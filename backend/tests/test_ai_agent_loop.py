@@ -170,7 +170,8 @@ def test_chat_page_scope_arms_read_tools(org, monkeypatch):
         "read_page", "read_block", "read_chats", "list_annotations", "read_annotation", "view_pdf_page", "view_ink",
         "view_image", "cite", "search_library", "search_papers", "related_papers", "search_web", "fetch_paper",
         "fetch_url", "read_paper", "save_paper", "edit_block", "create_block", "move_block", "delete_block",
-        "clip_region", "comment", "resolve", "highlight"]
+        "clip_region", "comment", "resolve", "highlight", "draw", "add_text_box", "place_picture", "add_sheet",
+        "backlinks"]
     assert f'page_id "{ids["a"]}"' in seen["system"]
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     reads = [l["action"] for l in lines if "action" in l]
@@ -643,12 +644,12 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
                                      "permissions": {"rename": "off", "move": "off", "save": "off",
                                                      "restore": "off", "delete": "off", "organize": "off",
                                                      "organize_delete": "off", "block_edit": "off",
-                                                     "comment": "off"}})
+                                                     "comment": "off", "create": "off", "draw": "off"}})
     assert r.status_code == 200
     assert [t["name"] for t in seen["tools"]] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "list_annotations", "read_annotation",
         "view_pdf_page", "view_ink", "view_image", "cite", "search_library", "search_papers", "related_papers",
-        "search_web", "fetch_paper", "fetch_url", "read_paper", "list_deleted"]
+        "search_web", "fetch_paper", "fetch_url", "read_paper", "list_deleted", "backlinks"]
     assert seen["blocked"].startswith("error: tool not enabled")
     assert props(c, ids["a"])["content"] == before  # nothing was renamed
 
@@ -659,6 +660,26 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
                                      "permissions": {k: "off" for k in ALL_PERMS}})
     assert r.status_code == 200
     assert seen["tools"] is None
+
+
+def test_the_apps_tools_ride_on_a_chat_whose_app_shows_pages(org, monkeypatch):
+    """show_page and export are offered to a streamed chat whose client says
+    it acts on them (``shows_pages``, sent by ChatDock), never to another."""
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    seen = []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        seen.append({t["name"] for t in kw.get("tools") or []})
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    for shows in (True, False):
+        r = c.post("/api/ai/chat", json={"prompt": "hi", "agent_scope": "folder", "folder": ids["readout"],
+                                         "stream": True, "shows_pages": shows})
+        assert r.status_code == 200
+    assert {"show_page", "export"} <= seen[0] and not {"show_page", "export"} & seen[1]
 
 
 def test_chat_without_agent_scope_gets_no_tools(org, monkeypatch):

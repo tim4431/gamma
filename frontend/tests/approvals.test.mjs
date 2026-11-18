@@ -170,3 +170,16 @@ test("a conversation can stop waiting for blocked papers, without losing its gra
   assert.equal(waitsForPapers(store, "ada", ""), true);
   assert.deepEqual(withoutPaperWait(store, "ada", "", 3), store);
 });
+
+test("a drawing's card names its surface, and a new page's where it goes", () => {
+  const card = (tool, preview = {}, args = {}) => approvalTitle({ tool, preview, args });
+  assert.equal(card("draw", { title: "Paper", pdf_page: 3 }), "Draw on page 3 of “Paper”");
+  assert.equal(card("draw", { title: "Sketches", sheet: true }), "Draw on a page of paper in “Sketches”");
+  assert.equal(card("add_text_box", { title: "Paper", pdf_page: 1 }), "Add a text box to page 1 of “Paper”");
+  assert.equal(card("place_picture", { title: "Sketches", sheet: true }), "Place a picture on a page of paper in “Sketches”");
+  assert.equal(card("add_sheet", { title: "Sketches" }), "Add a page of paper to “Sketches”");
+  assert.equal(card("highlight", { title: "Paper", place: { kind: "area", page: 2 } }), "Highlight an area in “Paper”");
+  assert.equal(card("create_page", { title: "Plan", to: "readout / plans" }), "Make the page “Plan” in readout / plans");
+  assert.equal(card("create_page", { title: "Plan", inside: "Paper" }), "Make the page “Plan” inside “Paper”");
+  assert.equal(card("create_page", { title: "Plan" }), "Make the page “Plan” at the library root");
+});

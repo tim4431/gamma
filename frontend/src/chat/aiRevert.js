@@ -25,6 +25,10 @@ const PAGE_REVERTIBLE = new Set(["rename_page", "move_page", "label_page"]);
 // those pages (`revert.trash`, `revert.restore`): their row puts each back
 // where the call found it (gamma/ai_revert.py _plan_trash).
 const TRASH_REVERTIBLE = new Set(["delete_page", "restore_page"]);
+// A page create_page made records its id (`revert.made`): its row moves it
+// to Recently deleted while it is empty, and its redo brings it back
+// (gamma/ai_revert.py _plan_made).
+const MADE_REVERTIBLE = "create_page";
 const listed = (ids) => Array.isArray(ids) && ids.length > 0;
 
 // A change recorded for reverting (changes saved by an older version have
@@ -33,6 +37,7 @@ function recorded(a) {
   if (!isChange(a) || !a.revert) return false;
   if (PAGE_REVERTIBLE.has(a.tool)) return listed(a.revert.pages);
   if (TRASH_REVERTIBLE.has(a.tool)) return listed(a.revert.trash) || listed(a.revert.restore);
+  if (a.tool === MADE_REVERTIBLE) return typeof a.revert.made === "string" && a.revert.made === a.block_id;
   if (!a.block_id) return false;
   return changePlace(a) === "notes" ? REVERTIBLE.has(a.kind) : LIBRARY_REVERTIBLE.has(a.tool);
 }
@@ -40,9 +45,9 @@ function recorded(a) {
 // The revert endpoint's kind for an action: "pages" for a page tool's
 // record (a page move's own kind, "move", is the note move's there; a
 // deleted folder's or label's `revert.pages` is its own, kind "delete"),
-// "trash" for pages deleted or restored.
+// "trash" for pages deleted or restored, "made" for a page made.
 export const revertKind = (a) => (PAGE_REVERTIBLE.has(a?.tool) ? "pages"
-  : TRASH_REVERTIBLE.has(a?.tool) ? "trash" : a?.kind);
+  : TRASH_REVERTIBLE.has(a?.tool) ? "trash" : a?.tool === MADE_REVERTIBLE ? "made" : a?.kind);
 
 // A change this reply can still take back.
 export function canRevert(a) {
@@ -50,9 +55,10 @@ export function canRevert(a) {
 }
 
 // A reverted change that can be put back. A new note needs the place it
-// was made in, which older actions did not record.
+// was made in, which older actions did not record; a page made needs none.
 export function canRedo(a) {
-  return recorded(a) && !!a.reverted && (a.kind !== "create" || typeof a.revert.parent === "string");
+  return recorded(a) && !!a.reverted
+    && (a.kind !== "create" || a.tool === MADE_REVERTIBLE || typeof a.revert.parent === "string");
 }
 
 // The actions as the request's history sends them for the replay: the

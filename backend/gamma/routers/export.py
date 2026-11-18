@@ -1951,6 +1951,22 @@ def start_export_job(payload: ExportJob, request: Request):
         if not translations:
             translations = _kept_translations(request, ws, "" if folder else page_id, folder, payload.translation_of)
         _translation_bounds(list(translations.values()))
+    return start_export(ws, owner=owner, user=user, payload=payload, scope=scope, token=token,
+                        translations=translations)
+
+
+def start_export(ws: str, *, owner: str, user: str, payload: ExportJob, scope=None, token: str = "",
+                 translations: dict | None = None) -> dict:
+    """The export job ``payload`` asks for, started for ``owner`` (``user``
+    the name its notes are written by): the page or the folder checked now
+    and read again when the job runs, held to a share's ``scope`` (and its
+    ``token``) when one starts it. ``translations`` are the page's or the
+    folder's papers' translated views, checked by the caller. The job as
+    ``jobs.start`` answers it. What ``POST /api/jobs/export`` and the chat's
+    ``export`` tool (gamma/ai_tools.py) start; a known ``mode`` is the
+    caller's to check."""
+    translations = translations or {}
+    mode, folder, page_id = payload.mode, payload.folder, payload.page_id
     with connect_pages_db(ws) as conn:
         if folder:
             path = _export_folder(conn, folder, scope)

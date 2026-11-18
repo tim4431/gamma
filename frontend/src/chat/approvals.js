@@ -86,7 +86,22 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
       return (preview.reply ?? !!args.thread_id) ? t("Reply in a comment thread in “{title}”", { title })
         : t("Comment on “{title}”", { title });
     case "resolve": return t("Resolve a comment thread in “{title}”", { title });
-    case "highlight": return t("Highlight a passage in “{title}”", { title });
+    case "highlight": return preview.place?.kind === "area" ? t("Highlight an area in “{title}”", { title })
+      : t("Highlight a passage in “{title}”", { title });
+    case "draw": return preview.sheet || args.sheet_id ? t("Draw on a page of paper in “{title}”", { title })
+      : t("Draw on page {page} of “{title}”", { page: preview.pdf_page || args.pdf_page || "?", title });
+    case "add_text_box": return preview.sheet || args.sheet_id ? t("Add a text box to a page of paper in “{title}”", { title })
+      : t("Add a text box to page {page} of “{title}”", { page: preview.pdf_page || args.pdf_page || "?", title });
+    case "place_picture": return preview.sheet || args.sheet_id ? t("Place a picture on a page of paper in “{title}”", { title })
+      : t("Place a picture on page {page} of “{title}”", { page: preview.pdf_page || args.pdf_page || "?", title });
+    case "add_sheet": return t("Add a page of paper to “{title}”", { title });
+    case "create_page":
+      if (preview.inside) return t("Make the page “{title}” inside “{parent}”", { title, parent: preview.inside });
+      return preview.to ? t("Make the page “{title}” in {folder}", { title, folder: preview.to })
+        : t("Make the page “{title}” at the library root", { title });
+    case "show_page": return t("Show you “{title}”", { title });
+    case "export": return t("Export “{title}”", { title: args.folder || title });
+    case "backlinks": return t("Find the notes that link to “{title}”", { title });
     case "restore_page": return t("Restore “{title}” from Recently deleted", { title });
     case "delete_page": return t("Move “{title}” to Recently deleted", { title });
     case "rename_folder": return t("Rename the folder “{title}”", { title });

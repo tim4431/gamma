@@ -926,3 +926,112 @@ def test_a_secrets_file_and_a_listed_file_are_not_read(org):
     assert text == '".env" is a text file: read it with read_page'
     for page in (secret, listed, r.json()["id"]):
         c.delete(f"/api/blocks/{page}")
+
+
+def _writer_scope(ids, folder_id="", **more):
+    """A folder chat that writes as Gamma AI for the module's account."""
+    from gamma import agents
+
+    return {**folder(folder_id), "actor": ids["user_id"], "can_write": True, "can_comment": True,
+            "agent": agents.stamp(agents.gamma(), ids["user"]), **more}
+
+
+def test_create_page_makes_a_page_the_chat_then_writes_in(org):
+    c, ids = org
+    scope = _writer_scope(ids, ids["readout"])
+    text, action = run_agent_tool(ids["ws"], scope, "create_page", {"title": "  Reading   notes "})
+    assert text.startswith("ok — made the page [Reading notes](/?page="), text
+    page_id = action["block_id"]
+    assert (action["kind"], action["page_id"], action["to"], action["revert"]) == (
+        "create", page_id, "readout", {"made": page_id})
+    made = props(c, page_id)
+    assert made["content"] == "Reading notes" and made["properties"]["folders"] == [ids["readout"]]
+    # in the chat's reach: its notes go in with create_block
+    text, _ = run_agent_tool(ids["ws"], scope, "create_block", {"parent_id": page_id, "content": "First note"})
+    assert text.startswith("ok"), text
+    # a folder below that does not exist yet is made; a page inside a page is filed where that page is
+    text, action = run_agent_tool(ids["ws"], scope, "create_page", {"title": "Plan", "folder": "plans"})
+    assert action["to"] == "readout / plans" and ["readout", "plans"] in folder_names(c).values()
+    text, action = run_agent_tool(ids["ws"], scope, "create_page", {"title": "Inside", "parent_id": ids["a"]})
+    assert props(c, action["block_id"])["properties"]["parent_page"] == ids["a"]
+    assert action["inside"] == props(c, ids["a"])["content"]
+    # a page out of the chat's reach is refused, and a page chat makes no page
+    text, action = run_agent_tool(ids["ws"], scope, "create_page", {"title": "x", "parent_id": ids["note"]})
+    assert action["error"] and "outside this chat's scope" in text
+    assert "create_page" not in {t["name"] for t in agent_tools("page")}
+
+
+def test_a_made_page_reverts_once_it_is_empty_again(org):
+    import pytest
+
+    from gamma import ai_revert
+    from gamma.blocks_store import TRASH
+    from gamma.db import connect_pages_db
+
+    c, ids = org
+    scope = _writer_scope(ids, ids["cooling"])
+    _, action = run_agent_tool(ids["ws"], scope, "create_page", {"title": "Scratch"})
+    page_id = action["block_id"]
+    run_agent_tool(ids["ws"], scope, "create_block", {"parent_id": page_id, "content": "a note"})
+
+    def revert(**more):
+        return ai_revert.revert_change(ids["ws"], "made", page_id, action["revert"], actor=ids["user_id"], **more)
+
+    def place():
+        with connect_pages_db(ids["ws"]) as conn:
+            return conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()[0]
+
+    with pytest.raises(ai_revert.RevertError) as stop:  # a note on it: asked first
+        revert()
+    assert stop.value.conflict == "filled" and stop.value.preview == {"page": True, "children": 1, "pages": 0,
+                                                                      "threads": 0}
+    revert(force=True)
+    assert place() == TRASH  # to Recently deleted, never for good
+    revert(redo=True)
+    assert place() == "root"
+    _, empty = run_agent_tool(ids["ws"], scope, "create_page", {"title": "Empty"})
+    assert ai_revert.revert_change(ids["ws"], "made", empty["block_id"], empty["revert"],
+                                   actor=ids["user_id"])["noop"] is False
+
+
+def test_backlinks_list_the_notes_the_chat_reaches(org):
+    c, ids = org
+
+    def page(title, folder_id, content=""):
+        r = c.post("/api/blocks", json={"parent_id": "root", "content": title,
+                                        "properties": {"folders": [folder_id]}})
+        page_id = r.json()["id"]
+        if content:
+            c.post("/api/blocks", json={"parent_id": page_id, "content": content})
+        return page_id
+
+    target = page("Target", ids["readout"])
+    near = page("Near", ids["readout"], f"see [[{target}]]")
+    far = page("Far", ids["cooling"], f"also [[{target}]]")
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "backlinks", {"block_id": target})
+    assert text.startswith("1 note links to the page “Target”") and near in text and far not in text, text
+    text, _ = run_agent_tool(ids["ws"], folder(""), "backlinks", {"block_id": target})
+    assert text.startswith("2 notes link") and far in text
+    # an id is matched as written: its "_" is no wildcard (the route's too)
+    r = c.post("/api/pages", json={"id": "pg_and_more1", "title": "Underscored"})
+    assert r.status_code == 200, r.text
+    c.post("/api/blocks", json={"parent_id": near, "content": "[[pgXandXmore1]]"})
+    assert c.get("/api/blocks/pg_and_more1/backlinks").json() == {"backlinks": []}
+
+
+def test_show_page_and_export_need_the_app(org):
+    c, ids = org
+    scope = _writer_scope(ids, ids["readout"], app=True)
+    names = {t["name"] for t in agent_tools("folder", has=frozenset({"app"}))}
+    assert {"show_page", "export"} <= names and not {"show_page", "export"} & {t["name"] for t in agent_tools("folder")}
+    text, action = run_agent_tool(ids["ws"], scope, "show_page", {"page_id": ids["a"], "pdf_page": 3,
+                                                                  "quote": "cat  qubits"})
+    assert text.startswith(f"ok — the app shows the user “{props(c, ids['a'])['content']}” at PDF page 3"), text
+    assert action["show"] == {"page_id": ids["a"], "pdf_page": 3, "quote": "cat qubits"}
+    text, action = run_agent_tool(ids["ws"], scope, "show_page", {"page_id": ids["note"]})
+    assert action["error"] and "outside this chat's scope" in text
+    text, action = run_agent_tool(ids["ws"], scope, "export", {"page_id": ids["b"], "format": "bibtex"})
+    assert action["kind"] == "export" and action["job"]["kind"] == "export", text
+    assert action["job"]["id"] in {j["id"] for j in c.get("/api/jobs").json()["jobs"]}  # the person's job
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "export", {"page_id": ids["b"]})
+    assert action["error"] and "not enabled" in text  # no app, no export

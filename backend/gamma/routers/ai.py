@@ -224,6 +224,10 @@ class AIChatRequest(BaseModel):
     # wait in this chat" the card's Skip offers: the reply ends and the card
     # stays under it.
     paper_wait: bool = True
+    # Whether the client acts on the tools that work in the app: it shows a
+    # page show_page names and downloads a file export starts (App.jsx
+    # handleAgentEvent). An older client, a script or a token sends none.
+    shows_pages: bool = False
     # Whether read_paper is offered: a long document is read by a helper on
     # the same connection, and the chat carries its answer instead of the
     # document (Settings → AI → Tool usage → "Read long papers with a helper").
@@ -1583,6 +1587,10 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
             # Whether read_paper is offered: a long document read by a
             # helper whose own conversation carries the windows.
             "delegates": bool(payload.delegate_reads),
+            # Whether show_page and export are offered (ai_tools.available,
+            # ``needs: "app"``): a live reply to the person's own app, which
+            # acts on them while it streams.
+            "app": bool(payload.shows_pages and can_ask and user_id and not is_token(request)),
             "paper_save": {key: payload.paper_save.get(key, True) is not False
                            for key in ("allow_oa", "save_copy", "fetch_metadata")},
             # This turn's reads, {block_id: full text}: what an edit_block
@@ -1737,7 +1745,7 @@ def ai_chat_steer(reply_id: str, payload: AISteer, request: Request):
 
 
 class AIRevert(BaseModel):
-    kind: Literal["edit", "create", "move", "delete", "pages", "trash"]
+    kind: Literal["edit", "create", "move", "delete", "pages", "trash", "made"]
     block_id: str = Field(default="", max_length=64)  # "" for "pages": a page tool's record names its pages
     revert: dict   # the action's `revert`, as the tool recorded it
     force: bool = False

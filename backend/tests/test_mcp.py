@@ -53,7 +53,7 @@ def test_initialize_and_read_tools(client, connection):
     assert {t["name"] for t in tools} == mcp_tools() | {"list_workspaces", "read_gamma_link", "export_page"}
     assert {t["name"] for t in tools} == {"list_pages", "list_folders", "read_page", "read_block", "read_chats",
                                           "list_annotations", "read_annotation", "view_pdf_page", "view_ink",
-                                          "view_image", "cite", "search_library", "list_workspaces",
+                                          "view_image", "cite", "search_library", "backlinks", "list_workspaces",
                                           "read_gamma_link", "export_page"}
     # every tool but the workspace list and a link (which names its own) can be pointed at a workspace
     assert all("workspace" in t["inputSchema"]["properties"] for t in tools

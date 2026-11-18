@@ -143,9 +143,17 @@ connection's Comment level, the four note tools at its Edit level
 | `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
 | `delete_block` | Edit note blocks | folder + page | Delete a note block with everything under it; the user can revert |
 | `clip_region` | Edit note blocks | folder + page | Store a picture of a PDF region (with the handwriting on it, if asked) or of a handwriting block as an upload the notes can embed, and return its URL |
-| `comment` | Comments and highlights | folder + page | Write a comment as the chat's agent, for its account: a reply in a thread, or a new thread on a PDF quote with its page, a text file's lines, a note or the page itself |
+| `comment` | Comments and highlights | folder + page | Write a comment as the chat's agent, for its account: a reply in a thread, or a new thread on a PDF quote with its page, an area of a PDF page, a text file's lines, a note or the page itself |
 | `resolve` | Comments and highlights | folder + page | Resolve a comment thread once it is done; never a reopen |
-| `highlight` | Comments and highlights | folder + page | Highlight a PDF quote or a text file's lines as the chat's agent, with a note, a colour and a style |
+| `highlight` | Comments and highlights | folder + page | Highlight a PDF quote, an area of a PDF page (`box`) or a text file's lines as the chat's agent, with a note, a colour and a style |
+| `draw` | Draw on pages | folder + page | Shapes (lines, arrows, rects, ellipses, triangles, polygons, curves) on a PDF page or a page of paper as one new handwriting group, placed by page fractions or anchored to a quote (`around`, `from_quote`, `to_quote`) |
+| `add_text_box` | Draw on pages | folder + page | A text box on a PDF page or a page of paper, in the empty space beside a quote (`near`) or at a corner (`at`) |
+| `place_picture` | Draw on pages | folder + page | A stored picture placed on a PDF page or a page of paper, fitted in a box with its shape kept, or beside a quote |
+| `add_sheet` | Draw on pages | folder + page | A page of paper (size, pattern, colour, title) after another or at the end of a page |
+| `show_page` | Show pages | folder + page | Show the user a page in the app, at a PDF page and passage, a note or a text file's line: at once on the page the chat is beside, else when the reply ends. Only a live chat in the app has it |
+| `create_page` | Create pages | folder | Make a page of notes in a folder (made when missing) or inside a page; the user can revert it |
+| `export` | Read pages | folder + page | Start the Export dialog's job for a page or a folder (Markdown, the annotated PDF, the notes as a PDF, BibTeX, Obsidian, Zotero RDF, Notion, Logseq); the app downloads the file. Only a live chat in the app has it |
+| `backlinks` | Read pages | folder + page | The notes that link to a page or a note (`[[id]]`) among the pages the chat reaches, newest first |
 
 ### list_pages (folder only)
 
@@ -2035,6 +2043,17 @@ asks (`hand.may_mark`, in `_plan_write`).
   `squiggly`, `strikeout`, as the viewer's styles); a place the agent
   highlighted already is refused with that highlight's id.
 
+`highlight` and `comment` also take an area of a PDF page: `box` (`[x0, y0,
+x1, y1]`, fractions of the page as shown, top-left origin, as
+`clip_region`'s) with its `pdf_page` and no quote, the rectangle a person's
+Ctrl+drag makes (`places.find`: `highlights.position(…, area=True)` in the
+page's own frame, `pdf_text.page_sizes`; the quote `""`). An area is drawn
+as a wash, so `highlight` refuses a style there, and the agent's second
+highlight of an area, or its comment made again, is the same rectangle on
+the same page to a thousandth of the page (`hand._same_box`). Its action
+carries `area: true` ("Highlighted an area in …"), and a card's place is
+`{kind: "area", page}`.
+
 A quote is found exactly, as the relocation folds text, or not at all: one
 not on the page is refused with the closest passage the finder saw, never
 placed by guess ([annotations.md](annotations.md) "The writing tools"). The
@@ -2059,6 +2078,145 @@ doubles a comment. The prompt names them once any is armed: reply where a
 comment asks, say what changed, resolve once done, ask on a passage, quote
 verbatim, comment or highlight only when asked.
 
+### Drawing on pages (both scopes, one permission)
+
+`draw`, `add_text_box`, `place_picture` and `add_sheet` put things on the
+user's pages, under one permission, **Draw on pages** (`draw`, in "Make
+changes", asking by default as every change does). Each call makes one
+block a person's client would make. The planning is `gamma/ai_draw.py` (the
+surface, the anchors, the block), under the registry's executors
+(`_run_placed`, `_run_add_sheet`), which insert it through the op path
+(`_insert_made`). The block carries the agent's stamp (`agents.stamp`, as a
+highlight it makes does), and the account's role is asked when the call
+runs (`hand.may_write`, `hand.may_mark`: a viewer's chat draws nothing).
+Its action is a new block (kind `create`, with `pdf_page`, the chip's
+`picture` and `revert: {after, parent, position, props}`), so its row under
+"Changed in your notes" reverts and redoes it ("Reverting a note change"
+below).
+
+- **The surface** (`ai_draw.surface`): a PDF page (`page_id` + `pdf_page`,
+  sized as pdf.js shows it, `pdf_text.page_sizes`) or a page of paper
+  (`sheet_id`, a sheet of the page at any depth, `notebook.sheets_of`; the
+  page is the sheet's when `page_id` is left out). A new block goes last at
+  a PDF page's top level, or last under the sheet. A page without a PDF
+  answers that it has none, and that `add_sheet` makes a page of paper.
+- **Places** are fractions of the surface, top-left origin
+  (`ai_pictures.parse_box` for a box). On a PDF page a passage stands in
+  for a place: its quote is found as `highlight` finds one
+  (`annotations.places.passage_at`), refused with the closest passage when
+  it is not there, and refused when it is found on another page than the
+  call's (one call, one surface).
+- **`draw`**: up to `MAX_SHAPES` (20) shapes as one new handwriting group,
+  never merged into a group of the person's. `line` and `arrow` take
+  `from` and `to`, or `from_quote` / `to_quote`: the end lands on the
+  passage's box, padded by `END_PAD`, on the side facing the other end.
+  `rect` and `ellipse` take `box`, or `around` a quote: the passage's box
+  padded by `AROUND_PAD`, an ellipse through its corners. `triangle`,
+  `polygon` and `curve` take `points` (a curve's `closed`, `smooth`). Each
+  shape goes through the redraw's parser (`ink_ai.figure`, then `placed`),
+  is sampled under a running budget (`ink.shape_samples`' limit,
+  `MAX_SAMPLES` for the call) and becomes a constant-width pen stroke with
+  its shape record (`pen: false`, `ch: "xy"`, no `t0`). The colour is the
+  call's `color` (the pens' palette by name, `ai_draw.COLORS`; red by
+  default), with its `width` (2 pt) and `dash`, or a shape's own; `fill:
+  true` fills a closed shape in its colour at the file's 0.25. The file is
+  built by `ink.group_files`, checked by `ink.parse_ink` and stored when
+  the call runs (`storage.store_file`; a full workspace answers its 507 in
+  words). The block carries `ink_url`, `ink_strokes` and, on a PDF page,
+  `ink.pdf_position`. For a model that reads pictures the result carries
+  the group as `view_ink` shows it (`ink_view.picture`), so it can check
+  its work; a render that fails leaves the change as it is.
+- **`add_text_box`**: `text` (Markdown, math in dollars, at most
+  `MAX_TEXT`), `size` (`text_box.TEXT_SIZES`), `color`, `background`
+  (none, white, yellow, blue) and `width` (a fraction; without it the box
+  takes its text's width). It is sized as the PDF writers lay it out
+  (`text_box.measure`) and refused when it is taller than the page. `near`
+  a quote places it in the nearest empty spot beside the passage
+  (`pdf_free_space.spot`: the page's own content and the handwriting, text
+  boxes and pictures already on it, `ai_draw.taken`, are taken). With no
+  free spot the call is refused, naming `at`, rather than laid over the
+  text. `at` places its corner. Either way it is kept on the page
+  (`keep_on_surface`).
+- **`place_picture`**: a stored picture of the workspace (`url`: one
+  `clip_region` stored, one a note embeds), its size as a browser shows it
+  (`picture.image_size`: EXIF turns, an SVG's own size). It is fitted
+  inside `box` with its shape kept, or `width` wide (0.3 of the page by
+  default) `near` a quote or `at` a corner; `caption` is its text and `t0`
+  its making.
+- **`add_sheet`**: a page of paper (`size` a4, letter or a5, `landscape`,
+  `pattern`, `color` white, cream, grey or dark: the paper menu's, and
+  `title`), collapsed as the notebook's New page makes one, after the sheet
+  `after_id` names, else last on the page.
+
+The approval card says what each makes (`what`: "2 shapes: a rectangle
+around “…”, an arrow"), with the first anchor's place and the surface as
+the user sees it (`/api/ai/page-image?…&ink=1`, a sheet's
+`/api/ai/ink-image/<sheet>`): a text box's text as its diff, a picture's
+file. The prompt's drawing paragraph, armed with any of them, says to
+anchor to the text where it can, to look at the page before placing by
+fractions, to check the picture a result shows, and to draw only what the
+user asks for. MCP reaches none of them: they change pages.
+
+### show_page (both scopes)
+
+The one tool that acts in the app. `show_page(page_id, pdf_page?, quote?,
+block_id?, line?)` checks the page is in reach (a reading tool's scope) and
+answers an action of kind `show` with `show: {page_id, pdf_page?, quote?,
+block_id?, line?}`; nothing is stored. It is offered only where an app acts
+on it (`needs: "app"`, `available`): a streamed request of a person's
+session whose client says so (`shows_pages`, sent by ChatDock), never a
+token's chat, MCP or a helper. The app decides when to land
+(`chat/agentShows.js`, asked by App's `handleAgentEvent`). On the page the
+chat is beside it lands at once. Another page opens when the reply ends on
+its own (ChatDock's last `done` carries `ended`; a steer's carries none),
+since the chat follows the open page ([chat_history.md](chat_history.md)
+"Buckets") and opening another page mid-reply would hide the reply. Either
+happens only while the dock still shows the conversation that asked. It
+lands as the reply's links do (`openPageLink` with a citation or line
+target, `openBlockLink`). Its permission is **Show pages** (`show`,
+reading, Allow by default).
+
+### create_page (folder only)
+
+A new page of notes, as `POST /api/pages` makes one, under **Create pages**
+(`create`, a change, asking by default). It takes a `title`, and either a
+`folder` (read as `save_paper`'s, `_save_folder`: the chat's folder by
+default, a folder below it made when missing, `_made`) or a `parent_id` (a
+page in reach: the new page goes inside it, filed where its top is). It is
+a folder chat's tool only: a page chat's note tools edit its own page
+alone, so it could not fill a page it made. The parent is checked live and
+under `MAX_PAGE_DEPTH`, and so is the share host's page cap
+(`publish.cap_refusal`), under the write lock the page is made in; the page
+is held to the work-folder rule as a person's (client `ai`) and carries the
+agent's stamp. Its action (kind `create`, `block_id` the page's id, `to`
+its folder's path or `inside` its parent's title) is listed under "Changed
+in your library" ("Made the page … in …"). Its `revert: {made: <id>}`
+moves it to Recently deleted while it is empty (`ai_revert._plan_made`,
+below). The result names the id `create_block` fills it by.
+
+### export (both scopes)
+
+`export(page_id | folder, format, sub_pages?)` starts the export job the
+Export dialog starts (`routers/export.py` `start_export`, the job body the
+route and the tool share), as the person, for a page in reach (a page
+chat's own by default) or a folder. `format` is one of `EXPORT_FORMATS`:
+markdown, pdf (the annotated PDF), notes-pdf, bibtex, obsidian, zotero,
+notion, logseq. Its action (kind `export`) carries the job, which the app
+adopts and downloads when it is ready (`tasks.adopt`, `download: "auto"`),
+so it needs the app as `show_page` does. It is under Read pages: the file
+goes to the person, who may export any page of the workspace, and the
+model never reads it.
+
+### backlinks (both scopes)
+
+`backlinks(block_id)`: the notes whose text links to a page or a note
+(`[[id]]`), newest first, at most 50, each with its block id and page
+(`blocks_store.backlinks`, which `GET /api/blocks/{id}/backlinks` uses
+too). The reach is the chat's (`_scope_pages`), filtered in the query
+before the limit, and the id is matched as written (`instr`: an id's `_`
+is a LIKE wildcard). It is under Read pages; MCP has it by `mcp_tools`'
+rule, with links.
+
 ## Guardrails
 
 Deliberately not offered under any permission:
@@ -2071,17 +2229,20 @@ Deliberately not offered under any permission:
   or says it cannot be reverted (`delete_block`).
 - Deleting a shared folder (the user stops sharing it first), the chat's
   own folder or one above it; editing highlight anchors; creating a folder
-  on its own (a folder is made only as `move_page`'s or `save_paper`'s
-  target); moving or reordering folders; and refiling except through
-  `move_page` and `label_page`.
+  on its own (a folder is made only as `move_page`'s, `save_paper`'s or
+  `create_page`'s target); moving or reordering folders; and refiling
+  except through `move_page` and `label_page`.
+- Acting in the app beyond showing a page (`show_page`) and downloading an
+  export the user asked for (`export`): no command, no setting, no other
+  window.
 - Reading library pages outside the base scope and attached references, or
   editing pages outside the base scope. The server checks every call.
 - Reaching uploads other than the pictures a note embeds (`view_image`)
   and the ones `clip_region` stores, share links, settings, or other
   users' data.
 - Adding a paper as a side effect of reading it: `fetch_paper` never
-  creates a page. Only `save_paper` does, under its own permission and on
-  the user's request.
+  creates a page. Only `save_paper` (a paper) and `create_page` (a page of
+  notes) do, each under its own permission and on the user's request.
 
 Tools whose permission is Off are not offered to the model, and the server
 additionally refuses to execute them if called. A tool whose permission is
@@ -2099,12 +2260,12 @@ always a visible record of what the agent looked at and changed. One pill
 sums them up ("6 steps · listed, read 1 page · 1 failed") and expands to a
 line per call, its icon naming the action kind (`ACTION_ICONS` in
 `chat/AgentChanges.jsx`: list, book, search, eye, pen, quote, globe, download,
-file-plus, history, pencil, folder, plus, label). Each line expands to the
+file-plus, history, pencil, folder, plus, label, locate, export). Each line expands to the
 arguments and the output the model got. Everything that changed is listed
 again under the pill: "Changed in your library" (renamed, filed, saved,
-deleted and restored pages; renamed, made, applied and deleted folders and labels) and
+made, deleted and restored pages; renamed, made, applied and deleted folders and labels) and
 "Changed in your notes" (edited, added and moved
-blocks), each entry a link to the page or block. A call that changed
+blocks, and what was drawn or placed on a page), each entry a link to the page or block. A call that changed
 several pages is one entry that unfolds to them. The note tools' actions carry their page's `title` for that list; a
 change tool that changed nothing is marked `noop` and not listed.
 
@@ -2128,6 +2289,8 @@ The note tools record what undoing and redoing their change needs, as
 | --- | --- |
 | `edit_block` | `before` and `after`: the block's text just before and just after the write, read under the write lock |
 | `create_block` | `after`: the text the block was made with; `parent` and `position`: where it went |
+| `draw` / `add_text_box` / `place_picture` / `add_sheet` | as `create_block`'s, and `props`: the properties the block was made with (a drawing's `ink_url`, a box's `text_box`, a picture's `picture`, a sheet's `sheet`, the agent's stamp) |
+| `create_page` | `made`: the page's id |
 | `move_block` | `parent` and `position`: where the block was; `to_parent` and `to_position`: where it went |
 | `delete_block` | `blocks`: every block of the subtree, parent first, as `[id, parent, position, content, properties]` |
 | `delete_folder` / `delete_label` | `tree`; `blocks` (as `delete_block`'s: the folder's subtree, or the label); `pages`: `{page id: the ids it carried}`; a folder's `chats`: `{history id: folder}`, the conversations it moved into the library chat's history |
@@ -2141,7 +2304,8 @@ one write lock:
 | Change | Reverted by | Stops (409) when |
 | --- | --- | --- |
 | edit | merging the change `after → before` into the text stored now (`textmerge.merge` with word-level hunks, `semantic`) | `changed`: someone changed the agent's own text |
-| new block | deleting it | `filled`: it was typed in or has notes under it (`preview.children`) |
+| new block | deleting it | `filled`: it was typed in, has notes under it (`preview.children`) or comment threads on it (`preview.threads`), or, made with an `ink_url`, holds another stroke file now (`preview.drawn`: strokes were drawn into it). A move or a restyle loses nothing of anyone's and does not stop it |
+| made page | moving it to Recently deleted (`ops.trash_page`, kind `made`); a redo restores it (`ops.restore_page`) | `filled` (`preview.page`): it holds notes, pages or comment threads; forceable, since Recently deleted keeps it. A page deleted for good is `gone` for a redo |
 | move | moving it back to the old parent at the old key, re-keyed if a sibling took it (across pages: `ops.move_across_pages`) | `moved`: it was moved on since |
 | deletion | inserting the subtree again with the same ids, parents and keys (a no-op when the block is back already); a redo deletes it again | `gone`: the parent it was under was deleted |
 | deleted folder or label | inserting the blocks again with the same ids, parents and keys, filing the library pages that carried them again and moving the folders' chats back into their histories (`routers/chats.chats_back`); a redo runs `ops.delete_tree` again | `gone`: the folder it was in was deleted, a folder or label of that name is there again, or (redo) the folder is shared now |
@@ -2171,7 +2335,8 @@ still holds reverted (`textmerge.contains`), or a new block that is gone.
 
 A redo (`redo: true`) runs the same plan the other way. An edit merges
 `before → after`. A new block is inserted again under its old id, parent
-and key; with its parent gone it is `gone`. A move goes to `to_parent` at
+and key, with the properties it was made with (`props`); with its parent
+gone it is `gone`. A move goes to `to_parent` at
 `to_position`, and stops with `moved` when the block left the place the
 revert put it. An older move without `to_position` goes last under its
 parent, and an older new block without `parent` cannot be redone. A redo of
