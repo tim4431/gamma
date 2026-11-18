@@ -169,8 +169,8 @@ def test_chat_page_scope_arms_read_tools(org, monkeypatch):
     assert [t["name"] for t in seen["tools"]] == [
         "read_page", "read_block", "read_chats", "list_annotations", "read_annotation", "view_pdf_page", "view_ink",
         "view_image", "cite", "search_library", "search_papers", "related_papers", "search_web", "fetch_paper",
-        "read_paper", "save_paper", "edit_block", "create_block", "move_block", "delete_block", "clip_region",
-        "comment", "resolve", "highlight"]
+        "fetch_url", "read_paper", "save_paper", "edit_block", "create_block", "move_block", "delete_block",
+        "clip_region", "comment", "resolve", "highlight"]
     assert f'page_id "{ids["a"]}"' in seen["system"]
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     reads = [l["action"] for l in lines if "action" in l]
@@ -648,7 +648,7 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
     assert [t["name"] for t in seen["tools"]] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "list_annotations", "read_annotation",
         "view_pdf_page", "view_ink", "view_image", "cite", "search_library", "search_papers", "related_papers",
-        "search_web", "fetch_paper", "read_paper", "list_deleted"]
+        "search_web", "fetch_paper", "fetch_url", "read_paper", "list_deleted"]
     assert seen["blocked"].startswith("error: tool not enabled")
     assert props(c, ids["a"])["content"] == before  # nothing was renamed
 

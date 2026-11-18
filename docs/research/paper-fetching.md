@@ -226,7 +226,9 @@ What was built, with its reasoning:
   The provider route needs no setup for OpenAI, ChatGPT sign-in and Anthropic
   connections, so it is Automatic's fallback. Results are leads: when the
   provider reports the pages its search returned, only those pass. The
-  registries stay the first step because they establish identity.
+  registries stay the first step because they establish identity. The search
+  and a reader for any page were made general in November 2026
+  ([web-search.md](web-search.md)).
 - **Links with their text, ranked against the paper.** On the MIT list the PRL
   moved from position 227 to first once `fetch_paper` was given its title.
 - **Several open-access copies**, up to four, tried in version order before the

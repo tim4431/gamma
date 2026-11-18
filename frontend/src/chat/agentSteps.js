@@ -115,6 +115,15 @@ export function chipNote(a) {
   return parts.join(" · ");
 }
 
+// The site a fetch_url call reads, without its "www.".
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+};
+
 // What the step running right now is doing, from its {"step"} line
 // ({tool, args} — the short arguments the server repeats, ai_agent.STEP_ARGS);
 // `titleOf(pageId)` names a page when the library knows it (read_block's
@@ -126,6 +135,7 @@ export function runningLabel(step, titleOf = () => "") {
     const n = step.batch;
     switch (step.tool) {
       case "fetch_paper": return tn("Fetching {n} document…", "Fetching {n} documents…", n);
+      case "fetch_url": return tn("Reading {n} web page…", "Reading {n} web pages…", n);
       case "read_paper": return tn("{n} helper is reading a document…", "{n} helpers are reading documents…", n);
       case "read_page": return tn("Reading {n} page…", "Reading {n} pages…", n);
       case "search_papers": return tn("Searching papers, {n} query…", "Searching papers, {n} queries…", n);
@@ -180,6 +190,10 @@ export function runningLabel(step, titleOf = () => "") {
     case "related_papers": return t("Following citations of {source}…", { source: args.source || t("a paper") });
     case "search_web": return t("Searching the web for “{query}”…", { query: args.query || "" });
     case "fetch_paper": return t("Fetching {source}…", { source: args.source || t("a document") });
+    case "fetch_url": {
+      const host = hostOf(args.url);
+      return host ? t("Reading {host}…", { host }) : t("Reading a web page…");
+    }
     case "read_paper":
       return args.title ? t("A helper is reading “{title}”…", { title: args.title })
         : t("A helper is reading {source}…", { source: args.source || t("a document") });

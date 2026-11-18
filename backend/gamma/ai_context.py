@@ -754,7 +754,8 @@ def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
 def build_messages(payload, context: str, with_tools: bool = False,
                    located: list | None = None, message_context: str = "",
                    drop_turns: int = 0, picture_lines: str = "",
-                   files: list | None = None, quote_budget: int | None = None) -> list[dict]:
+                   files: list | None = None, quote_budget: int | None = None,
+                   date_line: str = "") -> list[dict]:
     """Build common chat messages, injecting context once before a user turn.
 
     With ``with_tools`` (an agent chat), each saved reply's tool calls are
@@ -780,6 +781,12 @@ def build_messages(payload, context: str, with_tools: bool = False,
     of the conversation they sit at the same place in its head.
     ``quote_budget`` is what the question's quoted passages share (the
     request's ``passage_budget`` unless the window fit shrank it).
+    ``date_line`` (today's date, for a chat that reads the web) opens the
+    oldest user turn: written there on every message it reads the same all
+    day, so the conversation's head stays the provider's cached prefix. On
+    the newest turn it would change that turn when the next message replays
+    it without the line, and that message would pay for the turn and its
+    tool rounds again.
     """
     history = [h for h in (payload.history or []) if not h.get("error")]
     if drop_turns > 0:
@@ -845,6 +852,9 @@ def build_messages(payload, context: str, with_tools: bool = False,
         content = f"{content}\n\n{picture_lines}"
     messages.append({"role": "user", "content": content,
                      **({"files": list(files)} if files and not context_used else {})})
+    if date_line:
+        oldest = next(m for m in messages if m["role"] == "user")
+        oldest["content"] = f"{date_line}\n\n{oldest['content']}"
     return messages
 
 

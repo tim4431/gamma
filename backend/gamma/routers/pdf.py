@@ -8,7 +8,6 @@ back as human-readable messages. Institutional access depends on the backend's
 network; publisher bot challenges may still require a browser.
 """
 
-import html as html_lib
 import json
 import re
 import urllib.parse
@@ -27,6 +26,7 @@ from ..logbuf import log
 from ..net_guard import guarded_urlopen
 from ..server_settings import can_store
 from ..storage import is_pdf
+from ..web_fetch import BROWSER_HEADERS, meta_refresh
 
 router = APIRouter(prefix="/api", tags=["pdf"])
 
@@ -34,14 +34,6 @@ router = APIRouter(prefix="/api", tags=["pdf"])
 # parameter). A fixed project address — deliberately not configurable, so the
 # open-access fallback needs zero setup.
 CONTACT_EMAIL = "gamma-pdf-annotator@users.noreply.github.com"
-
-# Realistic browser headers get past simple UA filters (many hosts 403 bare bots)
-BROWSER_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "Accept": "application/pdf,text/html;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-}
 
 # A new-style (2301.12345) or old-style (cond-mat/0402216, math.GT/0309136)
 # arXiv id without its version, non-capturing — the one id shape clip.py,
@@ -73,23 +65,7 @@ def _identifier_to_url(text: str) -> str:
     return text
 
 
-_REFRESH_TAG_RE = re.compile(r"<meta\b[^>]*http-equiv\s*=\s*[\"']?refresh[^>]*>", re.I)
-_REFRESH_CONTENT_RE = re.compile(r"""\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
-_REFRESH_URL_RE = re.compile(r"""^\s*[\d.]*\s*[;,]\s*url\s*=\s*['"]?([^'"]+)""", re.I)
 _ARXIV_PDF_URL_RE = re.compile(r"^https?://arxiv\.org/pdf/", re.I)
-
-
-def meta_refresh(html: str, base: str) -> str:
-    """Where a page's ``<meta http-equiv="refresh">`` sends the visitor,
-    absolute, or "". Some DOI landings are only that (Elsevier's
-    linkinghub → ScienceDirect), so a fetch follows it like a 3xx."""
-    tag = _REFRESH_TAG_RE.search(html[:50_000])
-    content = _REFRESH_CONTENT_RE.search(tag.group(0)) if tag else None
-    m = _REFRESH_URL_RE.match((content.group(1) or content.group(2)) if content else "")
-    if not m:
-        return ""
-    url = urllib.parse.urljoin(base, html_lib.unescape(m.group(1).strip()))
-    return url if url.lower().startswith(("http://", "https://")) and url != base else ""
 
 
 def _meta_content(html: str, name: str) -> str:

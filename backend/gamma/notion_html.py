@@ -21,9 +21,10 @@ import re
 from dataclasses import dataclass, field, replace
 from urllib.parse import unquote
 
+from .html_markdown import El, Parser
 from .notion_blocks import Block, color_name, merge_colors
 from .notion_gamma import _add, _literal, _trim
-from .zotero_notes import _TAG_MARKS, El, Parser, _href, _math_md, classes, node_tag, node_text
+from .zotero_notes import _TAG_MARKS, _href, _math_md, classes, node_tag, node_text
 
 # How deep the walk goes, in elements. A page goes on past it as flat text.
 _DEEPEST = 200

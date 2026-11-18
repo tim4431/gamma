@@ -121,10 +121,11 @@ connection's Comment level, the four note tools at its Edit level
 | `view_image` | View pages and handwriting | folder + page | Look at the pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), or a picture block's own, all of them or one by index |
 | `cite` | Read pages | folder + page | The citation records kept with pages: the paper metadata, its BibTeX and the slide citation, for up to 50 pages |
 | `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND their documents' text; note hits name the block id and page, PDF hits the page number, file hits the file's path and line. `search_pdfs` is its deprecated alias (replay only) |
-| `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref, arXiv and OpenAlex at once, or a direct DOI / arXiv-id lookup — returning merged registry records (citation count, the start of the abstract) with the `doi:` / `arXiv:` string `fetch_paper` takes; an optional year filter and citation or recency order |
-| `related_papers` | Search papers online | folder + page | One step through OpenAlex's citation graph from a DOI, arXiv id or exact title: the works it cites, the works citing it, or related works, most cited first |
-| `search_web` | Search papers online | folder + page | General web search through the account's engine (the chat's own AI connection, Brave Search or SearXNG): titles, URLs and snippets as leads for `fetch_paper`. Offered only when an engine is available |
-| `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, several open-access copies tried) in `read_page`-style windows, else the web page's readable text with its PDF links; nothing is stored. The result names the PDF's version and checks it against the paper's title when given. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
+| `search_papers` | Search online | folder + page | Scholarly search outside the library — Crossref, arXiv and OpenAlex at once, or a direct DOI / arXiv-id lookup — returning merged registry records (citation count, the start of the abstract) with the `doi:` / `arXiv:` string `fetch_paper` takes; an optional year filter and citation or recency order |
+| `related_papers` | Search online | folder + page | One step through OpenAlex's citation graph from a DOI, arXiv id or exact title: the works it cites, the works citing it, or related works, most cited first |
+| `search_web` | Search online | folder + page | General web search through the account's engine (Brave Search, Tavily, SearXNG or the chat's own AI connection), narrowed to the past day, week, month or year and to one site when asked: titles, URLs, the page's date when the engine reports one, and snippets, as leads for `fetch_url` (a paper's for `fetch_paper`). Offered only when an engine is available |
+| `fetch_paper` | Fetch documents | folder + page | Read a paper that is not in the library by DOI, arXiv id or the URL of its page or PDF: the PDF behind it (same resolver as opening a link, several open-access copies tried) in `read_page`-style windows, else the page as `fetch_url` reads it, with its PDF links; nothing is stored. The result names the PDF's version and checks it against the paper's title when given. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
+| `fetch_url` | Fetch documents | folder + page | Read any page or file at an http(s) URL in one GET: a web page's main content as Markdown with its links, title, site and dates, and a long page's sections with their offsets; plain text, JSON, XML and CSV as they are; a PDF page by page. `find` starts the window at a phrase. A wall is a sentence for the model, never a card; nothing is stored |
 | `save_paper` | Save papers | folder + page | Add a paper to the library by DOI, arXiv id or URL, through the ingest the reply's Save to library and the Connector use |
 | `rename_page` | Rename pages | folder | Change pages' titles, up to 50 in one call |
 | `move_page` | Move pages | folder | File pages into a (sub)folder, up to 100 in one call; never a sub-page, which goes where its top goes |
@@ -646,10 +647,11 @@ every page is refused is an error. Its chip is ❝ "Cited N pages" (kind
 
 ```mermaid
 flowchart LR
-  q["a paper the library lacks"] --> lib["search_library, read_page"]
+  q["a question the library does not answer"] --> lib["search_library, read_page"]
   lib --> held{"already a page?"}
-  held -- yes --> read
-  held -- no --> find["search_papers: Crossref + arXiv + OpenAlex"]
+  held -- yes --> libans(["answer from the library"])
+  held -- no --> kind{"a paper?"}
+  kind -- yes --> find["search_papers: Crossref + arXiv + OpenAlex"]
   find --> more["search_web, related_papers"]
   more --> probe
   find --> probe["fetch_paper mode=probe"]
@@ -658,22 +660,42 @@ flowchart LR
   right -- yes --> long{"answer could be anywhere in it?"}
   long -- yes --> helper["read_paper: a helper reads it"]
   long -- no --> read["fetch_paper, window by window"]
-  helper --> ans(["answer, citing pages"])
+  helper --> ans(["answer citing PDF pages"])
   read --> ans --> keep["save_paper"]
+  kind -- "no: a fact, docs, news, software" --> web["search_web: recency, site"]
+  web --> page["fetch_url: sections, find, offset"]
+  page --> cited(["answer citing the pages as links"])
 ```
 
 The agent's reach outside the library, read-only: `search_papers`,
-`related_papers` and `search_web` under **Search papers online**
-(`web_search`), `fetch_paper` and `read_paper` under **Fetch documents**
-(`web_read`). The
-code is `gamma/ai_web.py` (registries, citation graph, fetching),
-`gamma/openalex.py`, `gamma/paper_links.py` and `gamma/search_services.py`
-(general web search); the executors are in `ai_tools.py`.
+`related_papers` and `search_web` under **Search online** (`web_search`),
+`fetch_paper`, `fetch_url` and `read_paper` under **Fetch documents**
+(`web_read`). The executors are in `ai_tools.py`; the code under them
+depends one way, `html_markdown ← web_page ← web_fetch ← ai_web`, with the
+search engines beside them:
 
-Two uses shape them. A work the user's pages cite but do not hold: *"read
+- `gamma/ai_web.py`, the scholarly reach: the registries (with
+  `gamma/openalex.py`), the citation graph, `fetch_document` (the paper
+  resolver first, then the page) and the papers' cache;
+  `gamma/paper_links.py` ranks a page's PDF links.
+- `gamma/web_fetch.py`, reading a URL: the one guarded GET both readers
+  use (`get`), the size caps, the walls (`WALLS`, `access_wall`, `refusal`,
+  `entry`), `uri`, the caches' class (`DocCache`), `fetch_page`
+  (`fetch_url`'s reader) and the windows (`window`, `window_pages`,
+  `find`). `BROWSER_HEADERS` and `meta_refresh` live here, and
+  `routers/pdf.py` imports them, so no module of the web layer imports a
+  router.
+- `gamma/web_page.py`, a response body as the text the model reads, and
+  `gamma/html_markdown.py`, the HTML tree and the Markdown writer it shares
+  with the web clipper and the Zotero and Notion imports
+  ([The page reader](#the-page-reader)).
+- `gamma/search_services.py`, the engines behind `search_web`, their
+  adapters and the account's settings.
+
+Three uses shape them. A work the user's pages cite but do not hold: *"read
 reference 12 of this paper and tell me what it measures"*. The agent finds the
 reference entry with `search_library` / `read_page`, identifies the work with
-`search_papers` and reads it with `fetch_paper`. And discovery from a research
+`search_papers` and reads it with `fetch_paper`. Discovery from a research
 question or an experimental setup: *"find papers on density-dependent loss in
 Raman sideband cooling of 85Rb in a 1D lattice"*. With the search tools armed,
 `agent_system` gives the model a researcher's recipe: two to four short concept
@@ -683,8 +705,37 @@ from the abstracts, the strongest match's citations followed with
 `related_papers`, and only the few decisive papers fetched. The answer says
 which papers match the user's case directly and which are analogies (another
 species, geometry or regime), and never presents one paper's number as a
-general limit. Without a web engine the prompt adds that general web search is
-off and where to turn it on.
+general limit. And a fact that is current, versioned or specific: *"what's
+new in Python 3.14?"*, a price, a person, this week's news.
+The agent looks it up with `search_web` and reads the best pages with
+`fetch_url` instead of answering from memory, and cites the pages it used
+as links.
+
+The prompt's web paragraph (`agent_system`) names the armed web tools and
+says when to use them: for anything outside the library, current, versioned
+or specific facts (releases, docs, prices, people, news) looked up instead
+of answered from memory, and works the user's pages cite but do not hold,
+with the library preferred for what it holds. One sentence then sorts the
+armed tools, built from their names only, so it never names a tool that is
+off: "Papers: search_papers and fetch_paper. Anything else: search_web and
+fetch_url; cite the pages you used as links." Which tool is for what is
+otherwise each spec's, said once: `search_web`'s says that for papers
+`search_papers` comes first, `fetch_paper`'s sends any page that is not a
+paper's to `fetch_url`, and `fetch_url`'s sends a paper to `fetch_paper`.
+With `search_papers` armed and no web engine, the prompt adds that general
+web search is not set up and where to turn it on.
+
+A chat armed with `search_web` or `fetch_url` (`ai_tools.DATED_TOOLS`) is
+told today's date, since a result dated "3 days ago" or "the latest
+release" means nothing without it: `_chat_prompt` (`routers/ai.py`) passes
+`Today is YYYY-MM-DD (UTC).` (`page_now()[:10]`) as `build_messages`'
+`date_line`, which opens the oldest user turn. It is never in
+`agent_system`, which no message may change, and never on the newest turn:
+the next message replays that turn without the line, so it would pay for
+the turn and its tool rounds again. On the oldest turn it reads the same
+all day, so the cached head changes at most once a day
+([ai.md](ai.md#prompt-caching)). The context export (`POST
+/api/ai/chat/context`) shows it as the model reads it.
 
 #### search_papers
 
@@ -767,71 +818,368 @@ id). The head names the relation and, for citations, the total count.
 
 #### search_web
 
-`search_web(query, limit)` searches the general web for what the registries
-miss: author and lab publication lists, institutional repositories, theses,
-and another copy of a paper whose publisher PDF is blocked. It is armed only
-when `search_services.web_engine` finds an engine for this chat (the TOOLS
+`search_web(query, limit, recency, site)` searches the web: current or
+versioned facts, documentation, software and datasets, news, products,
+people and organisations, and what the registries miss (lab publication
+lists, theses, another copy of a blocked paper); its spec says that for
+papers `search_papers` comes first. `recency` is `day`, `week`, `month` or
+`year` (`search_services.RECENCY`) and keeps pages of that past stretch.
+`site` is one domain: `search_services.site_of` takes a URL, `site:x`, `*.x`
+or a host with a path to the bare host in its IDNA form, and several sites,
+an IP address or a name without a dot are an `error:` naming the shape
+wanted, as an unknown `recency` is. It is armed only when
+`search_services.web_engine` finds an engine for this chat (the TOOLS
 entry's `needs: "web_engine"`, met through `ai_tools.available(scope)`; the
-chat scope carries `web_engine`). Each result is a title link, the `doi:` /
-`arXiv:` string the URL carries when it carries one (a DOI or arXiv link, a
-publisher path with the DOI in it) with the `search_papers` call that gives its
-registry record, and the snippet. The head says these are leads, not verified
-papers, to be read with `fetch_paper(source=URL, title=…)`. Titles are capped
-at 300 characters and snippets at 400, HTML is stripped, non-http(s) and
-credentialed URLs are dropped, and duplicates are removed. One message may run
-`MAX_WEB_SEARCHES` (10) searches, since each is a paid query or a call on the
-chat's connection; the tool rounds cap everything else, unless the user chose
-Unlimited rounds ([ai.md](ai.md) "The tool loop").
+chat scope carries `web_engine`).
 
-The engines (`gamma/search_services.py`):
+Each result is a title link, the page's date when the engine reports one,
+the `doi:` / `arXiv:` string the URL carries when it carries one (a DOI or
+arXiv link, a publisher path with the DOI in it) with the `search_papers`
+call that gives its registry record, and the snippet. The head names the
+engine, the filters asked for and the day it ran: `Web results for "…" (8,
+via Brave Search, past week, docs.python.org, searched 2026-11-17 — leads: a
+snippet is what a page says about itself; read a page with fetch_url, or a
+paper with fetch_paper, before relying on it)`. No results says the same,
+adding that widening the filters may help when there were any. Titles are
+capped at 300 characters and snippets at 400, HTML is stripped, non-http(s)
+and credentialed URLs are dropped, `utm_*` parameters are taken off the URL
+(OpenAI's citations add `utm_source=openai`), and duplicates are removed by
+that URL. One message may run `MAX_WEB_SEARCHES` (10) searches,
+since each is a paid query or a call on the chat's connection; the tool
+rounds cap everything else, unless the user chose Unlimited rounds
+([ai.md](ai.md) "The tool loop").
 
-- **Your AI connection** (`ai`): one short call on the chat's own connection
-  with its provider's hosted search tool, the way Codex and Claude search. The
-  adapters say which wires have one (`Protocol.hosted_web_search`): the
-  Responses wires (OpenAI's platform, the ChatGPT sign-in) send
-  `{"type": "web_search"}`, and Anthropic's own API sends
-  `web_search_20250305` (at most three searches per call). A Chat Completions
-  gateway has none. A tool spec with a `hosted` entry goes out as that entry
-  on every wire that has one. The call asks for one `title | url | summary`
-  line per page, at low effort when the chat's connection takes an effort. The
-  stream yields `("web_sources", …)` for the pages the provider reports (the
-  Responses `web_search_call` sources, which OpenAI's platform sends when asked
-  with `include`, its URL citations, and Anthropic's `web_search_tool_result`
-  and citations). When sources are reported, only lines for those pages are
-  kept, and reported pages the model did not list follow; a URL from the
-  model's memory never passes. The call counts as chat usage.
+A result's date comes only from a field the engine fills itself, never from
+text a model wrote, so a page the AI engine's model dates from memory carries
+none. It is `YYYY-MM-DD` when it parses (ISO 8601, RFC 2822, "April 30,
+2025"); other text (Brave's "3 days ago") is shown as the engine wrote it, cut
+at 40 characters, and an impossible ISO date is dropped.
+
+The engines (`gamma/search_services.py`, `ENGINES`: a label, the fields the
+settings ask for and an adapter each). Every adapter takes the same request
+(the query, the limit, `recency`, `site`) and answers `[{title, url, snippet,
+date?}]`:
+
 - **Brave Search** (`brave`): the Brave Search API with the account's key in
-  the `X-Subscription-Token` header.
-- **SearXNG** (`searxng`): a SearXNG instance's `/search?format=json`. The
-  account's own URL goes through the SSRF guard, so it must be a public host.
-  The server's `GAMMA_SEARXNG_URL` serves accounts without their own and may
-  be on the private network, since the admin chose it.
+  the `X-Subscription-Token` header. `recency` is its `freshness` (`pd`,
+  `pw`, `pm`, `py`), `site` a `site:` operator appended to the query; the
+  date is the result's `page_age`, else its `age`.
+- **Tavily** (`tavily`): `POST https://api.tavily.com/search` with
+  `Authorization: Bearer <key>` and `{query, max_results, search_depth:
+  "basic", include_published_date: true}`, plus `time_range` for `recency`
+  and `include_domains: [site]`. Tavily returns a result's
+  `published_date` only when asked (by default only on its news topic).
+  HTTP 432 and 433, its plan and pay-as-you-go limits, read as 429 does: the
+  rate limit or quota is reached.
+- **SearXNG** (`searxng`): a SearXNG instance's `/search?format=json`, with
+  `time_range` for `recency` and `site:` in the query; the date is
+  `publishedDate`. The account's own URL goes through the SSRF guard, so it
+  must be a public host. The server's `GAMMA_SEARXNG_URL` serves accounts
+  without their own and may be on the private network, since the admin
+  chose it.
+- **Your AI connection** (`ai`): one short call on the chat's own connection
+  with its provider's hosted search tool, the way Codex and Claude search.
+  `hosted_tool` asks the wire a call with tools goes over
+  (`Protocol.tool_wire(conf).hosted_web_search(conf, site)`, [ai.md](ai.md)
+  "Protocol adapters"): the Responses wires (OpenAI's platform, the ChatGPT
+  sign-in) send `{"type": "web_search"}` with `filters: {allowed_domains:
+  [site]}`, and Anthropic's own API sends `web_search_20250305` with
+  `max_uses` 5 and `allowed_domains: [site]`. A Chat Completions gateway has
+  none. A tool spec with a `hosted` entry goes out as that entry on every
+  wire that has one. The prompt asks for up to `limit` pages, primary and
+  authoritative sources first (the official site or documentation, the
+  original publication, announcement or data, the people or organisation
+  concerned) over aggregators, reposts and listicles, one `title | url |
+  summary` line each; `site` also goes into the query as `site:`, and a
+  `recency` adds "Only pages published or updated in the past week: today is
+  YYYY-MM-DD (UTC)." The call runs at low effort when the chat's connection
+  takes an effort.
 
-`engine` picks one: **Automatic** (the default) takes Brave or SearXNG when set
-up, else the AI connection; a named engine is used only when it is available,
-so a missing key never switches services silently; **Off** turns general web
-search off.
+  The stream says what the search did. It yields `("web_searched", {"error"})`
+  as each hosted search runs, with the provider's error code when one failed,
+  and `("web_sources", …)` for the pages the provider reports (the Responses
+  `web_search_call` sources, which OpenAI's platform sends when asked with
+  `include`, its URL citations, and Anthropic's `web_search_tool_result` and
+  citations, with `page_age` as the date). A reply that never searched is a
+  `SearchError` ("the AI connection answered without searching the web"), and
+  so is one whose search failed and reported no page: its lines could only be
+  URLs from memory. When the provider lists what its search found, only
+  lines for those pages are kept, and listed pages the model did not write
+  follow; a list of none keeps none, so a search that found nothing gives no
+  results rather than the model's memory. Only a wire that lists nothing
+  (the ChatGPT backend, asked for no sources and citing none) has its lines
+  taken as written. A reply cut short keeps the sources it reported. `ai_client.CallRefused` (the account's call slots all in use, an
+  allowance used up) is a `SearchError` with its reason. The call counts as
+  chat usage (`ai_usage.recorder`), and its integer token counts also go into the
+  `meter` the tool passes, which `_run_search_web` puts on the action as
+  `spent`, failed or not, so the reply's footer counts the search (the loop
+  yields it as a `usage` event, as it does `read_paper`'s helper). The meter
+  never carries the served `speed`, which the reply would take for its own
+  model's.
+
+`engine` picks one: **Automatic** (the default) takes the first engine that
+is ready in `ENGINES`' order, Brave Search, Tavily, SearXNG, then the AI
+connection; a named engine is used only when it is available, so a missing
+key never switches services silently; **Off** turns general web search off.
 
 #### Online search services
 
-Settings → AI → Tool usage → **Online search** (`settings/OnlineSearch.jsx`) holds
-**Search the web with** (the engine) and one row per service: Brave Search (API
-key), SearXNG (address) and OpenAlex (optional API key). Each row has Set up,
-or Test, Edit and Remove. Test runs one small search with the stored settings.
+Settings → AI → Tool usage → **Online search** (`settings/OnlineSearch.jsx`)
+holds **Search the web with** (the engine: Automatic, Your AI connection,
+Brave Search, Tavily, SearXNG or Off) and one row per service
+(`search_services.SERVICES`): Brave Search (API key), Tavily (API key),
+SearXNG (address) and OpenAlex (optional API key). The AI connection is a
+choice, never a row: it needs nothing set up, so `SERVICES` is the engines
+that have fields, and OpenAlex. Each row has Set up, or Test, Edit and
+Remove. Test runs one small search with the stored settings: a general query
+(`TEST_QUERY`) for a web engine, a registry search for OpenAlex. A row that
+is set up shows its first plain field (SearXNG's address), else its key's
+hint; OpenAlex's says it works without a key (`optional` in
+`SERVICE_FORMS`).
+
 The settings are the account's, stored in `users.db` `user_prefs` under the
 reserved account-wide `search-services` key (`{"engine", "brave": {api_key},
-"searxng": {url}, "openalex": {api_key}}`, each with `updated_at`). Like
-`ai-settings` and `translate-engines`, the generic `/api/prefs` endpoints refuse
-the key. `GET /api/ai/search-services` masks secrets to their last four
-characters; a secret left empty on save keeps the stored one. Guests cannot
-store keys. The routes are in [api.md](api.md).
+"tavily": {api_key}, "searxng": {url}, "openalex": {api_key}}`, each with
+`updated_at`). An older server keeps only the services it knows and reads an
+engine it does not know as Automatic. Like `ai-settings` and
+`translate-engines`, the generic `/api/prefs` endpoints refuse the key. `GET
+/api/ai/search-services` masks secrets to their last four characters; a
+secret left empty on save keeps the stored one. Guests cannot store keys. The
+routes are in [api.md](api.md).
+
+#### fetch_url
+
+`fetch_url(url, find, offset, chars)` reads any page or file at an http(s)
+URL through `web_fetch.fetch_page`: one GET, with the browser's headers and an
+Accept that asks for a page first, then text, JSON and a PDF. What comes back
+depends on the body:
+
+- **A web page** (`kind: "html"`): its main content as Markdown with its
+  links ([The page reader](#the-page-reader)), and the head `Read web page
+  "<title>" (<url>, N chars, <site>, by <author>, published …, updated …,
+  fetched …)`, each fact when the page has it (`_read_facts`: "updated" only
+  when it differs from "published", "fetched" the day it was read, in UTC).
+- **Any other text** (`kind: "text"`: plain, Markdown, JSON, XML and feeds,
+  CSV, `text/x-*`, JavaScript): the decoded body as it is, `Read text file
+  (<url>, N chars, fetched …)`. Nothing is pretty-printed or parsed.
+- **A PDF** (by its type or a body that starts `%PDF-`, so one served as
+  `application/octet-stream` too): its text page by page with `[p. N]`
+  lines, `Read PDF <url> (N pages, N chars of text, fetched …)`, and the
+  action's `pdf_pages`.
+- **Anything else** (an image, audio, video, font or model type, or a NUL
+  byte in the first kilobyte of a body without a UTF-16 byte-order mark, as
+  an archive or an office file has) is "not a web page or text"; an empty
+  text body "is empty".
+
+A body is read up to `web_fetch.PAGE_MAX_BYTES` (5 MB) and the rest cut
+(`truncated`; the head says only its first 5 MB were read); a PDF is refused
+past `PDF_MAX_BYTES` (40 MB), the message naming its size when the server
+gave one.
+
+The window is `read_page`'s. `chars` and `offset` are passed to
+`_window_args` as its `pdf_chars` and `pdf_offset`, so the default and the
+cap are the Read window preference's, and the excerpt ends with
+`fetch_url(url="…", offset=N)` while text remains. `find` starts the window
+at a phrase (`web_fetch.find`): its first match at or after `offset`, in any
+case and with any white space between its words, on the same joined text
+`window` cuts (a PDF's `[p. N]` lines included), backed up to the start of
+its line by at most 300 characters. The excerpt says where it starts and
+where the phrase first occurs; a phrase not there says so. On a page longer
+than the window, a read that asked for no place (no `find`, no `offset`), or
+whose phrase is not there, lists the page's sections in its head, one line
+`- ## Heading — offset N` each: the h1–h3 the page reader wrote, at their
+offsets in the text, each cut at 80 characters and the list sampled to 2 000
+(`web_page.OUTLINE_BUDGET`, through `documents.text._fit`). The model reads a
+section by passing its offset.
+
+Before any fetch, a PDF the user's browser already delivered for that
+address (`fetch_handoff.delivered`, the account's `handoff_user`) is read,
+and its chip says it came from the browser. A source that `ai_web.identifier`
+reads as a paper (a bare DOI or arXiv id, a `doi.org` or `arxiv.org` link) is
+answered `error: … names a paper — read it with fetch_paper(source="…")`. A
+page whose address carries a DOI or an arXiv id (`_url_identifier`, a
+publisher path with the DOI in it) is read, and the head adds that
+`fetch_paper(source="doi:…")` reads the paper itself and, when **Search
+online** is not off, that `search_papers` gives its registry record. The tool
+binds `publisher_sessions.current_user` from the chat scope around the fetch,
+as `fetch_paper` does, so **Use journal sign-ins** applies to its connected
+hosts too.
+
+A wall is a sentence for the model, never a card: the handoff can only bring
+back a PDF, and a docs page, a product page or a news article has none. The
+result is `error:` with what stopped the server and, behind a wall, that only
+a person gets past it in their own browser: work from the search snippet or
+another source, or ask the user to paste the text, and do not retry the
+address. An address that looks like a paper's (a DOI or an arXiv id in it, or
+a `.pdf` path; `_paper_like`) adds that `fetch_paper(source="…")` looks for its
+PDF, open-access copies included, and can hand a blocked one to the user's
+browser. The reply never waits.
+
+`fetch_url` reads walls as any web page shows them (`access_wall` with
+`general`). Cloudflare's `cf-mitigated: challenge` header and a host that
+serves nothing but a bot check always count. A vendor's challenge markers, a
+CAPTCHA widget, a password field and a sign-in address count only on a thin
+HTML page (under 2 000 characters of all the text a browser shows, menus
+and forms included — `web_page.Page.visible`, not the main content, so a
+short article under a header's sign-in box reads; HTML by its Content-Type,
+or a body that starts with `<` when there is none): a docs page under
+`/login/help`, a long article with a newsletter form, or a script file that
+mentions `_cf_chl_opt` reads. An HTML page with no readable text is the
+`script` wall (it needs a browser). A `<meta http-equiv="refresh">` is
+followed, at most two hops, only from an HTML page with under 500 readable
+characters (an interstitial such as Elsevier's linkinghub); a readable page
+that refreshes to a sign-in after five minutes is read as it is.
+
+Read pages are kept in `web_fetch`'s page cache (`_pages`: 24 documents and
+10 M characters, PDFs included), partitioned like the papers' cache by
+`publisher_sessions.cache_scope()` and keyed by the address without its
+fragment. A page unused for `PAGE_TTL` (15 minutes) is read anew, so a price
+or a news index is read as it is now, while a page read in windows stays
+the same. A document this call downloaded carries `fresh`; a continuation
+(`offset` above 0) served by such a read says that the page was read anew and
+may have changed since the windows before it. The page cache and the papers'
+never answer for each other: `fetch_url` and `fetch_paper` of one URL are two
+entries.
+
+The address is read as the URI it spells (`web_fetch.uri`): the page reader
+shows a link's address with its characters decoded (`光`, `例え.jp`), and
+the model copies it so; `uri` gives the host its IDNA form and
+percent-encodes the rest of the path, query and fragment as UTF-8, reserved
+characters and escapes kept, so it names the same page. It runs before the
+SSRF guard sees the host, so a loopback address written in ideographic or
+enclosed digits and dots (`127。0。0。1`, `①②⑦.0.0.1`) is refused.
+
+The result carries the untrusted-content line, as `fetch_paper`'s does. The
+action is `{kind: "fetch", url, title, pdf, summary: "Read “…”"}`, with
+`pdf_pages` for a PDF; `url` is one of `ai_agent.STEP_ARGS`, so the running
+step reads "Reading example.org…", or "Reading 3 web pages…" for a round's
+batch (`runningLabel` in `chat/agentSteps.js`), and an approval card "Read
+{url}" (`chat/approvals.js`). The reply's **Save to library** lists only
+`fetch_paper`'s reads (`chat/chatPapers.js`), so a page read with `fetch_url`
+is never offered as a paper. MCP does not offer it (`web_read`, as for every
+web tool).
+
+#### The page reader
+
+`web_page.read(raw, url, ctype)` turns a response body into what the model
+reads, a `Page(title, text, kind, meta, outline)`; both readers use it
+through `web_fetch.get`. `html_markdown` holds the parts it shares with the
+web clipper and the Zotero and Notion imports.
+
+- **Decoding** (`decode`): the byte-order mark, else the charset the
+  Content-Type names, else the one a `<meta charset>`, `http-equiv` or
+  `<?xml encoding>` in the first 4 KB declares, read as a browser reads the
+  name (gb2312 and gbk as gb18030, shift_jis as cp932, latin-1 and us-ascii
+  as cp1252, euc-kr as cp949, big5 as big5hkscs; a `<meta>` declaring UTF-16
+  as UTF-8), else UTF-8; what cannot be decoded (a body cut in the middle of
+  a character) is replaced. A body without a Content-Type is HTML when it
+  starts as one (the WHATWG sniffing rules).
+- **The head** is read with regexes over the text before `<body>` (its first
+  200 KB): the `<title>` as written (site suffix and all), else `og:title`,
+  else the h1's text; `meta` with the keys the page has: `site`
+  (`og:site_name`), `description`, `author` (never a URL), `published` and
+  `modified` (`YYYY-MM-DD` when they read as a date, an ISO date or time,
+  `2017/06/12` or a Unix time; the head's JSON-LD `datePublished` and
+  `dateModified` fill in when no meta tag does, as on the BBC), `canonical`
+  and `lang`, each unescaped and cut at 500 characters; and `<base href>`,
+  which relative links resolve against.
+- **The tree** comes from `html_markdown.Parser`, the tree builder the
+  Zotero and Notion imports use, in a subclass that builds what pages lean
+  on a browser for: a `<head>` left open ends at the first element or text a
+  head cannot hold; `dt`, `dd`, `tr`, `td`, `th`, `thead`, `tbody`, `tfoot`
+  and `option` close the open one before them; a `<p>` ends at any block;
+  `</body>` and `</html>` end nothing (a lab's publication list had a stray
+  `</html>` inside a 2015 abstract, and everything before 2015 came after
+  it). Only scripts and styles are left out while parsing, and a MathJax
+  `math/tex` script becomes its formula. The tree is at most
+  `html_markdown.DEPTH` (120) deep, which the writer and every pass recurse
+  within: past it, elements lie flat in the last one kept, and the parser
+  still tracks them (a `Counter` of their tags, so an end tag for none of
+  them costs nothing), so text inside one that hides stays out.
+- **What a browser never shows** goes: the head, noscript, templates, SVG,
+  canvases, frames, objects and embeds, audio and video, dialogs, form
+  controls, `hidden` (except `until-found`) and `aria-hidden="true"`
+  elements, MathJax's preview, inline `display:none` and
+  `visibility:hidden`, and code line-number gutters that hold only numbers. React's streamed segments
+  (`<div hidden id="S:0">`, which a script moves into place; X's posts are
+  there) stay.
+- **Chrome** goes: `nav` and `menu`; `header` and `footer` outside a `main`
+  or an `article`; an `aside` outside the article (in a `main` without one,
+  the main is the article; the BBC's "Related" and "More from the BBC" are
+  asides beside the article in its `main`); the navigation, banner,
+  contentinfo, complementary, search, dialog, alertdialog, menu, menubar,
+  toolbar and tablist roles; class or id tokens that name chrome (navbox,
+  sidebar, breadcrumbs, cookie, consent, share, related, toc, catlinks,
+  sr-only, GitHub's `VisuallyHidden` …), on an inline element only the
+  tokens of text never read (a Sphinx heading's text is an `<a
+  class="toc-backref">`). A wrapper
+  that holds the main, an article, the h1 or over 30 % of the page's text is
+  no chrome: arXiv wraps its whole page in `div.flex-wrap-footer`.
+- **The content** is the largest `main` (or `role="main"`) with 250+
+  characters, else the page's one `article`, else what a descent from
+  `<body>` reaches through each child that holds 85 % of its parent's text
+  (its text outside links, or all of it on a page with under 500 characters
+  outside its links, a page of headlines). The page's h1 goes first when it
+  lies outside. Outside a main or an article, link farms go: a block of 5+
+  links that are over 60 % of its text, with under four words of its own per
+  link and no paragraph, unless the farms are over 80 % of the content (a
+  news portal's headline lists are what it has).
+- **The writer**, `html_markdown.Markdown`, writes blocks: headings, nested
+  lists, quotes, fenced code with its language (`data-lang`, a
+  `language-x`, `lang-x`, `highlight-x` or `sourceCode x` class on the
+  `<pre>`, its `<code>` or a wrapper), `$…$` / `$$…$$` math (a `<math>`'s
+  TeX annotation or `alttext`, else `mathml.to_latex`), figures with their
+  captions, rules, and tables. A table's rows are found in one walk that
+  skips the tables inside it, and its cells are laid on the table's grid, a
+  cell's text in every grid cell its `rowspan` and `colspan` cover (a header
+  group, a category column). What a tree's tables write beyond their cells'
+  own text — span repetition and the padding of short rows to the widest —
+  has a budget of 2 M characters (`_TABLE_CHARS`), past which a table's rows
+  go as they come, each with its own cells: a few bytes of markup cannot
+  write gigabytes. A table whose cells
+  hold blocks (paragraphs, lists, tables, code, quotes, figures, rules,
+  headings, a video or frame, a display formula) is a layout table, written as its cells' content in order; a
+  wrapper in a cell, such as Wikipedia's centering `<div>`, does not make
+  one. A subclass changes the writing through hooks (`text`,
+  `line`, `href`, `image`, `heading`, `code_lang`). The clipper's
+  (`web_clip.ClipMarkdown`) writes a note a reader keeps: text escaped where
+  Markdown would read markup, `mailto:` links kept, pictures as `![alt](url)`
+  pointing at the copies the browser uploaded. The reader's
+  (`web_page.PageMarkdown`) writes what the model reads: text as the page has
+  it, a picture as `[image: alt]` (nothing without alt text) and a link that
+  holds only one as `[image: alt](url)`, `mailto:` and `javascript:` links as
+  their text, and a link's address absolute and readable (`%E5%85%89` shows
+  as 光; every ASCII escape such as `%2F`, `%3F` or `%23`, the host and any
+  character that does not print stay as they are, so the address names the
+  same page). It drops in-page footnote markers (`[12]`, `[a]`, `[citation
+  needed]`), heading permalink marks (¶, §, 🔗, a leading `# ` or a
+  trailing ` #`) and a short label above a code block that only repeats its
+  language (MDN's "js"), takes a code block's language from
+  SyntaxHighlighter's `brush:` class too, and links a teaser card (a link
+  around blocks) by its heading, else its first line.
+- **The outline** is the h1–h3 the writer wrote, found by their `Heading`
+  type with their offsets in the text, so a `#` line in a code block is
+  never one.
+
+Measured on 18 saved pages (Wikipedia in English and Chinese, docs sites,
+GitHub, news articles and front pages, blogs, lab pages, arXiv, LinkedIn, X),
+the menus, footers and language lists that were 5–65 % of the old regex
+stripper's text are 0–4 % of the text at the top on every page but GitHub's
+(9 %), and 0–3 % at the bottom on all but three (the Guardian's article 11 %,
+LinkedIn 19 %, arXiv's abstract page 57 %), with the links, headings, lists,
+table rows and code indentation kept; a Shift_JIS novel declared in its
+`<meta>` reads with no replacement character, and a page takes 10–300 ms.
+The comparison and what is left are in
+[web-search.md](../research/web-search.md).
 
 #### fetch_paper
 
-`fetch_paper` takes a `source` (DOI, arXiv id or http(s) URL) and reads the
-document in windows with `read_page`'s knobs: `pdf_chars` (default and cap
-from the Read window preference, shared through `_window_args`), `pdf_page`,
-`pdf_offset`, and an excerpt that names the next offset while text remains.
+`fetch_paper` takes a `source` (a DOI, an arXiv id or the http(s) URL of a
+paper: an arXiv, DOI, publisher or repository page, or its PDF; its spec sends
+any other page to `fetch_url`) and reads the document in windows with
+`read_page`'s knobs: `pdf_chars` (default and cap from the Read window
+preference, shared through `_window_args`), `pdf_page`, `pdf_offset`, and
+an excerpt that names the next offset while text remains.
 `mode: "probe"` reads only `PROBE_CHARS` (1 500) of front matter with the
 version and the identity check, for deciding whether a candidate is the
 right paper before a full read costs a window; its excerpt ends by saying
@@ -849,8 +1197,10 @@ sessions are used for the authenticated caller's account, restricted to each
 connected HTTPS host; guest and share
 requests use none. The tool binds that identity in its worker from the chat
 scope, never from model arguments, and resets it after the fetch. Cookie values
-never enter the model's context. It is downloaded through the SSRF guard under a size cap
-(`FETCH_MAX_BYTES`, 40 MB) and extracted page by page
+never enter the model's context. It is downloaded through the SSRF guard
+(`web_fetch.read_bounded`) under a size cap (`web_fetch.PDF_MAX_BYTES`, 40 MB,
+refused by the Content-Length before a byte is read when it says more) and
+extracted page by page
 (`pdf_text.extract_pages`); every page's text is prefixed `[p. N]` so the
 model can cite pages. The resolver's open-access version note is retained in
 the cache and every reading window, so a submitted preprint or accepted
@@ -869,12 +1219,24 @@ what an any-version read cached (the cache alias carries the policy), and a
 preprint it still gets (an arXiv source) is flagged as not the version asked
 for.
 
-When no PDF is reachable (a paywall, a plain web page)
-and the source is a page, its readable text is returned instead
-(`ai_web.html_text`: head, scripts and styles dropped, block tags to line
-breaks, entities unescaped), labelled as a web page with the reason no PDF
-came, and followed by the page's PDF links for the model to try
-(`paper_links.pdf_links`: a `.pdf` path, a `/pdf` or download route, "PDF",
+When no PDF is reachable (a paywall, a plain web page) and the source is a
+page, the page is read as `fetch_url` reads it: `web_fetch.get`, the one page
+GET both readers use, and `web_page.read`, so it comes as Markdown with its
+title, metadata and outline, and a page over 5 MB is cut and flagged rather
+than refused. A body that is a PDF after all (served as
+`application/octet-stream`, which the resolver did not take for one) is read
+page by page. The head reads `Fetched web page "…" (<url>, N chars, <site>,
+published …, fetched …) — no PDF was reachable (<note>)`, the facts the page
+has of those (`_read_facts`). The note is written for the model from the
+resolver's trace (`ai_web._no_pdf`): the host refused this server, the PDF
+link the page advertises gave no PDF (or none of its N links did), no
+(published) open-access copy of the DOI was found, else that the address serves
+`text/html`, not a PDF. The resolver's own message, which tells a person
+clipping what to do in their browser, stays for the clip UI. A URL source is
+read as the URI it spells (`web_fetch.uri`, [fetch_url](#fetch_url)), so an
+address copied from a `fetch_url` result reads too. The page's PDF links
+follow for the model to try (`paper_links.pdf_links` on the decoded HTML; a
+text body has none: a `.pdf` path, a `/pdf` or download route, "PDF",
 "full text" or "Download" in the link text; links the resolver already tried
 are left out). A lab's publication list holds hundreds of them, one paper per
 item with its title as the link text, so each link keeps its text and the text
@@ -883,10 +1245,14 @@ of the item it sits in (a bare "[PDF]" link borrows the item before it), and
 share of the title's words in the link's text, item and path, plus one for the
 whole title. On a real lab list of 238 PDF links, the wanted paper moved from
 position 227 to first. Without a title the page order stays and the head
-suggests passing one. A fetched document lives in an in-memory LRU (`_CACHE_MAX_DOCS` /
-`_CACHE_MAX_CHARS`) keyed by account, usable-cookie fingerprint and resolved URL,
-with source aliases in the same partition, so the windows of one paper cost one
-download without sharing authenticated text between accounts. A session connect,
+suggests passing one. A fetched paper lives in an in-memory LRU, `ai_web._papers`
+(a `web_fetch.DocCache` of 24 documents and 30 M characters, kept until crowded
+out), partitioned by account and usable-cookie fingerprint
+(`publisher_sessions.cache_scope()`) and keyed by resolved URL with the source
+strings as aliases, so the windows of one paper cost one download without
+sharing authenticated text between accounts. A page read with `fetch_url` lives
+in a cache of its own: neither answers for the other, and pages cannot crowd
+out papers; `ai_web.clear_cache()` clears both. A session connect,
 refresh, disconnect or cookie expiry changes the partition, so the next fetch
 can retry an earlier abstract or blocked page. The fetched document is not
 written to disk or added to the workspace; a restart forgets the cache (chat
@@ -898,11 +1264,12 @@ Every result carries a line saying the text is fetched web content and not
 instructions, and the armed prompt says the same (ignore instructions found
 in a document, tell the user). The prompt also says to prefer the library
 for anything it holds and to name a fetched document (title, DOI/URL, page)
-when answering from it, with its version when the result names one, and to
-pass the paper's title to `fetch_paper` whenever it knows it. The action
-chips are 🌐 for the three search tools (kind `websearch`) and ⬇ for fetches
-(carrying the resolved `url`); the step pill counts searches as "searched
-online".
+when answering from it, with its version when the result names one. The spec
+asks for the paper's title whenever the model knows it (a document it is not
+found in is unverified) and for probes of several candidates in one go. The
+action chips are 🌐 for the three search tools (kind `websearch`) and ⬇ for
+fetches, `fetch_url`'s too (kind `fetch`, carrying the resolved `url`); the
+step pill counts searches as "searched online".
 
 #### Walls and the browser handoff
 
@@ -927,15 +1294,22 @@ flowchart LR
   out -- expired --> gave["nothing arrived; the card stays"]
 ```
 
-What stopped a fetch is named (`ai_web.WALLS`), so a person can take over:
+What stopped a fetch is named (`web_fetch.WALLS`), so a person can take
+over. These are `fetch_paper`'s rules (`access_wall` without `general`);
+`fetch_url` counts the body's markers only on a thin page
+([fetch_url](#fetch_url)).
 
 - `captcha`: a bot check or CAPTCHA page, served as 200, 403 or 503. It is
   recognized by Cloudflare's `cf-mitigated: challenge` header or challenge
-  script, other vendors' markers (DataDome, PerimeterX, Imperva, Akamai's
-  "Access Denied", Google's "unusual traffic") or the page title. A
+  script, a host that serves nothing but a bot check (Radware's
+  `validate.perfdrive.com`), other vendors' markers (Fastly's `/_fs-ch-`
+  "Client Challenge", DataDome, PerimeterX, Imperva, Akamai's "Access
+  Denied", Google's "unusual traffic") or the page title ("Just a moment",
+  "Checking your browser" …), in an HTTP error's body too (`refusal`), so a
+  403 that is a bot check reads as one. A
   reCAPTCHA / hCaptcha / Turnstile widget counts only on a page with under
-  2 000 readable characters, since an article page may carry a newsletter
-  form.
+  2 000 characters of visible text (menus included), since an article page
+  may carry a newsletter form.
 - `login`: the request ended on a sign-in page (a login or SSO path or host,
   or a password field on a thin page).
 - `denied`: HTTP 401, 403 or 418. `rate`: HTTP 429.
@@ -945,8 +1319,10 @@ What stopped a fetch is named (`ai_web.WALLS`), so a person can take over:
   reach (the page advertised one, or its DOI's publisher refused).
 
 The page fallback follows `<meta http-equiv="refresh">` redirects (up to two
-hops, `pdf.meta_refresh`) as the resolver does, so a DOI landing that only
-redirects (Elsevier's linkinghub) reaches the publisher and its wall.
+hops, `web_fetch.meta_refresh`) as the resolver does, from a page with under
+500 characters of visible text, so a DOI landing that only redirects (Elsevier's
+linkinghub) reaches the publisher and its wall, while a readable page with a
+delayed refresh to a sign-in is read.
 
 A wall on the PDF still falls back to the page's text, so the model keeps
 what was readable. In an account's own chat (`_chat_scope`'s `handoff_user`:
@@ -954,7 +1330,7 @@ not a guest, not a share link), a wall opens a request in
 `gamma/fetch_handoff.py`. Requests are per account and in memory, live 6
 hours, at most 20 are kept, and there is one per work however its source is
 spelled (reused while it waits). The page to open is the publisher's, never
-`doi.org`, a sign-in page or a bot check's own host (`ai_web._entry`). For a
+`doi.org`, a sign-in page or a bot check's own host (`web_fetch.entry`). For a
 sign-in or bot-check address the page it would return to is taken from its
 query (Radware's `ssc=` on `validate.perfdrive.com` in front of IOP, a sign-in
 page's `next=` / `uri=`): starting from the paper's page, the site sends the
@@ -1058,7 +1434,7 @@ finished reply's actions for the requests it left behind:
 The card asks the server every 2.5 s while the user is at the page, every
 10 s while the request waits in the conversation's last reply, and otherwise
 when the window regains focus. A delivered PDF (`POST …/pdf`: at most
-`FETCH_MAX_BYTES`, a `%PDF` with a text layer; 409 once the request is
+`web_fetch.PDF_MAX_BYTES`, a `%PDF` with a text layer; 409 once the request is
 settled) is extracted and kept with the request for its account only
 (30 M characters across requests, the oldest dropped), and the PDF itself is
 held for saving (200 MB across requests, the oldest let go first; its text
@@ -1112,8 +1488,9 @@ characters instead of a forty-page paper it would have to re-send every
 round for the rest of the reply. Four papers asked the same question cost
 about what one full read would.
 
-The helper runs the same `AgentLoop` with `fetch_paper` as its only tool,
-no gate and no settle, at most `HELPER_ROUNDS` (12) rounds, on the chat's
+The helper runs the same `AgentLoop` with `fetch_paper` as its only tool
+(its scope has no web engine, so a blocked paper does not tell it to run a
+`search_web` it does not have), no gate and no settle, at most `HELPER_ROUNDS` (12) rounds, on the chat's
 own connection with its own prompt (`READ_PAPER_PROMPT`: one document, one
 question, a page number beside every number, say plainly when the document
 does not answer it). Nothing it does can change the library, its pictures
@@ -1141,7 +1518,7 @@ is the helper's, not the chat's), and
 `spent`, the helper's token counts, which the loop yields as a `usage`
 event so the reply's footer counts the whole answer. Each `fetch_paper`
 child names the PDF pages its window read (`pdf_pages`, from
-`ai_web.window_pages`), which the chat shows beside its summary. That is
+`web_fetch.window_pages`), which the chat shows beside its summary. That is
 what tells reads of one document apart. A wall the helper met
 cannot show a card from in there, so its request rides up on the parent
 action as the `handoff`, and the chat's own card and wait take over

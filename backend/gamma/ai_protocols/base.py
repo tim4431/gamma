@@ -324,10 +324,15 @@ class Protocol:
 
     # --- chat --------------------------------------------------------------
 
-    def wire(self, conf, tools=None) -> "Protocol":
-        """The adapter a call actually goes over (a protocol may switch to a
-        sibling wire for some calls)."""
+    def tool_wire(self, conf) -> "Protocol":
+        """The adapter a call with tools goes over: this one, unless the
+        protocol switches to a sibling wire for tool calls (OpenAIChat)."""
         return self
+
+    def wire(self, conf, tools=None) -> "Protocol":
+        """The adapter a call actually goes over: ``tool_wire`` when it
+        carries tools, else this one."""
+        return self.tool_wire(conf) if tools else self
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
                 max_tokens=8192, images=None, stream=False, tools=None,
@@ -352,11 +357,16 @@ class Protocol:
         for it — then the request leaves the field out."""
         return self.speeds.get(speed or "", "")
 
-    def hosted_web_search(self, conf) -> dict | None:
+    def hosted_web_search(self, conf, site="") -> dict | None:
         """The provider's own web-search tool on this wire, as the tools
-        entry to send, or None when it has none. A stream that used it
-        yields ``("web_sources", [{url, title}])`` for the pages it found
-        (gamma/search_services.py runs the search)."""
+        entry to send (limited to ``site``, a bare domain, when one is
+        given), or None when it has none. A stream that used it yields
+        ``("web_searched", {"error": ""})`` as a search runs, with the
+        provider's error code instead when one failed, and ``("web_sources",
+        [{url, title, date?}])`` for the pages it found — an empty list when
+        it listed its results and there were none (``date``: the provider's
+        own date of the page, when it gives one).
+        gamma/search_services.py runs the search."""
         return None
 
     def reply_text(self, data) -> str:
@@ -428,8 +438,10 @@ class Protocol:
         counts when the provider sent them (plus the served ``speed`` when
         it named one — ``usage``), and ``("stop", reason)`` the provider's
         stop reason (``truncated_stop`` says whether it means the reply was
-        cut off). Raises on a fully empty response (neither text nor tool
-        calls) with the stop reason attached."""
+        cut off). A call with the hosted search tool also yields its
+        ``web_searched`` and ``web_sources`` events (hosted_web_search).
+        Raises on a fully empty response (neither text nor tool calls) with
+        the stop reason attached."""
         state = {"got": False, "stop": "", "usage": None}
         seen = False
         for event in sse_json(response):

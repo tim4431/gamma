@@ -215,7 +215,7 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 | Concern | Adapter member |
 |---|---|
 | what the form offers | `label`, `base_url` (env default, `config.AI_BASE_URLS`), `auth` (`"key"` / `"oauth"` + the `oauth` module that refreshes tokens), `entry`, `key_placeholder` / `key_url` (the key field's hint and "Get a key at" link, for the provider's own endpoint) |
-| the chat call | `wire(conf, tools)` (a sibling wire for some calls), `request(...)`, `reply_text`, `stop_reason` (a whole reply's), `read_reply`, `streams_only` |
+| the chat call | `tool_wire(conf)` (the wire a call with tools goes over: this one, or a sibling, as OpenAI's Responses API is for an entry on OpenAI's own platform), `wire(conf, tools)` (`tool_wire` when the call carries tools, else this one), `request(...)`, `reply_text`, `stop_reason` (a whole reply's), `read_reply`, `streams_only` |
 | speed tiers | `speeds` (canonical name → the value this wire sends), `speed_value(speed)`, `speed_tiers(conf)` (what an entry may be asked for when its own listing names none) |
 | the stream | `events` (one loop in the base) over `stream_event` / `stream_end`, with `("reasoning", …)` before the tool calls where the wire reports thinking; a stream without a single event raises `NotAnAIStream` |
 | token counts | `usage(raw)` → `{input, output, cache_read, cache_write}` |
@@ -223,7 +223,7 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 | credential check | `ping_request` (default: the model listing) |
 | quota | `has_account_usage`, `account_usage_request`, `account_usage` |
 | attachments, dictation | `native_pdf`, `transcription` (a rank), `transcription_request`, `transcript` |
-| hosted web search | `hosted_web_search(conf)`: the provider's own search tool as the tools entry to send, or None. A tool spec with a `hosted` entry goes out as that entry, and a stream that used it yields `("web_sources", [{url, title}])`. `search_web`'s AI engine runs it ([ai_tools.md](ai_tools.md)) |
+| hosted web search | `hosted_web_search(conf, site)`: the provider's own search tool as the tools entry to send, limited to one domain when `site` is given (Anthropic's `allowed_domains`, the Responses wires' `filters.allowed_domains`), or None; asked of `tool_wire(conf)`, the wire a call with tools goes over. A tool spec with a `hosted` entry goes out as that entry. A stream that used it yields `("web_searched", {"error"})` as each search runs (the provider's error code when one failed, else "") and `("web_sources", [{url, title, date?}])` for the pages it found, `date` the provider's own date of a page (Anthropic's `page_age`). `search_web`'s AI engine runs it ([ai_tools.md](ai_tools.md) "search_web") |
 
 The wires: `anthropic.py` (Messages API), `openai.py` (Chat Completions for
 OpenAI and every compatible server), `responses.py` (the Responses API that
@@ -637,7 +637,11 @@ message selected, the cursor block, attached chips
 (`notes_focus_section`) — goes in front of the question itself under a
 "Context for this message" line. The stable head is what the providers'
 prompt caches key on (see "Prompt caching" below); the moving part stays
-small.
+small. A chat armed with `search_web` or `fetch_url` also opens its oldest
+user turn with today's date, `Today is YYYY-MM-DD (UTC).` (`build_messages`'
+`date_line`), which reads the same all day; on the newest turn it would
+change that turn when the next message replays it without the line
+([ai_tools.md](ai_tools.md#the-web-tools-both-scopes)).
 
 Whatever went to the model is reported back: the stream's first line is
 `{"context": [...]}` (non-stream: a `context` field) with one entry per
@@ -760,7 +764,8 @@ user turn is the cached head. With the PDF switch on, the PDF files go there too
 ahead of the turn's text, on every message
 ([ai_context.md](ai_context.md#with-the-pdf-switch-on)). The head changes only when
 the pages, the notes, the map, the PDF switch or the context settings
-change.
+change, and in a chat that reads the web when its date line turns, once a
+day.
 
 The tool specs and the system prompt come before that head in the cached
 prefix, so a change in either costs the head and the history too. The system
@@ -1577,9 +1582,10 @@ One permission per capability: List pages (`list_pages`, the folder tree
 and handwriting (`view` → `view_pdf_page`, a rendered page picture for a
 scan or a figure, `view_ink`, the user's handwriting, and `view_image`, the
 pictures a note embeds), Search library (`search_library` — notes, PDF text and text files; the stored key is
-still `search`), Search papers online (`web_search` → `search_papers`,
+still `search`), Search online (`web_search` → `search_papers`,
 `related_papers` and, when the account has a web engine for this chat,
-`search_web`), Fetch documents (`web_read` → `fetch_paper`; the web tools are
+`search_web`), Fetch documents (`web_read` → `fetch_paper`, `fetch_url` and,
+with the helper switch on, `read_paper`; the web tools are
 read-only and described in [ai_tools.md](ai_tools.md), the web engine in its
 "search_web" section), Save papers (`save` → `save_paper`, in every chat
 kind), Rename pages, Move pages, Restore deleted pages (`restore` →
@@ -1592,8 +1598,8 @@ and Edit note blocks (one permission
 for `edit_block`, `create_block`, `move_block`, `delete_block` and
 `clip_region`, which stores a picture for the notes). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
 includes the web permissions and the page viewer. **Use journal sign-ins**
-(`publisher_cookies`, default Allow) controls whether `fetch_paper` may use the
-caller's connected publisher cookies; the browser handoff for a blocked fetch
+(`publisher_cookies`, default Allow) controls whether `fetch_paper` and
+`fetch_url` may use the caller's connected publisher cookies; the browser handoff for a blocked fetch
 needs no permission of its own. The backend excludes that identity when
 the permission is Off, including from the authenticated text cache. This
 choice requires **Fetch documents**; turning fetching off preserves its stored
@@ -2149,7 +2155,7 @@ crosses messages: OpenRouter's signed `reasoning_details` must match the
 original sequence, so they are replayed within one reply only.
 
 OpenAI-protocol calls that carry tools are rerouted to the platform
-`/v1/responses` (`OpenAIChat.wire`) — gpt-5.x rejects function tools on chat
+`/v1/responses` (`OpenAIChat.tool_wire`) — gpt-5.x rejects function tools on chat
 completions — but only against the official api.openai.com base URL; custom
 gateways keep chat-completions tools.
 

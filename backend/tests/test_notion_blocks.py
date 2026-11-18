@@ -11,10 +11,11 @@ from pathlib import Path
 import pytest
 
 from gamma import notion_blocks
+from gamma.html_markdown import Parser
 from gamma.notion_blocks import (CAPS, Block, Page, callout_color, callout_type, color_name, gamma_leaves,
                                  gamma_marks, lower_for_file, merge_colors, style_color)
 from gamma.notion_gamma import leaves_of
-from gamma.zotero_notes import Parser, block_elements, css_style, markdown, node_tag
+from gamma.zotero_notes import block_elements, css_style, markdown, node_tag
 
 SHARED = Path(__file__).resolve().parents[2] / "tests/shared"
 COLORS = json.loads((SHARED / "notioncolors.json").read_text(encoding="utf-8"))

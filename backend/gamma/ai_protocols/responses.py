@@ -63,19 +63,23 @@ def responses_tools(tools) -> list:
              "parameters": t["parameters"], "strict": False} for t in (tools or [])]
 
 
-def _web_sources(item) -> list:
+def _web_sources(item) -> list | None:
     """The pages a finished output item names: a web search call's sources
-    (when the request asked for them) or a message's URL citations."""
+    (when the request asked for them; an empty list when it found none) or
+    a message's URL citations. None when the item lists no pages at all."""
     if item.get("type") == "web_search_call":
-        found = ((item.get("action") or {}).get("sources")) or []
+        found = (item.get("action") or {}).get("sources")
+        if not isinstance(found, list):
+            return None
         return [{"url": s["url"], "title": s.get("title") or ""}
                 for s in found if isinstance(s, dict) and s.get("url")]
     if item.get("type") == "message":
-        return [{"url": a["url"], "title": a.get("title") or ""}
-                for part in item.get("content") or [] if isinstance(part, dict)
-                for a in part.get("annotations") or []
-                if isinstance(a, dict) and a.get("type") == "url_citation" and a.get("url")]
-    return []
+        cited = [{"url": a["url"], "title": a.get("title") or ""}
+                 for part in item.get("content") or [] if isinstance(part, dict)
+                 for a in part.get("annotations") or []
+                 if isinstance(a, dict) and a.get("type") == "url_citation" and a.get("url")]
+        return cited or None
+    return None
 
 
 def responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key="",
@@ -115,8 +119,9 @@ class ResponsesWire(Protocol):
     # one. The Codex backend's listing says which tiers each model has.
     speeds = {"flex": "flex", "fast": "priority"}
 
-    def hosted_web_search(self, conf):
-        return {"type": "web_search"}
+    def hosted_web_search(self, conf, site=""):
+        # The Codex CLI sends ``filters`` on the ChatGPT backend too.
+        return {"type": "web_search", **({"filters": {"allowed_domains": [site]}} if site else {})}
 
     def usage(self, raw):
         if not isinstance(raw, dict):
@@ -150,8 +155,11 @@ class ResponsesWire(Protocol):
                                 "name": item.get("name") or "",
                                 "arguments": parse_tool_args(item.get("arguments"))})
             else:
+                if item.get("type") == "web_search_call":
+                    # The hosted search ran; its item says when it failed.
+                    yield ("web_searched", {"error": "failed" if item.get("status") == "failed" else ""})
                 sources = _web_sources(item)
-                if sources:
+                if sources is not None:
                     yield ("web_sources", sources)
         elif kind in ("response.completed", "response.incomplete"):
             # incomplete: the output cap or the window stopped it — the
@@ -171,7 +179,7 @@ class OpenAIResponses(ResponsesWire):
     """OpenAI's platform /v1/responses, used instead of Chat Completions when
     a call carries function tools: reasoning models (gpt-5.x) reject tools +
     reasoning_effort on /v1/chat/completions, and OpenAI's guidance is the
-    Responses API. Only against OpenAI itself — see OpenAIChat.wire."""
+    Responses API. Only against OpenAI itself — see OpenAIChat.tool_wire."""
 
     id = "openai-responses"
     label = "OpenAI Responses API"
@@ -179,7 +187,7 @@ class OpenAIResponses(ResponsesWire):
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
                 max_tokens=8192, images=None, stream=False, tools=None, cache_key="", speed=""):
-        # No endpoint check here: OpenAIChat.wire only switches to this wire
+        # No endpoint check here: OpenAIChat.tool_wire only switches to this wire
         # against OpenAI itself.
         body = {**responses_body(messages, model, pdf_b64s, images, tools, effort, cache_key,
                                  self.speed_value(speed)),

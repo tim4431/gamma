@@ -111,6 +111,8 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
     case "search_web": return t("Search the web for “{query}”", { query: args.query || "" });
     case "related_papers": return t("Follow the citations of {source}", { source: args.source || t("a paper") });
     case "fetch_paper": return t("Fetch {source}", { source: args.source || t("a document") });
+    case "fetch_url": return t("Read {url}", { url: args.url || t("a web page") });
+    case "read_paper": return t("Read {source} with a helper", { source: args.source || t("a document") });
     default: return permission ? t("Use “{permission}”", { permission }) : t("Use a tool");
   }
 }
