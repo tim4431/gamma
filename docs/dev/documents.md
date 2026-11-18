@@ -986,8 +986,7 @@ step 55), and with it:
   rules in `transfers/fileRouting.js`): `routeFile` says what a file
   becomes (`pdf`, `markdown`, `file`, or nothing for an executable),
   `dropFilter` leaves a dropped directory's dot entries, `node_modules`,
-  temporary names and executables out (`ASK_PAST_FILES`: past 100 files
-  App asks first), `uploadOneFile` makes a library page (by-file),
+  temporary names and executables out, `uploadOneFile` makes a library page (by-file),
   `attachFile` the open page's document (`{file}` to the attachment
   routes), `promoteChip` a chip's page by its format. The library's drop
   and *Upload files…* take any file (no `accept`, `PAGE_FILE_ACCEPT` is
@@ -997,9 +996,10 @@ step 55), and with it:
   `rememberDocPage(name, page)`). In App, `uploadFiles` routes every file
   by `routeFile` (a PDF the PDF way, Markdown the importer, any other
   `uploadOneDocument` → by-file, a single one opening its page), a
-  dropped or picked directory goes through `uploadFolder` (`dropFilter`,
-  and past `ASK_PAST_FILES` the question "Upload {n} files to the
-  library?"), the paperclip's *Upload a file…* and *Replace the file…*
+  dropped or picked directory goes through `uploadFolder` (`dropFilter`),
+  and a directory or several files go up as one batch with its dialog,
+  which asks first when it is large
+  ([import_export.md](import_export.md#uploading-a-folder-or-many-files)), the paperclip's *Upload a file…* and *Replace the file…*
   (the picker accepting the page's format's extensions, `replaceAccept`)
   take any file through `attachFile`, with *Find highlights in this PDF*
   and *Push from a file on this computer…* for a PDF alone and *Detach

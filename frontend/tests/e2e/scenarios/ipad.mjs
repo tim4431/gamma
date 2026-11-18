@@ -18,6 +18,7 @@ import { decodeStroke } from "../../../src/ink/ink.js";
 import { newInkStrokes, savedInkStrokes } from "./ink.mjs";
 import { same, tree } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
+import { openedImport } from "./transfers.mjs";
 import { png } from "./pictures.mjs";
 import { IPAD_UA as SHELL_UA, T_SNAP, fakeShell, heldLine, shellPaper as shellPage } from "../shells.mjs";
 import { TOURS } from "../../../src/guide/tours/index.js";
@@ -417,10 +418,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       let review = page.getByRole("dialog", { name: "Review Notability & GoodNotes import", exact: true });
       await review.getByRole("region", { name: "Library after import", exact: true }).getByText("Handed NTB note", { exact: true }).waitFor();
       await review.getByRole("button", { name: "Import to library", exact: true }).click();
-      let report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor();
-      await report.getByRole("button", { name: "Done", exact: true }).click();
-      assert((await pages()).some((p) => p.content === "Handed NTB note"), "the note is a page");
+      await openedImport(page, ann, "Handed NTB note"); // one note: its page opens
 
       // A .goodnotes: the note apps import's review, as Import → Notability & GoodNotes opens it.
       await hand(page, { id: "F6", name: "Handed.goodnotes", type: "", b64: b64(fs.readFileSync(goodnotesPath)) });
@@ -429,10 +427,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       await review.getByRole("region", { name: "Library after import", exact: true })
         .getByText("Handed GoodNotes notebook", { exact: true }).waitFor();
       await review.getByRole("button", { name: "Import to library", exact: true }).click();
-      report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor();
-      await report.getByRole("button", { name: "Done", exact: true }).click();
-      assert((await pages()).some((p) => p.content === "Handed GoodNotes notebook"), "the notebook is a page");
+      await openedImport(page, ann, "Handed GoodNotes notebook");
 
       // A .zip: the Import dialog asks which export it is, offering only the
       // sources that read an archive (an Obsidian vault's among them), and
@@ -447,10 +442,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       review = page.getByRole("dialog", { name: "Review Obsidian import", exact: true });
       await review.getByRole("region", { name: "Library after import", exact: true }).getByText("Vault note", { exact: true }).first().waitFor();
       await review.getByRole("button", { name: "Import to library", exact: true }).click();
-      report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor();
-      await report.getByRole("button", { name: "Done", exact: true }).click();
-      await until(async () => (await pages()).some((p) => p.content === "Vault note"), { what: "the vault's note is a page" });
+      await openedImport(page, ann, "Vault note");
 
       // A file of any other format is a page of its own, as the library's upload makes one.
       await hand(page, { id: "F5", name: "notes.txt", type: "text/plain", b64: b64("plain text") });

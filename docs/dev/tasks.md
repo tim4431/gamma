@@ -10,7 +10,11 @@ of work meet there:
   indexer. A job lives
   on the server (`gamma/jobs.py`), so it goes on when the tab or the dialog
   that started it closes, and every tab and device of the account sees it.
-- **This tab's own work**: a PDF loading in the viewer, a file uploading,
+- **This tab's own work**: a PDF loading in the viewer, a file uploading
+  (its bytes and the time left at the rate kept so far, `taskKinds`
+  `byteProgress`, patched once per visible percent), a folder or many files
+  uploading as one batch (local kind `uploads`, whose click opens its
+  dialog again; [import_export.md](import_export.md#uploading-a-folder-or-many-files)),
   an AI lookup (the open page's metadata, a title, a slide citation), a
   handwriting selection's Redraw as shapes or Convert to text (its Stop
   aborts the request and the handwriting stays as it was;
@@ -317,7 +321,9 @@ keeps it with the job,
 - A row has its title, elapsed or finish time, bar and detail, plus Stop,
   Download, Start again and Remove. A click on an export or import row
   opens its dialog on that job again; a backup row opens Settings → Backups.
-- `TaskProgress` is the progress block the dialogs show. `TaskBlock` is
+- `TaskProgress` is the progress block the dialogs show; for a row of this
+  tab's (the upload dialog's batch) it shows the row's own line and how
+  long it has run. `TaskBlock` is
   the one beside what a job works on, in Settings: its title, that
   progress block and Stop while the job can still stop. The Backups pane
   shows a workspace's snapshot, restore or delete with it, and holds the
@@ -345,7 +351,9 @@ window does not show:
   Download button.
 - A restore into the open workspace reloads the tab that started it, and
   offers a Reload to any other tab.
-- An import into the open workspace refreshes the library.
+- An import into the open workspace refreshes the library. One that
+  brought one page (`importReview.onlyPage`) and ended with its dialog
+  closed offers that page in the pill, whose Open opens it.
 - A review read while its dialog was closed is offered in the pill, whose
   Open shows it; a failed one says why.
 - A database check started here says whether every file passed.
@@ -376,6 +384,13 @@ and has no row, so a close by the backdrop, Escape or × asks first; a
 close while the review is read asks nothing and leaves it to its job,
 whose row opens the dialog on the review. A review on screen asks first
 too, since a close drops it.
+
+An upload of a folder or of several files is one batch in the tab
+(`transfers/uploadBatch.js`), one row however many files, "12 of 340 files
+· 120 MB of 1.2 GB · about 3 minutes left": three files on their way at a
+time, Stop aborting them and starting no more. Its dialog asks first when
+it is large and follows it to its end; the details are in
+[import_export.md](import_export.md#uploading-a-folder-or-many-files).
 
 The library's actions over many pages (delete, delete a folder with its
 pages, move into a page or to the library, pin, add or remove a label or
@@ -469,7 +484,8 @@ page or folder by link").
   a share, the AI's tools and the jobs that change it), the database
   check and the streamed snapshot download; `test_backup_safety.py` the
   final copy itself and the delete holds.
-- Frontend: `tests/tasks.test.mjs` covers the model and kinds (the share view's follow rounds too),
+- Frontend: `tests/tasks.test.mjs` covers the model and kinds (the share view's follow rounds too, the time left),
+  `tests/uploadBatch.test.mjs` the upload batch (its plan, question, pool, Stop and closing line),
   `tests/transferFormats.test.mjs` the export job's body and
   `tests/pageBatch.test.mjs` the library's page batches; `test_bulk_pages.py` their
   endpoint, `POST /blocks/bulk`.
@@ -478,7 +494,9 @@ page or folder by link").
   dialog's finished step, and an import review closed while the server
   reads it, opened from its row and imported, and one cancelled. The settings group covers a workspace export
   that downloads itself and a merged backup that reloads the library. The
-  files group covers an upload stopped from the tray. The settings group
+  files group covers an upload stopped from the tray, a dropped folder's
+  batch in its dialog, and one past a hundred files that asks first, stops
+  from its row and opens its dialog again. The settings group
   also deletes a workspace through its job, turns a tab read-only on an
   edit refused for a workspace being deleted, and runs the database check
   as one; the trash group deletes twelve selected pages as a batch, in one request.

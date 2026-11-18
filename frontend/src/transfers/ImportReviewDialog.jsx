@@ -12,14 +12,19 @@
 // dialog shows a review it keeps it on the server (keepReview); a review
 // gone anyway (404: swept after a sleep past its two hours) leaves an
 // error with Retry preview, which uploads the held file again and keeps
-// the choices; so does a review a server restart cut short.
+// the choices; so does a review a server restart cut short. An import this
+// dialog watched that brought one page (onlyPage: a note, a notebook, a
+// Notion page with the pages inside it) and warned of nothing opens that
+// page and closes (`onOpenPage`); any other summary offers the page, or
+// the folder the import went into (`onShowFolder`).
 import React from "react";
 import { FormNotice, Segmented, SubDialog } from "../settings/SettingsKit";
 import { fmtBytes } from "../shared/lib/format.js";
 import ImportTree from "./ImportTree";
 import { dialogSource, discardImport, fetchReview, importFormat, importJobBody, keepReview, requestImport } from "./importApi";
 import { IMPORT_FILTERS, allItemIds, buildImportTree, filterImportPages, firstRow, importLinks, importSummary,
-  importWarnings, itemSelected, orderLikeSource, pageKey, resultPages, reviewRefused, selectItems } from "./importReview";
+  importWarnings, itemSelected, onlyPage, orderLikeSource, pageKey, resultPages, reviewRefused, selectItems } from "./importReview";
+import { bytesInfo } from "../tasks/taskKinds.js";
 import { TaskProgress } from "../tasks/TasksTray";
 import { isActive } from "../tasks/taskModel.js";
 import "./importReview.css";
@@ -41,7 +46,7 @@ const NONE = new Set();
 // `folder`: the destination folder's id ("" = the library root);
 // `folderPath(id)` names it, for a review opened again from its job too.
 export default function ImportReviewDialog({ source, file, strip, folder = "", folderPath, jobId: openedJob = null,
-  previewJobId: openedPreview = null, previewJob: openedPreviewJob = null, tasks, onClose }) {
+  previewJobId: openedPreview = null, previewJob: openedPreviewJob = null, tasks, onOpenPage, onShowFolder, onClose }) {
   const reopened = Boolean(openedJob || openedPreview);
   const [jobId, setJobId] = React.useState(openedJob);
   const [previewId, setPreviewId] = React.useState(openedPreview); // the job reading the review
@@ -63,6 +68,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
   const [plan, setPlan] = React.useState(null);
   const [reviewPhase, setReviewPhase] = React.useState(openedPreview ? "scanning" : "upload");
   const [progress, setProgress] = React.useState({ loaded: 0, total: null });
+  const counting = React.useRef({ phase: "", since: 0 }); // when the phase whose bytes the bar counts began
   const [selected, setSelected] = React.useState(new Set());
   const [filter, setFilter] = React.useState("all");
   // The row whose match the columns show: the column clicked, the row's
@@ -93,7 +99,9 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
       signal: ctl.signal, onProgress: update => {
         if (ctl.signal.aborted) return;
         setReviewPhase(update.phase === "processing" ? "scanning" : update.phase);
-        if (update.phase !== "processing") setProgress(update);
+        if (update.phase === "processing") return;
+        if (counting.current.phase !== update.phase) counting.current = { phase: update.phase, since: Date.now() };
+        setProgress(update);
       },
     }).then(started => {
       if (ctl.signal.aborted) return;
@@ -202,6 +210,19 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
   const phase = !jobId ? reviewPhase
     : !job || isActive(job) || (job.state === "done" && !ended) ? "importing"
       : job.state === "done" ? "complete" : "ended";
+  // The one page the import brought, opened at once when this dialog saw
+  // the import run (not one opened on a finished job's row) and it warned
+  // of nothing: a warning stays on screen, the page a button beside it.
+  const single = React.useMemo(() => (result ? onlyPage(result) : null), [result]);
+  const watchedImport = React.useRef(false);
+  if (phase === "importing") watchedImport.current = true;
+  const quiet = Boolean(result) && !importWarnings(result).length;
+  const openNow = phase === "complete" && single && quiet && watchedImport.current && Boolean(onOpenPage);
+  React.useEffect(() => {
+    if (!openNow) return;
+    watchedImport.current = false;
+    onOpenPage(single, importSummary(result));
+  }, [openNow, single, result, onOpenPage]);
   React.useEffect(() => { if (phase === "complete") reportHeading.current?.focus(); }, [phase]);
   // The review on screen is kept: every KEEP_ALIVE_MS, which a hidden tab
   // still runs, and when the window comes back (a sleep stops the timer).
@@ -326,7 +347,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
       <p className="reportModalHint">{t("You can close this window: the review goes on in Background tasks.")}</p>
     </> : reviewBusy ? <div className="importUploadProgress" role="status">
       <div><strong>{phaseLabel}{uploading && percent !== null ? `… ${percent}%` : "…"}</strong>
-        {uploading ? <span>{fmtBytes(progress.loaded)}{progress.total ? ` / ${fmtBytes(progress.total)}` : ` / ${fmtBytes(file.size)}`}</span>
+        {uploading ? <span>{bytesInfo(progress.loaded, progress.total || file.size, counting.current.since)}</span>
           : <span>{t("Upload complete. Reading the archive…")}</span>}
       </div>
       <progress aria-label={phase === "packing" ? phaseLabel : uploading ? t("Upload progress") : t("Import processing")} max={100} value={uploading ? percent ?? undefined : undefined} />
@@ -372,7 +393,11 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
       ) : null}
       {phase === "importing" && job?.stoppable ? <button type="button" className="uiBtn" onClick={() => tasks.cancel(job).catch(err => setError(err.message))}>{t("Stop")}</button> : null}
       {phase === "importing" || phase === "ended" ? <button type="button" className="uiBtn primary" onClick={onClose}>{t("Close")}</button> : null}
-      {phase === "complete" ? <button type="button" className="uiBtn primary" onClick={onClose}>{t("Done")}</button> : null}
+      {phase === "complete" && !single && onShowFolder ? <button type="button" className="uiBtn"
+        onClick={() => onShowFolder(plan?.folder || params.folder || "")}>{t("Show in library")}</button> : null}
+      {phase === "complete" ? <button type="button" className={`uiBtn${single && onOpenPage ? "" : " primary"}`} onClick={onClose}>{t("Done")}</button> : null}
+      {phase === "complete" && single && onOpenPage ? <button type="button" className="uiBtn primary"
+        onClick={() => onOpenPage(single, importSummary(result))}>{t("Open “{title}”", { title: single.title || t("Untitled") })}</button> : null}
     </div>
   </SubDialog>;
 }
