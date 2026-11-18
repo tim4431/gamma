@@ -234,7 +234,7 @@ DeepSeek, Kimi, Qwen, GLM, OpenRouter and the custom endpoint sit under the **Ot
 
 <img alt="In a folder chat, rename these AuthorYear is sent; a card shows the rename with the old title struck through; Allow once is clicked and the four cards are renamed, with an undo pill" src="assets/agent.svg" width="100%">
 
-On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, rename them, file them into folders, move them to Recently deleted or bring them back, rename folders, make and apply labels, delete a folder or a label (never its pages), search the web for papers and save them, build BibTeX, and edit your notes. On a paper, the same chat reads, searches and edits that paper and its notes.
+On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, rename them, file them into folders, move them to Recently deleted or bring them back, rename folders, make and apply labels, delete a folder or a label (never its pages), search the web for papers and save them, look things up online and read web pages, build BibTeX, and edit your notes. On a paper, the same chat reads, searches and edits that paper and its notes.
 
 - **It asks first.** A change shows as a card — many pages renamed, filed or labelled together show on one card that lists them all. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead). A deletion's **Allow once** is red.
 - Everything it changed is listed under the reply. A note change, a rename, move or label change (one page or many at once), deleted or restored pages, or a deleted folder or label (its chats included), can be undone there; pages you changed since are left as they are. **Revert…** lists every change of the conversation with a checkbox, to take back the ones you tick, or all of them, at once.
@@ -255,8 +255,8 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | View pages and handwriting | `view_pdf_page`, `view_ink`, `view_image` | Look at figures, tables, scanned pages, your handwriting and the pictures in your notes and on your pages |
 | Search library | `search_library` | Find text in your notes, PDFs and text files |
 | **Web research** | | |
-| Search papers online | `search_papers`, `related_papers`, `search_web` | Find papers on Crossref, arXiv and OpenAlex, follow their citations, and search the web through your AI connection, Brave Search or SearXNG (Tool usage → Online search) |
-| Fetch documents | `fetch_paper`, `read_paper` | Read a DOI, arXiv id or URL without saving it; a paywall or sign-in hands the fetch to your browser |
+| Search online | `search_papers`, `related_papers`, `search_web` | Find papers on Crossref, arXiv and OpenAlex and follow their citations; search the web for current facts, documentation and news, by date or on one site, through your AI connection, Brave Search, Tavily or SearXNG (Tool usage → Online search) |
+| Fetch documents | `fetch_paper`, `fetch_url`, `read_paper` | Read a paper by DOI, arXiv id or URL, or any web page as text, without saving it; a paper behind a paywall or sign-in is handed to your browser |
 | Use journal sign-ins | | Use the publisher sign-ins Gamma Connector saved when fetching |
 | **Make changes** | | |
 | Save papers | `save_paper` | Add a paper found online to the library |

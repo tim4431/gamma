@@ -1,5 +1,5 @@
 """Fetches handed to the user's browser (gamma/fetch_handoff.py) and what
-leads there: bot-check / sign-in / paywall detection in ai_web, the chat
+leads there: bot-check / sign-in / paywall detection in web_fetch, the chat
 card's endpoints and /go page, one cookie jar per fetch, the Connector's
 User-Agent on a connected host, and the search merge. The resolver, reader
 and cookie path are real; HTTPS is the fake transport of test_net_guard."""
@@ -15,7 +15,7 @@ import gamma.routers.metadata as metadata_mod
 import gamma.routers.pdf as pdf_mod
 from ai_fixtures import FakeResp, folder
 from conftest import account_of, login, make_folder, make_user
-from gamma import ai_web, fetch_handoff, net_guard
+from gamma import ai_web, fetch_handoff, net_guard, web_fetch
 from gamma import publisher_sessions as sessions
 from gamma.ai_tools import agent_system, run_agent_tool
 from gamma.db import connect_users_db
@@ -125,11 +125,11 @@ def test_article_page_only_is_read_and_offers_the_full_text(web, fetch):
 
 def test_access_wall_ignores_a_widget_on_a_real_article():
     long_page = b"<html><body>" + b"<p>Real article text here.</p>" * 200 + b"<div class=g-recaptcha></div></body></html>"
-    assert ai_web.access_wall("https://x.example/article", {}, long_page) == ""
+    assert web_fetch.access_wall("https://x.example/article", {}, long_page) == ""
     short = b"<html><body><div class=g-recaptcha></div>Please continue</body></html>"
-    assert ai_web.access_wall("https://x.example/article", {}, short) == "captcha"
-    assert ai_web.access_wall("https://idp.example.edu/profile", {}, b"<p>hi</p>") == "login"
-    assert ai_web.access_wall("https://x.example/a", {"cf-mitigated": "challenge"}, b"") == "captcha"
+    assert web_fetch.access_wall("https://x.example/article", {}, short) == "captcha"
+    assert web_fetch.access_wall("https://idp.example.edu/profile", {}, b"<p>hi</p>") == "login"
+    assert web_fetch.access_wall("https://x.example/a", {"cf-mitigated": "challenge"}, b"") == "captcha"
 
 
 # -------------------------------------------------------- endpoints
@@ -443,11 +443,11 @@ def test_connected_host_gets_its_browsers_user_agent(accounts, transport, monkey
     monkeypatch.setattr(net_guard._BrowserAgent, "https_request", spy)
     token = sessions.current_user.set(account_of(USER))
     try:
-        net_guard.guarded_urlopen(Request(url, headers=pdf_mod.BROWSER_HEADERS)).read()
-        net_guard.guarded_urlopen(Request(other, headers=pdf_mod.BROWSER_HEADERS)).read()
+        net_guard.guarded_urlopen(Request(url, headers=web_fetch.BROWSER_HEADERS)).read()
+        net_guard.guarded_urlopen(Request(other, headers=web_fetch.BROWSER_HEADERS)).read()
     finally:
         sessions.current_user.reset(token)
-    assert agents == [(url, ua), (other, pdf_mod.BROWSER_HEADERS["User-Agent"])]
+    assert agents == [(url, ua), (other, web_fetch.BROWSER_HEADERS["User-Agent"])]
     # An unusable agent is dropped, never a reason to refuse the cookies.
     assert sessions.browser_agent("bad\nagent") == "" and sessions.browser_agent("x" * 600) == ""
 
@@ -559,7 +559,7 @@ def test_a_page_with_nothing_to_read_is_handed_to_the_browser(web, fetch):
 
 
 def test_meta_refresh_parsing():
-    from gamma.routers.pdf import meta_refresh
+    from gamma.web_fetch import meta_refresh
     base = "https://hub.example/retrieve/pii/1"
     assert meta_refresh("<meta http-equiv='refresh' content='0;URL=https://x.example/a'>", base) == "https://x.example/a"
     assert meta_refresh('<META content="5; url=/b?c=1&amp;d=2" HTTP-EQUIV="Refresh">', base) == "https://hub.example/b?c=1&d=2"

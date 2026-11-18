@@ -125,9 +125,11 @@ ai_agent.py        the agent tool loop, its two user-facing pauses, and the help
 ai_permissions.py  the chat tools' Allow / Ask / Off states and the approvals a reply waits on
 ai_steer.py        the messages a user steers into their chat reply while it runs
 ai_revert.py       taking back one change the agent made: a note change, pages it renamed, moved or labelled, or a folder or label it deleted; and putting it back
-ai_web.py          the agent's scholarly reach: search_papers, related_papers, fetch_paper
+ai_web.py          the agent's scholarly reach: search_papers, related_papers, fetch_paper (the paper resolver first, then the page) and the papers' cache
 openalex.py        OpenAlex: a registry search_papers asks, the citation graph behind related_papers
-search_services.py the services behind the agent's web search (search_web)
+search_services.py online search: the engines behind search_web (Brave, Tavily, SearXNG, the chat's AI connection), their adapters, and the account's settings
+web_fetch.py       reading a URL for the chat: the one guarded GET both fetch tools use, size caps, walls, the caches, fetch_url's reader, the windows
+web_page.py        a response body as the text the model reads: decoded, the head's metadata, the main content as Markdown, an outline of its sections
 paper_links.py     the links on a web page that may lead to a paper's full text, ranked
 fetch_handoff.py   fetches handed to the user's browser when a paper is behind a wall
 publisher_sessions.py  publisher cookies the Connector imports, stored encrypted
@@ -145,7 +147,9 @@ logseq_*.py        Logseq: PDF-highlight importers (EDN / Markdown), a page as a
 markdown_*.py      Markdown import (one document, or a zip: Notion, Obsidian, Gamma's own) and export
 zotero_import.py   Zotero RDF library import
 zotero_export.py   Zotero RDF library export
-zotero_notes.py    a Zotero note's HTML and a block tree, both ways
+zotero_notes.py    a Zotero note's HTML and a block tree, both ways (the HTML read with html_markdown.Parser)
+html_markdown.py   HTML as a tree of elements (Parser) and such a tree as Markdown (Markdown, with hooks): the Zotero and Notion imports, the web clipper, the page reader
+web_clip.py        a page the Gamma Connector clipped, as note blocks: its fragment as Markdown escaped for a note (html_markdown's writer)
 notability*.py     Notability notes: the plists and the .ntb's FlatBuffers log read behind guards, a note's model, its place in Gamma, the import and the export
 goodnotes*.py      GoodNotes notebooks: protobuf, Apple LZ4 and tpl read behind guards, a notebook's model, its place in Gamma, the import
 note_app_import.py what the Notability and GoodNotes imports share: the run over an upload, the commit, the storing of a note's files

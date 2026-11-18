@@ -94,7 +94,7 @@ Ranked by how likely a user meets them.
 | Ink in one group | 5,000 strokes, 500k samples, 4 MB | `ink/ink.js`, `ink.py` | The oldest strokes drop; past 4 MB the save is retried every 2 s and the work is gone after a reload |
 | Uploads in parts | 8 open per workspace, dropped after an hour idle | `upload_parts.py` | 429 for up to an hour after tabs closed mid-upload |
 | AI calls at once | 6 per account | `ai_client.py` | Page translation (4 at once) beside an agent chat (4 at once) reaches it |
-| PDFs the AI fetches or a tab hands off | 40 MB; 60 MB through the extension's in-page relay | `ai_web.py`, `routers/ai_handoffs.py`, `extension/detect.js` | Books and theses refused |
+| PDFs the AI fetches or a tab hands off | 40 MB; 60 MB through the extension's in-page relay | `web_fetch.py`, `routers/ai_handoffs.py`, `extension/detect.js` | Books and theses refused |
 | Reading positions | 200 pages remembered | `App.jsx` | An older paper opens at page 1 |
 | PDFs attached to a chat message | 15 MB each, 4 a message | `chat/ChatDock.jsx`, `ai_context.py` | A fifth is ignored without a word |
 | SVG and Mermaid fences | 50,000 characters; 500 Mermaid edges | `shared/lib/svgSanitize.js`, `shared/lib/mermaidRenderer.js` | An exported matplotlib or draw.io SVG is refused |

@@ -3,7 +3,7 @@ paper is behind a wall only a person gets past.
 
 ``fetch_paper`` opens a request here when it meets a CAPTCHA or bot check, a
 sign-in page, a refusal, or an article page whose PDF needs access
-(``ai_web.WALLS``). The chat shows a card for it and, by default, waits on
+(``web_fetch.WALLS``). The chat shows a card for it and, by default, waits on
 that card inside the same reply (``ai_agent.PaperWait``): the user opens the
 page, signs in or passes the check, and Gamma Connector — which recognized
 that tab — sends the PDF back (``POST …/pdf``), or the user drops the file
@@ -167,9 +167,9 @@ class Settled(Exception):
 
 def deliver(user_id: str, rid: str, data: bytes, from_url: str = "") -> dict | None:
     """Keep the text of the PDF the user got for request ``rid``; raises
-    ai_web.FetchError when it is not a readable PDF and Settled when the
+    web_fetch.FetchError when it is not a readable PDF and Settled when the
     request no longer waits for one. None = no such request."""
-    from .ai_web import pdf_document
+    from .web_fetch import pdf_document
 
     req = get(user_id, rid)
     if req is None:

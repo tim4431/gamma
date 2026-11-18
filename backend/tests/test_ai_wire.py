@@ -580,6 +580,17 @@ def test_user_attachments_never_ride_on_a_tool_picture_turn():
 HOSTED = {"name": "web_search", "description": "", "parameters": {}}
 
 
+def test_tool_calls_go_over_the_tool_wire():
+    chat, responses = WIRES["openai"], WIRES["openai-responses"]
+    openai_platform = {**CONF, "base_url": "https://api.openai.com"}
+    # OpenAI's platform takes tool calls on its Responses wire; a gateway
+    # speaking Chat Completions keeps them there.
+    assert chat.tool_wire(openai_platform) is responses and chat.tool_wire(CONF) is chat
+    assert chat.wire(openai_platform, [HOSTED]) is responses and chat.wire(openai_platform) is chat
+    assert WIRES["anthropic"].wire(CONF, [HOSTED]) is WIRES["anthropic"]
+    assert chat.tool_wire(CONF).hosted_web_search(CONF) is None
+
+
 def test_hosted_web_search_is_the_wire_tool_and_goes_out_as_is():
     responses, anthropic = WIRES["openai-responses"], WIRES["anthropic"]
     spec = responses.hosted_web_search(CONF)
@@ -587,15 +598,17 @@ def test_hosted_web_search_is_the_wire_tool_and_goes_out_as_is():
     # Anthropic's server tool on Anthropic itself only; a gateway has none.
     assert anthropic.hosted_web_search(CONF) is None
     platform = {**CONF, "base_url": "https://api.anthropic.com"}
-    assert anthropic.hosted_web_search(platform)["type"] == "web_search_20250305"
-    # OpenAI's platform routes a tool call to the Responses wire, which hosts it.
-    openai_platform = {**CONF, "base_url": "https://api.openai.com"}
-    assert WIRES["openai"].wire(openai_platform, [HOSTED]) is responses
-    assert WIRES["openai"].wire(CONF, [HOSTED]).hosted_web_search(CONF) is None
+    assert anthropic.hosted_web_search(platform) == {"type": "web_search_20250305", "name": "web_search",
+                                                     "max_uses": 5}
+    # A site becomes the provider's own domain filter.
+    assert anthropic.hosted_web_search(platform, "docs.python.org")["allowed_domains"] == ["docs.python.org"]
+    filtered = {"type": "web_search", "filters": {"allowed_domains": ["docs.python.org"]}}
+    assert responses.hosted_web_search(CONF, "docs.python.org") == filtered
+    assert WIRES["chatgpt"].hosted_web_search(CONF, "docs.python.org") == filtered
 
     body = json.loads(openai_responses_request(CONF, [{"role": "user", "content": "q"}], "sys", "m",
-                                               tools=[{**HOSTED, "hosted": spec}]).data)
-    assert body["tools"] == [spec] and body["include"] == ["web_search_call.action.sources"]
+                                               tools=[{**HOSTED, "hosted": filtered}]).data)
+    assert body["tools"] == [filtered] and body["include"] == ["web_search_call.action.sources"]
     body = json.loads(chatgpt_request(CONF, [{"role": "user", "content": "q"}], "sys", "m",
                                       tools=[{**HOSTED, "hosted": spec}]).data)
     assert body["tools"] == [spec] and body["include"] == []
@@ -609,19 +622,25 @@ def test_hosted_web_search_is_the_wire_tool_and_goes_out_as_is():
     assert "tools" not in body
 
 
-def test_hosted_search_streams_report_the_pages_found():
+def test_hosted_search_streams_report_the_searches_and_pages_found():
     stream = sse(
-        {"type": "response.output_item.done", "item": {"type": "web_search_call", "action": {
-            "type": "search", "query": "q", "sources": [{"type": "url", "url": "https://lab.example.edu/p"}]}}},
+        {"type": "response.output_item.done", "item": {"type": "web_search_call", "status": "completed",
+                                                       "action": {"type": "search", "query": "q", "sources": [
+                                                           {"type": "url", "url": "https://lab.example.edu/p"}]}}},
+        {"type": "response.output_item.done", "item": {"type": "web_search_call", "status": "failed",
+                                                       "action": {"type": "search", "query": "q2"}}},
         {"type": "response.output_text.delta", "delta": "Lab page | https://lab.example.edu/p | papers"},
         {"type": "response.output_item.done", "item": {"type": "message", "content": [{
             "type": "output_text", "text": "…", "annotations": [
                 {"type": "url_citation", "url": "https://lab.example.edu/p", "title": "Lab"}]}]}},
         {"type": "response.completed", "response": {"status": "completed"}},
     )
-    events = list(sse_events(stream, "chatgpt"))
-    assert events[0] == ("web_sources", [{"url": "https://lab.example.edu/p", "title": ""}])
-    assert events[2] == ("web_sources", [{"url": "https://lab.example.edu/p", "title": "Lab"}])
+    assert list(sse_events(stream, "chatgpt"))[:5] == [
+        ("web_searched", {"error": ""}),
+        ("web_sources", [{"url": "https://lab.example.edu/p", "title": ""}]),
+        ("web_searched", {"error": "failed"}),
+        ("text", "Lab page | https://lab.example.edu/p | papers"),
+        ("web_sources", [{"url": "https://lab.example.edu/p", "title": "Lab"}])]
 
     stream = sse(
         {"type": "content_block_start", "content_block": {"type": "server_tool_use", "id": "s1",
@@ -630,16 +649,29 @@ def test_hosted_search_streams_report_the_pages_found():
         {"type": "content_block_stop"},
         {"type": "content_block_start", "content_block": {"type": "web_search_tool_result", "content": [
             {"type": "web_search_result", "url": "https://arxiv.org/abs/1", "title": "Preprint",
-             "encrypted_content": "…"}]}},
+             "encrypted_content": "…", "page_age": "April 30, 2025"},
+            {"type": "web_search_result", "url": "https://lab.example.edu/p", "title": "Lab"}]}},
         {"type": "content_block_delta", "delta": {"type": "citations_delta", "citation": {
             "type": "web_search_result_location", "url": "https://arxiv.org/abs/1", "title": "Preprint",
             "cited_text": "…"}}},
+        {"type": "content_block_start", "content_block": {"type": "server_tool_use", "id": "s2",
+                                                          "name": "web_search"}},
+        {"type": "content_block_stop"},
+        {"type": "content_block_start", "content_block": {"type": "web_search_tool_result", "content": {
+            "type": "web_search_tool_result_error", "error_code": "max_uses_exceeded"}}},
         {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "done"}},
     )
     events = list(sse_events(stream, "anthropic"))
-    # The server tool's own call is not a tool call for Gamma to run.
-    assert events == [("web_sources", [{"url": "https://arxiv.org/abs/1", "title": "Preprint"}]),
+    # The server tool's own call is not a tool call for Gamma to run; a
+    # result's page_age is its date, and a failed search says why.
+    assert events == [("web_searched", {"error": ""}),
+                      ("web_searched", {"error": ""}),
+                      ("web_sources", [{"url": "https://arxiv.org/abs/1", "title": "Preprint",
+                                        "date": "April 30, 2025"},
+                                       {"url": "https://lab.example.edu/p", "title": "Lab"}]),
                       ("web_sources", [{"url": "https://arxiv.org/abs/1", "title": "Preprint"}]),
+                      ("web_searched", {"error": ""}),
+                      ("web_searched", {"error": "max_uses_exceeded"}),
                       ("text", "done")]
 
 

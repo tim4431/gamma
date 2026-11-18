@@ -1,7 +1,8 @@
 """The agent's scholarly reach: searching the registries, following a
-paper's citations, and reading a document that is not in the library
+paper's citations, and reading a paper that is not in the library
 (``search_papers`` / ``related_papers`` / ``fetch_paper`` in
-``ai_tools.py``; general web search is gamma/search_services.py).
+``ai_tools.py``; general web search is gamma/search_services.py, reading
+any web page gamma/web_fetch.py).
 
 Nothing here writes to a workspace. ``search_papers`` asks three registries
 at once — Crossref and arXiv (the ones the metadata lookup uses) and
@@ -13,75 +14,42 @@ arXiv id or URL into text: the PDF behind it through the resolver the
 extension and "open a link" use (``routers.pdf.resolve_source`` — arXiv abs
 pages, publisher ``citation_pdf_url`` tags, several Unpaywall open-access
 copies, the SSRF guard), extracted page by page; when no PDF is reachable
-and the source is a web page, its readable text instead, with the page's
-PDF links (gamma/paper_links.py) for the model to rank against the paper it
-wants. Fetched documents live in a small in-memory cache so the model can
+and the source is a web page, the page as fetch_url reads it (web_fetch.get,
+cut at its size cap rather than refused), with the page's PDF links
+(gamma/paper_links.py) for the model to rank against the paper it wants and
+a note, in the model's words, of what kept the PDF out of reach. Fetched
+papers live in a small in-memory cache (web_fetch.DocCache) so the model can
 read a long paper in successive windows without re-downloading it — nothing
 is stored on disk and a restart forgets everything.
 
 A fetch that meets a wall only a person gets past — a CAPTCHA or bot check,
 a sign-in page, a refusal, a paywall that serves only the article page — says
-which (``FetchError.wall`` / a document's ``wall``) and where the person
-would go, so the chat can hand the fetch to the user's browser
-(``gamma/fetch_handoff.py``).
+which (``FetchError.wall`` / a document's ``wall``, web_fetch.WALLS) and
+where the person would go, so the chat can hand the fetch to the user's
+browser (``gamma/fetch_handoff.py``).
 """
 
-import html
 import re
-import threading
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 from urllib.error import HTTPError, URLError
-from urllib.request import Request as URLRequest
+from urllib.parse import quote, urlsplit
 
 from fastapi import HTTPException
 
-from . import openalex, paper_links, publisher_sessions
-from .logbuf import log
-from .net_guard import browsing_session, guarded_urlopen
-from .pdf_text import extract_pages
+from . import openalex, paper_links, publisher_sessions, web_fetch, web_page
+from .net_guard import browsing_session
+from .web_fetch import (BROWSER_HEADERS, WALLS, DocCache, FetchError, access_wall, entry, get, page_document,
+                        pdf_document, read_bounded, refusal, uri)
 
 SEARCH_LIMIT_DEFAULT = 8
 SEARCH_LIMIT_MAX = 20
 SORTS = ("relevance", "citations", "recent")
 _ABSTRACT_SHOWN = 400  # chars of a record's abstract a search result shows
-FETCH_MAX_BYTES = 40_000_000    # a PDF larger than this is refused, not read
-HTML_MAX_BYTES = 2_000_000      # of a web page, before tag stripping
-# The document cache: entries and total extracted chars kept in memory.
-_CACHE_MAX_DOCS = 24
-_CACHE_MAX_CHARS = 30_000_000
 
 _DOI_RE = re.compile(r"^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)?(10\.\d{4,9}/\S+)$", re.I)
 _ARXIV_RE = re.compile(
     r"^(?:https?://arxiv\.org/(?:abs|pdf)/|arxiv:\s*)?"
     r"([0-9]{4}\.[0-9]{4,5}|[a-z][a-z-]*(?:\.[a-z]{2})?/[0-9]{7})(?:v\d+)?(?:\.pdf)?$", re.I)
-
-_cache: dict = {}        # (account/session scope, resolved URL) → document
-_aliases: dict = {}      # (account/session scope, source string) → cache key
-_cache_lock = threading.Lock()
-
-
-# What stood between the server and a document, in the model's words. A
-# person can get past each of them in their own browser.
-WALLS = {
-    "captcha": "a CAPTCHA or bot check",
-    "login": "a sign-in page",
-    "denied": "a refusal to this server (no access)",
-    "rate": "a rate limit",
-    "script": "a page that only works in a browser (it runs on JavaScript)",
-    "abstract": "the article page only (the full text needs access)",
-}
-
-
-class FetchError(Exception):
-    """A document could not be fetched; the message is for the model.
-    ``wall`` (a WALLS key) is set when a person could get past what stopped
-    it in a browser; ``open_url`` is the page they would open and
-    ``pdf_url`` the PDF link it was about."""
-
-    def __init__(self, message: str, *, wall: str = "", open_url: str = "", pdf_url: str = ""):
-        super().__init__(message)
-        self.wall, self.open_url, self.pdf_url = wall, open_url, pdf_url
 
 
 # ---------------------------------------------------------------- search
@@ -312,185 +280,10 @@ def format_records(records: list[dict], *, first_sight=None) -> str:
 
 # ----------------------------------------------------------------- fetch
 
-def _read_bounded(url: str, cap: int, headers: dict, timeout: int = 30) -> tuple[str, str, bytes, dict]:
-    """``(final_url, content_type, body, response headers)`` through the SSRF
-    guard, refusing bodies over ``cap`` bytes (by Content-Length up front,
-    else while reading)."""
-    req = URLRequest(url, headers=headers)
-    with guarded_urlopen(req, timeout=timeout) as resp:
-        ctype = (resp.headers.get("Content-Type") or "").lower()
-        length = resp.headers.get("Content-Length")
-        if length and length.isdigit() and int(length) > cap:
-            raise FetchError(f"document too large ({int(length) // 1_000_000} MB, cap {cap // 1_000_000} MB)")
-        chunks, total = [], 0
-        while True:
-            chunk = resp.read(65536)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > cap:
-                raise FetchError(f"document too large (over {cap // 1_000_000} MB)")
-            chunks.append(chunk)
-        return resp.geturl(), ctype, b"".join(chunks), resp.headers
-
-
-_BLOCK_TAG_RE = re.compile(
-    r"</?(?:p|div|br|li|ul|ol|h[1-6]|tr|td|th|table|section|article|header|footer|"
-    r"blockquote|pre|dd|dt|dl|figure|figcaption|main|nav|aside)\b[^>]*>", re.I)
-_DROP_RE = re.compile(r"<(head|script|style|noscript|svg|template)\b.*?</\1\s*>", re.I | re.S)
-_TAG_RE = re.compile(r"<[^>]+>")
-_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
-
-
-def _decode(raw: bytes, ctype: str = "") -> str:
-    m = re.search(r"charset=([\w-]+)", ctype or "")
-    try:
-        return raw.decode(m.group(1) if m else "utf-8", "replace")
-    except LookupError:  # an unknown charset name
-        return raw.decode("utf-8", "replace")
-
-
-def html_text(raw: bytes, ctype: str = "") -> tuple[str, str]:
-    """``(title, readable text)`` of an HTML page: scripts/styles dropped,
-    block tags turned into line breaks, entities unescaped, whitespace
-    collapsed. Deliberately simple — a paper's abstract page, not a news
-    site's layout, is what the agent reads here."""
-    text = _decode(raw, ctype)
-    title = _TITLE_RE.search(text)
-    title = re.sub(r"\s+", " ", html.unescape(title.group(1))).strip() if title else ""
-    text = _DROP_RE.sub(" ", text)
-    text = _BLOCK_TAG_RE.sub("\n", text)
-    text = html.unescape(_TAG_RE.sub(" ", text))
-    text = re.sub(r"[ \t\r\f\v]+", " ", text)
-    text = re.sub(r" *\n *", "\n", text)
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    return title, text
-
-
-# Walls a person passes in a browser. A bot-check page is recognized by its
-# vendor's markers or its title (Cloudflare, DataDome, PerimeterX, Imperva,
-# Akamai, Google's "unusual traffic"); a CAPTCHA widget or a password field
-# only on a page with little else to read — an article page may carry a
-# newsletter form. A sign-in page also by where the request ended up.
-_CHALLENGE_RE = re.compile(
-    r"_cf_chl_opt|cf-browser-verification|/cdn-cgi/challenge-platform/|"
-    r"<title>\s*(?:just a moment|attention required|access denied|pardon our interruption|"
-    r"are you a robot|robot check|security check|verify(?:ing)? (?:that )?you are (?:a )?human)|"
-    r"""captcha-delivery\.com|id=["']px-captcha|_Incapsula_Resource|"""
-    r"unusual traffic from your (?:computer|network)", re.I)
-_WIDGET_RE = re.compile(r"g-recaptcha|hcaptcha\.com|h-captcha|cf-turnstile", re.I)
-_PASSWORD_RE = re.compile(r"""<input\b[^>]*\btype\s*=\s*["']?password""", re.I)
-_LOGIN_PATH_RE = re.compile(
-    r"/(?:(?:show)?login|log-in|logon|signin|sign-in|sso|ssostart|idp|shibboleth|wayf|saml2?|"
-    r"authorize|authorization|auth/realms|cas/login)(?:[/.?;]|$)", re.I)
-_LOGIN_HOST_RE = re.compile(r"^(?:login|idp|sso|signin|auth|shibboleth|wayf)\.", re.I)
-# Hosts that serve nothing but a bot check for other sites (Radware's
-# validate.perfdrive.com in front of IOP, DataDome's captcha host).
-_CHECK_HOST_RE = re.compile(
-    r"(?:^|\.)(?:perfdrive\.com|captcha-delivery\.com|hcaptcha\.com|challenges\.cloudflare\.com)$", re.I)
-# Query keys an interstitial keeps the page to go back to under.
-_RETURN_KEYS = {"ssc", "referer", "referrer", "return", "returnurl", "return_url", "returnto", "redirect",
-                "redirecturl", "redirect_uri", "next", "url", "target", "continue", "uri", "dest",
-                "destination", "service", "goto"}
-_THIN_PAGE = 2000  # readable chars below which a page may be all widget or form
-
-
-def access_wall(url: str, headers, body: bytes, text: str | None = None) -> str:
-    """"captcha" / "login" when a response is an interstitial for a person
-    rather than the document, else "". ``text`` is the page's readable text
-    when the caller has it already."""
-    if ((headers or {}).get("cf-mitigated") or "").lower() == "challenge" or _check_host(url):
-        return "captcha"
-    head = body[:300_000].decode("utf-8", "replace") if body else ""
-    if _CHALLENGE_RE.search(head):
-        return "captcha"
-    if _sign_in_url(url):
-        return "login"
-    if len(html_text(body)[1] if text is None else text) < _THIN_PAGE:
-        if _WIDGET_RE.search(head):
-            return "captcha"
-        if _PASSWORD_RE.search(head):
-            return "login"
-    return ""
-
-
-def _sign_in_url(url: str) -> bool:
-    where = urlsplit(url or "")
-    return bool(_LOGIN_PATH_RE.search(where.path) or _LOGIN_HOST_RE.match(where.hostname or ""))
-
-
-def _check_host(url: str) -> bool:
-    return bool(_CHECK_HOST_RE.search(urlsplit(url or "").hostname or ""))
-
-
-def _interstitial(url: str) -> bool:
-    return _sign_in_url(url) or _check_host(url)
-
-
-def _return_url(url: str) -> str:
-    """The page an interstitial sends the visitor back to, when its address
-    carries it (Radware's ``ssc=``, a sign-in page's ``next=`` / ``uri=``)."""
-    for key, value in parse_qsl(urlsplit(url).query):
-        if key.lower() in _RETURN_KEYS:
-            back = urljoin(url, value.strip())
-            if back.lower().startswith(("http://", "https://")) and not _interstitial(back):
-                return back
-    return ""
-
-
-def _entry(*urls: str) -> str:
-    """The page a person should open for a blocked fetch: the first of
-    ``urls`` (most specific first) that is the site's own page — for a
-    sign-in or bot-check page, the page it would return to. Starting there,
-    the site sends the person through its check and back to the paper."""
-    for url in urls:
-        if url and not _interstitial(url):
-            return url
-        back = _return_url(url) if url else ""
-        if back:
-            return back
-    return next((u for u in urls if u), "")
-
-
-def _refusal(e: HTTPError) -> str:
-    """The wall behind an HTTP error, else "": a bot check served as an error
-    page (Cloudflare answers 403 or 503), a rate limit, a refusal."""
-    try:
-        body = e.read(300_000) or b""
-    except Exception:
-        body = b""
-    if ((e.headers or {}).get("cf-mitigated") or "").lower() == "challenge" \
-            or _CHALLENGE_RE.search(body.decode("utf-8", "replace")):
-        return "captcha"
-    if e.code == 429:
-        return "rate"
-    return "denied" if e.code in (401, 403, 418) else ""
-
-
-def _remember(source: str, doc: dict, scope: tuple) -> dict:
-    key = (scope, doc["url"])
-    with _cache_lock:
-        _cache.pop(key, None)
-        _cache[key] = doc
-        _aliases[scope, source] = key
-        total = sum(d["chars"] for d in _cache.values())
-        while _cache and (len(_cache) > _CACHE_MAX_DOCS or total > _CACHE_MAX_CHARS):
-            old_key = next(iter(_cache))  # insertion order = least recently used
-            old = _cache.pop(old_key)
-            total -= old["chars"]
-            for alias in [k for k, v in _aliases.items() if v == old_key]:
-                del _aliases[alias]
-    return doc
-
-
-def cached(source: str, scope: tuple) -> dict | None:
-    with _cache_lock:
-        key = _aliases.get((scope, source), (scope, source))
-        doc = _cache.get(key)
-        if doc:  # LRU touch
-            _cache.pop(key)
-            _cache[key] = doc
-        return doc
+# The papers read, under the source strings they were asked for as: 24 of
+# them and 30 M characters of text at most, kept until crowded out (web
+# pages read with fetch_url have a cache of their own, web_fetch's).
+_papers = DocCache(24, 30_000_000)
 
 
 def _source_url(source: str) -> str:
@@ -503,45 +296,39 @@ def _source_url(source: str) -> str:
     return source if source.lower().startswith(("http://", "https://")) else ""
 
 
-def pdf_document(url: str, data: bytes, note: str = "", version: str = "") -> dict:
-    """A PDF as the cache holds it: its text page by page. Raises FetchError
-    when there is no text to read."""
-    try:
-        pages = extract_pages(data)
-    except Exception as e:
-        log.warning(f"[ai_web] extraction failed for {url}: {e}")
-        raise FetchError(f"the PDF at {url} could not be read ({e})")
-    if not any(p.strip() for p in pages):
-        raise FetchError(f"the PDF at {url} has no text layer (a scan?)")
-    return {"url": url, "kind": "pdf", "title": "", "pages": pages,
-            "chars": sum(len(p) for p in pages), "note": note, "version": version}
-
-
 def fetch_document(source: str, published_only: bool = False) -> dict:
     """The document behind ``source`` (a DOI, arXiv id or URL) as
-    ``{"url", "kind": "pdf"|"html", "title", "pages": [text per page],
-    "chars", "note", "version"}`` — from the cache when it was fetched
-    before. ``version`` is the resolver's (``resolve_source``): "publisher",
-    "preprint", "published", "accepted", "submitted" or "" (unknown);
-    ``published_only`` refuses to substitute an unpublished open-access
-    copy. A web page also carries ``links`` (its PDF-looking links with
-    their text, paper_links.pdf_links) and, when it is an article page whose
-    PDF was out of reach, ``wall`` with ``open_url`` / ``pdf_url``. Raises
-    FetchError with a model-readable reason."""
+    ``{"url", "kind": "pdf"|"html"|"text", "title", "pages": [text per
+    page], "chars", "note", "version"}`` — from the cache when it was
+    fetched before. ``version`` is the resolver's (``resolve_source``):
+    "publisher", "preprint", "published", "accepted", "submitted" or ""
+    (unknown); ``published_only`` refuses to substitute an unpublished
+    open-access copy. A web page (web_fetch.page_document: also ``meta``,
+    ``outline``, ``fetched`` and ``truncated``) says in ``note`` why no PDF
+    was reachable, carries ``links`` (its PDF-looking links with their
+    text, paper_links.pdf_links) and, when it is an article page whose PDF
+    was out of reach, ``wall`` with ``open_url`` / ``pdf_url``. A URL is
+    read as the URI it spells (web_fetch.uri), so an address copied as a
+    page shows it reads too. Raises FetchError with a model-readable
+    reason."""
     source = (source or "").strip()
     if not source:
         raise FetchError("empty source — pass a DOI, an arXiv id or an http(s) URL")
+    if source.lower().startswith(("http://", "https://")):
+        source = uri(source)
     scope = publisher_sessions.cache_scope()
     # A published-only read never gets the copy an any-version read cached.
     alias = f"{source} [published]" if published_only else source
-    doc = cached(alias, scope)
+    doc = _papers.get(scope, alias)
     if doc:
         return doc
     if not _source_url(source):
         raise FetchError("source must be a DOI (10.…), an arXiv id (2301.12345) or an http(s) URL")
     # One cookie jar for the resolver's walk, the download and the fallback.
     with browsing_session():
-        return _remember(alias, _fetch(source, published_only), scope)
+        doc = _fetch(source, published_only)
+    _papers.put(scope, [alias], doc)
+    return doc
 
 
 def identity(doc: dict, title: str) -> bool | None:
@@ -551,13 +338,13 @@ def identity(doc: dict, title: str) -> bool | None:
     want = paper_links.title_key(title)
     if len(want) < 12:
         return None
-    head = " ".join(doc.get("pages") or [])[:30_000] if doc.get("kind") == "html" else \
+    head = " ".join(doc.get("pages") or [])[:30_000] if doc.get("kind") != "pdf" else \
         " ".join((doc.get("pages") or [])[:3])
     return want in paper_links.title_key(head)
 
 
 def _fetch(source: str, published_only: bool = False) -> dict:
-    from .routers.pdf import BROWSER_HEADERS, meta_refresh, resolve_source
+    from .routers.pdf import resolve_source
 
     reason = wall = source_note = referer = version = ""
     trace: dict = {}
@@ -567,115 +354,73 @@ def _fetch(source: str, published_only: bool = False) -> dict:
         source_note = resolved.get("note", "")
         referer = resolved.get("referer", "")
         version = resolved.get("version", "")
-    except HTTPException as e:
-        reason, pdf_url = str(e.detail), ""
+    except HTTPException:
+        # Its detail tells the person clipping what to do in their browser;
+        # the model hears what the walk met.
+        pdf_url, reason = "", _no_pdf(trace, published_only)
         wall = "denied" if trace.get("blocked") else ""
     page_url = trace.get("page_url") or _source_url(source)
     want_pdf = pdf_url or next(iter(trace.get("pdf_urls") or []), "")
     if pdf_url:
         try:
-            final_url, ctype, data, headers = _read_bounded(
-                pdf_url, FETCH_MAX_BYTES, {**BROWSER_HEADERS, **({"Referer": referer} if referer else {})})
+            got = read_bounded(pdf_url, {**BROWSER_HEADERS, **({"Referer": referer} if referer else {})})
         except FetchError:
             raise
         except HTTPError as e:
-            wall = _refusal(e)
+            wall = refusal(e)
             reason = f"the PDF at {pdf_url} answered HTTP {e.code}"
             if not wall:
                 raise FetchError(reason)
         except (URLError, OSError, ValueError) as e:
             raise FetchError(f"could not fetch the PDF at {pdf_url}: {e}")
         else:
-            if "application/pdf" in ctype or data[:5] == b"%PDF-":
-                return pdf_document(pdf_url, data, source_note, version)
-            wall = access_wall(final_url, headers, data)
-            reason = (f"{pdf_url} is not a PDF ({ctype or 'no content type'})"
+            if "application/pdf" in got.ctype or got.body[:5] == b"%PDF-":
+                return pdf_document(pdf_url, got.body, source_note, version)
+            wall = access_wall(got.url, got.headers, got.body)
+            reason = (f"{pdf_url} is not a PDF ({got.ctype or 'no content type'})"
                       + (f" — it is {WALLS[wall]}" if wall else ""))
-    # No PDF: the source's own page, if it is one, as readable text.
+    # No PDF: the source's own page, if it is one, read as fetch_url reads it.
     fallback = _source_url(source)
     if wall and fallback == pdf_url:
-        raise FetchError(reason, wall=wall, open_url=_entry(page_url, pdf_url), pdf_url=want_pdf)
-    url = fallback
-    for hop in range(3):  # a page that only redirects (a meta refresh) is followed
-        try:
-            final_url, ctype, data, headers = _read_bounded(url, HTML_MAX_BYTES, {
-                **BROWSER_HEADERS, "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5"})
-        except FetchError:
-            raise
-        except HTTPError as e:
-            raise FetchError(f"no PDF ({reason}) and the page {url} answered HTTP {e.code}"
-                             + (" — the site blocks server-side fetching" if e.code in (401, 403) else ""),
-                             wall=_refusal(e) or wall, open_url=_entry(e.geturl(), page_url, fallback),
-                             pdf_url=want_pdf)
-        except (URLError, OSError, ValueError) as e:
-            raise FetchError(f"no PDF ({reason}) and {url} could not be fetched: {e}",
-                             wall=wall, open_url=_entry(page_url, fallback), pdf_url=want_pdf)
-        url = meta_refresh(_decode(data, ctype), final_url) if hop < 2 and "html" in ctype else ""
-        if not url:
-            break
-    if "html" not in ctype and "xml" not in ctype:
-        raise FetchError(f"no PDF ({reason}) and {fallback} is not a web page ({ctype or 'no content type'})",
-                         wall=wall, open_url=_entry(page_url, fallback), pdf_url=want_pdf)
-    title, text = html_text(data, ctype)
-    page_wall = access_wall(final_url, headers, data, text)
-    if page_wall:
-        raise FetchError(f"no PDF ({reason}) and the page {final_url} is {WALLS[page_wall]}",
-                         wall=page_wall, open_url=_entry(final_url, page_url, fallback), pdf_url=want_pdf)
-    if not text:
-        # A page with nothing to read without its scripts: a browser shows it.
-        raise FetchError(f"no PDF ({reason}) and the page {final_url} has no readable text",
-                         wall=wall or "script", open_url=_entry(final_url, page_url, fallback),
-                         pdf_url=want_pdf)
+        raise FetchError(reason, wall=wall, open_url=entry(page_url, pdf_url), pdf_url=want_pdf)
+    try:
+        got = get(fallback)
+    except FetchError as e:
+        raise FetchError(f"no PDF{f' ({reason})' if reason else ''} and {e}", wall=e.wall or wall,
+                         open_url=entry(e.open_url, page_url, fallback), pdf_url=want_pdf)
+    if got.page is None:  # a PDF the resolver did not take for one (served as application/octet-stream)
+        return pdf_document(got.url, got.body)
+    doc = page_document(got)
     # PDF links the resolver has not tried already (those met the wall).
     tried = {pdf_url, *(trace.get("pdf_urls") or [])}
-    links = [link for link in paper_links.pdf_links(_decode(data, ctype), final_url) if link["url"] not in tried]
-    doc = {"url": final_url, "kind": "html", "title": title, "pages": [text],
-           "chars": len(text), "note": reason, "links": links, "version": ""}
+    links = paper_links.pdf_links(web_page.decode(got.body, got.ctype), got.url) if doc["kind"] == "html" else []
+    served = got.ctype.split(";")[0].strip() or "a page without a content type"
+    doc.update(note=reason or f"the address serves {served}, not a PDF",
+               links=[link for link in links if link["url"] not in tried], version="")
     # An article page whose PDF was out of reach (it advertised one, or the
     # DOI's publisher refused): only a person with access gets the rest.
     if wall or trace.get("pdf_urls") or trace.get("doi"):
-        doc.update(wall=wall or "abstract", open_url=final_url, pdf_url=want_pdf)
+        doc.update(wall=wall or "abstract", open_url=got.url, pdf_url=want_pdf)
     return doc
 
 
-_PAGE_GAP = "\n\n"   # between the pages a window is cut from
-
-
-def window(doc: dict, limit: int, offset: int = 0, start_page: int = 1) -> tuple[str, int | None, int]:
-    """``(text, next_offset, total)``: ``limit`` chars of the document from
-    ``offset`` chars after the start of PDF page ``start_page`` (1-based; every
-    page's text is prefixed ``[p. N]`` so the model can cite pages), the offset
-    a follow-up read continues from (None = the document ended inside this
-    window), and the total chars from start_page on."""
-    full = _PAGE_GAP.join(text for _, text in _page_texts(doc, start_page))
-    text = full[offset:offset + limit]
-    next_offset = offset + limit if len(full) > offset + limit else None
-    return text, next_offset, len(full)
-
-
-def window_pages(doc: dict, limit: int, offset: int = 0, start_page: int = 1) -> tuple[int, int] | None:
-    """The PDF pages that same window holds text of, ``(first, last)``; None
-    for a web page, which has no pages, and for a window past the end."""
-    at, held = 0, []
-    for page, text in _page_texts(doc, start_page):
-        if page and at < offset + limit and at + len(text) > offset:
-            held.append(page)
-        at += len(text) + len(_PAGE_GAP)
-    return (held[0], held[-1]) if held else None
-
-
-def _page_texts(doc: dict, start_page: int) -> list:
-    """What a window is cut from: ``(page, text)`` for each PDF page with
-    text from ``start_page`` on, its text under its ``[p. N]`` line; a web
-    page's text as page 0."""
-    pages = doc["pages"]
-    if doc["kind"] != "pdf":
-        return [(0, text) for text in pages]
-    start = max(1, min(start_page, len(pages)))
-    return [(n, f"[p. {n}]\n{text}") for n, text in enumerate(pages[start - 1:], start) if text.strip()]
+def _no_pdf(trace: dict, published_only: bool) -> str:
+    """What the resolver's walk met instead of a PDF, from its ``trace``:
+    a refusal, the page's advertised PDF links that gave none, a DOI with
+    no open-access copy."""
+    said = []
+    if trace.get("blocked"):
+        said.append(f"{urlsplit(trace.get('page_url') or '').hostname or 'the site'} refused this server")
+    tried = trace.get("pdf_urls") or []
+    if tried:
+        said.append("the PDF link the page advertises gave no PDF" if len(tried) == 1
+                    else f"none of the {len(tried)} PDF links the page advertises gave a PDF")
+    if trace.get("doi"):
+        said.append(f"no {'published ' if published_only else ''}open-access copy of doi:{trace['doi']} was found")
+    return "; ".join(said)
 
 
 def clear_cache():
-    with _cache_lock:
-        _cache.clear()
-        _aliases.clear()
+    """Forget every paper and web page read (both caches)."""
+    _papers.clear()
+    web_fetch.clear_cache()

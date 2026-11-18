@@ -14,10 +14,10 @@ from pydantic import BaseModel, Field
 
 from .. import fetch_handoff as handoff
 from .. import html_page
-from ..ai_web import FETCH_MAX_BYTES, FetchError
 from ..auth import require_personal_user_id, require_ws
 from ..documents.model import stored_name, upload_url
 from ..storage import is_pdf, store_pdf
+from ..web_fetch import PDF_MAX_BYTES, FetchError
 
 router = APIRouter(prefix="/api/ai/handoffs", tags=["ai"])
 
@@ -70,9 +70,9 @@ def dismiss(rid: str, request: Request, payload: SkipNote | None = None):
 @router.post("/{rid}/pdf")
 def deliver(rid: str, request: Request, file: UploadFile = File(...), url: str = Form("")):
     user_id = _user_id(request)
-    data = file.file.read(FETCH_MAX_BYTES + 1)
-    if len(data) > FETCH_MAX_BYTES:
-        raise HTTPException(413, f"The PDF is larger than {FETCH_MAX_BYTES // 1_000_000} MB")
+    data = file.file.read(PDF_MAX_BYTES + 1)
+    if len(data) > PDF_MAX_BYTES:
+        raise HTTPException(413, f"The PDF is larger than {PDF_MAX_BYTES // 1_000_000} MB")
     if not is_pdf(data):
         raise HTTPException(400, "Not a PDF (the site may have sent a sign-in page instead)")
     from_url = url if url.startswith(("https://", "http://")) and len(url) <= 2048 else ""

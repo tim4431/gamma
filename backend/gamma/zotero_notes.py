@@ -23,8 +23,8 @@ import binascii
 import html as html_mod
 import re
 import urllib.parse
-from html.parser import HTMLParser
 
+from .html_markdown import El, Parser
 from .note_markup import (ALT_SIZE_RE, BARE_URL, INLINE_RE, LINK_PARTS, LINK_TARGET, LITERAL_SPANS, WIDTH_SUFFIX,
                           alt_and_width)
 
@@ -380,9 +380,6 @@ def note_html(node: dict, resolve_image=None, resolve_ref=None) -> str:
 
 # --- import: note HTML → block markdown ----------------------------------------
 
-_VOID = {"br", "img", "hr", "input", "meta", "link", "col", "area", "base", "wbr", "source",
-         "embed", "param", "track"}
-_HIDDEN = {"script", "style", "head", "title"}
 _BLOCKS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "ul", "ol", "li",
            "table", "hr"}
 # Containers whose children stand in their place (Zotero wraps a note in a
@@ -409,81 +406,6 @@ _LINE_START_RE = re.compile(r"([#>]|[-+](?=\s))|\d{1,9}([.)])(?=\s)")
 # ... and a whole line that would read as a list item or a rule, or
 # underline the line above as a heading.
 _WHOLE_LINE_RE = re.compile(r"(\+|-+|=+)[ \t]*|\d{1,9}([.)])[ \t]*")
-
-
-class El:
-    __slots__ = ("tag", "attrs", "children")
-
-    def __init__(self, tag: str, attrs: dict):
-        self.tag, self.attrs, self.children = tag, attrs, []
-
-
-class Parser(HTMLParser):
-    """Note HTML → a tree of ``El`` and text, forgiving as a browser is about
-    an unclosed <p> or <li>; scripts, styles and the head are left out. A
-    subclass can bound ``max_open``, which bounds every walk up the open
-    elements: what nests past it lies flat in the last one kept."""
-    max_open = float("inf")
-
-    def __init__(self, keep_p: bool = False, hidden=()):
-        super().__init__(convert_charrefs=True)
-        self.keep_p = keep_p                     # a <p> stays open around a block (Notion's export)
-        self.left_out = _HIDDEN | set(hidden)
-        self.root = El("", {})
-        self.stack = [self.root]
-        self.hidden = 0
-        self.past = 0                            # how many of what is open went past max_open
-
-    def handle_starttag(self, tag, attrs):
-        if self.hidden:
-            self.hidden += 0 if tag in _VOID else 1
-            return
-        if tag in self.left_out:
-            self.hidden = 1
-            return
-        if len(self.stack) >= self.max_open:
-            self.stack[-1].children.append(El(tag, dict(attrs)))
-            self.past += tag not in _VOID
-            return
-        if not self.keep_p and self.stack[-1].tag == "p" and tag in _BLOCKS | _TRANSPARENT:
-            self.stack.pop()
-        if tag == "li":
-            for i in range(len(self.stack) - 1, 0, -1):
-                if self.stack[i].tag in ("ul", "ol"):
-                    break
-                if self.stack[i].tag == "li":
-                    del self.stack[i:]
-                    break
-        el = El(tag, dict(attrs))
-        self.stack[-1].children.append(el)
-        if tag not in _VOID:
-            self.stack.append(el)
-
-    def handle_startendtag(self, tag, attrs):
-        self.handle_starttag(tag, attrs)
-        if tag not in _VOID:
-            self.handle_endtag(tag)
-
-    def handle_endtag(self, tag):
-        if self.hidden:
-            self.hidden -= 1
-            return
-        if self.past:
-            self.past -= 1
-            return
-        for i in range(len(self.stack) - 1, 0, -1):
-            if self.stack[i].tag == tag:
-                del self.stack[i:]
-                return
-
-    def handle_data(self, data):
-        if self.hidden:
-            return
-        kids = self.stack[-1].children
-        if kids and isinstance(kids[-1], str):
-            kids[-1] += data
-        else:
-            kids.append(data)
 
 
 def _parse(html: str) -> El:

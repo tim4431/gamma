@@ -89,11 +89,11 @@ class OpenAIChat(Protocol):
         # OpenAI itself is known to take the field.
         return super().speed_tiers(conf) if is_openai_platform(conf["base_url"]) else []
 
-    def wire(self, conf, tools=None):
+    def tool_wire(self, conf):
         # Tool calls to OpenAI itself go over the Responses API (reasoning
         # models reject tools on chat completions); a compatible gateway may
         # not implement /v1/responses, and chat-completions tools work there.
-        return OPENAI_RESPONSES if tools and is_openai_platform(conf["base_url"]) else self
+        return OPENAI_RESPONSES if is_openai_platform(conf["base_url"]) else self
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
                 max_tokens=8192, images=None, stream=False, tools=None, cache_key="", speed=""):

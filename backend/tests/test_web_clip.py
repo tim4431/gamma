@@ -27,6 +27,9 @@ def test_a_table_of_plain_cells_is_a_table_and_a_layout_table_its_content():
     assert md("<table><tr><th>A</th><th>B</th></tr><tr><td>1 | x</td><td><i>2</i></td></tr></table>") == (
         "| A | B |\n| --- | --- |\n| 1 \\| x | *2* |")
     assert md("<table><tr><td><p>Left</p></td><td><ul><li>Right</li></ul></td></tr></table>") == "Left\n\n- Right"
+    # A video or a display formula in a cell is a block of its own, as it was.
+    assert md("<table><tr><td><video src='https://v.example/a.mp4'></video></td><td>b</td></tr></table>") == (
+        "[Video: v.example](https://v.example/a.mp4)\n\nb")
 
 
 def test_links_and_pictures_point_where_they_should():
@@ -67,6 +70,14 @@ def test_what_a_note_cannot_show_says_nothing():
     assert md("<iframe src='https://video.example/embed/1'></iframe>") == (
         "[Embedded: video.example](https://video.example/embed/1)")
     assert md("") == "" and md("   <div> </div> ") == ""
+
+
+def test_a_loose_or_deep_fragment_still_reads():
+    assert md("<ul><li>One<li>Two</ul>") == "- One\n- Two"
+    assert md("<div>" * 3000 + "Deep" + "</div>" * 3000) == "Deep"
+    assert md("<p>" + "<span>" * 1200 + "Deep" + "</span>" * 1200 + "</p>") == "Deep"
+    assert md("<table><tr><th colspan=2>Score</th></tr><tr><td>1</td><td>2</td></tr></table>") == (
+        "| Score | Score |\n| --- | --- |\n| 1 | 2 |")
 
 
 def test_an_article_is_a_tree_under_its_source_line():

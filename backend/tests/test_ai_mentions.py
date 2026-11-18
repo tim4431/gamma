@@ -177,13 +177,15 @@ def test_reference_pdf_is_readable_and_searchable(org, indexed_pdf, monkeypatch)
 def test_context_export_is_the_prompt_the_chat_sends(org):
     """/ai/chat/context renders the request /ai/chat would send — system
     prompt, tools, replayed turns, the draft last — without a provider."""
+    from gamma.db import page_now
+
     c, ids = org
-    response = c.post("/api/ai/chat/context", json={
-        "prompt": "What next?", "title": "My chat", "agent_scope": "page",
-        "page_id": ids["b"], "pages": [ids["b"], ids["note"]],
-        "history": [{"role": "user", "text": "Summarize ```code```"},
-                    {"role": "ai", "text": "Done.", "actions": [
-                        {"tool": "read_page", "args": {"page_id": ids["note"]}, "result": "loose note text"}]}]})
+    body = {"prompt": "What next?", "title": "My chat", "agent_scope": "page",
+            "page_id": ids["b"], "pages": [ids["b"], ids["note"]],
+            "history": [{"role": "user", "text": "Summarize ```code```"},
+                        {"role": "ai", "text": "Done.", "actions": [
+                            {"tool": "read_page", "args": {"page_id": ids["note"]}, "result": "loose note text"}]}]}
+    response = c.post("/api/ai/chat/context", json=body)
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("text/markdown")
     text = response.text
@@ -196,3 +198,9 @@ def test_context_export_is_the_prompt_the_chat_sends(org):
     # The document context rides on the oldest question, the draft is last.
     assert "User question: Summarize" in text
     assert text.rstrip().endswith("### 5. User\n\n```text\nWhat next?\n```")
+    # A chat that reads the web (fetch_url) is told today's date once, where
+    # it reads the same all day: opening the oldest turn, not in the system
+    # prompt and not on the draft, which the next message replays without it.
+    assert f"### 1. User\n\n````text\nToday is {page_now()[:10]} (UTC).\n\n" in text and text.count("Today is") == 1
+    offline = c.post("/api/ai/chat/context", json={**body, "permissions": {"web_search": "off", "web_read": "off"}})
+    assert offline.status_code == 200 and "Today is" not in offline.text

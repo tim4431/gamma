@@ -26,7 +26,7 @@ def protocol(runtime, entry) -> str:
 
 def wire_protocol(runtime, entry, tools=None) -> str:
     """The wire a call actually goes over (an OpenAI entry's tool calls go
-    over OpenAI's Responses API — OpenAIChat.wire)."""
+    over OpenAI's Responses API — OpenAIChat.tool_wire)."""
     conf = runtime["providers"][entry["provider"]]
     return ai_protocols.of(conf).wire(conf, tools).id
 
