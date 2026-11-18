@@ -875,9 +875,13 @@ Comment level") and a computer agent's turn through its token. They work on
 every page of the library, a work folder's file as a library page.
 
 **The places** (`places.find`): a PDF passage by its quote and its 1-based
-page, a range of a text file by its first and last line (with the quote of
-those lines when it comes, else the lines whole), a note by its block, the
-page itself by nothing. A PDF quote is looked for on its page and the ones
+page, an area of a PDF page by its `box` (page fractions) and page, a range
+of a text file by its first and last line (with the quote of those lines
+when it comes, else the lines whole), a note by its block, the page itself
+by nothing. An area is the rectangle a person's Ctrl+drag makes, an area
+highlight with no quote in the page's own frame (`pdf_text.page_sizes`).
+The passage finder is `places.passage_at`, which the chat's drawing tools
+anchor to as well ([ai_tools.md](ai_tools.md) "Drawing on pages"). A PDF quote is looked for on its page and the ones
 either side (`highlight_relocate.place_quote`: `find_passage` over those
 pages, the named one first among equals, the text folded as a relocation
 folds it) and drawn over the glyphs it covers (`rects_for_span`, the page's

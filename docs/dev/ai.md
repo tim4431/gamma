@@ -1544,9 +1544,10 @@ server, `chat/chatSettings.js` in the client):
   on an approval card in the reply ([Asking before a call](#asking-before-a-call-approvals)).
 - **Off**: its tools are not offered, and a call is refused.
 
-Reading is allowed by default and changes ask: Save papers, Rename pages,
-Move pages, Restore deleted pages, Delete pages, Organize folders and
-labels, Delete folders and labels and Edit note blocks start at Ask. The
+Reading is allowed by default and changes ask: Save papers, Create pages,
+Rename pages, Move pages, Restore deleted pages, Delete pages, Organize
+folders and labels, Delete folders and labels, Edit note blocks, Comments
+and highlights and Draw on pages start at Ask. The
 server gives a permission the request leaves out the same default, so a
 changing tool added later asks until the user allows it. **Use journal
 sign-ins** is part of fetching, not a call of its own, so it is only Allow
@@ -1568,9 +1569,9 @@ sit below its description. Each column offers four presets:
 
 Individual changes show **Custom**. The stored map is account-synced. Its
 localStorage JSON is `gamma-ai-agent-perms` = `{folder, pdf, notes}` →
-`{list, read, block_read, view, search, web_search, web_read,
-publisher_cookies, save, rename, move, restore, delete, organize,
-organize_delete, block_edit}` → `"allow"` / `"ask"` / `"off"`, and a pre-kind flat map is
+`{list, read, block_read, view, search, show, web_search, web_read,
+publisher_cookies, save, create, rename, move, restore, delete, organize,
+organize_delete, block_edit, comment, draw}` → `"allow"` / `"ask"` / `"off"`, and a pre-kind flat map is
 applied to every kind on read.
 A stored boolean is the older on / off value (`normalizePerm`): `false` is
 Off, and `true` is the permission's default. So a change that was on asks,
@@ -1586,25 +1587,31 @@ request's `permissions`.
 
 One permission per capability: List pages (`list_pages`, the folder tree
 `list_folders` and Recently deleted `list_deleted`), Read pages (`read_page`, the page and folder chats
-`read_chats`, and the citation records `cite`), Read note blocks, View pages
+`read_chats`, the citation records `cite`, the notes linking to a page
+`backlinks`, and `export`, a file for the user), Read note blocks, View pages
 and handwriting (`view` → `view_pdf_page`, a rendered page picture for a
 scan or a figure, `view_ink`, the user's handwriting, and `view_image`, the
 pictures a note embeds), Search library (`search_library` — notes, PDF text and text files; the stored key is
-still `search`), Search online (`web_search` → `search_papers`,
+still `search`), Show pages (`show` → `show_page`, which acts in the app), Search online (`web_search` → `search_papers`,
 `related_papers` and, when the account has a web engine for this chat,
 `search_web`), Fetch documents (`web_read` → `fetch_paper`, `fetch_url` and,
 with the helper switch on, `read_paper`; the web tools are
 read-only and described in [ai_tools.md](ai_tools.md), the web engine in its
 "search_web" section), Save papers (`save` → `save_paper`, in every chat
-kind), Rename pages, Move pages, Restore deleted pages (`restore` →
+kind), Create pages (`create` → `create_page`, folder chats only), Rename pages, Move pages, Restore deleted pages (`restore` →
 `restore_page`, folder chats only), Delete pages (`delete` →
 `delete_page`, to Recently deleted, folder chats only), Organize folders
 and labels (`organize` → `rename_folder`, `create_label`, `rename_label`,
 `label_page`, folder chats only), Delete folders and labels
 (`organize_delete` → `delete_folder`, `delete_label`, folder chats only),
-and Edit note blocks (one permission
+Edit note blocks (one permission
 for `edit_block`, `create_block`, `move_block`, `delete_block` and
-`clip_region`, which stores a picture for the notes). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
+`clip_region`, which stores a picture for the notes), Comments and
+highlights (`comment` → `comment`, `resolve`, `highlight`) and Draw on
+pages (`draw` → `draw`, `add_text_box`, `place_picture`, `add_sheet`). A
+tool that acts in the app (`show_page`, `export`) is offered only to a
+streamed chat whose client says it shows pages (`shows_pages`, sent by
+ChatDock; `available`, [ai_tools.md](ai_tools.md#show_page-both-scopes)). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
 includes the web permissions and the page viewer. **Use journal sign-ins**
 (`publisher_cookies`, default Allow) controls whether `fetch_paper` and
 `fetch_url` may use the caller's connected publisher cookies; the browser handoff for a blocked fetch

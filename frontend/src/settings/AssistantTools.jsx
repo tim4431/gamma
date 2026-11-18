@@ -2,8 +2,8 @@ import React from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { MenuSelect } from "../shared/ui/Menus";
 import { BanIcon, BookIcon, CheckIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FileTextIcon, FolderIcon,
-  FolderMinusIcon, FoldersIcon, GlobeIcon, HelpCircleIcon, HistoryIcon, ListIcon, MessageSquareIcon, OutlineIcon, PenIcon,
-  PencilIcon, SearchIcon, ShieldIcon, TrashIcon } from "../shared/ui/Icons";
+  FolderMinusIcon, FoldersIcon, GlobeIcon, HelpCircleIcon, HistoryIcon, ListIcon, LocateIcon, MessageSquareIcon, OutlineIcon,
+  PagesIcon, PenIcon, PencilIcon, SearchIcon, ShapesIcon, ShieldIcon, TrashIcon } from "../shared/ui/Icons";
 import { permGroup, permState, permStates, permissionPreset, presetPermissions, toolsForKind } from "../chat/chatSettings.js";
 
 // One catalog for the comparison table, the current chat's quick settings
@@ -15,14 +15,16 @@ const GROUPS = [
 ];
 const PERMISSIONS = [
   ["list", ListIcon, t("List pages"), t("Browse page titles, folders, metadata and Recently deleted")],
-  ["read", BookIcon, t("Read pages"), t("Read PDF text, highlights, notes and citation records")],
+  ["read", BookIcon, t("Read pages"), t("Read PDF text, highlights, notes and citation records, and export them on request")],
   ["block_read", OutlineIcon, t("Read note blocks"), t("Read individual notes and their outline")],
   ["view", EyeIcon, t("View pages and handwriting"), t("Look at figures, tables, scanned pages and your handwriting")],
   ["search", SearchIcon, t("Search library"), t("Find text in your notes and PDFs")],
+  ["show", LocateIcon, t("Show pages"), t("Open a page for you at a PDF page, a passage or a note")],
   ["web_search", GlobeIcon, t("Search online"), t("Search the web and Crossref, arXiv and OpenAlex, and follow papers' citations")],
   ["web_read", CloudDownloadIcon, t("Fetch documents"), t("Read a web page, DOI or URL without saving it to your library")],
   ["publisher_cookies", ShieldIcon, t("Use journal sign-ins"), t("Use connected publisher cookies when fetching documents")],
   ["save", FilePlusIcon, t("Save papers"), t("Add papers found online to your library on request")],
+  ["create", PagesIcon, t("Create pages"), t("Make new pages of notes on request. You can revert it from the reply.")],
   ["rename", PenIcon, t("Rename pages"), t("Change page titles on request")],
   ["move", FolderIcon, t("Move pages"), t("Organize pages into folders")],
   ["restore", HistoryIcon, t("Restore deleted pages"), t("Bring pages back from Recently deleted on request")],
@@ -30,7 +32,8 @@ const PERMISSIONS = [
   ["organize", FoldersIcon, t("Organize folders and labels"), t("Rename folders, and make, rename and apply labels, on request")],
   ["organize_delete", FolderMinusIcon, t("Delete folders and labels"), t("Delete a folder or a label on request, never its pages. You can revert it from the reply.")],
   ["block_edit", PencilIcon, t("Edit note blocks"), t("Create, edit and move notes, and transcribe handwriting, on request")],
-  ["comment", MessageSquareIcon, t("Comments and highlights"), t("Comment on passages, reply in and resolve comment threads, and highlight passages, under its own name")],
+  ["comment", MessageSquareIcon, t("Comments and highlights"), t("Comment on passages, reply in and resolve comment threads, and highlight passages and areas, under its own name")],
+  ["draw", ShapesIcon, t("Draw on pages"), t("Draw shapes, add text boxes, pictures and pages of paper on a page, on request. You can revert it from the reply.")],
 ];
 export const permissionLabel = (key) => PERMISSIONS.find((row) => row[0] === key)?.[2] || key;
 export const permissionIcon = (key) => PERMISSIONS.find((row) => row[0] === key)?.[1] || ShieldIcon;

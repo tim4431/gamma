@@ -167,3 +167,17 @@ test("an edit outside a reply is shown and saved against the version read", asyn
   assert.equal(session.isSaved("page"), true);
   assert.equal(session.version("page"), "v2");
 });
+
+test("a page the agent made reverts as kind made, and a drawing as a new block with its properties", () => {
+  const page = { kind: "create", tool: "create_page", summary: "Made the page “P”", page_id: "p", block_id: "p",
+    title: "P", revert: { made: "p" } };
+  assert.equal(canRevert(page), true);
+  assert.equal(revertKind(page), "made");
+  assert.equal(canRedo({ ...page, reverted: true }), true);  // no parent to name: it goes back where it was
+  assert.equal(canRevert({ ...page, revert: { made: "q" } }), false);
+  const drawn = { kind: "create", tool: "draw", summary: "Drew a line on “N”", page_id: "n", block_id: "b",
+    title: "N", revert: { after: "", parent: "n", position: "a0", props: { ink_url: "/api/uploads/x.ink" } } };
+  assert.equal(canRevert(drawn), true);
+  assert.equal(revertKind(drawn), "create");
+  assert.equal(canRedo({ ...drawn, reverted: true }), true);
+});
