@@ -429,8 +429,8 @@ def remove_link(ws: str) -> None:
     """Forget the link: the workspace stays as an ordinary one, its pages
     and Zotero's items as they are; what the link kept in the workspace's
     pages.db (its objects, queue and state, the sync log and conflicts) goes,
-    and so do the marks it left on pages and blocks (``zotero_pdf``,
-    ``zotero_readonly``, ``zotero_author``), on the pages in Recently
+    and so do the marks it left on pages and blocks
+    (``zotero_local.LINK_MARKS``), on the pages in Recently
     deleted too, so a page brought back later takes a PDF like any other.
     The marks go in one statement, in the transaction that empties the
     link's tables: each live page that lost one is logged as a reload
@@ -453,9 +453,9 @@ def remove_link(ws: str) -> None:
             conn.execute("DELETE FROM sync_log")
             live = [page for (page,) in conn.execute(
                 f"SELECT id FROM unified_blocks WHERE parent_id = 'root' AND id IN (SELECT CASE WHEN page_id = '' "
-                f"THEN id ELSE page_id END FROM unified_blocks WHERE {_MARKED})")]
-            conn.execute(f"UPDATE unified_blocks SET properties = json_remove(properties, '$.zotero_pdf', "
-                         f"'$.zotero_readonly', '$.zotero_author') WHERE {_MARKED}")
+                f"THEN id ELSE page_id END FROM unified_blocks WHERE {zotero_local.SQL_LINK_MARKED})")]
+            conn.execute(f"UPDATE unified_blocks SET properties = {zotero_local.SQL_UNMARKED} "
+                         f"WHERE {zotero_local.SQL_LINK_MARKED}")
             for page in live:
                 ops.log_reload(conn, page, zotero_local.ACTOR, client=zotero_local.CLIENT)
             conn.commit()
@@ -465,10 +465,6 @@ def remove_link(ws: str) -> None:
         collab.publish_reload(ws, page)
     if live:
         ops.notify_commit(ws, zotero_local.CLIENT)
-
-
-_MARKED = ("json_extract(properties, '$.zotero_pdf') IS NOT NULL "
-           "OR json_extract(properties, '$.zotero_readonly') IS NOT NULL")
 
 
 def fetch_page(ws: str, page_id: str) -> bool:

@@ -127,7 +127,7 @@ def _rows(ws, page_id) -> list:
 
 def _opened_files(ws) -> str:
     with connect_pages_db(ws) as conn:
-        return linked_files._opened_files(conn)
+        return linked_files.opened_files_page(conn)
 
 
 def _inside(c, ws) -> list:

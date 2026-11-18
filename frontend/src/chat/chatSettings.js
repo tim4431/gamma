@@ -15,10 +15,12 @@ const CATALOG = [
   ["block_read", "library"],
   ["view", "library"],
   ["search", "library"],
+  ["show", "library"],
   ["web_search", "web"],
   ["web_read", "web"],
   ["publisher_cookies", "web"],
   ["save", "edit"],
+  ["create", "edit", true],
   ["rename", "edit", true],
   ["move", "edit", true],
   ["restore", "edit", true],
@@ -27,6 +29,7 @@ const CATALOG = [
   ["organize_delete", "edit", true],
   ["block_edit", "edit"],
   ["comment", "edit"],
+  ["draw", "edit"],
 ];
 export const PERMISSION_KEYS = CATALOG.map(([key]) => key);
 const GROUP = Object.fromEntries(CATALOG.map(([key, group]) => [key, group]));
@@ -53,8 +56,8 @@ export function normalizePerm(key, value) {
 export const permState = (perms, key) => normalizePerm(key, perms?.[key]);
 
 // The permissions a chat kind has: the folder chat all of them, a page chat
-// all but listing pages, renaming, moving, restoring or deleting them, and
-// organizing folders and labels.
+// all but listing pages, making, renaming, moving, restoring or deleting
+// them, and organizing folders and labels.
 export const toolsForKind = (kind) => CATALOG
   .filter(([, , folderOnly]) => kind === "folder" || !folderOnly).map(([key]) => key);
 

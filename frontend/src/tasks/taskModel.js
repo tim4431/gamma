@@ -115,3 +115,14 @@ export function elapsed(task, now = Date.now()) {
   const since = time(task.started_at || task.created_at);
   return since ? now - since : 0;
 }
+
+// How long work that got `done` of `total` (bytes, files) since `since`
+// (ms) still takes at the rate it has kept, in ms; undefined until it has
+// run ETA_AFTER_MS and moved, or once it is through. An average over the
+// whole run, so one slow file does not swing it.
+export const ETA_AFTER_MS = 3000;
+export function remainingMs(done, total, since, now = Date.now()) {
+  const ran = now - since;
+  if (!(total > 0) || !(done > 0) || done >= total || ran < ETA_AFTER_MS) return undefined;
+  return ((total - done) * ran) / done;
+}

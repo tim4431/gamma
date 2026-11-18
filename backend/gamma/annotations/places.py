@@ -6,6 +6,10 @@ in the page's document as it is now.
   text (``highlight_relocate.place_quote``: that page and the ones either
   side, folded as a relocation reads a file) and drawn over the glyphs it
   covers. It is stored as the file spells it.
+- **An area of a PDF page**: a ``box`` (``[x0, y0, x1, y1]``, fractions of
+  the page as shown, top-left origin) with its 1-based PDF page, the
+  rectangle a person's Ctrl+drag makes: an area highlight, no quote
+  (``pdf_position.area``), in the page's own frame (``pdf_text.page_sizes``).
 - **A range of lines of a text file**: its first and last line (1-based,
   as ``read_page`` numbers them), with the quote of those lines found near
   them (``documents/text_anchors.find_range``, folded as a range's run
@@ -28,8 +32,9 @@ person's selection gives one (``Place.props``); the caller writes it.
 
 from typing import NamedTuple
 
-from .. import highlight_relocate, highlights
+from .. import highlight_relocate, highlights, pdf_text
 from ..ai_context import pdf_path
+from ..ai_pictures import parse_box
 from ..blocks_store import load_props
 from ..documents import text as doctext
 from ..documents.model import file_hash, page_document
@@ -45,16 +50,19 @@ class Place(NamedTuple):
     """A place found: ``block_id`` the block a thread goes on ("" for a
     passage or a range, which a new highlight gives); ``props`` that
     highlight's properties (``{quote, pdf_position}`` or ``{quote,
-    text_position}``), ``{}`` for a block; ``kind`` ``passage``, ``lines``,
-    ``note`` or ``file``; ``page`` a passage's PDF page, ``lines`` a range's
-    ``(first, last)``; ``words`` how an answer names it ("page 3, “the
-    loss…”", "lines 4–6", "a note", "the whole file")."""
+    text_position}``), ``{}`` for a block; ``kind`` ``passage``, ``area``,
+    ``lines``, ``note`` or ``file``; ``page`` a passage's or an area's PDF
+    page, ``lines`` a range's ``(first, last)``, ``box`` an area's
+    rectangle as page fractions; ``words`` how an answer names it ("page
+    3, “the loss…”", "an area of page 2", "lines 4–6", "a note", "the whole
+    file")."""
     block_id: str
     props: dict
     kind: str
     words: str
     page: int = 0
     lines: tuple = ()
+    box: tuple = ()
 
 
 def _int(args: dict, key: str) -> int | None:
@@ -85,9 +93,10 @@ def _said(text: str) -> str:
 def find(conn, ws: str, page_id: str, args: dict, *, mark: bool = False) -> Place:
     """The place ``args`` names on the page ``page_id`` (a page of the
     library, its row read from ``conn``): ``quote`` with ``pdf_page`` on a
-    PDF, ``line`` (and ``end_line``, and a ``quote`` of those lines) in a
-    text file, ``block_id`` a note of the page, or none of them for the page
-    itself. ``mark``: for a highlight, which needs a passage or a range.
+    PDF, a ``box`` with ``pdf_page`` (an area of it), ``line`` (and
+    ``end_line``, and a ``quote`` of those lines) in a text file,
+    ``block_id`` a note of the page, or none of them for the page itself.
+    ``mark``: for a highlight, which needs a passage, an area or a range.
     ValueError with what to send instead, or with the closest passage for a
     quote found nowhere."""
     row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
@@ -96,7 +105,7 @@ def find(conn, ws: str, page_id: str, args: dict, *, mark: bool = False) -> Plac
     block_id = args.get("block_id") if isinstance(args.get("block_id"), str) else ""
     if block_id and block_id != page_id:
         if mark:
-            raise ValueError("a highlight marks a passage: give its quote with pdf_page, or a text file's line")
+            raise ValueError(_MARKS)
         on = conn.execute("SELECT page_id FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
         if not on or on[0] != page_id:
             raise ValueError("that block is not a note of this page: read_block lists its notes")
@@ -107,6 +116,17 @@ def find(conn, ws: str, page_id: str, args: dict, *, mark: bool = False) -> Plac
                              + ("give the PDF passage's quote and pdf_page" if view and view["format"] == "pdf"
                                 else "comment on the page or a note"))
         return _lines(ws, view, line, _int(args, "end_line") or line, quote)
+    if args.get("box") is not None:
+        if not view or view["format"] != "pdf":
+            raise ValueError("a box marks an area of a PDF page, and this page has none")
+        if quote:
+            raise ValueError("an area is a box alone: give the box and its pdf_page, or a passage's quote, not both")
+        box = parse_box(args.get("box"))
+        if box is None:
+            raise ValueError("box is [x0, y0, x1, y1] as fractions of the page (top-left origin), x0 < x1, y0 < y1")
+        if pdf_page is None:
+            raise ValueError("an area needs its pdf_page (1-based)")
+        return _area(ws, view, box, pdf_page)
     if quote or pdf_page is not None:
         if not view or view["format"] != "pdf":
             raise ValueError("quote and pdf_page name a passage of a PDF, and this page has none"
@@ -116,20 +136,49 @@ def find(conn, ws: str, page_id: str, args: dict, *, mark: bool = False) -> Plac
             raise ValueError("a PDF passage needs both its quote (verbatim) and its pdf_page (1-based)")
         return _passage(ws, view, quote, pdf_page)
     if mark:
-        raise ValueError("a highlight marks a passage: give its quote with pdf_page, or a text file's line")
+        raise ValueError(_MARKS)
     return Place(page_id, {}, "file", "the whole file" if view else "the page")
 
 
-def _passage(ws: str, view: dict, quote: str, pdf_page: int) -> Place:
+_MARKS = "a highlight marks a passage: give its quote with pdf_page, a box with pdf_page, or a text file's line"
+
+
+def _area(ws: str, view: dict, box: tuple, pdf_page: int) -> Place:
     path = pdf_path(ws, file_hash(view))
     if path is None:
-        raise ValueError("this page's PDF is not stored on the server, so no passage of it can be found")
+        raise ValueError("this page's PDF is not stored on the server, so no area of it can be marked")
+    sizes = pdf_text.page_sizes(path)
+    if not sizes:
+        raise ValueError("this page's PDF cannot be read, so no area of it can be marked")
+    if not 1 <= pdf_page <= len(sizes):
+        raise ValueError(f"the PDF has {len(sizes)} pages")
+    w, h = sizes[pdf_page - 1]
+    rect = (round(box[0] * w, 2), round(box[1] * h, 2), round(box[2] * w, 2), round(box[3] * h, 2))
+    position = highlights.position(pdf_page, round(w, 2), round(h, 2), [rect], area=True)
+    return Place("", {"quote": "", "pdf_position": position}, "area", f"an area of page {pdf_page}", page=pdf_page,
+                 box=box)
+
+
+def passage_at(path, quote: str, pdf_page: int) -> tuple[dict, str]:
+    """``(pdf_position, spelled)`` of ``quote`` in the PDF at ``path``, on
+    PDF page ``pdf_page`` or beside it (the position names the page it is
+    on), as the file spells it. ValueError naming the closest passage when
+    it is found nowhere. A passage's place here, and what the chat's
+    drawing tools anchor to (gamma/ai_draw.py)."""
     position, spelled, confidence = highlight_relocate.place_quote(path, quote, pdf_page)
     if position is None:
         near = (f"; the closest passage reads {_said(spelled)} ({round(confidence * 100)}% alike)" if spelled
                 else "")
         raise ValueError(f"that quote is not on PDF page {pdf_page} or beside it{near}. Quote the page as read_page "
                          "gives its text, or look at it with view_pdf_page")
+    return position, spelled
+
+
+def _passage(ws: str, view: dict, quote: str, pdf_page: int) -> Place:
+    path = pdf_path(ws, file_hash(view))
+    if path is None:
+        raise ValueError("this page's PDF is not stored on the server, so no passage of it can be found")
+    position, spelled = passage_at(path, quote, pdf_page)
     page = position["pageNumber"]
     words = f"page {page}, {_said(spelled)}"
     return Place("", {"quote": spelled, "pdf_position": position}, "passage", words, page=page)

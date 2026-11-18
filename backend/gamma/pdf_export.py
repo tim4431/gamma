@@ -136,6 +136,14 @@ def display_size(crop, rotation):
     return (ch, cw) if rotation in (90, 270) else (cw, ch)
 
 
+def to_display(view, rotation: int):
+    """The inverse of pdf_notes ``_frame``: a user-space point → the display
+    frame, in points (``pdf_point_to_viewer`` scaled by the page as shown):
+    the frame the viewer stores positions in (pdf_notes, pdf_free_space)."""
+    w, h = display_size(view, rotation)
+    return lambda x, y: tuple(c * s for c, s in zip(pdf_point_to_viewer(x, y, rotation, view), (w, h)))
+
+
 def viewer_rect_to_pdf(rect, size, rotation, crop):
     """One stored viewer rect, in a frame of ``size`` (the position's
     width, height), → (x1, y1, x2, y2) in PDF user space."""

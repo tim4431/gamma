@@ -10,18 +10,18 @@ import React from "react";
 import { Empty } from "../settings/SettingsKit";
 import ListMotion from "../shared/ui/ListMotion";
 import {
-  ActivityIcon, AlertCircleIcon, CheckIcon, ClockIcon, CloudDownloadIcon, DatabaseIcon, DownloadIcon,
+  ActivityIcon, AlertCircleIcon, CheckIcon, ClockIcon, CloudDownloadIcon, CopyIcon, DatabaseIcon, DownloadIcon,
   ExportIcon, FileIcon, HardDriveIcon, ImportIcon, RefreshIcon, SearchIcon, SparklesIcon, StopIcon,
   ShieldIcon, TerminalIcon, Trash2Icon, UploadIcon, XIcon,
 } from "../shared/ui/Icons";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { isActive, progressFraction, waitsForYou } from "./taskModel.js";
+import { elapsed, fmtElapsed, isActive, progressFraction, waitsForYou } from "./taskModel.js";
 import { canOpen, kindOf, progressText, taskActions, taskInfo, taskTime, taskTitle } from "./taskKinds.js";
 import "./tasks.css";
 import { Popover } from "../shared/ui/Surfaces";
 
 const ICONS = {
-  activity: ActivityIcon, cloudDownload: CloudDownloadIcon, database: DatabaseIcon, download: DownloadIcon,
+  activity: ActivityIcon, cloudDownload: CloudDownloadIcon, copy: CopyIcon, database: DatabaseIcon, download: DownloadIcon,
   export: ExportIcon, file: FileIcon, hardDrive: HardDriveIcon, import: ImportIcon, search: SearchIcon,
   sparkles: SparklesIcon, terminal: TerminalIcon, trash: Trash2Icon, upload: UploadIcon,
 };
@@ -189,15 +189,17 @@ export function TasksPanel({ tasks, onOpen, onRetry }) {
 }
 
 // A job's progress as a dialog shows it: the bar, what it is doing, how
-// long it has run.
+// long it has run. A row of this tab's (a folder upload) says what its
+// own line says.
 export function TaskProgress({ task, label }) {
   const now = useNow(task?.state === "running");
   if (!task) return null;
-  const when = taskTime(task, now);
+  const when = task.local ? (task.state === "running" ? fmtElapsed(elapsed(task, now)) : "") : taskTime(task, now);
+  const text = task.state === "queued" ? t("Waiting for its turn…") : task.local ? task.info : progressText(task);
   return (
     <div className="taskProgress" role="status">
       <div className="taskProgressLine">
-        <strong>{task.state === "queued" ? t("Waiting for its turn…") : progressText(task)}</strong>
+        <strong>{text}</strong>
         {when ? <span>{when}</span> : null}
       </div>
       <TaskBar task={task} label={label} />

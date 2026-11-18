@@ -136,7 +136,8 @@ def test_codex_answers_a_turn(monkeypatch, work, log):
     assert sent[2]["params"] == {"cwd": str(work)}
     assert sent[3]["params"] == {"cwd": str(work), "sandbox": "workspace-write", "approvalPolicy": "never",
                                  "config": {"mcp_servers": {"fake_server": {"enabled": False}},
-                                            "features": {"apps": False}, "web_search": "disabled"}}
+                                            "features": {"apps": False, "plugins": False},
+                                            "web_search": "disabled"}}
     assert sent[4]["params"] == {
         "threadId": "019a0000-fake-thread",
         "input": [{"type": "text", "text": PROMPT}, {"type": "localImage", "path": str(work / "fig.png")}],
@@ -424,7 +425,7 @@ def test_codex_gets_gammas_server_beside_the_rule_that_starts_no_other(monkeypat
     assert started["config"] == {
         "mcp_servers": {"fake_server": {"enabled": False}, "gamma_turn": {
             "enabled": True, "url": UNREACHED.url, "bearer_token_env_var": events.TOKEN_ENV}},
-        "features": {"apps": False}, "web_search": "disabled",
+        "features": {"apps": False, "plugins": False}, "web_search": "disabled",
         "shell_environment_policy": {"exclude": [events.TOKEN_ENV]}}
     # the token is in the app-server's environment, never in what it was sent or on its command line
     first = read_log(log)[0]

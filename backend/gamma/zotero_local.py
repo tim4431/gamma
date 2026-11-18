@@ -72,6 +72,18 @@ CLIENT = ZOTERO_CLIENT
 META_ORDER = ("title", "authors", "year", "venue", "volume", "pages", "doi", "arxiv_id", "publisher", "isbn",
               "source", "kind")
 
+# What the link writes on the pages and blocks it keeps, about them rather
+# than in them: a page's PDF in Zotero (``zotero_pdf``, ``zotero_pdf_op``) and
+# a block Gamma will not write back (``zotero_readonly``, with another
+# member's ``zotero_author``, ``readonly_op``). They go with the link
+# (zotero_sync.remove_link), and a copy of a page never carries them: the
+# app's Duplicate, a copy into another workspace (gamma/workspace_copy.py),
+# where nothing would ever honour them. ``SQL_LINK_MARKED`` is a row that
+# carries one, ``SQL_UNMARKED`` its properties without them.
+LINK_MARKS = ("zotero_pdf", "zotero_readonly", "zotero_author")
+SQL_LINK_MARKED = " OR ".join(f"json_extract(properties, '$.{mark}') IS NOT NULL" for mark in LINK_MARKS)
+SQL_UNMARKED = "json_remove(properties, " + ", ".join(f"'$.{mark}'" for mark in LINK_MARKS) + ")"
+
 # A keyed note picture as the compared notes hold it: the placeholder's two ends
 # (private-use characters no note text holds) around the attachment key.
 _PIC_OPEN, _PIC_CLOSE = chr(0xE000), chr(0xE001)

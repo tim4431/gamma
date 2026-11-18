@@ -418,6 +418,20 @@ def assert_block_in_scope(conn, block_id: str, scope) -> None:
         raise HTTPException(status_code=403, detail="not accessible via this share link")
 
 
+def backlinks(conn, block_id: str, *, pages=None, limit: int = 50) -> list[tuple[str, str, str]]:
+    """The blocks that link to ``block_id`` (``[[block_id]]`` in their
+    text), newest first: ``(id, content, page_id)``, at most ``limit``, on
+    live pages only (one in Recently deleted links to nothing). ``pages``,
+    when given, keeps those on these pages, before the limit (the chat's
+    reach). The id is matched as written (``instr``): an id's ``_`` would be
+    a LIKE pattern's wildcard."""
+    reach = "" if pages is None else "AND page_id IN (SELECT value FROM json_each(?)) "
+    return [tuple(r) for r in conn.execute(
+        f"SELECT id, content, page_id FROM unified_blocks WHERE id != ? AND instr(content, ?) > 0 AND {IN_PAGE} "
+        f"{reach}ORDER BY updated_at DESC LIMIT ?",
+        (block_id, f"[[{block_id}]]", *(() if pages is None else (json.dumps(list(pages)),)), limit)).fetchall()]
+
+
 def ancestor_chains(conn, block_ids: list[str]):
     """Return {block_id: [{id, content}, ...]} ancestor chains (root-first, excluding 'root')
     and {block_id: page_root_id} for a set of blocks, in one recursive CTE."""

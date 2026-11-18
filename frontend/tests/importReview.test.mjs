@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { allItemIds, filterImportPages, selectItems, buildImportTree, rowItemIds, treeItemIds, treeSize, resultPages, importSummary,
-  firstRow, importLinks, orderLikeSource, pageKey, reviewRefused } from "../src/transfers/importReview.js";
+  firstRow, importLinks, onlyPage, orderLikeSource, pageKey, reviewRefused } from "../src/transfers/importReview.js";
 
 test("filters preserve hidden selections; folder selection deduplicates items in multiple locations", () => {
   const pages = [
@@ -234,4 +234,21 @@ test("a review's job that failed on the file is refused; one a restart or a bug 
   assert.equal(reviewRefused("not a Gamma export"), true);
   assert.equal(reviewRefused("interrupted: the server restarted while this ran — start it again"), false);
   assert.equal(reviewRefused("unexpected error (KeyError: 'pages')"), false);
+});
+
+test("the one page an import brought, to open: a page alone, a page with those inside it, never two side by side", () => {
+  const page = (id, fields = {}) => ({ id, title: id, kind: "page", created: true, action: "create", ...fields });
+  assert.equal(onlyPage({ pages: [page("note")] })?.id, "note", "one note");
+  assert.equal(onlyPage({ pages: [page("top"), page("sub", { parent: "top" }), page("deeper", { parent: "sub" })] })?.id, "top",
+    "a Notion page and the pages inside it");
+  assert.equal(onlyPage({ pages: [page("a"), page("b")] }), null, "two pages");
+  assert.equal(onlyPage({ pages: [page("sub", { parent: "already-there" })] })?.id, "sub", "inside a page the import did not bring");
+  assert.equal(onlyPage({ pages: [page("new"), page("old", { created: false, action: "skip" })] })?.id, "new",
+    "the new one among those already in the library");
+  assert.equal(onlyPage({ pages: [page("old", { created: false, action: "skip" })] })?.id, "old", "only one already there");
+  assert.equal(onlyPage({ pages: [page("p"), { id: "c1", title: "Library chat", kind: "chat", action: "create" }] })?.id, "p",
+    "a Gamma export's chat is no page");
+  assert.equal(onlyPage({ pages: [page("z", { created: false, action: undefined })] })?.id, "z", "a Zotero item merged");
+  assert.equal(onlyPage({ pages: [] }), null);
+  assert.equal(onlyPage({}), null);
 });

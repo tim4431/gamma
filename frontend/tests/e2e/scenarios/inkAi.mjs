@@ -19,7 +19,12 @@
 // title saying why. The AI is stubbed: the routes
 // answer NDJSON as the server streams it (gamma/routers/ink_ai.py), whose
 // side is backend/tests/test_ink_ai.py; the client's pure parts are
-// tests/inkAi.test.mjs and tests/inkSvg.test.mjs.
+// tests/inkAi.test.mjs and tests/inkSvg.test.mjs. Asked in a PDF's chat,
+// Gamma AI draws a box around a passage once allowed (the chat's draw,
+// gamma/ai_draw.py, through a stand-in model the server calls): the card
+// names the passage, the group shows on the page as it lands, show_page
+// moves the PDF to the page it names, and the change's row reverts it.
+import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { assertMenuFrom, assertMenuRoles, fakeAiModels, live } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
@@ -350,4 +355,105 @@ export async function inkAiScenarios({ server, browser, alice, bob, makePdf, ste
       assertNoProblems(page);
     } finally { await small.close(); }
   });
+
+  await step("ink ai: asked in the chat, Gamma AI boxes a passage once allowed; the box shows as it lands, show_page moves the PDF, and the change's row takes it back", async () => {
+    const up = await alice.upload("/api/uploads", makePdf([["Drawn by the agent", "a passage to box"], ["The second page"]]),
+      "drawn.pdf", "application/pdf");
+    const drawnId = (await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
+      body: { default_title: "Drawn paper", source_url: up.source_url } })).id;
+    const model = await drawingModel(drawnId);
+    const provider = (await alice.api("/api/ai/providers", { method: "POST", body: {
+      protocol: "openai", name: "Stand-in model", api_key: "e2e-draw-only", base_url: model.base, models: "draw-model" } }))
+      .providers.find((p) => p.base_url === model.base);
+    const drawCtx = await alice.context(browser);
+    try {
+      await drawCtx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const P = await openPage(drawCtx, `${server.base}/?ws=${alice.ws}&page=${drawnId}`);
+      await waitForPdf(P, 1);
+      const dock = P.locator(".dockWindow:has(.chatPanel)");
+      if (!(await dock.count())) {
+        await P.getByRole("button", { name: "View", exact: true }).click();
+        await P.locator(".menuPopover .ctxMenuItem", { hasText: "AI Chat" }).click();
+        await P.keyboard.press("Escape");
+      }
+      const strokes = () => P.locator('.pdfViewer [data-page="1"] .inkLayer path').count();
+      const secondTop = () => P.locator('.pdfViewer [data-page="2"]').evaluate((el) => {
+        const view = el.closest(".pdfViewer").getBoundingClientRect();
+        return el.getBoundingClientRect().top - view.top;
+      });
+      const before = await secondTop();
+      assertEq(await strokes(), 0, "no handwriting yet");
+      const input = dock.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await input.fill("Box the passage on the first page, then take me to page 2.");
+      await input.press("Enter");
+      // Draw on pages asks first: the card names the page, the passage and the shape
+      const card = dock.locator(".chatApproval");
+      await card.waitFor({ timeout: 15000 });
+      await card.getByText("Draw on page 1 of “Drawn paper”").waitFor();
+      await card.getByText("Page 1: “a passage to box”").waitFor();
+      await card.getByText("a rectangle around “a passage to box”").waitFor();
+      await card.getByRole("button", { name: "Allow once", exact: true }).click();
+      await dock.locator(".chatBubble.ai", { hasText: "I boxed the passage." }).waitFor({ timeout: 15000 });
+      assert(model.results[0]?.startsWith("ok — drew a rectangle around “a passage to box” on PDF page 1"),
+        `the drawing's answer reached the model: ${JSON.stringify(model.results)}`);
+      // the box lands on the page while the reply runs on, and show_page took the PDF to page 2
+      await until(async () => (await strokes()) === 1, { what: "the agent's box on page 1" });
+      await until(async () => (await secondTop()) < before - 200, { what: "the PDF moved to page 2" });
+      // the change's row reverts it, and the box goes from the page
+      const row = dock.locator(".chatChange", { hasText: "Drew on" });
+      await row.getByRole("button", { name: "Revert this change" }).click();
+      await row.locator(".chatChangeTag", { hasText: "Reverted" }).waitFor();
+      await until(async () => (await strokes()) === 0, { what: "the box taken back" });
+      assertNoProblems(P);
+    } finally {
+      await drawCtx.close();
+      await alice.api(`/api/ai/providers/${provider.id}`, { method: "DELETE" });
+      await model.close();
+    }
+  });
+}
+
+// A chat model's API as the server reaches it (the OpenAI wire, streamed),
+// as comments.mjs's: the tool check answered with its check tool; a turn
+// calls `draw` around the page's passage, then `show_page` on its second
+// page, then says a line. `results` holds each tool answer sent back.
+function drawingModel(pageId) {
+  const results = [];
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (chunk) => { raw += chunk; });
+    req.on("end", () => {
+      if (req.method !== "POST") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ data: [{ id: "draw-model" }] }));
+      }
+      const body = JSON.parse(raw || "{}");
+      const tools = new Set((body.tools || []).map((tool) => tool.function?.name));
+      const answered = (body.messages || []).filter((m) => m.role === "tool");
+      const chunk = (delta, finish = null) => `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}
+
+`;
+      const call = (name, args) => chunk({ tool_calls: [{ index: 0, id: `call-${name}-${answered.length}`, type: "function",
+        function: { name, arguments: JSON.stringify(args) } }] }) + chunk({}, "tool_calls");
+      if (answered.length) results[answered.length - 1] = String(answered.at(-1).content);
+      let said;
+      if (tools.has("report_ok")) said = call("report_ok", { status: "ok" });
+      else if (!answered.length && tools.has("draw")) {
+        said = call("draw", { page_id: pageId, pdf_page: 1, shapes: [{ kind: "rect", around: "a passage to box" }] });
+      } else if (answered.length === 1 && tools.has("show_page")) said = call("show_page", { page_id: pageId, pdf_page: 2 });
+      else said = chunk({ content: "I boxed the passage." }) + chunk({}, "stop");
+      if (!body.stream) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: "Drawn" }, finish_reason: "stop" }] }));
+      }
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.end(`${said}data: [DONE]
+
+`);
+    });
+  });
+  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({
+    results, base: `http://127.0.0.1:${server.address().port}`, close: () => new Promise((done) => server.close(done)),
+  })));
 }

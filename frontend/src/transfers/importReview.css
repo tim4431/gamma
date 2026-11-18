@@ -61,3 +61,10 @@
   .importReviewColumns { grid-template-columns: minmax(0, 1fr); }
   .importTreeScroll { height: 220px; }
 }
+/* The upload dialog (UploadDialog.jsx) borrows the review's header, lists
+   and footer in a narrower box. */
+.reportModal.uploadModal { width: min(600px, calc(100vw - 32px)); max-width: 600px; max-height: calc(100dvh - 48px); }
+.uploadModal .settingsDialogContent { min-height: 0; overflow-y: auto; }
+.uploadNow { margin: 0 0 8px; color: var(--text-muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.uploadModal .importReviewHeader > .importFileSize:first-child { margin-left: 0; } /* loose files: no folder name before it */
+.uploadSummary { margin: 4px 0 12px; font-size: var(--fs-sm); font-weight: 600; }

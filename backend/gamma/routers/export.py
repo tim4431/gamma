@@ -35,9 +35,9 @@ from .. import (comments, goodnotes_export, jobs, notability_export, notebook, n
 from ..auth import (link_ratelimit, require_user, require_ws, resolve_ws, share_job_owner, share_lookup,
                     share_scope)
 from ..blocks_store import (
-    BLOCK_COLUMNS, FOLDERS, LABELS, PATH_SEP, TREES, assert_block_in_scope, block_to_dict,
-    existing_in, fetch_subtree, filing, folder_path, folder_subtree_ids, load_props, page_root_id, pages_in_folder,
-    sub_pages as pages_right_inside, tree_parents, tree_rows, with_sub_pages)
+    BLOCK_COLUMNS, FOLDERS, LABELS, PARENT_PAGE, PATH_SEP, TREES, assert_block_in_scope, block_to_dict,
+    existing_in, fetch_subtree, filed_folders, filing, folder_path, folder_subtree_ids, load_props, page_parents,
+    page_root_id, pages_in_folder, sub_pages as pages_right_inside, tree_parents, tree_rows, with_sub_pages)
 from ..documents.model import SQL_IN_PLACE, is_pdf, page_document, pdf_file_hash, stored_name
 from ..db import connect_pages_db
 from ..annotations.kept import held_files
@@ -87,6 +87,7 @@ from ..zotero_export import (
     standalone_note_html,
     strip_image_md,
 )
+from ..zotero_local import SQL_LINK_MARKED, SQL_UNMARKED
 from .imports import ATTACHMENTS_PROP
 
 router = APIRouter(prefix="/api", tags=["export"])
@@ -1463,18 +1464,46 @@ def page_gamma_zip(ws: str, page_id: str, dest, props: dict) -> None:
     the page leaves would be made, empty. Raises HTTPException like the
     routes."""
     builder = page_builder(ws, page_id, "gamma", _export_opts(), sub_pages=True)
-    row = builder.db.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-    patched = json.loads(row[0] or "{}")
-    for key, value in props.items():
-        if value is None:
-            patched.pop(key, None)
-        else:
-            patched[key] = value
-    builder.db.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps(patched), page_id))
+    _patch_pages(builder, {page_id: props})
+    builder.save(dest)
+
+
+def pages_gamma_zip(ws: str, page_ids: list[str], dest, progress=jobs.no_progress) -> list[str]:
+    """The pages ``page_ids`` (each followed by the pages inside it already,
+    ``with_sub_pages``) as a Gamma export at ``dest``: what another
+    workspace of this server merges in to hold a copy of them
+    (gamma/workspace_copy.py). A page whose parent page stays behind comes
+    filed in its top's folders, as it is listed here, and no block carries
+    what a Zotero link wrote on it here (``zotero_local.LINK_MARKS``: the
+    copy is a page of its own, as the app's Duplicate makes one). Returns
+    the stored files it holds. Raises HTTPException like the routes."""
+    with connect_pages_db(ws) as conn:
+        builder = _run_export(conn, ws, "gamma", page_ids, "copy", _export_opts(), progress)
+        parents, taken = page_parents(conn), set(builder.page_ids)
+        alone = {pid: {PARENT_PAGE: None, FOLDERS: filed_folders(conn, pid) or None}
+                 for pid in builder.page_ids if parents.get(pid, pid) not in taken}
+    _patch_pages(builder, alone)
+    builder.db.execute(f"UPDATE unified_blocks SET properties = {SQL_UNMARKED} WHERE {SQL_LINK_MARKED}")
+    builder.save(dest, progress)
+    return sorted(builder.upload_names)
+
+
+def _patch_pages(builder: "_GammaBuilder", patches: dict[str, dict]) -> None:
+    """Patch the properties of pages in a Gamma export's database (a None
+    value drops the key), then make the folders and labels it carries those
+    its pages are filed in once patched."""
+    for page_id, props in patches.items():
+        row = builder.db.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+        patched = json.loads(row[0] or "{}")
+        for key, value in props.items():
+            if value is None:
+                patched.pop(key, None)
+            else:
+                patched[key] = value
+        builder.db.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps(patched), page_id))
     builder.filed = {block_id for (raw,) in builder.db.execute(
         "SELECT properties FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(builder.page_ids),))
         for tree in TREES for block_id in filing(json.loads(raw or "{}"), tree)}
-    builder.save(dest)
 
 
 def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, comments=False, notes_at="beside",
@@ -1951,6 +1980,22 @@ def start_export_job(payload: ExportJob, request: Request):
         if not translations:
             translations = _kept_translations(request, ws, "" if folder else page_id, folder, payload.translation_of)
         _translation_bounds(list(translations.values()))
+    return start_export(ws, owner=owner, user=user, payload=payload, scope=scope, token=token,
+                        translations=translations)
+
+
+def start_export(ws: str, *, owner: str, user: str, payload: ExportJob, scope=None, token: str = "",
+                 translations: dict | None = None) -> dict:
+    """The export job ``payload`` asks for, started for ``owner`` (``user``
+    the name its notes are written by): the page or the folder checked now
+    and read again when the job runs, held to a share's ``scope`` (and its
+    ``token``) when one starts it. ``translations`` are the page's or the
+    folder's papers' translated views, checked by the caller. The job as
+    ``jobs.start`` answers it. What ``POST /api/jobs/export`` and the chat's
+    ``export`` tool (gamma/ai_tools.py) start; a known ``mode`` is the
+    caller's to check."""
+    translations = translations or {}
+    mode, folder, page_id = payload.mode, payload.folder, payload.page_id
     with connect_pages_db(ws) as conn:
         if folder:
             path = _export_folder(conn, folder, scope)

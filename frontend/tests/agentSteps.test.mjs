@@ -267,3 +267,27 @@ test("a chip says which copy was read, how it came and how long it took", () => 
   assert.equal(chipNote({ ms: 120 }), "");
   assert.equal(chipNote(null), "");
 });
+
+test("what the agent draws or places on a page is a note change; a page it makes is a library one", () => {
+  const placed = ["draw", "add_text_box", "place_picture", "add_sheet"].map((tool) => (
+    { kind: "create", tool, summary: "Drew a line on “N”", page_id: "n", block_id: "b", title: "N",
+      revert: { after: "", parent: "n", position: "a0", props: {} } }));
+  for (const a of placed) {
+    assert.equal(isChange(a), true, a.tool);
+    assert.equal(changePlace(a), "notes", a.tool);
+  }
+  assert.deepEqual(placed.map((a) => noteChangeText(a, "N")),
+    ["Drew on N", "Added a text box to N", "Placed a picture on N", "Added a page of paper to N"]);
+  assert.equal(noteChangeText({ kind: "highlight", tool: "highlight", area: true }, "N"), "Highlighted an area in N");
+  const page = { kind: "create", tool: "create_page", summary: "Made the page “P”", page_id: "p", block_id: "p",
+    title: "P", to: "readout", revert: { made: "p" } };
+  assert.equal(isChange(page), true);
+  assert.equal(changePlace(page), "library");
+  // showing a page and an export are steps, never changes
+  const shown = { kind: "show", tool: "show_page", summary: "Showed “N”", page_id: "n", show: { page_id: "n" } };
+  const exported = { kind: "export", tool: "export", summary: "Exported “N” as Markdown", job: { id: "j" } };
+  assert.equal(isChange(shown) || isChange(exported), false);
+  assert.equal(stepsSummary([shown, exported]), "2 steps · showed you a page, exported 1 file");
+  assert.equal(runningLabel({ tool: "draw", args: { page_id: "n", pdf_page: 3 } }), "Drawing on PDF page 3…");
+  assert.equal(runningLabel({ tool: "draw", args: { sheet_id: "s" } }), "Drawing on a page of paper…");
+});

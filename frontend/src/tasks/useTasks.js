@@ -21,12 +21,12 @@
 // `followed`), and nothing else. One the share no longer reaches (stopped,
 // changed, the job gone) ends there as failed (`afterFollow`).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fmtBytes, makeId } from "../shared/lib/utils";
+import { makeId } from "../shared/lib/utils";
 import { t } from "../shared/i18n/i18n.js";
 import { cancelJob, clearJobs, dismissJob, downloadJob, getJob, listJobs, startJob, stopAt, uploadJob } from "./tasksApi";
 import { addLocalRow, afterFollow, followed, isActive, isFinished, localRow, mergeTasks, newlyFinished, trayBadge }
   from "./taskModel.js";
-import { quietKinds, stopPath } from "./taskKinds.js";
+import { byteProgress, quietKinds, stopPath } from "./taskKinds.js";
 import { guideEvents } from "../guide/events.js";
 
 const FAST_MS = 1500;
@@ -202,16 +202,10 @@ export function useTasks({ enabled, onFinished, follow = false }) {
   const upload = useCallback(async (route, file, fields, { name = "", meta = {} } = {}) => {
     const ctl = new AbortController();
     const id = addLocal({ kind: "upload", name, info: t("uploading…"), cancel: () => ctl.abort() });
-    let lastPct = -1;
     try {
       const job = await uploadJob(route, file, fields, {
         signal: ctl.signal,
-        onProgress: (loaded, total) => {
-          const pct = Math.floor((loaded / total) * 100);
-          if (pct === lastPct) return; // one re-render per visible step
-          lastPct = pct;
-          updateLocal(id, { info: `${fmtBytes(loaded)} / ${fmtBytes(total)}`, fraction: loaded / total });
-        },
+        onProgress: byteProgress((patch) => updateLocal(id, patch)), // one re-render per visible step
         onProcessing: () => updateLocal(id, { info: t("starting…"), fraction: undefined }),
       });
       removeLocal(id);
