@@ -57,9 +57,16 @@ zero-token probe of ``thread/start`` counting
 nothing (it merges: 6 notifications); ``mcp_servers.<name>.enabled =
 false`` for every server ``config/read`` lists keeps the user's servers
 down but ChatGPT's apps server (``codex_apps``) still starts (2);
-``features.apps = false`` beside it leaves none (0). ``web_search =
-"disabled"`` is the documented switch of the search tool. A server that
-reports starting all the same fails the turn (``_dispatch``).
+``features.apps = false`` beside it leaves none (0). A plugin's servers
+(its ``.mcp.json``) are not in what ``config/read`` lists: with the Codex
+app's ``unified-computer-use@openai-bundled`` plugin enabled, ``cua_repl``
+still started (codex-cli 0.167.0). ``features.plugins = false`` leaves none
+(0), every plugin's skills and hooks off with it (Gamma's own ``gamma``
+plugin is a skill for the user's ``gamma`` server, off here anyway); naming
+the server alone (``mcp_servers.cua_repl.enabled = false``) is refused,
+"invalid transport". ``web_search = "disabled"`` is the documented switch
+of the search tool. A server that reports starting all the same fails the
+turn (``_dispatch``).
 
 A turn with ``gamma`` (Gamma's tools, gamma/local_agents/tools.py) adds
 one server to that config, ``mcp_servers.gamma_turn`` (``events.MCP_NAME``,
@@ -170,15 +177,16 @@ def _initialize(stream: bool = False) -> dict:
 def _quiet(config: dict, gamma_url: str = "") -> dict:
     """The thread's config override that starts no MCP server and no web
     search: every server the user's config names turned off, ChatGPT's apps
-    off, web search disabled; with ``gamma_url``, Gamma's server alone at
+    and every plugin (whose servers the config does not name) off, web
+    search disabled; with ``gamma_url``, Gamma's server alone at
     that address, its token read from ``events.TOKEN_ENV``, which the
     user's own excludes and that variable keep from every command the agent
     runs."""
     config = config if isinstance(config, dict) else {}
     servers = config.get("mcp_servers")
     names = list(servers) if isinstance(servers, dict) else []
-    out = {"mcp_servers": {name: {"enabled": False} for name in names}, "features": {"apps": False},
-           "web_search": "disabled"}
+    out = {"mcp_servers": {name: {"enabled": False} for name in names},
+           "features": {"apps": False, "plugins": False}, "web_search": "disabled"}
     if gamma_url:
         out["mcp_servers"][events.MCP_NAME] = {"enabled": True, "url": gamma_url,
                                                "bearer_token_env_var": events.TOKEN_ENV}
