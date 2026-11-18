@@ -305,8 +305,13 @@ function fragmentToMarkdown(node, ctx = {}) {
     case "IMG": return `![${el.getAttribute("alt") || ""}](${el.getAttribute("src") || ""})`;
     case "BR": return "\n";
     case "HR": return "\n\n---\n\n";
-    case "H1": case "H2": case "H3": case "H4": case "H5": case "H6":
-      return `\n\n${"#".repeat(Number(el.tagName[1]))} ${kids().trim()}\n\n`;
+    // A heading or a list item the selection only touches (a triple click
+    // ends it at the start of the next block) copies as nothing, not as a
+    // bare "## " or "- ".
+    case "H1": case "H2": case "H3": case "H4": case "H5": case "H6": {
+      const inner = kids().trim();
+      return inner ? `\n\n${"#".repeat(Number(el.tagName[1]))} ${inner}\n\n` : "";
+    }
     case "UL": case "OL": {
       const indent = "  ".repeat(ctx.listDepth || 0);
       const items = Array.from(el.children).filter((c) => c.tagName === "LI").map((li, i) => {
@@ -314,9 +319,9 @@ function fragmentToMarkdown(node, ctx = {}) {
         const inner = Array.from(li.childNodes)
           .map((n) => fragmentToMarkdown(n, { ...ctx, listDepth: (ctx.listDepth || 0) + 1 }))
           .join("").replace(/^\n+|\n+$/g, "");
-        return `${indent}${marker}${inner.replace(/\n+/g, "\n").replace(/\n/g, `\n${indent}  `)}`;
-      });
-      return `\n\n${items.join("\n")}\n\n`;
+        return inner.trim() ? `${indent}${marker}${inner.replace(/\n+/g, "\n").replace(/\n/g, `\n${indent}  `)}` : "";
+      }).filter(Boolean);
+      return items.length ? `\n\n${items.join("\n")}\n\n` : "";
     }
     case "BLOCKQUOTE":
       return `\n\n${kids().trim().split("\n").map((l) => `> ${l}`).join("\n")}\n\n`;
@@ -334,21 +339,31 @@ function fragmentToMarkdown(node, ctx = {}) {
   }
 }
 
+// A selection of rendered Markdown (`from`: a Selection, the document's by
+// default, or one Range) as a copy puts it on the clipboard: `md` its
+// Markdown source (text/plain), `html` the fragment without what is marked
+// data-markdown-copy-ignore (text/html). Both "" for an empty selection.
+export function selectionMarkdown(from = window.getSelection()) {
+  const ranges = !from ? [] : typeof from.cloneContents === "function" ? [from]
+    : from.isCollapsed ? [] : Array.from({ length: from.rangeCount }, (_, i) => from.getRangeAt(i));
+  if (!ranges.length || ranges.every((r) => r.collapsed)) return { md: "", html: "" };
+  const holder = document.createElement("div");
+  for (const range of ranges) holder.appendChild(range.cloneContents());
+  const md = Array.from(holder.childNodes).map((n) => fragmentToMarkdown(n))
+    .join("").replace(/\n{3,}/g, "\n\n").trim();
+  holder.querySelectorAll("[data-markdown-copy-ignore]").forEach((el) => el.remove());
+  return { md, html: holder.innerHTML };
+}
+
 function handleMarkdownCopy(e) {
   // A copy something inside already made stays: a synced block's editor puts
   // its source on the clipboard (and remembers it, editor/sourceCopy.js).
-  if (e.defaultPrevented) return;
-  const sel = window.getSelection();
-  if (!sel || sel.isCollapsed || !e.clipboardData) return;
-  const holder = document.createElement("div");
-  for (let i = 0; i < sel.rangeCount; i++) holder.appendChild(sel.getRangeAt(i).cloneContents());
-  const md = Array.from(holder.childNodes).map((n) => fragmentToMarkdown(n))
-    .join("").replace(/\n{3,}/g, "\n\n").trim();
+  if (e.defaultPrevented || !e.clipboardData) return;
+  const { md, html } = selectionMarkdown();
   if (!md) return;
   e.preventDefault();
   e.clipboardData.setData("text/plain", md);
-  holder.querySelectorAll("[data-markdown-copy-ignore]").forEach((el) => el.remove());
-  e.clipboardData.setData("text/html", holder.innerHTML);
+  e.clipboardData.setData("text/html", html);
 }
 
 // Copy the contents of a code/prompt block without its surrounding reply or

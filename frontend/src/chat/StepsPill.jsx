@@ -26,7 +26,7 @@ export default function StepsPill({
   const done = !live && steps > 0;
   return (
     <Collapse open={live || steps > 0} className="chatStepsFold" still={still}>
-      <div className="chatStepsWrap">
+      <div className="chatStepsWrap" data-markdown-copy-ignore="">
         {/* Only the label is a live region, and only on this tab's own
             turns: neither the meter ticking beside it nor a label a load
             changes is read out. */}

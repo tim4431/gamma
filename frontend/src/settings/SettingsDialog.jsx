@@ -1,6 +1,6 @@
 import React from "react";
 import { stepList } from "../shared/ui/listKeys.js";
-import { composing } from "../shared/lib/hotkeys.js";
+import { chordLabel, composing } from "../shared/lib/hotkeys.js";
 import { backdropPress } from "../shared/ui/press.js";
 import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurrentWorkspace } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
@@ -43,6 +43,7 @@ import {
   BugIcon,
   CloudDownloadIcon,
   ContrastIcon,
+  CornerDownRightIcon,
   DatabaseIcon,
   EraserIcon,
   EraseStrokeIcon,
@@ -942,7 +943,7 @@ function PromptsSettings({ value }) {
   );
 }
 
-// The chat's defaults (effort, speed, snapshots).
+// The chat's defaults (effort, speed, a follow-up while a reply runs, snapshots).
 function ChatDefaults({ value, ai }) {
   return (
     <Section title={t("Chat")} scope="account" prefs={SECTION_PREFS.assistant["Chat"]}>
@@ -954,6 +955,12 @@ function ChatDefaults({ value, ai }) {
         title={t("Which service tier chats ask the provider for: \"fast\" buys its premium low-latency routing (Anthropic's fast mode, OpenAI's and Codex's Fast) at a higher price per token, \"flex\" trades latency for a lower one. A model whose provider offers neither is called as usual.")}>
         <MenuSelect label={t("Default speed")} value={ai.chatSpeed} onChange={ai.setChatSpeed}
           options={[["", t("Default")], ...SPEED_ORDER.map((v) => [v, t(SPEED_LABELS[v])])]} />
+      </Row>
+      <Row icon={CornerDownRightIcon} label={t("Follow-up while a reply runs")}
+        hint={t("{key} does the other", { key: chordLabel("Mod-Shift-Enter") })}
+        title={t("What Enter and Send do with a message you send while a reply is still running: Queue keeps it until the reply ends and sends it then; Steer hands it to the reply at once, which takes it in at its next step.")}>
+        <Segmented value={ai.chatFollowUp} onChange={ai.setChatFollowUp}
+          options={[["queue", t("Queue")], ["steer", t("Steer")]]} />
       </Row>
       <Toggle
         icon={RectSelectIcon}

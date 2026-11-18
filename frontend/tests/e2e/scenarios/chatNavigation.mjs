@@ -437,6 +437,188 @@ export async function chatNavigationScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("chat navigation: with the follow-up preference on Steer, Enter while the reply runs steers it and Ctrl+Shift+Enter queues", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    // The account's preference, as Settings → AI → Chat saves it.
+    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { chatFollowUp: "steer" } } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatStreams = [];
+      window.steers = [];
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/api/ai/chat")) {
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStreams.push({
+                body: JSON.parse(init.body),
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              });
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        if (url.includes("/api/ai/chat/steer/")) {
+          window.steers.push({ reply: url.split("/").pop(), ...JSON.parse(init.body) });
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      const rows = page.locator(".chatQueueRow");
+      const push = (event) => page.evaluate((e) => window.chatStreams.at(-1).push(e), event);
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await input.fill("Summarize my library");
+      await input.press("Enter");
+      await page.waitForFunction(() => window.chatStreams.length === 1);
+      await push({ steer: "reply-1" });
+      await push({ step: { id: "t1", tool: "list_pages", args: {} } });
+      assertEq(await input.getAttribute("placeholder"), "Steer the reply…", "the box says what Enter does");
+      // Enter steers the message into the reply under way.
+      await input.fill("Group them by year");
+      await input.press("Enter");
+      await page.waitForFunction(() => window.steers.length === 1);
+      const steer = await page.evaluate(() => window.steers[0]);
+      assertEq(`${steer.reply} ${steer.text}`, "reply-1 Group them by year");
+      // Ctrl/⌘+Shift+Enter queues it for when the reply ends.
+      await input.fill("Flag error correction");
+      await input.press("ControlOrMeta+Shift+Enter");
+      await until(async () => (await rows.allInnerTexts()).some((text) => text.includes("Flag error correction")),
+        { what: "the message waits in the queue" });
+      assertEq(await page.evaluate(() => window.steers.length), 1, "the other way queues, it does not steer");
+      await push({ steered: { ids: [steer.id] } });
+      await push({ delta: "Grouped." });
+      await page.evaluate(() => window.chatStreams[0].finish());
+      await page.waitForFunction(() => window.chatStreams.length === 2);
+      assertEq(await page.evaluate(() => window.chatStreams[1].body.prompt), "Flag error correction", "the queued one goes when the reply ends");
+      await push({ delta: "Flagged." });
+      await page.evaluate(() => window.chatStreams[1].finish());
+      await until(async () => !(await rows.count()));
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { chatFollowUp: null } } }).catch(() => {});
+    }
+  });
+
+  await step("chat navigation: text selected in a reply is quoted into the next message by Ask about this; its right-click menu copies it and makes a note of it, as it reads or structured by AI, on the page or as a page of its own", async () => {
+    const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Selection notes" } });
+    const reply = "**Dephasing** dominates the noise model here.\n\n- the first point\n- the second point";
+    const stored = [{ id: "u1", role: "user", text: "Explain the noise" }, { id: "a1", role: "ai", text: reply }];
+    for (const key of [notesPage.id, "home"]) await alice.api(`/api/chats/${key}`, { method: "PUT", body: { messages: stored } });
+    const ctx = await alice.context(browser, { permissions: ["clipboard-read", "clipboard-write"] });
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatStreams = []; // the streamed replies, with what each asked
+      window.plainAsks = [];   // the plain requests (Structured by AI's)
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          const body = JSON.parse(init.body);
+          if (!body.stream) {
+            window.plainAsks.push(body);
+            const response = "```markdown\n# Dephasing\n\n- It dominates the noise.\n```";
+            return Promise.resolve(new Response(JSON.stringify({ response }), { headers: { "Content-Type": "application/json" } }));
+          }
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStreams.push({ body, push: (e) => controller.enqueue(new TextEncoder().encode(JSON.stringify(e) + "\n")),
+                finish: () => controller.close() });
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${notesPage.id}`);
+    // A mouse's selection of a reply's paragraph or list item; its popup
+    // opens once the hand moves on from the release.
+    const select = async (locator) => {
+      await locator.click({ clickCount: 3 });
+      const box = await locator.boundingBox();
+      await page.mouse.move(box.x + box.width / 2 + 12, box.y + box.height + 12);
+    };
+    const rightClick = async (locator) => {
+      const box = await locator.boundingBox();
+      await page.mouse.click(box.x + 8, box.y + box.height / 2, { button: "right" });
+      await page.locator(".chatSelMenu").waitFor();
+    };
+    const notesText = async (id) => {
+      const flat = (b) => [b.content || "", ...(b.children || []).flatMap(flat)];
+      return flat((await alice.api(`/api/blocks/${id}/subtree`)).block).join("\n");
+    };
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      const answer = page.locator(".chatBubble.ai").first();
+      const first = answer.locator("p").first();
+      await first.waitFor();
+      // Ask about this quotes the paragraph, as its Markdown, ahead of the question.
+      await select(first);
+      await page.locator(".chatSelTip").getByRole("button", { name: "Ask about this" }).click();
+      const chip = page.locator(".chatSelChip.isQuote");
+      await until(async () => (await chip.innerText()).includes("Dephasing dominates"), { what: "the quote's chip" });
+      await input.fill("Why does it dominate?");
+      await input.press("Enter");
+      await page.waitForFunction(() => window.chatStreams.length === 1);
+      assertEq(await page.evaluate(() => window.chatStreams[0].body.prompt),
+        "> **Dephasing** dominates the noise model here.\n\nWhy does it dominate?", "the quote goes ahead of the question");
+      assertEq(await chip.count(), 0, "a sent quote leaves the composer");
+      await page.evaluate(() => { window.chatStreams[0].push({ delta: "Because it is slow." }); window.chatStreams[0].finish(); });
+      const sent = page.locator(".chatBubble.user").nth(1);
+      await until(async () => (await sent.locator(".chatUserQuote").count()) === 1, { what: "the sent message draws its quote" });
+      assert((await sent.locator(".chatUserText").innerText()).includes("Why does it dominate?"), "the question reads apart from its quote");
+      // The menu's Copy puts the Markdown on the clipboard.
+      const item = answer.locator("li").first();
+      await select(item);
+      await rightClick(item);
+      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "Copy" }).click();
+      await until(async () => (await page.evaluate(() => navigator.clipboard.readText())) === "the first point", { what: "the selection copied" });
+      // Create note ▸ As it is: a block at the end of the page's notes.
+      await select(item);
+      await rightClick(item);
+      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "Create note" }).hover();
+      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "As it is" }).click();
+      await until(async () => (await notesText(notesPage.id)).includes("the first point"), { what: "the note saved on the page" });
+      // ... Structured by AI: a plain request of its own, its answer the note.
+      await select(first);
+      await rightClick(first);
+      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "Create note" }).hover();
+      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "Structured by AI" }).click();
+      await until(async () => (await notesText(notesPage.id)).includes("It dominates the noise."), { what: "the structured note saved" });
+      const ask = await page.evaluate(() => window.plainAsks[0]);
+      assert(ask.prompt.includes("<text>\n**Dephasing** dominates the noise model here.\n</text>") && !ask.history?.length && !ask.page_id,
+        `the structuring request carries the passage alone: ${JSON.stringify(ask)}`);
+      assertEq(await page.evaluate(() => window.chatStreams.length), 1, "the conversation took no turn for it");
+      // In the library's chat a note is a page of its own, named by its first line.
+      await page.goto(`${server.base}/?ws=${alice.ws}`);
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      const home = page.locator(".chatBubble.ai").first().locator("li").last();
+      await home.waitFor();
+      await select(home);
+      await rightClick(home);
+      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "Create note" }).hover();
+      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "As it is" }).click();
+      let made;
+      await until(async () => {
+        made = (await alice.api("/api/blocks/root/children")).children.find((p) => p.content === "the second point");
+        return !!made;
+      }, { what: "the note's page in the library" });
+      assert((await notesText(made.id)).includes("the second point"), "the page holds the note");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("chat navigation: two tabs asking in one conversation keep each other's messages", async () => {
     await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
     const tabs = [];
