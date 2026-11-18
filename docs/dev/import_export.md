@@ -392,8 +392,21 @@ Import → Summary.
   drops the upload the restart left and uploads the file again (a close
   drops it too). The source column is headed by
   what was uploaded: one file, a ZIP's contents, a folder, or the files
-  picked together.
-  `ImportTree.jsx` renders one tree with its checkboxes (a folder toggles
+  picked together. While the file goes up the dialog shows its bytes and
+  the time left at the rate kept so far (`taskKinds.bytesInfo`).
+- **One page opens.** An import the dialog watched run that brought one
+  page and warned of nothing opens that page and closes, the summary on
+  the status line. The page is `importReview.onlyPage`'s: of the report's
+  pages, chats left out, those the import made or changed (else, when it
+  made none, those already in the library), the one inside none of the
+  others. So a single note, a notebook, or a Notion page with the pages
+  inside it opens; two pages side by side show the summary. A summary that
+  stays (warnings, several pages, a dialog opened on a finished job's row)
+  offers *Open “title”* for one page, else *Show in library*, the
+  destination folder. An import that ends with its dialog closed says its
+  summary on the status line, or for one page offers it in the pill with
+  Open (`useAppJobs`).
+- `ImportTree.jsx` renders one tree with its checkboxes (a folder toggles
   its descendants). A tree of more than 300 files (a vault) starts with its
   folders closed, a closed folder's rows are made only once it opens, and
   a list shows 300 files at a time, so 20,000 notes open and click as fast
@@ -435,6 +448,58 @@ Import → Summary.
     (`files/999` before `files/1000`).
 
 Logseq and in-PDF annotations keep their own import controls.
+
+## Uploading a folder or many files
+
+The add menu's *Upload folder…*, a directory dropped on the library, and
+*Upload files…* or a drop of more than one file go up as one batch
+(App's `uploadFiles` → `transfers/useUploadBatches.js`, the owner of the
+batch and its dialog, its rules in `uploadBatch.js`). A single file keeps
+its own row of Background tasks and opens its page.
+
+- **What goes.** A dropped directory's walk
+  (`shared/lib/dropEntries.js` `collectEntryFiles`) never goes into a
+  hidden directory or `node_modules` (`fileRouting.hiddenName`), so a
+  project's `.git` is not read file by file, and a pill counts the files
+  found while a large tree is read. `dropFilter` then leaves out dot
+  files, temporary names and executables. Each file goes the way
+  `routeFile` says: a PDF the PDF way, a Markdown file a note, any other a
+  document page. The directories become folders below the open library
+  folder, made once before any file lands (`ensureFolders`).
+- **The question.** `planUpload` counts the files by kind, their bytes,
+  the folders they make and what was left out, and compares the stored
+  bytes with the room the workspace's storage has left (`GET /quota`; a
+  note is no stored file, and a file the library has already takes no
+  room, so it may warn of more than fails). Past 100 files
+  (`ASK_PAST_FILES`, each file is a page), past 500 MB (`ASK_PAST_BYTES`)
+  or past that room (`askFirst`), the dialog (`transfers/UploadDialog.jsx`)
+  asks first and says which. It lists what was left out, a hidden
+  directory once with its count, or none when it was never read
+  (`skippedGroups`). Cancel uploads nothing.
+- **The run.** One row of Background tasks, local kind `uploads`, however
+  many files: "12 of 340 files · 120 MB of 1.2 GB · about 3 minutes left".
+  `runUploads` keeps three files on their way (`POOL`), each reporting its
+  bytes into the batch's. The row is patched as files start and end, and
+  once per visible percent. Every 10 s the library is read again and the
+  PDFs that came meanwhile have their metadata looked up as one job, so
+  the pages show as they land. Stop, the row's or the dialog's, aborts the
+  files on their way and starts no more; what went stays. The batch holds
+  no `loading`, so the menus stay free while it runs.
+- **The dialog.** A directory's batch shows its dialog from the start;
+  files picked together show it only when they ask first. It reads the
+  batch from its row (`uploads`): the progress, the files on their way,
+  the failures so far. It may close any time, and the row's click opens it
+  again (`openTask` → the owner's `open`). Once over it says what went
+  (`batchSummary`) and lists each failed file with its reason, with
+  *Retry n failed files* (a batch of its own, of the files the tab still
+  holds), and *Show in library* opens the folder the batch went into. A
+  batch watched in its dialog that made one page and failed none opens
+  that page, as a single upload does. With the dialog closed, the status
+  line says how it ended, naming the first failure.
+- **The tab's work.** The batch lives in the tab, as the library's page
+  batches do ([tasks.md](tasks.md)): a reload or a closed tab ends it part
+  way, keeping what went. The dialog says so ("while this tab stays
+  open").
 
 ## Plain Markdown uploads
 
@@ -2367,7 +2432,12 @@ block whose id the workspace already uses on another page gets a fresh id
 Import dialog's "Gamma export (.zip)" source reviews the zip like the
 other library sources, then merges the selected pages (`restore_zip` merge
 with a selection) as the import job; guests can't import. A Gamma export is
-a complete copy, so the Export dialog has no switches for it.
+a complete copy, so the Export dialog has no switches for it. Between two
+workspaces of one server the same export carries pages with no file to
+download: an opened file's Add to library (`page_gamma_zip`,
+[synced_vaults.md](synced_vaults.md)) and a copy or a Duplicate
+(`pages_gamma_zip`, which leaves a Zotero link's marks behind,
+[workspaces.md](workspaces.md) "Copies between workspaces").
 
 The review (`ws_backup._review_import`) reads the workspace through
 `connect_pages_db`, so one nobody has opened since the server's upgrade is

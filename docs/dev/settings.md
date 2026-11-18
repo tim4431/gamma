@@ -786,8 +786,10 @@ AI:
 Library:
 
 - **Workspaces**: storage meter, personal and shared workspaces, New
-  workspace, Export all, and last the clones. Each row has Open, a Data menu (export, import)
-  and Manage. Manage opens an inline page under one breadcrumb head,
+  workspace, Export all, and last the clones. Each row has Open, a Data menu (export,
+  Duplicate…, import) and Manage; a clone's and a Zotero link's More has Duplicate… too, whose
+  dialog names the copy and says what it leaves behind ([workspaces.md](workspaces.md)
+  "Copies between workspaces"). Manage opens an inline page under one breadcrumb head,
   "Workspaces › <name>", with Open workspace at its right end: General,
   Access, Members and the Danger zone, every row saving at once, no footer.
   Rename and invite are small editor dialogs. The invite dialog's *Find

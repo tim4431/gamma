@@ -1513,7 +1513,8 @@ unexpectedly (exit N)." The stderr tail (8 KB) stays for the run's row.
 Only the user's own settings shape the agent, its `AGENTS.md` or
 `CLAUDE.md`, its models, its hooks, except that a turn gets **no MCP
 server but Gamma's and no web tools**: with approvals off nothing would
-ask before such a tool ran.
+ask before such a tool ran. Codex's plugins bring servers of their own, so
+a Codex turn runs without its plugins (their skills and hooks too).
 
 ### Codex
 
@@ -1540,13 +1541,22 @@ sandbox check) or 120 s (`thread/start`, `thread/resume`, `turn/start`).
    -32600 "already has an active writer" (`codex._held`), fails the turn as
    `events.SessionBusy`, never a new thread in its place). `_quiet` turns off every server the user's
    `mcp_servers` names (`mcp_servers.<name>.enabled = false`), sets
-   `features.apps = false` and `web_search = "disabled"`. Verified on the
+   `features.apps = false`, `features.plugins = false` and
+   `web_search = "disabled"`. Verified on the
    development machine (codex-cli 0.167.0, three MCP servers in
    config.toml) with a zero-token probe of `thread/start` counting
    `mcpServer/startupStatus/updated`: `config.mcp_servers = {}` does nothing
    (it merges: 6 notifications); every listed server `enabled = false`
    keeps the user's servers down but ChatGPT's apps server (`codex_apps`)
    still starts (2); `features.apps = false` beside it leaves none (0).
+   A plugin's servers (its `.mcp.json`) are not among those `config/read`
+   lists: with the Codex app's `unified-computer-use@openai-bundled` plugin
+   enabled, `cua_repl` still started and failed every turn;
+   `features.plugins = false` leaves none (0). It turns off every plugin's
+   skills and hooks too (Gamma's own `gamma` plugin is a skill for the
+   user's `gamma` server, which the turn turns off anyway), and naming the
+   server alone (`mcp_servers.cua_repl.enabled = false`) is refused
+   ("invalid transport": a plugin's server is no entry of the config's).
    `web_search = "disabled"` is the documented switch of the search tool.
    A server that reports starting all the same fails the turn ("Codex
    started the MCP server … although Gamma asked for none."), one that

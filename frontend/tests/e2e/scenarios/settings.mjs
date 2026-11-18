@@ -2179,6 +2179,39 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // Data → Duplicate… (docs/dev/workspaces.md "Copies between workspaces"):
+  // a new personal workspace with a copy of every page, made by a job; the
+  // dialog offers the copy's name, and the pill says it is done and opens it.
+  await step("settings: Duplicate… copies every page into a new personal workspace, which the pill opens", async () => {
+    const source = await user.api("/api/workspaces", { method: "POST", body: { name: "Dup source" } });
+    await user.api(`/api/blocks?ws=${source.id}`, { method: "POST", body: { parent_id: "root", content: "Duplicated page" } });
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Workspaces").click();
+      await page.locator(".settingsPane .aiProvRow").filter({ hasText: "Dup source" })
+        .getByRole("button", { name: "Data", exact: true }).click();
+      await page.locator(".ctxMenuItem", { hasText: "Duplicate…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Duplicate “Dup source”", exact: true });
+      await dialog.waitFor();
+      assertEq(await dialog.getByRole("textbox").inputValue(), "Dup source (copy)");
+      await dialog.getByRole("button", { name: "Duplicate", exact: true }).click();
+      const pill = page.locator(".statusPill", { hasText: "Duplicated “Dup source” as “Dup source (copy)”." });
+      await pill.waitFor({ timeout: 30000 });
+      const job = (await user.api("/api/jobs")).jobs.find((j) => j.kind === "workspace-copy" && j.params.ws === source.id);
+      assertEq(job?.state, "done");
+      const made = (await user.api(`/api/jobs/${job.id}`)).result.workspace;
+      assertEq((await user.api(`/api/workspaces/${made}`)).name, "Dup source (copy)");
+      const reloaded = page.waitForEvent("load", { timeout: 30000 });
+      await pill.getByRole("button", { name: "Open", exact: true }).click();
+      await reloaded;
+      await page.waitForSelector(".folderNewBtn");
+      assertEq(new URL(page.url()).searchParams.get("ws"), made);
+      await page.getByText("Duplicated page", { exact: true }).first().waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: a backup past one request's size goes up in parts and merges as a job", async () => {
     // A proxy in front of the server caps a request's body (Cloudflare at
     // 100 MB): past 32 MiB the zip goes in parts (/jobs/restore/parts).

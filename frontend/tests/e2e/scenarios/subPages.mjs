@@ -3,7 +3,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { Account, PYTHON, live, pressMouseBack, wanted } from "../harness.mjs";
 import { editRow, row } from "./notes.mjs";
-import { openDialog } from "./transfers.mjs";
+import { openDialog, openedImport } from "./transfers.mjs";
 
 // Sub-pages (docs/dev/home_library.md "Sub-pages"): a page inside another
 // carries `parent_page` and no folders of its own. /page and "New page
@@ -825,10 +825,8 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await until(async () => (await under()) === "Alone home < folder Alone dest|Alone inside < folder Alone home",
         { what: "ticked alone, the page inside moves to its directory's folder" });
       await choice(review, "Import to library").click();
-      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor({ timeout: 15000 });
-      assert((await report.innerText()).includes("1 new page"), `the report counts the one page: ${await report.innerText()}`);
-      await choice(report, "Done").click();
+      const { said } = await openedImport(page, user, "Alone inside");
+      assert(said.includes("1 new page"), `the summary counts the one page: ${said}`);
 
       const pages = await listing();
       const inside = pages.find((p) => p.content === "Alone inside");

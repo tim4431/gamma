@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { addLocalRow, afterFollow, followed, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished,
-  progressFraction, sortTasks, trayBadge, waitsForYou } from "../src/tasks/taskModel.js";
-import { canOpen, exportAgain, kindOf, progressCounts, progressText, quietKinds, relocationSummary, relocationSuperseded, retryOf,
-  stopPath, taskActions, taskInfo, taskTime, taskTitle, turnShown } from "../src/tasks/taskKinds.js";
+  progressFraction, remainingMs, sortTasks, trayBadge, waitsForYou } from "../src/tasks/taskModel.js";
+import { byteProgress, bytesInfo, canOpen, exportAgain, fmtRemaining, kindOf, progressCounts, progressText, quietKinds,
+  relocationSummary, relocationSuperseded, retryOf, stopPath, taskActions, taskInfo, taskTime, taskTitle, turnShown }
+  from "../src/tasks/taskKinds.js";
 
 const at = (minutes) => new Date(Date.UTC(2026, 8, 29, 12, minutes)).toISOString();
 const job = (fields) => ({ kind: "export", state: "running", params: {}, progress: {}, error: "", artifact: null,
@@ -227,6 +228,41 @@ test("a click opens the export and import dialogs again, or where the work is ma
   assert.equal(canOpen(job({ kind: "workspace-export" })), false);
   assert.equal(canOpen(job({ kind: "workspace-delete" })), false, "the workspace's Settings row shows it");
   assert.equal(canOpen({ local: true, kind: "download" }), false);
+  assert.equal(canOpen({ local: true, kind: "uploads" }), true, "a folder upload's row opens its dialog");
+  assert.equal(kindOf({ local: true, kind: "uploads" }).open, "uploads");
+});
+
+test("the time left: at the rate kept so far, once the work has run a moment and moved", () => {
+  assert.equal(remainingMs(25, 100, 0, 10000), 30000, "a quarter in 10 s: 30 s to go");
+  assert.equal(remainingMs(25, 100, 0, 2000), undefined, "too soon to tell");
+  assert.equal(remainingMs(0, 100, 0, 10000), undefined, "nothing moved yet");
+  assert.equal(remainingMs(100, 100, 0, 10000), undefined, "through");
+  assert.equal(remainingMs(5, 0, 0, 10000), undefined, "no total");
+  assert.equal(fmtRemaining(undefined), "");
+  assert.equal(fmtRemaining(20000), "less than a minute left");
+  assert.equal(fmtRemaining(29000), "less than a minute left");
+  assert.equal(fmtRemaining(60000), "about 1 minute left");
+  assert.equal(fmtRemaining(3.4 * 60000), "about 3 minutes left");
+  assert.equal(fmtRemaining(59.7 * 60000), "about 1 hour left", "rounded up past the minutes");
+  assert.equal(fmtRemaining(2.6 * 3600000), "about 3 hours left");
+});
+
+test("an upload's row: its bytes and the time left, patched once per visible percent", () => {
+  const MB = 1024 * 1024;
+  assert.equal(bytesInfo(12 * MB, 40 * MB, 0, 1000), "12.0 MB / 40.0 MB", "too soon for the time left");
+  assert.equal(bytesInfo(10 * MB, 40 * MB, 0, 10000), "10.0 MB / 40.0 MB · less than a minute left");
+  assert.equal(bytesInfo(3 * MB, 0, 0, 10000), "3.0 MB", "no total");
+  let clock = 0;
+  const patches = [];
+  const report = byteProgress((patch) => patches.push(patch), () => clock);
+  report(0, 1000);
+  report(4, 1000);
+  report(9, 1000);
+  assert.equal(patches.length, 1, "the same percent patches once");
+  clock = 4000;
+  report(500, 1000);
+  assert.equal(patches.length, 2);
+  assert.deepEqual(patches[1], { info: "500 B / 1000 B · less than a minute left", fraction: 0.5 });
 });
 
 test("a share view follows only the share's own jobs that wait or run", () => {
