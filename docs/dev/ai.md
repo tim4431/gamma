@@ -1830,7 +1830,8 @@ reply takes the drawing away (`noteReview.settle`).
   browser: localStorage `gamma-ai-chat-grants`, keyed by the conversation's
   first message id, the 100 most recent conversations. It is sent as
   `granted` with every request of that conversation, and the composer shows
-  an **Allowed in this chat** chip; clicking it makes the chat ask again. A
+  an **Allowed in this chat** chip (a shield; its tooltip lists the grants);
+  clicking it makes the chat ask again. A
   new chat, or another conversation opened from history, asks again.
 - **Always allow** sets the permission to Allow for the chat's kind in the
   account preference, the same change as in Settings.
