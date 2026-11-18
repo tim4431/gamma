@@ -465,6 +465,53 @@ def test_lookup_by_arxiv_and_doi(guest, upstream, meta_calls):
     assert guest.get("/api/library/lookup").status_code == 400
 
 
+def test_an_arxiv_pdf_tab_finds_the_journal_paper_it_preprints(guest, upstream, meta_calls, monkeypatch):
+    """A paper filed by its journal DOI alone (an upload, a Zotero import, a
+    save from the publisher) is in the library on its arXiv abstract page,
+    whose tags carry that DOI, and on its PDF tab, which has only the arXiv
+    id: the lookup and the save's dedup ask the arXiv record for the
+    published version's DOI, only when the id alone found nothing."""
+    asked = []
+
+    def fake_arxiv(aid):
+        asked.append(aid)
+        doi = {"2611.04242": "10.5555/Published.4242", "2611.04243": ""}.get(aid)
+        return None if doi is None else {"title": "Preprint", "authors": ["A. One"], "doi": doi,
+                                         "arxiv_id": aid, "source": "arxiv"}
+
+    monkeypatch.setattr(metadata_mod, "_fetch_arxiv", fake_arxiv)
+    metadata_mod._REGISTRY_CACHE.clear()
+    r = guest.post("/api/clip", json={"pdf_url": "https://journal.example/published-4242.pdf", "title": "Published"})
+    assert r.status_code == 200, r.text
+    block_id = r.json()["block_id"]
+    with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
+        _, props = _props(block_id)
+        props["meta"] = {"doi": "10.5555/published.4242", "arxiv_id": "", "title": "Published"}  # a DOI lookup's
+        conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps(props), block_id))
+        conn.commit()
+
+    abstract = {"doi": "10.5555/published.4242", "arxiv_id": "2611.04242", "url": "https://arxiv.org/pdf/2611.04242"}
+    lk = guest.get("/api/library/lookup", params=abstract)
+    assert lk.status_code == 200 and lk.json()["block_id"] == block_id
+    assert asked == []  # the abstract page's DOI found it
+    tab = "https://arxiv.org/pdf/2611.04242v2"
+    lk = guest.get("/api/library/lookup", params={"arxiv_id": "2611.04242", "url": tab})
+    assert lk.status_code == 200, lk.text
+    assert lk.json()["block_id"] == block_id and asked == ["2611.04242"]
+
+    # Saved from the PDF tab: the paper already filed, nothing downloaded,
+    # the record read from the cache.
+    fetched = len(upstream)
+    r2 = guest.post("/api/clip", json={"source_url": tab, "pdf_url": tab, "arxiv_id": "2611.04242"})
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["existed"] is True and r2.json()["block_id"] == block_id
+    assert len(upstream) == fetched and asked == ["2611.04242"]
+
+    # A preprint never published, and an id arXiv does not answer for.
+    for aid in ("2611.04243", "2611.04244"):
+        assert guest.get("/api/library/lookup", params={"arxiv_id": aid}).status_code == 404
+
+
 def test_clip_arxiv_html_page_with_old_style_id(guest, upstream, meta_calls):
     """arXiv's HTML rendering carries no citation meta tags: the extension
     sends the id read off the URL (old-style here) and the server saves the
