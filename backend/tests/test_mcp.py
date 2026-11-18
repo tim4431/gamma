@@ -580,7 +580,8 @@ def test_setup_command_signs_in_through_the_browser(client, anon, connection):
 
 # --- editing notes --------------------------------------------------------------------
 
-EDITING = {"edit_block", "create_block", "move_block", "clip_region"}
+EDITING = {"edit_block", "create_block", "move_block", "clip_region", "draw", "add_text_box", "place_picture",
+           "add_sheet"}
 
 
 def _text(ws, block_id):
@@ -643,6 +644,21 @@ def test_a_connection_edits_notes_only_where_it_may(client, connection):
                         {"block_id": lab_note, "content": " McpAppended", "mode": "append"})
         assert not appended["isError"], appended
         assert _text(lab, lab_note).endswith("McpAppended")
+        # it adds a page of paper and draws on it, signed as itself; nothing it makes is reverted from a reply here
+        sheet = call(client, item["token"], "add_sheet", {"page_id": lab_page["id"], "pattern": "grid"})
+        assert not sheet["isError"], sheet
+        sheet_id = sheet["structuredContent"]["block_id"]
+        drawn = call(client, item["token"], "draw", {"sheet_id": sheet_id, "shapes": [
+            {"kind": "rect", "box": [0.1, 0.1, 0.5, 0.3]}]})
+        assert not drawn["isError"], drawn
+        said = drawn["content"][0]["text"]
+        assert "drew a rectangle on the page of paper of “Lab notes”" in said
+        assert "from the reply" not in said and "delete_block" not in said and "removes it in Gamma" in said
+        assert any(part["type"] == "image" for part in drawn["content"]), "it sees what it drew"
+        with connect_pages_db(lab) as conn:
+            parent, raw = conn.execute("SELECT parent_id, properties FROM unified_blocks WHERE id = ?",
+                                       (drawn["structuredContent"]["block_id"],)).fetchone()
+        assert parent == sheet_id and json.loads(raw)["agent"] == {"id": item["id"], "name": "Codex", "for": "mcp-reader"}
         with connect_pages_db(lab) as conn:
             assert conn.execute("SELECT client FROM page_ops WHERE page_id = ? ORDER BY seq DESC LIMIT 1",
                                 (lab_page["id"],)).fetchone()[0] == "ai"
@@ -698,6 +714,15 @@ def test_the_question_shows_a_change_line_by_line():
     rewrite = _question(codex, "edit_block", {"title": "test", "diff": text_diff("old line", "new line")}, "")
     assert rewrite.splitlines()[0] == "Codex wants to change a note in “test”. It removes 1 line and adds 1 line."
     assert "− old line\n+ new line" in rewrite
+    # a drawing says what it draws and on which surface; a text box what it says and beside which passage
+    drawn = _question(codex, "draw", {"title": "Paper", "pdf_page": 3, "what": "a rectangle around “the fit”"}, "")
+    assert drawn == "Codex wants to draw a rectangle around “the fit” on page 3 of “Paper”."
+    boxed = _question(codex, "add_text_box", {"title": "Paper", "pdf_page": 1, "place": {"kind": "passage", "page": 1,
+                      "quote": "the fit"}, "diff": text_diff("", "Which error?")}, "")
+    assert boxed.splitlines()[0] == "Codex wants to add a text box to page 1 of “Paper” beside “the fit”."
+    assert "+ Which error?" in boxed
+    sheet = _question(codex, "add_sheet", {"title": "Sketches", "what": "a grid page of paper (a4)"}, "")
+    assert sheet == "Codex wants to add a grid page of paper (a4) to “Sketches”."
     added = _question(codex, "create_block", {"title": "Paper", "parent": "Methods", "diff": text_diff("", "A note")}, "")
     assert added == "Codex wants to add a note to “Paper”, under “Methods”. It adds 1 line.\n\n+ A note"
     long = _question(codex, "create_block", {"title": "P", "diff": text_diff("", "\n".join(f"line {i}" for i in range(60)))}, "")

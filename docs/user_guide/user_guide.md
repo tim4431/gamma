@@ -274,7 +274,7 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | Comments and highlights | `comment`, `resolve`, `highlight` | Write under its own name, Gamma AI, for you: reply in a comment thread, ask about a passage with a comment on it, resolve a thread, highlight a passage or an area of a page (a figure, a table). A comment on a quote highlights it; a quote not on the page is refused with the closest passage. Viewers' chats have it too |
 | Draw on pages | `draw`, `add_text_box`, `place_picture`, `add_sheet` | Draw shapes (boxes, circles, arrows, lines, curves) on a PDF page or a page of paper, add a text box beside a passage, place a picture, add a page of paper. Each is one change you can revert from the reply, made under its own name |
 
-The agent never deletes a page for good: a deleted page stays in Recently deleted for 30 days, and deleting a folder or a label leaves its pages in your library. An assistant connected from outside ([Assistants](#assistants)) gets the reading tools, and the comment and note tools only where you give its connection the Comment or Edit level.
+The agent never deletes a page for good: a deleted page stays in Recently deleted for 30 days, and deleting a folder or a label leaves its pages in your library. An assistant connected from outside ([Assistants](#assistants)) gets the reading tools, and the comment tools, and the note and drawing tools, only where you give its connection the Comment or Edit level.
 
 ## Library
 
@@ -648,6 +648,7 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 | `list_folders` | The folder tree, each folder with its path and page counts |
 | `list_pages` | Pages with titles, folders, labels and metadata, a synced folder's files with their paths; filter by folder, label or title |
 | `search_library` | Full-text hits in notes, PDF text and text files, with where each one is: a PDF's page, a file's line |
+| `backlinks` | The notes that link to a page or a note |
 | `read_page` | A page's notes, highlights, properties and PDF text in windows, a text file by its lines; a synced folder's file also by its path |
 | `read_block` | One note block or a page's note outline |
 | `read_chats` | The AI chat kept with a page or folder |
@@ -661,7 +662,7 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 | `read_gamma_link` | A pasted page, block or share link, read in place (a line link from its line); a folder share lists its pages |
 | `export_page` | A page as Markdown, or as a PDF: the annotated paper or the notes typeset |
 
-The first twelve are the chat's own reading tools; each takes an optional workspace. In a workspace you mark **Comment**, an assistant also gets the chat's writing tools: `comment` (a reply in a thread, or a new comment on a PDF passage, lines of a file, a note or the page), `resolve` and `highlight`, each written under its own name. In one you mark **Edit**, it gets those and the chat's note tools: `edit_block`, `create_block`, `move_block` and `clip_region`. It never gets the chat's other write tools, or its web tools: the assistant has web access of its own.
+The first thirteen are the chat's own reading tools; each takes an optional workspace. In a workspace you mark **Comment**, an assistant also gets the chat's writing tools: `comment` (a reply in a thread, or a new comment on a PDF passage, an area of a page, lines of a file, a note or the page), `resolve` and `highlight`, each written under its own name. In one you mark **Edit**, it gets those, the chat's note tools (`edit_block`, `create_block`, `move_block` and `clip_region`) and its drawing tools (`draw`, `add_text_box`, `place_picture` and `add_sheet`: shapes, a text box, a picture or a page of paper on a page, each made under its own name; you remove one in Gamma). It never gets the chat's other write tools, or its web tools: the assistant has web access of its own.
 
 ## Import and export
 

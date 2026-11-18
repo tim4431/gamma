@@ -104,7 +104,8 @@ scope is read-only, and its `link_base` makes results carry absolute links
 to pages, PDF pages, blocks and comment threads (`gamma_link`; the chat's
 results carry none, [mcp.md](mcp.md) "Links in results"). The three
 writing tools (`comment`, `resolve`, `highlight`) reach MCP at a
-connection's Comment level, the four note tools at its Edit level
+connection's Comment level, the four note tools and the four drawing tools
+at its Edit level
 ([mcp.md](mcp.md) "The Comment level", "Editing notes").
 
 | Tool | Permission | Scope | What it does |
@@ -2155,7 +2156,10 @@ the user sees it (`/api/ai/page-image?…&ink=1`, a sheet's
 file. The prompt's drawing paragraph, armed with any of them, says to
 anchor to the text where it can, to look at the page before placing by
 fractions, to check the picture a result shows, and to draw only what the
-user asks for. MCP reaches none of them: they change pages.
+user asks for. MCP offers them at a connection's Edit level, asking first
+as its note tools do ([mcp.md](mcp.md) "Editing notes"); there a result
+says the user removes a misplaced drawing in Gamma, since MCP has neither
+`delete_block` nor a reply to revert from (`_placed_after`).
 
 ### show_page (both scopes)
 
