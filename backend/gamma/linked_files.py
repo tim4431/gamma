@@ -523,7 +523,7 @@ def _block(conn, page_id: str) -> dict | None:
     return block_to_dict(row) if row else None
 
 
-def _opened_files(conn) -> str | None:
+def opened_files_page(conn) -> str | None:
     """The page *Opened files*, by its property, oldest first; None before
     the first file is opened."""
     row = conn.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root' "
@@ -544,7 +544,7 @@ def _to_top(conn, page_id: str, actor: str) -> dict:
     it. Pages have no op that moves them, so this is the row and the change
     log."""
     write_lock(conn)
-    opened = _opened_files(conn)
+    opened = opened_files_page(conn)
     row = conn.execute("SELECT parent_page FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
     if opened and row[0] == opened:
         conn.execute("UPDATE unified_blocks SET position = ? WHERE id = ?",
@@ -728,7 +728,7 @@ def open_file(ws: str, path: str, actor: str) -> dict:
             raise folder_links.LinkError("A clone keeps its origin's pages: open this file in another workspace.")
         shape = {} if fmt == "pdf" else {"format": fmt, "ext": ext, "size": seen[1]}
         with connect_pages_db(ws) as conn:
-            opened = _opened_files(conn) or create_page(conn, OPENED_TITLE, {OPENED_FILES: True}, actor=actor)["id"]
+            opened = opened_files_page(conn) or create_page(conn, OPENED_TITLE, {OPENED_FILES: True}, actor=actor)["id"]
             page = create_page(conn, Path(path).stem,
                                {"doc": document(seen[0], name=Path(path).name, at="path", **shape), PARENT_PAGE: opened},
                                actor=actor, position=_top_key(conn, opened))
@@ -1213,7 +1213,7 @@ def _forget(ws: str, page_ids: list[str]) -> None:
     keeps its row, for a restore."""
     cutoff = format_stamp(datetime.now(timezone.utc) - timedelta(days=FORGET_DAYS))
     with connect_pages_db(ws) as conn:
-        opened = _opened_files(conn)
+        opened = opened_files_page(conn)
         idle = conn.execute(_IDLE, (opened, cutoff)).fetchall() if opened else []
         for row in idle:
             if _open_now(ws, row[0]):

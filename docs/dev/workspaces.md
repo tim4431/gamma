@@ -608,6 +608,53 @@ A task saved before a limit existed fails its next run with the reason in
 `last_error` (the `backup-failed` notice) until it is edited; pausing it is
 always allowed.
 
+## Copies between workspaces
+
+Pages travel from one workspace of this server to another as a copy, and
+stay where they were (`gamma/workspace_copy.py`):
+
+- **Copy to workspace ▸**, in the library's page menu, copies the pages
+  picked, each with the pages inside it, into a workspace the account may
+  edit. Anyone who may read the pages may copy them out, as anyone may
+  export them.
+- **Duplicate…**, in a workspace's Data menu in Settings → Workspaces
+  (a clone's or a Zotero link's **More**), copies every page into a new
+  personal workspace of the account. Recently deleted and *Opened files*
+  stay behind.
+
+Both are one job (`workspace-copy`, `POST /api/jobs/workspace-copy`,
+[tasks.md](tasks.md)) that takes the way a page already crosses between
+two workspaces here (`linked_files._carry`): the pages are written as a
+Gamma export (`routers/export.py` `pages_gamma_zip`) and merged in as an
+import is (`ws_backup.restore_zip` merge, "Export and backups" above). So
+they come whole, with their notes, highlights, handwriting, comments and
+chats, under the same ids, filed in the target's folders and labels of
+the same names. A page the target already holds, by id or by the PDF it
+owns, stays as it is there, so copying again adds nothing. A page whose
+parent page stays behind comes filed where its top is.
+
+Nothing that ties a page to the workspace it leaves travels with it: a
+Zotero link's rows and the marks it writes on pages and blocks
+(`zotero_local.LINK_MARKS`, which the app's Duplicate also drops,
+[zotero_sync.md](zotero_sync.md#data)), a clone's sync state, a work
+folder (its files come as library pages), a file read where it lies (its
+bytes come). A copy of a linked workspace is an ordinary workspace: a page
+copied into a workspace with a Zotero link of its own becomes a new item
+there once its record is found. A PDF the source's link has not brought
+yet is not there to copy: `POST /api/workspace-copy/preview` (`{pages,
+zotero_pdfs}`) counts the pages that would come without one. The page
+menu confirms first when there are some, and the Duplicate dialog says
+so.
+
+The files the target lacks count against its storage quota as an
+upload's would (507 before anything is merged). A Duplicate makes its
+workspace once the export is written and removes it again, without a
+final copy, when the merge fails or is stopped (`workspaces.delete(...,
+keep=False)`, as a restore from the bucket as a new workspace does). A
+copy needs an editor in the target (403 for a viewer and a guest's
+workspace); a Duplicate is refused for a guest and past
+`MAX_WORKSPACES_PER_USER`.
+
 ## Clones (mirrors)
 
 A personal workspace can be a **mirror** of a workspace on another Gamma
@@ -668,7 +715,10 @@ app are [synced_vaults.md](synced_vaults.md).
   one conversation per page or folder: two members asking at once end up in
   one merged conversation ([chat_history.md](chat_history.md)).
 - The account directory is visible to every signed-in non-guest account.
-- Cross-workspace page transfer uses export and merge, with no direct move.
+- Pages cross between workspaces as copies ("Copies between workspaces"):
+  there is no move, and a selection's copy stops at 10,000 pages
+  (`COPY_PAGES_MAX`; Duplicate copies every page). Translations kept with
+  a PDF (data.db) do not travel with a copy.
 - The desktop shell refreshes its workspace list on navigation or menu open.
 
 The historical reasoning is in [research/workspaces.md](../research/workspaces.md).

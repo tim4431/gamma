@@ -6,9 +6,11 @@
 // there; `onJobFinished` is what the store's `onFinished` calls.
 import { useRef, useState } from "react";
 import { API, fmtBytes, getCurrentWorkspace, withWorkspace } from "../shared/lib/utils";
-import { t } from "../shared/i18n/i18n.js";
+import { T, t } from "../shared/i18n/i18n.js";
 import { exportJobBody } from "../transfers/transferFormats";
 import { importSummary } from "../transfers/importReview";
+import { copyBody, copySummary, zoteroPdfsNote } from "../transfers/workspaceCopy.js";
+import { copyPreview } from "../transfers/exportApi";
 import { guideEvents } from "../guide/events.js";
 import { showInChat } from "../chat/computer/chatSide.js";
 import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle, turnShown } from "./taskKinds.js";
@@ -27,10 +29,12 @@ export function useAppJobs({
   pageId, shareMode, exportRawPdf, exportTranslation = () => null, exportFolderTranslations = () => [],
   // the open workspace: what a finished restore / import there refreshes
   workspaceId, refreshQuota, fetchHomeBlocks,
-  // the session read again: the workspaces a finished delete leaves
+  // the session read again: the workspaces a finished delete leaves, or a duplicate made
   refreshSession,
   // the page `id` open (in this workspace) with its chat shown
   openPageChat,
+  // the confirm box ({title, message, confirmLabel, onConfirm}), and a switch to another workspace
+  confirm, switchWorkspace,
 }) {
   const exportStartingRef = useRef(false); // a second press while the first start is answered starts nothing
   // An export being started, for the dialog's Export button to show busy
@@ -71,6 +75,30 @@ export function useAppJobs({
       meta: { pill: true, restoreInto: into, after } })
       .catch((err) => { if (!err.aborted) setStatus(t("Import failed: {msg}", { msg: err.message || "failed" })); })
       .finally(() => postPill("backup-upload", null));
+  }
+
+  // Copy pages (`pages`; null: every page) of the workspace `ws` into the
+  // workspace `to`, or into a new personal workspace named `name` (a
+  // duplicate): a background job (workspace-copy) whose progress shows in
+  // the pill. The server says first how many of the pages wait for a PDF
+  // their Zotero item holds and this workspace has not brought yet, and a
+  // confirm says so before anything starts (`checked`: the asker said it
+  // already, as the Duplicate dialog does).
+  async function copyPages({ ws, pages = null, to = "", name = "", checked = false }) {
+    const start = () => tasks.start("workspace-copy", copyBody({ ws, pages, to, name }), { pill: true })
+      .catch((err) => setStatus(t("Copy failed: {message}", { message: err.message })));
+    if (checked) return start();
+    let waiting = 0;
+    try {
+      waiting = (await copyPreview({ ws, pages })).zotero_pdfs || 0;
+    } catch (err) {
+      setStatus(t("Copy failed: {message}", { message: err.message }));
+      return null;
+    }
+    if (!waiting) return start();
+    confirm({ title: T("Copy without these PDFs?"), message: zoteroPdfsNote(waiting), confirmLabel: t("Copy anyway"),
+      onConfirm: start });
+    return null;
   }
 
   // Run what the export dialog was configured to do: a background job
@@ -216,6 +244,24 @@ export function useAppJobs({
         ? t("Import failed: {msg}", { msg: t(job.error) }) : t("{name} was stopped.", { name: title }));
       return;
     }
+    if (job.kind === "workspace-copy") {
+      // pages that landed in the open workspace (a copy another tab made) show at once
+      if (job.state === "done" && here) fetchHomeBlocks({ still: true });
+      if (!started) return;
+      if (job.state !== "done") {
+        setStatus(job.state === "failed" ? t("{name} failed: {message}", { name: title, message: t(job.error) })
+          : t("{name} was stopped.", { name: title }));
+        return;
+      }
+      tasks.fetchJob(job.id).catch(() => null).then((full) => {
+        const into = full?.result?.workspace || job.params?.to || "";
+        if (job.params?.new) refreshSession?.(); // the switcher lists the new workspace
+        postPill(`job:${job.id}`, { msg: copySummary(full?.result, job.params),
+          ...(into && into !== workspaceId ? { action: { label: t("Open"), run: () => switchWorkspace(into) } } : {}) },
+        { after: [20000, null] });
+      });
+      return;
+    }
     if (job.kind === "import-preview") {
       // A review read while its dialog was closed: the pill opens it.
       if (shownInDialog || !started) return;
@@ -336,5 +382,6 @@ export function useAppJobs({
     }
   }
 
-  return { startWorkspaceExport, runBackupImport, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask, onJobFinished };
+  return { startWorkspaceExport, runBackupImport, copyPages, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask,
+    onJobFinished };
 }

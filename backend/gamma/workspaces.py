@@ -803,12 +803,15 @@ def _deletable(ws: str) -> None:
         _other_personal(conn, ws)
 
 
-def delete(ws: str, *, by: str = "", progress=jobs.no_progress, allowed=None) -> dict:
+def delete(ws: str, *, by: str = "", progress=jobs.no_progress, allowed=None, keep: bool = True) -> dict:
     """Remove the workspace: its rows (memberships, invitations, shares,
     per-workspace prefs, the done marks of its reminders) and its
     directory, after a final copy of it went to backups/deleted/
     (``keep_final_copies``; FinalCopyError and nothing deleted when that
-    fails); the mailed links of its invitations by e-mail are withdrawn and
+    fails). ``keep=False`` keeps no copy, for a workspace a job made and
+    was filling when it failed (a copy of another workspace,
+    gamma/workspace_copy.py; a restore from the bucket as a new one): what
+    it holds is still where it came from. The mailed links of its invitations by e-mail are withdrawn and
     its open page sockets close. An account's last personal workspace is
     refused, and so is a workspace another delete holds; deleting its
     default moves the default to the oldest other personal one.
@@ -824,7 +827,7 @@ def delete(ws: str, *, by: str = "", progress=jobs.no_progress, allowed=None) ->
     with _claimed([ws]):
         _deletable(ws)
         name = get(ws)["name"]
-        final_copy = keep_final_copies([ws], by=by, progress=progress)[0]
+        final_copy = keep_final_copies([ws], by=by, progress=progress)[0] if keep else ""
         try:
             progress(phase="deleting", item=name, stoppable=False)
             with connect_users_db() as conn:

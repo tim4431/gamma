@@ -1,9 +1,19 @@
 import { API, apiJson } from "../shared/lib/utils";
 import { bibliographyPreviewUrl, bibliographyUrl } from "./transferFormats";
 
-// The two server calls the export dialog makes besides starting the job. The
-// URL building lives in transferFormats.js, which stays pure and testable;
-// this module is only the fetching.
+// The server calls an export makes besides starting its job: the export
+// dialog's two, and the preview of a copy into another workspace (its pages
+// exported and merged there, workspaceCopy.js). The URL building lives in
+// transferFormats.js, which stays pure and testable; this module is only
+// the fetching.
+
+// What a copy of the pages (`pages`; null: every page) of the workspace
+// `ws` would take, as the server reads it: {pages, zotero_pdfs}, the pages
+// with the pages inside them and how many come without a PDF their Zotero
+// item holds and the workspace has not brought yet.
+export const copyPreview = ({ ws, pages = null }) => apiJson(`${API}/workspace-copy/preview`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ws, ...(pages ? { pages } : {}) }),
+});
 
 // The bibliography a BibTeX export would write, as data: an entry per
 // citable page (title, citation key, whether it is pinned, the entry) plus

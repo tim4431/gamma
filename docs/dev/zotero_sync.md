@@ -319,9 +319,15 @@ all five, but for a synced vault's `file_won` conflicts in `sync_conflicts`
   member's annotation, with `zotero_author`.
 
 The row decides identity, never a property: a duplicated page or block
-carries `zotero_key` or `zotero_annotation` but has no row, and is new
-(the app's duplicate also drops `zotero_pdf`, `zotero_readonly` and
-`zotero_author`). `remove_link` takes the marks off every page and block,
+carries `zotero_key` or `zotero_annotation` but has no row, and is new.
+The marks (`zotero_local.LINK_MARKS`: `zotero_pdf`, `zotero_readonly`,
+`zotero_author`) are the link's word on what it keeps, so a copy never
+carries them: the app's duplicate drops them, and so does a copy into
+another workspace, or a Duplicate of the whole workspace, whose link
+would never honour them there ([workspaces.md](workspaces.md) "Copies
+between workspaces"; a `zotero_pdf` kept in a linked target would refuse
+every PDF attached to the page). A PDF still in Zotero is not copied:
+the copy's preview counts those pages. `remove_link` takes the marks off every page and block,
 those in Recently deleted included, in one statement in the transaction
 that empties the link's tables; each live page that lost a mark is logged
 as a reload (`ops.log_reload`, so the change feed lists it) and its room

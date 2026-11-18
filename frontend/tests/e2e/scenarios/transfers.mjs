@@ -1805,4 +1805,42 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
     }
   });
 
+  // The library's Copy to workspace ▸ (docs/dev/workspaces.md "Copies
+  // between workspaces"): the selected pages go into another workspace as a
+  // job. A page whose PDF is still in Zotero (its zotero_pdf mark) makes the
+  // menu ask first; the copy carries no mark, and the pill says what came
+  // and opens the other workspace.
+  await step("transfer: Copy to workspace copies the selected pages, says first which PDFs are still in Zotero, and the pill opens the copy", async () => {
+    const bin = await alice.folder("Copy out");
+    const target = await alice.api("/api/workspaces", { method: "POST", body: { name: "Copy target" } });
+    const paper = await alice.api("/api/pages", { method: "POST", body: { title: "Copy out paper",
+      properties: { folders: [bin], zotero_pdf: { key: "ABCD2345", state: "remote", filename: "paper.pdf" } } } });
+    await alice.api("/api/pages", { method: "POST", body: { title: "Copy out note", properties: { folders: [bin] } } });
+    const ctx = await alice.context(browser);
+    const page = await openPage(ctx, `${server.base}/?folder=${bin}&ws=${alice.ws}`);
+    try {
+      const rows = page.locator(".fileRow", { hasText: "Copy out" });
+      await until(async () => (await rows.count()) === 2, { what: "the two pages are listed" });
+      await rows.first().click();
+      await rows.last().click({ modifiers: ["Shift"] });
+      await rows.last().click({ button: "right" });
+      await page.locator(".ctxMenu .ctxSubTrigger", { hasText: "Copy to workspace" }).click();
+      const flyout = page.getByRole("menu", { name: "Copy to workspace", exact: true });
+      await flyout.locator(".ctxMenuItem", { hasText: "Copy target" }).click();
+      const confirm = page.locator(".confirmModal", { hasText: "1 paper's PDF is still in Zotero, not here yet: its copy comes without it." });
+      await confirm.getByRole("button", { name: "Copy anyway", exact: true }).click();
+      const pill = page.locator(".statusPill", { hasText: "Copied 2 pages to “Copy target”. 1 came without its PDF, which is still in Zotero." });
+      await pill.waitFor({ timeout: 30000 });
+      const copied = (await alice.api(`/api/blocks/${paper.id}/subtree?ws=${target.id}`)).block;
+      assertEq(copied.content, "Copy out paper");
+      assertEq(copied.properties.zotero_pdf, undefined, "the copy carries none of the link's marks");
+      const reloaded = page.waitForEvent("load", { timeout: 30000 });
+      await pill.getByRole("button", { name: "Open", exact: true }).click();
+      await reloaded;
+      await page.waitForSelector(".folderNewBtn");
+      assertEq(new URL(page.url()).searchParams.get("ws"), target.id);
+      await page.getByText("Copy out note", { exact: true }).first().waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }
