@@ -18,7 +18,7 @@ import { doublePress, menuPress } from "./press.js";
 import { assetUrl, copyText } from "../lib/utils";
 import { citesSeveralSources, isSourceLink, parseGammaLink } from "../model/gammaLinks.js";
 import { remarkPaperLinks } from "../lib/remarkPaperLinks.js";
-import { diagramFence, normalizeChatMarkdown, remarkDiagrams } from "../lib/diagramMarkdown.js";
+import { diagramFence, normalizeChatMarkdown, remarkDiagrams, remarkLoneDisplayMath } from "../lib/diagramMarkdown.js";
 import { DiagramFigure, diagramCodeProps } from "./DiagramFigure";
 import { highlightCode } from "../../editor/codeHighlight.js";
 import { t } from "../../shared/i18n/i18n.js";
@@ -597,7 +597,7 @@ const ChatMarkdown = React.memo(function ChatMarkdown({ text, copyBlocks = false
     <div onCopy={handleMarkdownCopy}>
       <CiteMultiContext.Provider value={multiSource}>
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath, remarkPaperLinks, remarkDiagrams]}
+          remarkPlugins={[remarkGfm, remarkMath, remarkLoneDisplayMath, remarkPaperLinks, remarkDiagrams]}
           rehypePlugins={[rehypeKatex]}
           urlTransform={(url) => assetUrl(defaultUrlTransform(url))}
           components={copyBlocks ? CHAT_MARKDOWN_COPY_COMPONENTS : CHAT_MARKDOWN_COMPONENTS}

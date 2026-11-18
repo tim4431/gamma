@@ -626,7 +626,12 @@ drawing, with the restrictions the sanitizer enforces ([diagrams.md](diagrams.md
 and to prefer prose or a table when they say it as well. The reply view
 reads the model's `\( … \)` and `\[ … \]` as math, every pair of them
 outside code (`normalizeChatMarkdown`), by a rule apart from a note's,
-where `\[x\]` may be an escaped bracket ([latex_editing.md](latex_editing.md)).
+where `\[x\]` may be an escaped bracket ([latex_editing.md](latex_editing.md)),
+and a `$$…$$` alone on its line as display math (`remarkLoneDisplayMath`,
+[diagrams.md](diagrams.md)), so a wide formula scrolls in its own box
+instead of widening the transcript. The transcript keeps its scrollbar's
+room (`scrollbar-gutter: stable`), so a reply growing past the window does
+not rewrap it.
 
 `gather_inputs` returns the context in two parts, and `build_messages`
 places them apart on purpose. The **document part** (the pages' sections:

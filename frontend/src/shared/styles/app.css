@@ -3915,6 +3915,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatMessages {
   flex: 1;
   overflow-y: auto;
+  /* The scrollbar's room is kept while nothing scrolls yet, so a reply
+     growing past the window does not narrow and rewrap the whole
+     transcript the moment the bar appears (as .blockList). */
+  scrollbar-gutter: stable;
   min-height: 0;
   padding: 4px 2px 0;
 }
