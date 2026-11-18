@@ -135,7 +135,20 @@ async function preview(candidate) {
   catch { return null; }
 }
 
-async function setDetection(tabId, candidate) {
+// The detection whose look-up is under way, per tab (tab id → {url, run}):
+// a popup opened meanwhile waits for it rather than asking again. On an
+// arXiv PDF tab the look-up may wait for arXiv's record (the server tries
+// the published version's DOI too).
+const detecting = new Map();
+
+function setDetection(tabId, candidate) {
+  const run = detectNow(tabId, candidate);
+  detecting.set(tabId, { url: candidate && candidate.source_url, run });
+  run.catch(() => {}).finally(() => { if (detecting.get(tabId)?.run === run) detecting.delete(tabId); });
+  return run;
+}
+
+async function detectNow(tabId, candidate) {
   const st = await setTabState(tabId, { candidate, hit: null, preview: null, looked: false, pageLooked: false });
   const auth = await checkAuth();
   if (!auth.configured) return st;
@@ -984,6 +997,11 @@ async function ensureDetection(tabId) {
   if (st.candidate && st.looked && sameLibrary(st, await getSettings())) return st;
   let tab = null;
   try { tab = await chrome.tabs.get(tabId); } catch { return st; }
+  const running = detecting.get(tabId);
+  if (running && running.url === tab.url) {
+    const done = await running.run.catch(() => null);
+    if (done && done.looked && sameLibrary(done, await getSettings())) return done;
+  }
   let fromPage = null;
   try { fromPage = await chrome.tabs.sendMessage(tabId, { type: "get-detection" }); } catch {}
   const candidate = mergeCandidates(fromPage, candidateFromUrl(tab.url, tab.title));
