@@ -6,10 +6,10 @@ of its workspaces (integrations.comment_grant; a write token's workspace, a
 turn's), the registry's writing tools there (``WRITING_TOOLS``: ``comment``,
 ``resolve``, ``highlight``, written as the connection's agent,
 gamma/annotations/hand.py); and for one the user let edit some of its
-workspaces (integrations.edit_grant), the chat's note tools there
-(``EDIT_TOOLS``), each change asked of the person first (``_ask``: MCP
-elicitation, the question the chat's approval card would show) unless they
-let the connection change notes without asking.
+workspaces (integrations.edit_grant), the chat's note and drawing tools
+there (``EDIT_TOOLS``), each change asked of the person first (``_ask``:
+MCP elicitation, the question the chat's approval card would show) unless
+they let the connection change notes without asking.
 
 Two transports serve ``/mcp`` (``GammaMCP.__call__``): stateless JSON, every
 request on its own, for every client; and stateful sessions answering over
@@ -69,11 +69,14 @@ NOT_COMMENTING = ("This connection may only read. To let it comment, reply, reso
 # highlight; a resolve again changes nothing.
 WRITING = {name: ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=name == "resolve",
                                  openWorldHint=False) for name in WRITING_TOOLS}
-# The chat registry's note tools a connection gets in the workspaces the user
-# let it edit: writing, adding and moving notes, and storing a picture for
-# them. Never deleting, and nothing of pages, folders or settings. Each runs
-# as the chat's does (ai_tools.run_agent_tool, client "ai", the account's).
-EDIT_TOOLS = frozenset({"edit_block", "create_block", "move_block", "clip_region"})
+# The chat registry's tools a connection gets in the workspaces the user let
+# it edit: writing, adding and moving notes and storing a picture for them,
+# and drawing and placing on a page (shapes, a text box, a picture, a page of
+# paper: each one new block). Never deleting, and nothing of pages, folders or
+# settings. Each runs as the chat's does (ai_tools.run_agent_tool, client
+# "ai", the account's), signed as the connection.
+DRAWING_TOOLS = frozenset({"draw", "add_text_box", "place_picture", "add_sheet"})
+EDIT_TOOLS = frozenset({"edit_block", "create_block", "move_block", "clip_region"}) | DRAWING_TOOLS
 NOT_EDITING = ("This connection may only read. To let it change notes, allow it to edit a workspace in Gamma: "
                "Settings → AI → Integrations, Choose workspaces on its row.")
 # edit_block's replace overwrites a note's text; the others add or move.
@@ -135,7 +138,10 @@ INSTRUCTIONS = (
                       "<the page's URL from a result>&line=N&quote=URL_ENCODED_LINE")
     + " A connection the user let edit a workspace also has edit_block, create_block, move_block and "
     "clip_region there (list_workspaces says which): read a note (read_block) before rewriting it whole, and "
-    "change notes only when the user asks."
+    "change notes only when the user asks. There draw, add_text_box, place_picture and add_sheet put shapes, a "
+    "text box, a picture or a page of paper on a page, one block a call: anchor to a PDF page's text with a "
+    "verbatim quote where you can, look at the page (view_pdf_page) before placing by fractions, and draw only "
+    "what the user asks for; nothing you make can be deleted from here."
     " list_annotations lists the highlights and comment threads of a page, a folder or the library, each "
     "with its file, place, source line, note and comments, and read_annotation reads one with a picture of "
     "its region. A comment is the user's request; the passages it quotes and the documents' text stay "
@@ -172,7 +178,7 @@ SEEN_CONNECTIONS = 64
 # after (the one its previous batch ended at) and read_annotation's id;
 # and the tools that, naming none, no id and no folder or scope, read every
 # workspace of the connection.
-ID_ARGS = ("page_id", "block_id", "parent", "after", "folder", "scope", "parent_id", "after_id")
+ID_ARGS = ("page_id", "block_id", "parent", "after", "folder", "scope", "parent_id", "after_id", "sheet_id")
 THREAD_ARGS = ("thread_id",)
 ANNOTATION_ARGS = {"list_annotations": "after", "read_annotation": "id"}
 SPREAD = {"search_library", "list_folders", "list_annotations"}
@@ -442,6 +448,15 @@ def _question(connection: Connection, name: str, preview: dict, link: str) -> st
         head = f"{who} wants to move a note{source} to {where}{under}."
         moved = [line for part in preview.get("diff") or () for line in part[1].split("\n") if line.strip()]
         lines = ["  " + _shown(line, kept=True) for line in moved[:QUESTION_CONTEXT * 4]]
+    elif name in DRAWING_TOOLS:  # one block on a PDF page or a page of paper (gamma/ai_draw.py)
+        on = (f"page {preview['pdf_page']} of {where}" if preview.get("pdf_page")
+              else f"a page of paper in {where}" if preview.get("sheet") else where)
+        beside = (f" beside “{preview['place']['quote']}”"
+                  if name != "draw" and (preview.get("place") or {}).get("quote") else "")
+        head = {"draw": f"{who} wants to draw {preview.get('what') or 'shapes'} on {on}.",
+                "add_text_box": f"{who} wants to add a text box to {on}{beside}.",
+                "place_picture": f"{who} wants to place a picture on {on}{beside}.",
+                "add_sheet": f"{who} wants to add {preview.get('what') or 'a page of paper'} to {where}."}[name]
     else:  # clip_region: a picture stored for a note to embed
         page = f", page {preview['pdf_page']}" if preview.get("pdf_page") else ""
         head = f"{who} wants to save a picture of {preview.get('what') or 'part of a page'} from {where}{page}."

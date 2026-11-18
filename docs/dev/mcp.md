@@ -546,11 +546,17 @@ level").
 - **The tools.** Where it may edit, the connection gets four of the chat's
   note tools (`mcp_server.EDIT_TOOLS`): `edit_block`, `create_block`,
   `move_block` and `clip_region` (a picture of a PDF region or of
-  handwriting, for a note to embed). Never `delete_block`, and nothing of
-  pages, folders, labels or settings. They run through
+  handwriting, for a note to embed), and the chat's drawing tools
+  (`DRAWING_TOOLS`: `draw`, `add_text_box`, `place_picture`, `add_sheet`,
+  each one new block on a PDF page or a page of paper, [ai_tools.md](ai_tools.md)
+  "Drawing on pages"). Never `delete_block`, and nothing of
+  pages, folders, labels or settings. A drawing's answer carries its
+  picture (image content, as `view_ink`'s) and, since nothing it makes can
+  be deleted from here or reverted from a reply, says the user removes a
+  misplaced one in Gamma (`ai_tools._placed_after`). They run through
   `ai_tools.run_agent_tool` with `can_write` on, as the chat's agent's do:
-  written as the account with client `ai`, a block `create_block` makes
-  stamped with the connection (`properties.agent`, `agents.stamp`:
+  written as the account with client `ai`, a block `create_block` or a
+  drawing tool makes stamped with the connection (`properties.agent`, `agents.stamp`:
   `{id, name, for}`, [block_centric.md](block_centric.md) "Made by an
   agent"), planned and checked as in the chat (the edit's three-way merge with what the user typed meanwhile, the
   picture checks, the write lock), refused in a workspace being deleted.

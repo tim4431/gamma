@@ -2084,6 +2084,18 @@ def _placed_picture(ws: str, conn, scope: dict, tool: str, surface, block_id: st
     return url, ([image_part(shown)] if shown and scope.get("pictures") is not False else [])
 
 
+def _placed_after(scope: dict, images) -> str:
+    """What a placing call's answer says after it: to check the picture
+    (when one is attached), and how the change is taken back — from the
+    reply in Gamma's chat; by the user in Gamma over MCP (``link_base``),
+    which has no reply to revert from and no delete_block."""
+    mcp = bool(scope.get("link_base"))
+    check = (" A picture of the page as it is now is attached: check that it is where you meant"
+             + ("; if not, tell the user, who removes it in Gamma." if mcp
+                else ", and delete_block it to try again if not.")) if images else ""
+    return check + ("" if mcp else " The user can revert it from the reply.")
+
+
 _PLACED_WORDS = {"draw": ("drew {what}", "Drew {what} on “{title}”"),
                  "add_text_box": ("added a text box", "Added a text box to “{title}”"),
                  "place_picture": ("placed a picture", "Placed a picture on “{title}”")}
@@ -2115,9 +2127,7 @@ def _run_placed(tool: str):
         url, images = _placed_picture(ws, conn, scope, tool, s, block_id, props)
         done, summary = _PLACED_WORDS[tool]
         text = (f"ok — {done.format(what=made.what)} on {s.words} of “{s.title}”: block [{block_id}]."
-                + (" A picture of the page as it is now is attached: check that it is where you meant, and "
-                   "delete_block it to try again if not." if images else "")
-                + " The user can revert it from the reply.")
+                + _placed_after(scope, images))
         action = {"kind": "create", "page_id": s.page_id, "block_id": block_id, "title": s.title,
                   "summary": summary.format(what=made.what[:40], title=s.title[:50]),
                   **({"pdf_page": s.page} if s.page else {}), **({"picture": url} if url else {}),
@@ -2176,7 +2186,7 @@ def _run_add_sheet(conn, ws: str, scope: dict, args: dict):
     if answer:
         return answer, None
     return (f"ok — added {made.what} to “{title}”: sheet [{block_id}]. Draw or write on it with sheet_id "
-            f"\"{block_id}\". The user can revert it from the reply.",
+            f"\"{block_id}\"." + _placed_after(scope, []),
             {"kind": "create", "page_id": page_id, "block_id": block_id, "title": title,
              "summary": f"Added a page of paper to “{title[:60]}”", "picture": ink_picture_url(block_id, True),
              "revert": {"after": made.content, "parent": plan["parent"], "position": position, "props": props}})
