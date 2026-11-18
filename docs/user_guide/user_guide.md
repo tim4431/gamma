@@ -250,16 +250,18 @@ On the home page or in a folder, the chat can act on your library: list, read an
 |---|---|---|
 | **Read your library** | | |
 | List pages | `list_pages`, `list_folders`, `list_deleted` | Browse page titles, folders, metadata and Recently deleted, a synced folder's files by their paths; a long library in batches (folder chats) |
-| Read pages | `read_page`, `read_chats`, `cite` | Read PDF text, a text file's lines, highlights, notes, earlier chats and citation records (metadata, BibTeX) |
+| Read pages | `read_page`, `read_chats`, `cite`, `backlinks`, `export` | Read PDF text, a text file's lines, highlights, notes, earlier chats and citation records (metadata, BibTeX), find the notes that link to a page, and export a page or a folder to a file that downloads in the app |
 | Read note blocks | `read_block` | Read individual notes and their outline |
 | View pages and handwriting | `view_pdf_page`, `view_ink`, `view_image` | Look at figures, tables, scanned pages, your handwriting and the pictures in your notes and on your pages |
 | Search library | `search_library` | Find text in your notes, PDFs and text files |
+| Show pages | `show_page` | Open a page for you at a PDF page, a passage or a note: at once on the page the chat is beside, else when the reply ends |
 | **Web research** | | |
 | Search online | `search_papers`, `related_papers`, `search_web` | Find papers on Crossref, arXiv and OpenAlex and follow their citations; search the web for current facts, documentation and news, by date or on one site, through your AI connection, Brave Search, Tavily or SearXNG (Tool usage → Online search) |
 | Fetch documents | `fetch_paper`, `fetch_url`, `read_paper` | Read a paper by DOI, arXiv id or URL, or any web page as text, without saving it; a paper behind a paywall or sign-in is handed to your browser |
 | Use journal sign-ins | | Use the publisher sign-ins Gamma Connector saved when fetching |
 | **Make changes** | | |
 | Save papers | `save_paper` | Add a paper found online to the library |
+| Create pages | `create_page` | Make a new page of notes in a folder or inside a page; you can revert it from the reply while it is empty (folder chats) |
 | Rename pages | `rename_page` | Change pages' titles, many in one call (folder chats) |
 | Move pages | `move_page` | File pages into a folder, many in one call (folder chats) |
 | Restore deleted pages | `restore_page` | Bring pages back from Recently deleted (folder chats) |
@@ -267,7 +269,8 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | Organize folders and labels | `rename_folder`, `create_label`, `rename_label`, `label_page` | Rename folders, and make, rename and apply labels — to many pages in one call (folder chats) |
 | Delete folders and labels | `delete_folder`, `delete_label` | Delete a folder or a label, never its pages; you can revert it from the reply (folder chats) |
 | Edit note blocks | `edit_block`, `create_block`, `move_block`, `delete_block`, `clip_region` | Create, edit, move and delete notes, transcribe handwriting, and clip a region of a PDF page into a note |
-| Comments and highlights | `comment`, `resolve`, `highlight` | Write under its own name, Gamma AI, for you: reply in a comment thread, ask about a passage with a comment on it, resolve a thread, highlight a passage. A comment on a quote highlights it; a quote not on the page is refused with the closest passage. Viewers' chats have it too |
+| Comments and highlights | `comment`, `resolve`, `highlight` | Write under its own name, Gamma AI, for you: reply in a comment thread, ask about a passage with a comment on it, resolve a thread, highlight a passage or an area of a page (a figure, a table). A comment on a quote highlights it; a quote not on the page is refused with the closest passage. Viewers' chats have it too |
+| Draw on pages | `draw`, `add_text_box`, `place_picture`, `add_sheet` | Draw shapes (boxes, circles, arrows, lines, curves) on a PDF page or a page of paper, add a text box beside a passage, place a picture, add a page of paper. Each is one change you can revert from the reply, made under its own name |
 
 The agent never deletes a page for good: a deleted page stays in Recently deleted for 30 days, and deleting a folder or a label leaves its pages in your library. An assistant connected from outside ([Assistants](#assistants)) gets the reading tools, and the comment and note tools only where you give its connection the Comment or Edit level.
 

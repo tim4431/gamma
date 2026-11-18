@@ -344,7 +344,9 @@ No new endpoint. A picture is a block with `picture`, plus `pdf_page` (the
 1-based page) on a PDF page and `t0` from its making. A picture imported
 from the PDF's own `/Stamp` also carries `imported_annot` and
 `annot_stripped`, as a text box does. Migration step 44 teaches the block
-table's `kind` column the new kind (below).
+table's `kind` column the new kind (below). The chat's agent places one with
+`place_picture`, sized by `image_size` ([ai_tools.md](ai_tools.md) "Drawing
+on pages").
 
 | `picture` key | meaning | default |
 |---|---|---|

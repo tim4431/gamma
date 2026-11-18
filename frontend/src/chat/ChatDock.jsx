@@ -507,6 +507,9 @@ export default function ChatDock({
           // leaves the card under it ("Skip, and don't wait in this chat").
           paper_wait: waitsForPapers(readGrants(), activeUser(), conversationId(prevMessages)),
           delegate_reads: delegateReads !== false,
+          // This app shows a page show_page names and downloads a file
+          // export starts (App's handleAgentEvent).
+          shows_pages: true,
           // save_paper stores a paper the way the reply's Save to library does.
           paper_save: { allow_oa: paperSave.allowOa !== false, save_copy: paperSave.saveCopy !== false,
                         fetch_metadata: paperSave.fetchMetadata !== false } }
@@ -1594,7 +1597,7 @@ export default function ChatDock({
             // read/edited (and reloads the tree for an applied edit), and the
             // note shows what an edit changed until the user keeps or
             // reverts it (chat/noteReview.js).
-            onAgentEvent?.({ type: "action", action: ev.action });
+            onAgentEvent?.({ type: "action", action: ev.action, key: sendKey });
             noteReview.landed({ action: ev.action, key: sendKey, reply: replyId, index: actions.length - 1 });
           } else if (ev.progress) {
             // The agent is still writing a note edit — the block types it in.
@@ -1666,7 +1669,10 @@ export default function ChatDock({
       // after a reply that ended on its own, and waits after Stop or a failure.
       chatQueue.ended(sendKey, ended);
       session.finish(sendKey);
-      onAgentEvent?.({ type: "done", key: sendKey });
+      // `ended`: the reply ended on its own, not stopped, failed or steered
+      // (a steer's own done above has none), so a page it asked to show
+      // opens now (App's handleAgentEvent).
+      onAgentEvent?.({ type: "done", key: sendKey, ended });
       // A card the reply left waiting (stopped, or the stream failed) goes from its note too.
       if (approval) noteReview.settle(approval.id);
       noteReview.replying(sendKey, false);

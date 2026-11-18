@@ -464,11 +464,13 @@ def _curve(points, closed: bool, smooth: bool):
     return "curve", {**_corners(points), "closed": closed, "smooth": smooth}, points
 
 
-def _figure(entry):
-    """``(kind, params, points)`` for one entry of the reply, in the
-    digest's frame — the stored kinds' params (handwriting.md "The stroke
-    file"), normalised and snapped, and the points the box check reads — or
-    None when the entry is not a shape this file format can hold."""
+def figure(entry):
+    """``(kind, params, points)`` for one shape entry, in the frame its
+    numbers are in (the redraw's digest; the page itself for the chat's
+    ``draw``, gamma/ai_draw.py) — the stored kinds' params (handwriting.md
+    "The stroke file"), normalised and snapped, and the points the box
+    check reads — or None when the entry is not a shape this file format
+    can hold."""
     kind = str(entry.get("kind") or "").strip().lower()
     kind = {"rectangle": "rect"}.get(kind, kind)
     if kind in ("line", "arrow"):
@@ -492,7 +494,7 @@ def _figure(entry):
     return None
 
 
-def _placed(params: dict, ox: float, oy: float) -> dict:
+def placed(params: dict, ox: float, oy: float) -> dict:
     """Params moved from the digest's frame to page points and put on the
     1/100 pt grid: x-like keys gain ``ox``, y-like ones ``oy``; lengths and
     the angle are only rounded; the curve's flags stay booleans."""
@@ -532,17 +534,17 @@ def read_shapes(raw: str, offered: list[int], box) -> list[dict]:
     for entry in answer["shapes"]:
         if not isinstance(entry, dict):
             continue
-        figure = _figure(entry)
-        if figure is None:
+        made = figure(entry)
+        if made is None:
             continue
-        kind, params, points = figure
+        kind, params, points = made
         if not all(lo_x <= x + x0 <= hi_x and lo_y <= y + y0 <= hi_y for x, y in points):
             continue
         numbers = [n for n in _stroke_numbers(entry.get("strokes"), len(offered)) if n not in taken]
         if not numbers:
             continue
         taken.update(numbers)
-        out.append({"kind": kind, "params": _placed(params, x0, y0),
+        out.append({"kind": kind, "params": placed(params, x0, y0),
                     "strokes": sorted(offered[n - 1] for n in numbers)})
     return out
 

@@ -1,10 +1,11 @@
 // The agent's tool calls as the chat shows them: every call counts as a
 // step, summed up in one pill ("6 steps · listed, read 1 page · 1 failed"),
 // and the calls that changed something are listed apart, grouped by where
-// the change landed — the library (renamed, filed, saved or restored pages;
-// renamed, made, applied or deleted folders and labels) or the notes
-// (edited, added or moved blocks, and what the agent wrote as itself: its
-// comments, the threads it resolved, its highlights). A call that changed several pages is one
+// the change landed — the library (renamed, filed, saved, made or restored
+// pages; renamed, made, applied or deleted folders and labels) or the notes
+// (edited, added or moved blocks, what the agent drew or placed on a page,
+// and what it wrote as itself: its comments, the threads it resolved, its
+// highlights). A call that changed several pages is one
 // step and one change, counted by its pages in the library list
 // (`changeCount`). While a reply streams, the
 // {"step"} line the server sends before each call names what is running now,
@@ -16,12 +17,14 @@ import { t, tn } from "../shared/i18n/i18n.js";
 
 const CHANGE_KINDS = new Set(["rename", "move", "edit", "create", "delete", "save", "restore", "label", "comment",
   "resolve", "highlight"]);
-const LIBRARY_TOOLS = new Set(["rename_page", "move_page", "save_paper", "restore_page", "delete_page",
+const LIBRARY_TOOLS = new Set(["rename_page", "move_page", "save_paper", "create_page", "restore_page", "delete_page",
   "rename_folder", "create_label", "rename_label", "label_page", "delete_folder", "delete_label"]);
 // The note-block mutators: their actions carry the page id(s) they touched,
 // so the open page's block tree can reload and show the change. A highlight
-// is a block the agent made.
-export const BLOCK_TOOLS = ["edit_block", "create_block", "move_block", "delete_block", "highlight"];
+// is a block the agent made, and so is each thing it draws or places on a
+// page (gamma/ai_draw.py).
+export const BLOCK_TOOLS = ["edit_block", "create_block", "move_block", "delete_block", "highlight", "draw",
+  "add_text_box", "place_picture", "add_sheet"];
 
 // A call that changed something (listed in the reply, and ChatDock refreshes
 // the home feed after one). Actions saved before `noop` existed mark a
@@ -76,6 +79,8 @@ const READ_VERBS = {
   websearch: (n) => tn("searched online", "searched online {n} times", n),
   fetch: (n) => tn("fetched {n} document", "fetched {n} documents", n),
   helper: (n) => tn("used {n} helper", "used {n} helpers", n),
+  show: (n) => tn("showed you a page", "showed you {n} pages", n),
+  export: (n) => tn("exported {n} file", "exported {n} files", n),
 };
 
 export function stepsSummary(actions = []) {
@@ -230,6 +235,16 @@ export function runningLabel(step, titleOf = () => "") {
     case "comment": return args.thread_id ? t("Replying in a comment thread…") : t("Writing a comment…");
     case "resolve": return t("Resolving a comment thread…");
     case "highlight": return t("Highlighting a passage…");
+    case "draw":
+      return args.sheet_id ? t("Drawing on a page of paper…")
+        : args.pdf_page ? t("Drawing on PDF page {page}…", { page: args.pdf_page }) : t("Drawing…");
+    case "add_text_box": return t("Adding a text box…");
+    case "place_picture": return t("Placing a picture…");
+    case "add_sheet": return t("Adding a page of paper…");
+    case "show_page": return title ? t("Showing you “{title}”…", { title }) : t("Showing you a page…");
+    case "create_page": return args.title ? t("Making the page “{title}”…", { title: args.title }) : t("Making a page…");
+    case "export": return title ? t("Exporting “{title}”…", { title }) : t("Exporting…");
+    case "backlinks": return t("Finding the notes that link here…");
     default: return t("Working…");
   }
 }
@@ -256,6 +271,7 @@ const DONE_WORDS = {
   comment: () => t("Wrote a comment"),
   resolve: () => t("Resolved a comment thread"),
   highlight: () => t("Highlighted a passage"),
+  backlinks: () => t("Found the notes that link here"),
 };
 
 // A call of Gamma's tool `tool` known by its name alone (a computer
@@ -295,12 +311,20 @@ export function helperStatus(h) {
 
 // The sentence of a note change, around the link to its page ({page}).
 export function noteChangeText(a, page) {
-  if (a.kind === "create") return t("Added a note in {page}", { page });
+  if (a.kind === "create") {
+    return {
+      draw: () => t("Drew on {page}", { page }),
+      add_text_box: () => t("Added a text box to {page}", { page }),
+      place_picture: () => t("Placed a picture on {page}", { page }),
+      add_sheet: () => t("Added a page of paper to {page}", { page }),
+    }[a.tool]?.() || t("Added a note in {page}", { page });
+  }
   if (a.kind === "delete") return t("Deleted a note in {page}", { page });
   if (a.kind === "comment") return a.reply ? t("Replied in a comment thread in {page}", { page })
     : t("Commented in {page}", { page });
   if (a.kind === "resolve") return t("Resolved a comment thread in {page}", { page });
-  if (a.kind === "highlight") return t("Highlighted a passage in {page}", { page });
+  if (a.kind === "highlight") return a.area ? t("Highlighted an area in {page}", { page })
+    : t("Highlighted a passage in {page}", { page });
   if (a.kind === "move") return a.src_page_id && a.src_page_id !== a.page_id
     ? t("Moved a note to {page}", { page }) : t("Moved a note in {page}", { page });
   return {

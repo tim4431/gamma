@@ -71,6 +71,7 @@ import { MAX_CHAT_PASSAGES, MAX_INK_SELECTIONS, MAX_INK_SELECTION_BYTES } from "
 // Agent tools whose applied action changes the open page's block tree
 // (handleAgentEvent reloads it and lights the block up).
 import { BLOCK_TOOLS } from "../chat/agentSteps.js";
+import { agentShows, landing } from "../chat/agentShows.js";
 import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
@@ -5907,10 +5908,32 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setAiMarks((prev) => { if (!prev.has(id)) return prev; const m = new Map(prev); m.delete(id); return m; });
     }, ttl));
   }
+  // What show_page asks to show, landed on as the reply's own links land:
+  // at once on the page the chat is beside, else when the reply ends
+  // (chat/agentShows.js).
+  function landAgentShow(decided) {
+    if (decided?.kind !== "now") return;
+    const to = landing(decided.show);
+    if (to.block) openBlockLink(to.block, to.page);
+    else openPageLink(to.page, to.target);
+  }
   function handleAgentEvent(ev) {
+    // The conversation the dock shows (ChatDock's chatKey).
+    const dockKey = focusedBlockId || (!shareMode && folderFilter) || "home";
     // Replies stream per conversation: another page's finishing reply must
     // not drop the preview this page's own reply is still writing.
-    if (ev.type === "done") { if (ev.key === focusedBlockId) setAiLive(null); return; }
+    if (ev.type === "done") {
+      if (ev.key === focusedBlockId) setAiLive(null);
+      landAgentShow(agentShows.done(ev, dockKey));
+      return;
+    }
+    if (ev.action?.kind === "show") { landAgentShow(agentShows.action(ev, dockKey, focusedBlockId || "")); return; }
+    // An export the agent started is this tab's to download, as the Export
+    // dialog's is (tasks/useTasks.js adopt).
+    if (ev.action?.kind === "export" && ev.action.job && !ev.action.error) {
+      tasks.adopt(ev.action.job, { download: "auto" });
+      return;
+    }
     if (!focusedBlockId) return;
     const inTree = (id) => !!id && (id === focusedBlockId || flattenBlocks(blocksRef.current).some((b) => b.id === id));
     if (ev.type === "progress") {
