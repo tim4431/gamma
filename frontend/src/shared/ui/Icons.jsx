@@ -8,6 +8,7 @@
 // every size, so neighbouring icons of different sizes look equally heavy.
 // An explicit `strokeWidth` (grid units) is for icons sized by CSS.
 import React from "react";
+import { FOLDER_MARK_SHIFT, FOLDER_PATH, FOLD_PATH, KIND_MARKS, KIND_TONES, PDF_BAND, SHEET_PATH, glyphKind } from "./fileIcons.js";
 
 const ICON_WEIGHT = 1.6;
 const iconStroke = (size, weight = ICON_WEIGHT) => (size ? (weight * 24) / size : 2);
@@ -531,55 +532,53 @@ export function LabelGlyph({ dashed } = {}) {
   );
 }
 
-// What the sheet shows of each format (documents/formats.js FORMATS): a
-// PDF its stamp, text a pair of brackets, a picture a mountain under a sun,
-// audio a note, video a play triangle, a binary nothing (a plain sheet), a
-// note (markdown, or a page with no document) its lines.
-const GLYPH_MARKS = {
-  text: <><path d="M9.5 12 7.5 15l2 3" /><path d="m14.5 12 2 3-2 3" /></>,
-  image: <><path d="M7 19l3.5-4.5 2.5 3 1.8-2.2L17 19" /><circle cx="14.5" cy="12.5" r="1.2" /></>,
-  audio: <><path d="M14 11v6.5" /><circle cx="12" cy="17.5" r="2" /><path d="M14 11c0-1.5 1.5-2 3-1.5" /></>,
-  video: <path d="M9.5 11.5v7l6-3.5z" fill="currentColor" stroke="none" />,
-  binary: null,
-};
-// The formats drawn as a band at the small size, like the PDF's lettering.
-const BAND_FORMATS = new Set(["image", "audio", "video"]);
+// A kind's mark (fileIcons.js KIND_MARKS: [tag, attributes] lists) as
+// elements, in the stroke of the icon around it.
+const kindMark = (kind) => KIND_MARKS[kind].map(([Tag, attrs], i) => <Tag key={i} {...attrs} />);
 
-// Big file glyph — a document sheet with a folded corner. `format` is the
-// page's document's (pageDocument(...).format, "" for none): a PDF gets a
-// small "PDF" tab so it reads as an annotated paper at a glance, and every
-// other format a mark of its own (GLYPH_MARKS); a note, its lines.
-// `size` draws it as a small kind icon (search results, tabs, Ctrl+P), the
-// "PDF" lettering and a picture's, audio's or video's mark a solid band
-// there; without it the surface's CSS sizes the tile. The glyph carries its
-// format as a class (`.pdf`, `.image`, …), which library.css tints.
-// `label`: a short format stamp on the page (the PDF card's "PDF", the
-// bibliography card's "BIB"); a file-format token, so it is not translated.
-export function FileGlyph({ format = "", label = "", size }) {
-  const pdf = format === "pdf";
+// Big file glyph — a document sheet with a folded corner, its kind's mark
+// on it in its kind's tint (fileIcons.js KIND_MARKS, KIND_TONES; ui-design
+// .md "File icons"). `kind` is a synced file's by its name (fileKind);
+// without one, `format`, the page's document's (pageDocument(...).format,
+// "" for none), says it (glyphKind). A PDF gets a small "PDF" tab so it
+// reads as an annotated paper at a glance. `size` draws it as a small kind
+// icon (search results, tabs, Ctrl+P, a synced folder's rows), the "PDF"
+// lettering a solid band there; without it the surface's CSS sizes the
+// tile. The glyph carries its tint as a class (`.pdf`, `.code`, `.data`,
+// `.media`), which library.css colours, and its kind as `data-kind`.
+// `label`: a short format stamp on the page (the bibliography card's
+// "BIB"); a file-format token, so it is not translated.
+export function FileGlyph({ kind = "", format = "", label = "", size }) {
+  const k = glyphKind(kind, format);
   const small = !!size && size < 24;
-  const stamp = pdf ? "PDF" : label;
-  const mark = !stamp && Object.hasOwn(GLYPH_MARKS, format) ? GLYPH_MARKS[format] : undefined;
-  const band = small && (stamp || (mark && BAND_FORMATS.has(format)));
+  const stamp = k === "pdf" ? "PDF" : label;
+  const tone = KIND_TONES[k];
+  const [Band, band] = PDF_BAND;
   return (
-    <svg className={`tileGlyph fileGlyph${format ? ` ${format}` : ""}${size ? " kindGlyph" : ""}`}
+    <svg className={`tileGlyph fileGlyph${tone ? ` ${tone}` : ""}${size ? " kindGlyph" : ""}`} data-kind={k}
       style={size ? { width: size, height: size } : undefined} aria-hidden="true"
       viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={small ? iconStroke(size) : 1.5} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="var(--bg-raised)" />
-      <path d="M14 2v6h6" />
-      {band ? (
-        <rect x="7.5" y="12.5" width="9" height="5" rx="1" fill="currentColor" stroke="none" />
-      ) : stamp ? (
+      <path d={SHEET_PATH} fill="var(--bg-raised)" />
+      <path d={FOLD_PATH} />
+      {stamp && small ? <Band {...band} /> : stamp ? (
         <text x="12" y="17" textAnchor="middle" fontSize="5" fontWeight="700" fill="currentColor" stroke="none">{stamp}</text>
-      ) : mark !== undefined ? mark : (
-        <>
-          <line x1="8" y1="13" x2="16" y2="13" />
-          <line x1="8" y1="17" x2="13" y2="17" />
-        </>
-      )}
+      ) : kindMark(k)}
     </svg>
   );
 }
+
+// A synced folder's directory: FolderIcon's folder with its kind's mark in
+// its body (fileIcons.js folderKind, KIND_MARKS), the plain folder for
+// none. An open directory keeps it: its row's chevron says it is open.
+export const FolderKindIcon = ({ kind = "", ...p }) => {
+  const marked = Object.hasOwn(KIND_MARKS, kind);
+  return (
+    <Icon data-kind={marked ? kind : undefined} {...p}>
+      <path d={FOLDER_PATH} />
+      {marked ? <g transform={`translate(0 ${FOLDER_MARK_SHIFT})`}>{kindMark(kind)}</g> : null}
+    </Icon>
+  );
+};
 export const ChevronLeftIcon = (p) => (
   <Icon {...p}><path d="m15 18-6-6 6-6" /></Icon>
 );

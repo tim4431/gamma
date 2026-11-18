@@ -40,7 +40,7 @@ import {
   BanIcon, BookIcon, CalendarIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, FileIcon, FolderIcon, HistoryIcon,
   LabelIcon, SearchIcon, TextSearchIcon, UserIcon, XIcon,
 } from "../shared/ui/Icons";
-import FileThemeIcon from "../shared/ui/FileIcon.jsx";
+import FileKindIcon from "../shared/ui/FileIcon.jsx";
 import { Chevron, MorphText } from "../shared/ui/MotionWidgets";
 
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
@@ -500,11 +500,11 @@ export default function SearchPanel({
     const path = pagePathLabel(pagesById, pageId);
     return path ? `${path}${PAGE_PATH_SEP.trimEnd()}` : "";
   };
-  // A synced folder's file leads with its theme icon, by its name (`file`,
+  // A synced folder's file leads with its kind's icon, by its name (`file`,
   // a file hit's by its path), any other page with its kind glyph.
   const resultHead = (pageId, title, format, extra, opts, lead = pageLead(pageId), file = pagesById.get(pageId)?._fileName || "") => (
     <span className="searchResultPage">
-      <FileThemeIcon path={file} format={format} size={14} />
+      <FileKindIcon path={file} format={format} size={14} />
       {lead ? <span className="searchResultPath">{lead}</span> : null}
       <span className="searchResultTitle">{marked(title || t("Untitled"), opts)}</span>
       {extra}

@@ -36,7 +36,7 @@ each page links at its end.
 
 | Page | What it explains |
 |---|---|
-| [Look and feel](look.md) | Themes and how one is made, surfaces, type, sizes, icons, buttons, motion, the colour palette, the brand |
+| [Look and feel](look.md) | Themes and how one is made, surfaces, type, sizes, icons and file icons, buttons, motion, the colour palette, the brand |
 | [Interaction](interaction.md) | Mouse, finger and pen alike; menus and dialogs; the keyboard's one command catalog; where a setting lives; languages |
 | [Blocks and pages](blocks.md) | Everything is a block; a page and its document; files in notes; pages inside pages; notebooks; Markdown notes |
 | [The library](library.md) | Folders and labels, pages inside pages in the library, files from a synced folder, pins and recents, Recently deleted, who may organize |

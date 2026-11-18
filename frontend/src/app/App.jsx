@@ -305,7 +305,7 @@ import { fileRules, filingTargets, folderRules, refusalText, treeOf, workOf } fr
 import { directoryMoves, filingOf, libraryCopy, listRows, pagesMenu, workCounts } from "../explorer/workFolderActions.js";
 import { useWorkFolderActions } from "../explorer/useWorkFolderActions.jsx";
 import FolderTree from "../explorer/FolderTree.jsx";
-import FileThemeIcon from "../shared/ui/FileIcon.jsx";
+import FileKindIcon from "../shared/ui/FileIcon.jsx";
 import { folderRows } from "../explorer/fileTree.js";
 import { useFolderTree } from "../explorer/useFolderTree.js";
 import { useSummaries } from "../explorer/useSummaries.js";
@@ -9630,7 +9630,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const synced = !!libTree.folders.get(f)?.mark;
     const keeper = synced ? work.keeperOf(f) : null;
     return {
-      glyph: synced ? <FileThemeIcon root badge={keeper?.badge} /> : <FolderGlyph />,
+      glyph: synced ? <FileKindIcon root badge={keeper?.badge} /> : <FolderGlyph />,
       title: libTree.folders.get(f)?.name,
       kind: !synced ? t("Folder") : keeper ? <StateTag state={keeper} className="keeperTag" /> : t("Synced folder"),
       count: folderMeta[f]?.count || 0,
@@ -11654,7 +11654,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     ) : null}
                     <div className="folderCurrent">
                       {labelFilter ? <LabelIcon size={16} strokeDasharray={labelFilter === NO_LABEL ? "2 1.5" : undefined} />
-                        : workFolder ? <FileThemeIcon root size={16} badge={workKeeper?.badge} /> : <FolderOpenIcon size={16} />}
+                        : workFolder ? <FileKindIcon root size={16} badge={workKeeper?.badge} /> : <FolderOpenIcon size={16} />}
                       {/* Breadcrumb: every folder of the path navigates to its level —
                           from the library's root on (a folder share starts at its
                           folder) — and files a page or moves a folder dropped on it;
@@ -12020,7 +12020,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           : t("Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in")}
                       >
                         {selecting && selectedFolders.has(f) ? <SelectCheck />
-                          : synced ? <FileThemeIcon root size={16} badge={keeper?.badge} /> : <FolderIcon size={16} />}
+                          : synced ? <FileKindIcon root size={16} badge={keeper?.badge} /> : <FolderIcon size={16} />}
                         {folderRenaming?.id === f ? (
                           <input
                             autoFocus

@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="644" viewBox="0 0 960 644" role="img" aria-label="Gamma's file icons: each kind of file and directory of a synced folder" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif">
+<title>Gamma's file icons: each kind of file and directory of a synced folder</title>
+<style>
+.l { fill: #292822; } .m { fill: #6b6a65; } .rim { stroke: #c7c2b6; } .paper { fill: #d2cec4; } .t { color: #6b6a65; } .t-pdf { color: #c8483b; } .t-code, .t-folder { color: #92620e; } .t-data { color: #2a8d4f; } .t-media { color: #d9822b; }
+@media (prefers-color-scheme: dark) { .l { fill: #f0ede6; } .m { fill: #a9a69e; } .rim { stroke: #45443f; } .paper { fill: #38362f; } .t { color: #a9a69e; } .t-pdf { color: #e0776b; } .t-code, .t-folder { color: #e8b451; } .t-data { color: #57b073; } .t-media { color: #d9822b; } }
+.mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+</style>
+<text y="16" font-size="14" font-weight="600" class="l">Files</text>
+<text y="34" font-size="11" class="m">A synced folder's file by its name: its kind's mark on the sheet, in its kind's tint</text>
+<g transform="translate(0 50) scale(1.3333333333333333)" class="t-pdf" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><rect x="7.5" y="12.5" width="9" height="5" rx="1" fill="currentColor" stroke="none"/></g>
+<text x="44" y="64" font-size="12" font-weight="600" class="l">PDF</text>
+<text x="44" y="79" font-size="10" class="m mono">.pdf</text>
+<g transform="translate(240 50) scale(1.3333333333333333)" class="t" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></g>
+<text x="284" y="64" font-size="12" font-weight="600" class="l">Text</text>
+<text x="284" y="79" font-size="10" class="m mono">.md .txt .docx .rst</text>
+<g transform="translate(480 50) scale(1.3333333333333333)" class="t" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M12 11h.01"/><path d="M12 15v3.5"/></g>
+<text x="524" y="64" font-size="12" font-weight="600" class="l">README</text>
+<text x="524" y="79" font-size="10" class="m mono">README.*</text>
+<g transform="translate(720 50) scale(1.3333333333333333)" class="t" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><circle cx="12" cy="13.5" r="2.5"/><path d="m10.3 15.4-.8 3.6 2.5-1.3 2.5 1.3-.8-3.6"/></g>
+<text x="764" y="64" font-size="12" font-weight="600" class="l">License</text>
+<text x="764" y="79" font-size="10" class="m mono">LICENSE.*</text>
+<g transform="translate(0 98) scale(1.3333333333333333)" class="t-code" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M15.5 12h-7l3.5 3-3.5 3h7"/></g>
+<text x="44" y="112" font-size="12" font-weight="600" class="l">TeX</text>
+<text x="44" y="127" font-size="10" class="m mono">.tex .sty .cls .ltx</text>
+<g transform="translate(240 98) scale(1.3333333333333333)" class="t" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><circle cx="9.6" cy="13.4" r="1.4" fill="currentColor"/><path d="M11 13.4c0 2.2-1 3.6-2.8 4.3"/><circle cx="14.6" cy="13.4" r="1.4" fill="currentColor"/><path d="M16 13.4c0 2.2-1 3.6-2.8 4.3"/></g>
+<text x="284" y="112" font-size="12" font-weight="600" class="l">References</text>
+<text x="284" y="127" font-size="10" class="m mono">.bib .ris .bbl .bibtex</text>
+<g transform="translate(480 98) scale(1.3333333333333333)" class="t-code" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M9.5 12 7.5 15l2 3"/><path d="m14.5 12 2 3-2 3"/></g>
+<text x="524" y="112" font-size="12" font-weight="600" class="l">Code</text>
+<text x="524" y="127" font-size="10" class="m mono">.py .js .ts .c</text>
+<g transform="translate(720 98) scale(1.3333333333333333)" class="t-code" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="m8 12 3 3-3 3"/><path d="M13 18h3"/></g>
+<text x="764" y="112" font-size="12" font-weight="600" class="l">Shell script</text>
+<text x="764" y="127" font-size="10" class="m mono">.sh .ps1 .bat .bash</text>
+<g transform="translate(0 146) scale(1.3333333333333333)" class="t-code" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M8 13.5c2.2-2.4 5.8-2.4 8 0"/><path d="M8 17.5c2.2 2.4 5.8 2.4 8 0"/><path d="M16.5 10.5h.01"/></g>
+<text x="44" y="160" font-size="12" font-weight="600" class="l">Notebook</text>
+<text x="44" y="175" font-size="10" class="m mono">.ipynb .nb .qmd .mlx</text>
+<g transform="translate(240 146) scale(1.3333333333333333)" class="t-code" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M12 11v3.5"/><path d="M10.25 12.75h3.5"/><path d="M10.25 17.75h3.5"/></g>
+<text x="284" y="160" font-size="12" font-weight="600" class="l">Diff</text>
+<text x="284" y="175" font-size="10" class="m mono">.diff .patch .rej</text>
+<g transform="translate(480 146) scale(1.3333333333333333)" class="t-data" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/></g>
+<text x="524" y="160" font-size="12" font-weight="600" class="l">Table</text>
+<text x="524" y="175" font-size="10" class="m mono">.csv .tsv .xlsx .xls</text>
+<g transform="translate(720 146) scale(1.3333333333333333)" class="t-data" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><ellipse cx="12" cy="12.5" rx="3.5" ry="1.5"/><path d="M8.5 12.5v5c0 .83 1.57 1.5 3.5 1.5s3.5-.67 3.5-1.5v-5"/></g>
+<text x="764" y="160" font-size="12" font-weight="600" class="l">Dataset</text>
+<text x="764" y="175" font-size="10" class="m mono">.h5 .npy .mat .parquet</text>
+<g transform="translate(0 194) scale(1.3333333333333333)" class="t-data" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1"/><path d="M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1"/></g>
+<text x="44" y="208" font-size="12" font-weight="600" class="l">JSON</text>
+<text x="44" y="223" font-size="10" class="m mono">.json .jsonl .geojson .jsonc</text>
+<g transform="translate(240 194) scale(1.3333333333333333)" class="t-media" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M7 19l3.5-4.5 2.5 3 1.8-2.2L17 19"/><circle cx="14.5" cy="12.5" r="1.2"/></g>
+<text x="284" y="208" font-size="12" font-weight="600" class="l">Image</text>
+<text x="284" y="223" font-size="10" class="m mono">.png .jpg .svg .jpeg</text>
+<g transform="translate(480 194) scale(1.3333333333333333)" class="t-media" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M14 11v6.5"/><circle cx="12" cy="17.5" r="2"/><path d="M14 11c0-1.5 1.5-2 3-1.5"/></g>
+<text x="524" y="208" font-size="12" font-weight="600" class="l">Audio</text>
+<text x="524" y="223" font-size="10" class="m mono">.mp3 .wav .flac .ogg</text>
+<g transform="translate(720 194) scale(1.3333333333333333)" class="t-media" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M10 12.5v5l4.5-2.5z" fill="currentColor"/></g>
+<text x="764" y="208" font-size="12" font-weight="600" class="l">Video</text>
+<text x="764" y="223" font-size="10" class="m mono">.mp4 .mov .mkv .m4v</text>
+<g transform="translate(0 242) scale(1.3333333333333333)" class="t" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><rect x="7.5" y="11.5" width="9" height="6" rx="1"/><path d="M12 17.5v2"/></g>
+<text x="44" y="256" font-size="12" font-weight="600" class="l">Slides</text>
+<text x="44" y="271" font-size="10" class="m mono">.pptx .ppt .odp .pptm</text>
+<g transform="translate(240 242) scale(1.3333333333333333)" class="t" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M10 11.5v3"/><path d="M8 17h8"/><path d="M14 15.5v3"/></g>
+<text x="284" y="256" font-size="12" font-weight="600" class="l">Config</text>
+<text x="284" y="271" font-size="10" class="m mono">.yaml .toml .ini .yml</text>
+<g transform="translate(480 242) scale(1.3333333333333333)" class="t" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><rect x="8.5" y="14" width="7" height="5" rx="1"/><path d="M10 14v-1a2 2 0 0 1 4 0v1"/></g>
+<text x="524" y="256" font-size="12" font-weight="600" class="l">Lock, key</text>
+<text x="524" y="271" font-size="10" class="m mono">.lock .pem .key .lockb</text>
+<g transform="translate(720 242) scale(1.3333333333333333)" class="t" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M9.5 11v8"/><path d="M9.5 17c3.5 0 5-1.5 5-4"/><circle cx="14.5" cy="12" r="1" fill="currentColor"/></g>
+<text x="764" y="256" font-size="12" font-weight="600" class="l">Git</text>
+<text x="764" y="271" font-size="10" class="m mono">.gitignore .gitattributes</text>
+<g transform="translate(0 290) scale(1.3333333333333333)" class="t" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><rect x="7.5" y="11.5" width="9" height="2.5" rx="0.5"/><path d="M8.5 14v3.5a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1V14"/></g>
+<text x="44" y="304" font-size="12" font-weight="600" class="l">Archive</text>
+<text x="44" y="319" font-size="10" class="m mono">.zip .tar.gz .7z .tar</text>
+<g transform="translate(240 290) scale(1.3333333333333333)" class="t" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/><path d="M8.5 12h7"/><path d="M12 12v6.5"/></g>
+<text x="284" y="304" font-size="12" font-weight="600" class="l">Font</text>
+<text x="284" y="319" font-size="10" class="m mono">.ttf .otf .woff2 .woff</text>
+<g transform="translate(480 290) scale(1.3333333333333333)" class="t" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" class="paper"/><path d="M14 2v6h6"/></g>
+<text x="524" y="304" font-size="12" font-weight="600" class="l">Other</text>
+<text x="524" y="319" font-size="10" class="m mono">.aux .synctex.gz .exe .o</text>
+<text y="370" font-size="14" font-weight="600" class="l">Folders</text>
+<text y="388" font-size="11" class="m">A directory by its name, a leading dot or underscore aside: its kind's mark in the folder, in the accent</text>
+<g transform="translate(0 404) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></g>
+<text x="44" y="418" font-size="12" font-weight="600" class="l">Folder</text>
+<text x="44" y="433" font-size="10" class="m mono">any other name</text>
+<g transform="translate(240 404) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><path d="M8 13h8"/><path d="M8 17h5"/></g></g>
+<text x="284" y="418" font-size="12" font-weight="600" class="l">Notes</text>
+<text x="284" y="433" font-size="10" class="m mono">docs/ notes/ wiki/ doc/</text>
+<g transform="translate(480 404) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><path d="M15.5 12h-7l3.5 3-3.5 3h7"/></g></g>
+<text x="524" y="418" font-size="12" font-weight="600" class="l">Paper</text>
+<text x="524" y="433" font-size="10" class="m mono">paper/ thesis/ latex/ tex/</text>
+<g transform="translate(720 404) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><circle cx="9.6" cy="13.4" r="1.4" fill="currentColor"/><path d="M11 13.4c0 2.2-1 3.6-2.8 4.3"/><circle cx="14.6" cy="13.4" r="1.4" fill="currentColor"/><path d="M16 13.4c0 2.2-1 3.6-2.8 4.3"/></g></g>
+<text x="764" y="418" font-size="12" font-weight="600" class="l">References</text>
+<text x="764" y="433" font-size="10" class="m mono">references/ refs/ papers/ ref/</text>
+<g transform="translate(0 452) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><path d="M9.5 12 7.5 15l2 3"/><path d="m14.5 12 2 3-2 3"/></g></g>
+<text x="44" y="466" font-size="12" font-weight="600" class="l">Code</text>
+<text x="44" y="481" font-size="10" class="m mono">src/ lib/ scripts/ source/</text>
+<g transform="translate(240 452) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><path d="M8 13.5c2.2-2.4 5.8-2.4 8 0"/><path d="M8 17.5c2.2 2.4 5.8 2.4 8 0"/><path d="M16.5 10.5h.01"/></g></g>
+<text x="284" y="466" font-size="12" font-weight="600" class="l">Notebooks</text>
+<text x="284" y="481" font-size="10" class="m mono">notebooks/ notebook/ ipynb/</text>
+<g transform="translate(480 452) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><path d="M10.5 11v2.6l-2.6 4.1a.9.9 0 0 0 .8 1.3h6.6a.9.9 0 0 0 .8-1.3l-2.6-4.1V11"/><path d="M9.8 11h4.4"/></g></g>
+<text x="524" y="466" font-size="12" font-weight="600" class="l">Tests, experiments</text>
+<text x="524" y="481" font-size="10" class="m mono">tests/ experiments/ test/ e2e/</text>
+<g transform="translate(720 452) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><ellipse cx="12" cy="12.5" rx="3.5" ry="1.5"/><path d="M8.5 12.5v5c0 .83 1.57 1.5 3.5 1.5s3.5-.67 3.5-1.5v-5"/></g></g>
+<text x="764" y="466" font-size="12" font-weight="600" class="l">Data</text>
+<text x="764" y="481" font-size="10" class="m mono">data/ datasets/ raw/ dataset/</text>
+<g transform="translate(0 500) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><path d="M8.5 18.5v-3"/><path d="M12 18.5v-7"/><path d="M15.5 18.5v-5"/></g></g>
+<text x="44" y="514" font-size="12" font-weight="600" class="l">Results</text>
+<text x="44" y="529" font-size="10" class="m mono">results/ output/ plots/ plot/</text>
+<g transform="translate(240 500) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><path d="M7 19l3.5-4.5 2.5 3 1.8-2.2L17 19"/><circle cx="14.5" cy="12.5" r="1.2"/></g></g>
+<text x="284" y="514" font-size="12" font-weight="600" class="l">Figures</text>
+<text x="284" y="529" font-size="10" class="m mono">figures/ images/ assets/ img/</text>
+<g transform="translate(480 500) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><path d="M10 12.5v5l4.5-2.5z" fill="currentColor"/></g></g>
+<text x="524" y="514" font-size="12" font-weight="600" class="l">Media</text>
+<text x="524" y="529" font-size="10" class="m mono">media/ videos/ recordings/</text>
+<g transform="translate(720 500) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><rect x="7.5" y="11.5" width="9" height="6" rx="1"/><path d="M12 17.5v2"/></g></g>
+<text x="764" y="514" font-size="12" font-weight="600" class="l">Talks</text>
+<text x="764" y="529" font-size="10" class="m mono">slides/ talks/ posters/ talk/</text>
+<g transform="translate(0 548) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><path d="M8 13h8"/><path d="M10 11.5v3"/><path d="M8 17h8"/><path d="M14 15.5v3"/></g></g>
+<text x="44" y="562" font-size="12" font-weight="600" class="l">Config</text>
+<text x="44" y="577" font-size="10" class="m mono">config/ settings/ vscode/</text>
+<g transform="translate(240 548) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><path d="M9.5 11v8"/><path d="M9.5 17c3.5 0 5-1.5 5-4"/><circle cx="14.5" cy="12" r="1" fill="currentColor"/></g></g>
+<text x="284" y="562" font-size="12" font-weight="600" class="l">Git</text>
+<text x="284" y="577" font-size="10" class="m mono">git/ github/ gitlab/ githooks/</text>
+<g transform="translate(480 548) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><path d="M12 11 8.5 13v4l3.5 2 3.5-2v-4z"/><path d="m8.5 13 3.5 2 3.5-2"/><path d="M12 15v4"/></g></g>
+<text x="524" y="562" font-size="12" font-weight="600" class="l">Build, packages</text>
+<text x="524" y="577" font-size="10" class="m mono">build/ dist/ node_modules/</text>
+<g transform="translate(720 548) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><circle cx="12" cy="15" r="3.6"/><path d="M12 13.2V15l1.2 1"/></g></g>
+<text x="764" y="562" font-size="12" font-weight="600" class="l">Temporary</text>
+<text x="764" y="577" font-size="10" class="m mono">tmp/ cache/ pycache/ temp/</text>
+<g transform="translate(0 596) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><rect x="7.5" y="11.5" width="9" height="2.5" rx="0.5"/><path d="M8.5 14v3.5a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1V14"/></g></g>
+<text x="44" y="610" font-size="12" font-weight="600" class="l">Archive</text>
+<text x="44" y="625" font-size="10" class="m mono">legacy/ archive/ old/ backup/</text>
+<g transform="translate(240 596) scale(1.3333333333333333)" class="t-folder" fill="none" stroke="currentColor" stroke-width="1.2000000000000002" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><g transform="translate(0 -2)"><rect x="8.5" y="14" width="7" height="5" rx="1"/><path d="M10 14v-1a2 2 0 0 1 4 0v1"/></g></g>
+<text x="284" y="610" font-size="12" font-weight="600" class="l">Secrets</text>
+<text x="284" y="625" font-size="10" class="m mono">secrets/ keys/ certs/ secret/</text>
+</svg>

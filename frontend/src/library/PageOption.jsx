@@ -32,7 +32,7 @@ function OptionEnd({ checked, current, time }) {
 }
 
 // A work folder's file as an option, one row whatever lists it (a recent, an
-// open tab, a title hit, a file GET /api/files found): its theme icon, the
+// open tab, a title hit, a file GET /api/files found): its kind's icon, the
 // file's name with the query's matches marked, under it its place
 // (explorer/workPaths.js filePlace, "W / a / b"), its library folders and
 // labels (filingChips: its directory is its place, no chip), then the end.

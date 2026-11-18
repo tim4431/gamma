@@ -757,8 +757,8 @@ or pinned, and answers `work_counts`, the files filed right in each of its
 directories (`libTree.workCounts`); `folderMeta` counts a folder in a work
 folder from those, summed down its subtree, in place of the library pages.
 
-- **The root.** W's own card and row in the listing wear the theme's root
-  folder icon (`shared/ui/FileIcon.jsx`) and say the computer that keeps it
+- **The root.** W's own card and row in the listing wear the synced
+  folder glyph (`SyncedFolderIcon`, drawn by `shared/ui/FileIcon.jsx`) and say the computer that keeps it
   and how its sync stands, "This computer · Synced" in the desktop app that
   keeps it, "TIM-PC · Connected" elsewhere to that computer's account
   (`work.keeperOf`, [work_folders.md](work_folders.md) "File icons"): the
@@ -771,7 +771,7 @@ folder from those, summed down its subtree, in place of the library pages.
   files of each open one from `GET /api/folders/{id}/pages`, sorted on the
   server, 200 rows at a time with a "Show {n} more files" row
   (`explorer/useFolderTree.js`, read again whenever the listing is), each
-  with its theme icon. Columns: Name (the file's name, `file_name`),
+  with its kind's icon. Columns: Name (the file's name, `file_name`),
   Format, File size, Modified, Comments (open threads). The sort is its
   own (`gamma-work-sort`, name by default), the filter box keeps the files
   read by name, the keys are the Files window's, and the view and kind

@@ -1,13 +1,16 @@
-// The colour sheets of the design pages (docs/design/look.md): every theme
-// drawn from its own tokens, and the default colour palette from the palette
-// module, so the pictures cannot drift from the code. tests/themes.test.mjs
-// fails while a committed sheet differs from what this writes.
+// The sheets of the design pages (docs/design/look.md): every theme drawn
+// from its own tokens, the default colour palette from the palette module,
+// and the file icons from their kinds' tables, so the pictures cannot drift
+// from the code. tests/themes.test.mjs fails while a committed sheet
+// differs from what this writes.
 //
-//   node tools/designSheets.mjs   # write docs/design/assets/themes.svg and palette.svg
+//   node tools/designSheets.mjs   # write docs/design/assets/themes.svg, palette.svg and file-icons.svg
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_PALETTE, colorName, darkPageColor, darkPageLine, lineColor, swatchCss } from "../src/shared/model/palette.js";
+import { EXTENSIONS, FILE_NAMES, FILE_STEMS, FOLDER_MARK_SHIFT, FOLDER_NAMES, FOLDER_PATH, FOLD_PATH, KIND_MARKS, KIND_TONES, PDF_BAND,
+  SHEET_PATH } from "../src/shared/ui/fileIcons.js";
 import { THEME_CHOICES } from "../src/settings/themeChoices.js";
 import { THEME_SCHEMES, resolveTheme } from "./themes.mjs";
 
@@ -29,10 +32,11 @@ function themeColors(theme) {
 }
 
 // The labels around the pictures follow the reader's colour scheme, in the
-// Gamma themes' text and border colours; what a picture shows keeps its own.
-function head(w, h, title) {
+// Gamma themes' text and border colours; what a picture shows keeps its own,
+// or follows the scheme too by `rules(c)`, more rules in a theme's colours.
+function head(w, h, title, rules = () => "") {
   const [light, dark] = [themeColors("gamma-light"), themeColors("gamma-dark")];
-  const rule = (c) => `.l { fill: ${c("--text-primary")}; } .m { fill: ${c("--text-muted")}; } .rim { stroke: ${c("--border")}; }`;
+  const rule = (c) => `.l { fill: ${c("--text-primary")}; } .m { fill: ${c("--text-muted")}; } .rim { stroke: ${c("--border")}; }${rules(c)}`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(title)}" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif">
 <title>${esc(title)}</title>
 <style>
@@ -165,7 +169,81 @@ export function paletteSheet() {
   return `${head(W, y, "Gamma's default colour palette: the Highlight, Ink highlight and Pen groups")}${body}</svg>\n`;
 }
 
-export const SHEETS = { "themes.svg": themesSheet, "palette.svg": paletteSheet };
+// The file icons' names in the catalog, in its order: the files by tint
+// (a PDF, the writing, the code, the data, the media, the rest), then the
+// directories ("" a folder of no kind).
+const FILE_KIND_LABELS = {
+  pdf: "PDF", doc: "Text", readme: "README", license: "License", tex: "TeX", references: "References", code: "Code",
+  shell: "Shell script", notebook: "Notebook", diff: "Diff", table: "Table", data: "Dataset", json: "JSON",
+  image: "Image", audio: "Audio", video: "Video", slides: "Slides", config: "Config", lock: "Lock, key", git: "Git",
+  archive: "Archive", font: "Font", plain: "Other",
+};
+const FOLDER_KIND_LABELS = {
+  "": "Folder", doc: "Notes", tex: "Paper", references: "References", code: "Code", notebook: "Notebooks",
+  test: "Tests, experiments", data: "Data", results: "Results", image: "Figures", video: "Media", slides: "Talks",
+  config: "Config", git: "Git", packages: "Build, packages", temp: "Temporary", archive: "Archive", lock: "Secrets",
+};
+
+// A kind's mark as SVG ([tag, attributes] lists, fileIcons.js KIND_MARKS).
+const markSvg = (marks) => marks.map(([tag, attrs]) => `<${tag} ${Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(" ")}/>`).join("");
+
+// The first names a kind is known by, as the catalog lists them: up to
+// four, in at most 30 characters.
+function examples(tokens) {
+  const out = [];
+  for (const t of tokens) if (out.length < 4 && [...out, t].join(" ").length <= 30) out.push(t);
+  return out.join(" ");
+}
+
+// The file icons: every kind of file on FileGlyph's sheet in its tint, every
+// kind of directory in FolderKindIcon's folder in the accent, at 32 px with
+// the app's 1.6 px stroke, in the reader's scheme's Gamma theme; each named
+// with the first names that give it.
+export function fileIconsSheet() {
+  const W = 960, COLS = 4, CELL = W / COLS, ROW = 48, SIZE = 32;
+  const fileKinds = Object.keys(FILE_KIND_LABELS), folderKinds = Object.keys(FOLDER_KIND_LABELS);
+  const missing = Object.keys(KIND_MARKS).filter((k) => !fileKinds.includes(k) && !folderKinds.includes(k));
+  if (missing.length) throw new Error(`the file icons' catalog names no ${missing.join(", ")}: add it to FILE_KIND_LABELS or FOLDER_KIND_LABELS`);
+  const tones = (c) => ` .paper { fill: ${c("--bg-raised")}; } .t { color: ${c("--text-muted")}; } .t-pdf { color: ${c("--kind-pdf")}; }`
+    + ` .t-code, .t-folder { color: ${c("--accent")}; } .t-data { color: ${c("--kind-data")}; } .t-media { color: ${c("--warn")}; }`;
+  const icon = (x, y, tone, body) => `<g transform="translate(${x} ${y}) scale(${SIZE / 24})" class="${tone}" fill="none" stroke="currentColor" `
+    + `stroke-width="${(1.6 * 24) / SIZE}" stroke-linecap="round" stroke-linejoin="round">${body}</g>\n`;
+  let y = 0;
+  let body = "";
+  const section = (title, caption) => {
+    body += `<text y="${y + 16}" font-size="14" font-weight="600" class="l">${esc(title)}</text>
+<text y="${y + 34}" font-size="11" class="m">${esc(caption)}</text>\n`;
+    y += 50;
+  };
+  const grid = (kinds, draw) => {
+    kinds.forEach((kind, i) => {
+      const x = (i % COLS) * CELL, top = y + Math.floor(i / COLS) * ROW;
+      const [label, names] = draw(kind, x, top);
+      body += `<text x="${x + SIZE + 12}" y="${top + 14}" font-size="12" font-weight="600" class="l">${esc(label)}</text>
+<text x="${x + SIZE + 12}" y="${top + 29}" font-size="10" class="m mono">${esc(names)}</text>\n`;
+    });
+    y += Math.ceil(kinds.length / COLS) * ROW + 16;
+  };
+
+  section("Files", "A synced folder's file by its name: its kind's mark on the sheet, in its kind's tint");
+  grid(fileKinds, (kind, x, top) => {
+    body += icon(x, top, `t${KIND_TONES[kind] ? `-${KIND_TONES[kind]}` : ""}`,
+      `<path d="${SHEET_PATH}" class="paper"/><path d="${FOLD_PATH}"/>${markSvg(kind === "pdf" ? [PDF_BAND] : KIND_MARKS[kind])}`);
+    const names = [...(FILE_STEMS[kind] || []).slice(0, 1).map((stem) => `${stem.toUpperCase()}.*`),
+      ...(EXTENSIONS[kind] || []).map((ext) => `.${ext}`), ...(FILE_NAMES[kind] || [])];
+    return [FILE_KIND_LABELS[kind], examples(names)];
+  });
+  section("Folders", "A directory by its name, a leading dot or underscore aside: its kind's mark in the folder, in the accent");
+  grid(folderKinds, (kind, x, top) => {
+    body += icon(x, top, "t-folder", `<path d="${FOLDER_PATH}"/>${kind ? `<g transform="translate(0 ${FOLDER_MARK_SHIFT})">${markSvg(KIND_MARKS[kind])}</g>` : ""}`);
+    return [FOLDER_KIND_LABELS[kind], kind ? examples(FOLDER_NAMES[kind].map((name) => `${name}/`)) : "any other name"];
+  });
+  y -= 16;
+
+  return `${head(W, y, "Gamma's file icons: each kind of file and directory of a synced folder", tones)}${body}</svg>\n`;
+}
+
+export const SHEETS = { "themes.svg": themesSheet, "palette.svg": paletteSheet, "file-icons.svg": fileIconsSheet };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   fs.mkdirSync(SHEETS_DIR, { recursive: true });

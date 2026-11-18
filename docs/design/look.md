@@ -120,6 +120,19 @@ shadow sets it apart. So a control that must stand out on the content
   same width at every size, so a small icon and a large one side by side
   look equally heavy. A close button is always the round × icon, never the
   letter.
+- **File icons** are drawn in the same set. A synced folder's file is the
+  library's sheet and a directory is the library's folder, each with a
+  small mark for its kind. One mark serves files and folders alike: a
+  `.py` file and a `src/` folder both carry code brackets, a `.png` and a
+  `figures/` folder the same picture. A file takes one of a few kind
+  colours: red for PDFs, the accent for code and TeX, green for tables and
+  datasets, amber for pictures and recordings, muted for everything else.
+  Folders are all in the accent, as library folders are. A name that says
+  no kind shows the file's format, as a library page does. Gamma draws
+  these itself instead of using a code editor's icon theme, whose filled,
+  brand-coloured logos would be the one foreign set in the app.
+
+<img alt="Gamma's file icons. Files: PDF, Text, README, License, TeX, References, Code, Shell script, Notebook, Diff, Table, Dataset, JSON, Image, Audio, Video, Slides, Config, Lock, Git, Archive, Font and Other, each a sheet with its mark in its colour and the extensions that give it. Folders: plain, Notes, Paper, References, Code, Notebooks, Tests, Data, Results, Figures, Media, Talks, Config, Git, Build, Temporary, Archive and Secrets, each a folder with its mark and the names that give it" src="assets/file-icons.svg" width="100%">
 
 ## Buttons
 
@@ -211,7 +224,9 @@ app; the other themes keep their own accents.
 ## Behind this page
 
 - [UI design conventions](../dev/ui-design.md): the tokens, the shared
-  controls, the motion recipes and the checks that hold them.
+  controls, the motion recipes and the checks that hold them; how a file
+  icon's mark is drawn and a new kind added
+  ([File icons](../dev/ui-design.md#file-icons)).
 - [Settings](../dev/settings.md): where each preference is stored, and the
   text highlighters.
 - [One colour palette](../research/color-palette.md): what came before the

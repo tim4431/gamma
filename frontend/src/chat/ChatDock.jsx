@@ -51,7 +51,7 @@ import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from
 import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
 import { PathLinkContext } from "../editor/pathLinkContext.js";
-import FileThemeIcon from "../shared/ui/FileIcon.jsx";
+import FileKindIcon from "../shared/ui/FileIcon.jsx";
 import { formatOf } from "../documents/formats.js";
 import { chipSegments } from "./chipText";
 import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
@@ -171,7 +171,7 @@ export function SelChip({ kind, icon, label, note, file = "", cut, auto = false,
       <div className="chatSelChipHead">
         <span className="chatSelChipLabel"><Glyph size={14} aria-hidden="true" />{label}</span>
         {note ? (
-          <span className="chatSelChipNote">· {file ? <FileThemeIcon path={file} format={formatOf(file).format} size={14} /> : null}{note}</span>
+          <span className="chatSelChipNote">· {file ? <FileKindIcon path={file} format={formatOf(file).format} size={14} /> : null}{note}</span>
         ) : null}
         {cut ? <span className="chatSelChipNote cut">· {cut}</span> : null}
         <button type="button" className="uiClose uiCloseSm chatSelChipClose" onClick={onRemove} title={removeTitle} aria-label={removeTitle}><XIcon size={14} /></button>

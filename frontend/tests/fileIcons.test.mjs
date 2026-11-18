@@ -1,63 +1,51 @@
-// A synced folder's file icons (shared/ui/fileIcons.js iconFor) against the
-// theme's own manifest, as frontend/tools/fileIcons.mjs compacts it: the
-// cases VS Code was seen to draw with Material Icon Theme (a whole name over
-// an extension, the longest extension, a key under its parent only, the
-// built-in languages, folders, the root, the light variants), and the open
-// folders' ids the map derives instead of carrying.
+// A synced folder's file and directory icons (shared/ui/fileIcons.js): the
+// kind a name says — a whole name over its stem, a stem over an extension,
+// the longest dotted extension, a directory's name without its dots and
+// underscores — and that every kind the tables give has its drawing.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { iconFor, languageOf } from "../src/shared/ui/fileIcons.js";
-import { compactMap, iconFiles, themeManifest } from "../tools/fileIcons.mjs";
+import { EXTENSIONS, FILE_NAMES, FILE_STEMS, FOLDER_NAMES, KIND_MARKS, fileKind, folderKind, glyphKind } from "../src/shared/ui/fileIcons.js";
 
-const manifest = themeManifest();
-const map = compactMap(manifest);
-
-test("a file by its whole name, then its longest extension, then its language", () => {
+test("a file by its whole name, its stem, a dotfile's form, then its longest extension", () => {
   const cases = {
-    "src/index.d.ts": "typescript-def", "src/index.ts": "typescript", "app.test.js": "test-js", "app.spec.ts": "test-ts", "a.min.js": "javascript",
-    Dockerfile: "docker", "readme.MD": "readme", "main.tex": "tex", "analysis.py": "python", "tsconfig.app.json": "tsconfig",
-    ".config/graphqlrc": "graphql", "x/graphqlrc": "file", "notes.zzz": "file",
+    "paper/main.tex": "tex", "refs.bib": "references", "README.md": "readme", README: "readme", "LICENSE.txt": "license",
+    "notes.MD": "doc", "analysis.ipynb": "notebook", "run.h5": "data", "data.csv": "table",
+    "x/package-lock.json": "lock", "package.json": "json", Makefile: "config", "requirements.txt": "config",
+    ".gitignore": "git", ".env": "config", ".env.local": "config", ".latexmkrc": "config",
+    "build.tar.gz": "archive", "main.synctex.gz": "plain", "src/index.d.ts": "code", "fig1.PDF": "pdf",
+    "notes.zzz": "", noextension: "", "": "",
   };
-  for (const [path, icon] of Object.entries(cases)) assert.equal(iconFor(map, path), icon, path);
+  for (const [path, kind] of Object.entries(cases)) assert.equal(fileKind(path), kind, path);
 });
 
-test("the built-in languages the theme reaches only by a language id", () => {
-  assert.equal(languageOf("docker/dockerfile.dev"), "dockerfile");
-  assert.equal(languageOf("repo/.git/config"), "properties");
-  assert.equal(languageOf("x/.claude/rules/a/b.md"), "instructions");
-  assert.equal(languageOf("tsconfig.base.json"), "jsonc");
-  assert.equal(languageOf("main.tex"), "");
-  assert.equal(iconFor(map, "docker/Dockerfile.dev"), map.languageIds.dockerfile);
-  assert.equal(iconFor(map, "Jenkinsfile.ci"), map.languageIds.groovy);
-  assert.equal(iconFor(map, ".git/config"), map.languageIds.properties);
+test("a directory by its name, without the dots and underscores around it", () => {
+  const cases = {
+    legacy: "archive", notes: "doc", paper: "tex", references: "references", results: "results", simulations: "test",
+    tmp: "temp", "repo/.github": "git", __pycache__: "temp", ".ipynb_checkpoints": "temp", Figures: "image",
+    node_modules: "packages", "paper/sections": "tex", misc: "", "": "",
+  };
+  for (const [path, kind] of Object.entries(cases)) assert.equal(folderKind(path), kind, path);
 });
 
-test("folders by name, under their parent only, and the root always its own", () => {
-  assert.equal(iconFor(map, ".github/workflows", { dir: true }), "folder-gh-workflows");
-  assert.equal(iconFor(map, "x/workflows", { dir: true }), "folder");
-  assert.equal(iconFor(map, "Docs", { dir: true }), "folder-docs");
-  assert.equal(iconFor(map, "paper/figures", { dir: true }), manifest.folderNames.figures);
-  assert.equal(iconFor(map, "paper/figures", { dir: true, open: true }), manifest.folderNamesExpanded.figures);
-  assert.equal(iconFor(map, "zzz", { dir: true, open: true }), "folder-open");
-  assert.equal(iconFor(map, "Docs", { root: true }), "folder-root");
-  assert.equal(iconFor(map, "Docs", { root: true, open: true }), "folder-root-open");
+test("a page's format draws a name of no kind", () => {
+  assert.equal(glyphKind("tex", "text"), "tex");
+  assert.equal(glyphKind("", "text"), "code");
+  assert.equal(glyphKind("", "binary"), "plain");
+  assert.equal(glyphKind("", "pdf"), "pdf");
+  assert.equal(glyphKind("", ""), "doc");
+  assert.equal(glyphKind("nonsense", "markdown"), "doc");
 });
 
-test("the light theme's variants where it has them", () => {
-  assert.equal(iconFor(map, "foo.jinja", { light: true }), "jinja_light");
-  assert.equal(iconFor(map, "foo.jinja"), "jinja");
-  assert.equal(iconFor(map, "jinja", { dir: true, open: true, light: true }), "folder-jinja-open_light");
-  assert.equal(iconFor(map, "main.tex", { light: true }), "tex");
-});
-
-test("an open folder's derived id is the manifest's, and every id has its SVG", () => {
-  for (const [key, id] of Object.entries(manifest.folderNamesExpanded)) assert.equal(iconFor(map, key, { dir: true, open: true }), id, key);
-  for (const [key, id] of Object.entries(manifest.light.folderNamesExpanded)) {
-    assert.equal(iconFor(map, key, { dir: true, open: true, light: true }), id, key);
+test("every name has one kind, and every kind its mark", () => {
+  for (const table of [FILE_NAMES, FILE_STEMS, EXTENSIONS, FOLDER_NAMES]) {
+    const seen = new Map();
+    for (const [kind, keys] of Object.entries(table)) {
+      assert.ok(Object.hasOwn(KIND_MARKS, kind), `${kind} has a mark`);
+      for (const key of keys) {
+        assert.equal(key, key.toLowerCase(), `${key} is lowercased`);
+        assert.ok(!seen.has(key), `${key} is both ${seen.get(key)} and ${kind}`);
+        seen.set(key, kind);
+      }
+    }
   }
-  const ids = new Set(iconFiles(manifest).map(([id]) => id));
-  for (const table of [map.fileExtensions, map.fileNames, map.folderNames, map.languageIds, map.light.fileNames, map.light.folderNames]) {
-    for (const id of Object.values(table)) assert.ok(ids.has(id), id);
-  }
-  assert.ok(ids.has("folder-open") && ids.has("folder-root-open"));
 });

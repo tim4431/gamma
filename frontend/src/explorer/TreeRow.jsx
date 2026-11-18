@@ -16,7 +16,7 @@ import "./tree.css";
 // `row` a fileTree.js row; rowRef, tabbable, active and onActive(key) the
 // tree's (useTree.js rowProps); `selected`; onPress(row) a "more" row's
 // press and a failed note's Try again. `icon` in place of the row's own (a
-// synced folder's file or directory by its theme icon, FileIcon, a root
+// synced folder's file or directory by its kind's icon, FileIcon, a root
 // folder's SyncedFolderIcon; a library folder's FolderIcon, a library
 // page's FileGlyph), `name` in place of its name (a rename's field),
 // `after` what follows the name (a count, the folder view's columns),
@@ -53,7 +53,7 @@ export default function TreeRow({ row, rowRef, tabbable, active, onActive, selec
     <div {...item} {...props} aria-expanded={folder ? row.expanded : undefined} aria-selected={selected}
       className={`${classes} rowMenuHost${selected ? " selected" : ""}`}>
       <span className="fileTreeChevron">{folder ? <Chevron open={row.expanded} dir="right" /> : null}</span>
-      {icon || <FileIcon path={row.path} format={row.format} dir={folder} open={row.expanded} root={row.root} size={16} />}
+      {icon || <FileIcon path={row.path} format={row.format} dir={folder} root={row.root} size={16} />}
       {name || <span className="fileTreeName">{row.name}</span>}
       {after}
       <MenuButton className="fileTreeMenu" open={menu} tabIndex={-1} />
