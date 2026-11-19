@@ -64,8 +64,10 @@ costs a CI round.
 
 ## Cleanup, then merge to main
 
-`cleanup` passes over what landed on `dev` since its last pass. It unifies
-scattered logic, removes the code a new feature replaced, replaces
+`cleanup` passes over what landed on `dev` since its last pass. It
+restructures what a feature built in steps left tangled (an overgrown
+module split, two implementations made one), unifies scattered logic,
+removes the code a new feature replaced, replaces
 hard-coded values with tokens, prunes tests, and fixes the docs the work
 touched. `merge` takes a snapshot of `dev` to `main` through a PR and runs
 the PR's suites locally first.
@@ -80,7 +82,7 @@ record (`git log --grep='^Docs audit of'`, `--grep='^Sweep of'`).
   code. It deletes false statements, the designs of features that were
   replaced or dropped, and plans whose steps are built.
 - `cleanup sweep <area>` runs the code checks of `cleanup` over an area's
-  existing code and tests: leftovers of old implementations, hard-coded
-  values, tests that do not earn their place.
+  existing code and tests: tangled modules, leftovers of old
+  implementations, hard-coded values, tests that do not earn their place.
 
 Once every week or two, or before a release, is often enough.

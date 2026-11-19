@@ -8,7 +8,7 @@ admin sets it up in Settings → Backups (``save``: users.db ``settings`` key
 ``offsite``, the secret key Fernet-encrypted with the data directory's key
 like the shared AI provider keys): where it is and the keys, nothing more.
 That bucket has no schedule of its own: the backup tasks that copy to it
-send it their snapshots (gamma/bucket_snapshots.py). When
+send it their snapshots (gamma/snapshot_copies.py). When
 ``GAMMA_S3_BUCKET`` is set, every field comes from the environment instead
 (``config.offsite_env``), the pane shows them read-only (``from_env``), and
 the environment also runs the rounds below (``GAMMA_OFFSITE``, on by
@@ -83,7 +83,7 @@ from urllib.parse import urlsplit
 
 from cryptography.fernet import InvalidToken
 
-from . import config, db, integrity, s3, storage
+from . import backup_store, config, db, integrity, s3, storage
 from .backups import snapshot_db
 from .db_maintenance import truncate_wal
 from .logbuf import log
@@ -297,7 +297,7 @@ def _checked(current: dict, fields: dict) -> dict:
     prefix = text("prefix", "The prefix", 200).strip("/")
     if prefix:
         try:
-            s3.check_key(prefix)
+            backup_store.check_key(prefix)
         except ValueError:
             raise ValueError("The prefix must be names separated by /, without . or .. names or "
                              "backslashes.") from None

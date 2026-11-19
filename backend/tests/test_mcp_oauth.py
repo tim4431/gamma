@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import account_of, make_user
-from gamma.ai_tools import mcp_tools
+from gamma.ai_tools.registry import mcp_tools
 from gamma.db import connect_users_db
 from gamma.integrations import resolve_token
 

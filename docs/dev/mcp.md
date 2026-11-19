@@ -5,7 +5,7 @@ the app. It reads; it writes what the user let the connection write: comments,
 replies, resolves and highlights under its own name in the workspaces at the
 Comment level ("The Comment level" below), and notes in those at Edit
 ("Editing notes"). Gamma's chat and MCP
-adapter share `gamma/ai_tools.py`: tool definitions, executors, page/folder
+adapter share `gamma/ai_tools/`: tool definitions, executors, page/folder
 scope checks, and dispatch permissions. The chat calls these functions
 directly. Gamma is not an MCP client for external servers, and connecting
 Codex does not invoke Gamma's AI provider.
@@ -255,7 +255,7 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `resolve` | At the Comment level: resolve a thread once it is done (never a reopen) |
 | `highlight` | At the Comment level: highlight a PDF quote or a text file's lines, with a note, a colour and a style, stamped as the connection's |
 
-The first twelve are the Gamma chat's own tools (`gamma/ai_tools.py`, described
+The first twelve are the Gamma chat's own tools (`gamma/ai_tools/`, described
 in [ai_tools.md](ai_tools.md)), run through the same dispatcher with a
 workspace-wide, non-writable scope. `READ_TOOLS` in `mcp_server.py` comes
 from `ai_tools.mcp_tools`: every reading tool that stays inside the library.
@@ -553,8 +553,8 @@ level").
   pages, folders, labels or settings. A drawing's answer carries its
   picture (image content, as `view_ink`'s) and, since nothing it makes can
   be deleted from here or reverted from a reply, says the user removes a
-  misplaced one in Gamma (`ai_tools._placed_after`). They run through
-  `ai_tools.run_agent_tool` with `can_write` on, as the chat's agent's do:
+  misplaced one in Gamma (`ai_tools.drawing._placed_after`). They run through
+  `ai_tools.registry.run_agent_tool` with `can_write` on, as the chat's agent's do:
   written as the account with client `ai`, a block `create_block` or a
   drawing tool makes stamped with the connection (`properties.agent`, `agents.stamp`:
   `{id, name, for}`, [block_centric.md](block_centric.md) "Made by an
@@ -877,6 +877,24 @@ If sign-in is interrupted, resume with `codex mcp login gamma`.
 If `gamma-local` is already registered from another directory, keep using it or
 remove that marketplace registration in Codex before switching to release setup.
 Setup does not remove existing marketplaces or plugins.
+
+### An older plugin
+
+An installed plugin does not update itself: setup registers it from a local
+folder (`gamma-local`), so neither client has an upstream copy to refresh
+from. What updates is the server, whose instructions every client reads again
+at each session's `initialize`. A release build (`version.VERSION` an
+`X.Y.Z`; a `-dev` build or a checkout says nothing) ends them with the plugin
+version of its own release and how each assistant updates to it
+(`mcp_server.plugin_hint`): Codex and DeepSeek Harness by running the setup
+command again, Claude Code by extracting the release's ZIP over its
+`gamma-marketplace` folder and running `claude plugin marketplace update
+gamma-local` and `claude plugin update gamma@gamma-local`. The skill names
+its own plugin version (`SKILL.md`'s first line, which
+`package_plugins.load_manifests` holds to the manifests and the release
+stamps, `stamp_skill`) and tells the user once a conversation when the
+server's is newer. The comparison is the model's, so it is a hint; a skill
+older than the hint itself has no such line and says nothing.
 
 ### Build and publish
 

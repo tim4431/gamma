@@ -84,7 +84,7 @@ What all of them share:
 | Background tasks | `routers/jobs.py` lists, reads and cancels; the kinds are in [tasks.md](../dev/tasks.md) | no | a read-only list easy; starting only metadata, transcription and relocation |
 | Recolour or restyle a highlight | `PUT /blocks/{id}` writes `color` and `style` | partly: `highlight` sets them only when it makes one, `edit_block` changes the note alone | easy, with the properties revert above |
 | Find highlights again after a PDF is replaced | `POST /jobs/relocate-highlights` (`routers/pages.py:922`) | `list_annotations` names lost and rough ones | the job moderate; accepting or moving one edits its anchor, which the guardrails forbid |
-| Clip a web page into notes | `POST /clip` with an `article` (`routers/clip.py:401`, `web_clip.article_blocks`) | no: `save_paper` sends no article, so a web page saves as a page holding its address alone (`ai_tools.py:3286`) | moderate, under Save papers or its own permission |
+| Clip a web page into notes | `POST /clip` with an `article` (`routers/clip.py:401`, `web_clip.article_blocks`) | no: `save_paper` sends no article, so a web page saves as a page holding its address alone (`ai_tools/web.py`) | moderate, under Save papers or its own permission |
 | What links to a page | `GET /blocks/{id}/backlinks` (`routers/blocks.py:622`) | no | easy, read-only |
 | Search across chats | nothing; `read_chats` reads one bucket | no | moderate |
 | Collapse or expand a block | the `collapsed` property | no | easy, little use |

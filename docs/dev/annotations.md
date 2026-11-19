@@ -20,10 +20,8 @@ turn of the thread's own conversation, [local_agents.md](local_agents.md)
 [research/file-explorer.md](../research/file-explorer.md) section 7 (step 2
 of "In steps"; step 3 adds a picture's regions and the whole picture); the
 reader of any page is step 3.1 of
-[research/agents-as-participants-plan.md](../research/agents-as-participants-plan.md),
-whose step 3.7 removed Send's requests, the request file and the Feedback
-dialog (migration step 65 drops their tables); the surveys behind the
-SyncTeX reader and the pictures are research notes.
+[research/agents-as-participants-plan.md](../research/agents-as-participants-plan.md);
+the surveys behind the SyncTeX reader and the pictures are research notes.
 
 | Module | What |
 |---|---|

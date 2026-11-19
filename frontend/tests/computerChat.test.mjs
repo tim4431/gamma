@@ -241,11 +241,11 @@ test("a message goes with text, no turn still to end, and an agent able to run",
   assert.equal(canSend({ ...ready, ready: null }, conversation, "next"), true, "still checking: the server decides");
 });
 
-test("a message carries the model and effort chosen, neither when it is the agent's default", () => {
-  assert.deepEqual(turnBody("t1", "p1", "x", [], { model: "gpt-5.5", effort: "high" }),
-    { id: "t1", bucket: "p1", text: "x", selections: [], model: "gpt-5.5", effort: "high" });
+test("a message carries the model, effort and speed chosen, none when it is the agent's default", () => {
+  assert.deepEqual(turnBody("t1", "p1", "x", [], { model: "gpt-5.5", effort: "high", speed: "fast" }),
+    { id: "t1", bucket: "p1", text: "x", selections: [], model: "gpt-5.5", effort: "high", speed: "fast" });
   assert.deepEqual(turnBody("t1", "p1", "x", [], { model: "", effort: "low" }), { id: "t1", bucket: "p1", text: "x", selections: [], effort: "low" });
-  assert.deepEqual(turnBody("t1", "p1", "x", [], { model: "", effort: "" }), { id: "t1", bucket: "p1", text: "x", selections: [] });
+  assert.deepEqual(turnBody("t1", "p1", "x", [], { model: "", effort: "", speed: "" }), { id: "t1", bucket: "p1", text: "x", selections: [] });
   // the agent picked, and where a conversation that begins works ("" one of its own; null: the conversation's)
   assert.deepEqual(turnBody("t1", "home", "x", [], { agent: "claude", dir: "d1" }),
     { id: "t1", bucket: "home", text: "x", selections: [], agent: "claude", dir: "d1" });
@@ -326,7 +326,16 @@ test("the model chip: the person's pick, else what the conversation ran with, el
   assert.deepEqual([picked.model, picked.effort, picked.shown.id], ["gpt-5.5-mini", "", "gpt-5.5-mini"], "an effort the model lacks goes");
   const gone = modelChoice(models, null, { model: "o9", effort: "low" });
   assert.deepEqual([gone.model, gone.effort, gone.shown.id], ["", "low", "gpt-5.5"], "a model no longer listed is the default");
-  assert.deepEqual(modelChoice([], ran), { model: "", effort: "", shown: null });
+  assert.deepEqual(modelChoice([], ran), { model: "", effort: "", speed: "", shown: null });
+  // the speed as the effort: kept while the model chosen lists it, a turn's own the conversation's next
+  const tiered = [{ ...models[0], speeds: ["standard", "fast"], speed: "fast" }, models[1]];
+  assert.equal(modelChoice(tiered, null, { model: "", effort: "", speed: "standard" }).speed, "standard");
+  assert.equal(modelChoice(tiered, null, { model: "gpt-5.5-mini", effort: "", speed: "fast" }).speed, "",
+    "a speed the model lacks goes");
+  const fast = { messages: [person, agent({ model: null, effort: null, speed: "fast" })] };
+  assert.deepEqual([modelChoice(tiered, fast).speed, modelChoice(models, fast).speed], ["fast", ""]);
+  assert.equal(modelChoice(tiered, { messages: [...fast.messages, agent({ id: "m5", model: null, effort: null, speed: null })] })
+    .speed, "", "a turn at the default speed");
   assert.equal(modelDisplay(modelChoice([])), "");
   const first = modelChoice([{ id: "sonnet", label: "", efforts: [] }]);
   assert.equal(modelDisplay(first), "sonnet", "no default: the first, by its id when it has no name");
@@ -478,7 +487,10 @@ test("the transcript's shape: a turn done, with its steps as plain chips, its mo
   const info = { ...ready, models: [{ id: "gpt-fake", label: "GPT Fake" }], dir: { kind: "vault", name: "Thesis" } };
   const steps = [{ id: "s1", kind: "read", path: "main.tex", status: "completed" }, { id: "s2", kind: "edit", path: "main.tex", status: "failed" },
     { id: "s3", kind: "run", program: "latexmk", status: "declined" }, { id: "s4", kind: "other", status: "completed" }];
-  const [, reply] = shownMessages({ messages: [person, agent({ steps, model: "gpt-fake", effort: "high", changes: ["main.tex"], changed: 1, built: true })] }, info);
+  const [, reply] = shownMessages({ messages: [person, agent({ steps, model: "gpt-fake", effort: "high", speed: "fast", changes: ["main.tex"],
+    changed: 1, built: true })] }, info);
+  assert.equal(reply.speed, "fast", "the speed it ran at: the model chip's glyph");
+  assert.equal(shownMessages({ messages: [agent()] }, info)[0].speed, "");
   assert.deepEqual(reply.actions, [
     { kind: "file", summary: "Read main.tex", path: "main.tex" }, { kind: "fileEdit", summary: "Edited main.tex", path: "main.tex", error: true },
     { kind: "run", summary: "Not allowed to run latexmk", program: "latexmk", declined: true }, { kind: "work", summary: "Worked" }]);

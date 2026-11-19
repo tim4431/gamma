@@ -2,27 +2,24 @@
 
 The desktop app's own server keeps synced vaults, some of them of another
 Gamma server (a NAS, a hosted one: [synced_vaults.md](synced_vaults.md)).
-That other server used to see only the files a vault pushed. Now the
-computer announces itself to it over a channel of its own, and the server
-shows the vault's maker, in any window (a browser, an iPad, the desktop
+The computer announces itself to that server over a channel of its own,
+and the server shows the vault's maker, in any window (a browser, an iPad, the desktop
 window on that server), that the folder or file is kept on *TIM-PC*,
 whether that computer is online or since when it is not, and which
 assistants are there (Codex, Claude Code). The same channel then carries
 work the other way: the turns of that computer's agent asked for from the
 server ("The agents' turns there"), and sessions over the channel.
 
-This is step 4a of [agent-collab.md](../research/agent-collab.md) ("How
-the server sees a vault"). The later steps build on the channel: 4b work
-folders of another server, 4c their agent the computer's, 4d the chat's
-computer side relayed, and with it the turns of the comments sent to its
-agent (step 3.5 of the agents-as-participants plan, whose step 3.7 removed
-the Sends 4c first ran there). The words below call the
+The design is step 4a of [agent-collab.md](../research/agent-collab.md)
+("How the server sees a vault"). The channel also carries the work
+folders of another server, the turns of the computer's agent in the chat
+and those of the comments sent to it. The words below call the
 desktop app's own server *the host* (as [synced_vaults.md](synced_vaults.md)
 does) and the vault's server *the server*.
 
 | Side | Code |
 |---|---|
-| the server (every Gamma server) | `gamma/computers/registry.py`, `gamma/routers/computers.py`, the `computer` scope in `gamma/integrations.py` and `gamma/auth.py` |
+| the server (every Gamma server) | `gamma/computers/registry.py`, `gamma/routers/computers.py`, `gamma/local_agents/far_turns.py` (the turns a computer takes), the `computer` scope in `gamma/integrations.py` and `gamma/auth.py` |
 | the host (the desktop app's own server) | `gamma/computers/channel.py`, `gamma/routers/computer_links.py`, a check in `folder_links.tick` |
 | the desktop shell | `desktop/main.js` (`showComputer`, the panel's actions, `releaseRemote`, Settings' `addLinkedServer`, `removeLinkedServer`, `setLinkAsks`), `desktop/lib/keeping.js` (the panel's words and Settings' questions) |
 | the client | `frontend/src/vault/usePageComputer.js`, `vaultState.js` (`readComputers`, `computerChip`), `VaultChip.jsx`, the `{t: "computer"}` case in `collaboration/collabSession.js`, Settings' connections, `settings/SettingsAgents.jsx` (`AnsweredServers`), `settings/answeredServers.js` (its rows) |
@@ -127,7 +124,7 @@ names them (`_lends`), while both may edit: those answer the person in
 `GET /api/computers` and the page's route (`lent_by`, the owner's
 username; that agent alone, `enabled`, `runs` `never`, no directory and
 naming nobody, so a person never learns whom else it serves; a computer
-that keeps the page in no work folder left out), `chats.remote_of`
+that keeps the page in no work folder left out), `far_turns.remote_of`
 (`registry.seats`, after the person's own computers that keep the work
 folder: their chat on a synced folder's file, a comment's turn), and
 `agents.of_account`. `registry.names_of` names the computer in a comment its agent
@@ -145,7 +142,7 @@ edit), the claim checks the conversation's owner and that the agent still
 serves the person (`registry.serves`, 409 otherwise) and names them in the
 turn (`for: {id, username}`), and `write` takes the owner's computer's run
 alone. An announce that drops a person fails the turns of theirs that wait
-for it (`_end_orphaned` → `chats.fail_queued`, "The owner of Codex on
+for it (`_end_orphaned` → `far_turns.fail_queued`, "The owner of Codex on
 TIM-PC no longer lets you use it."); the computer
 stops the one that runs ([local_agents.md](local_agents.md) "A co-author's
 turn"). A co-author's far turn asks only where the computer relays asks
@@ -156,7 +153,7 @@ the chat's History lists them under the person's name (`GET
 /api/local-agents/chat/history`'s `lent`), `GET
 /api/local-agents/chat?conversation=` shows one, and the owner's
 Background tasks list the person's turns that wait or run there
-(`chats.remote_turns` by the conversation's `owner`, `params.person`),
+(`far_turns.remote_turns` by the conversation's `owner`, `params.person`),
 each opening its conversation.
 
 ### The agents' turns there (steps 4c, 4d, 4.2 and 4.3)
@@ -192,10 +189,10 @@ account's turns with that computer alone:
 
 | Method | Path | |
 |---|---|---|
-| GET | `/api/computers/chats` | `{turns: [{id, conversation_id, bucket, agent, dir: {kind, id}, at}], stops: [{id, run}], answers: [{id, run, ask, decision, note}]}`: the turns queued for this computer (its account's conversations with it, and the people its agent serves; oldest first, at most 20; none in a work folder paused there, none of a bucket gone, each of an agent on there: `registry.taking`), `dir` where its agent works by an id (`chats.dir_of`: `vault` a work folder's, `offered` a directory's, `own` "" for one of its own; never a path), the runs of its turns asked to stop, and the answers given here to what its running turns ask (`chats.answers_of`, below). |
-| POST | `/api/computers/chats/{turn}/claim` | `{run, agent}` → `{turn: {id, conversation_id, bucket, title, text, selections, model, effort, for: {id, username}, thread_id?, comment_id?}, history, about, dir: {kind, id}, seen, thread?, tools: {url, token} \| null}` (`for` the account the turn is for, the token's own or a co-author's; `title` the conversation's, which names a new Codex thread; the computer cuts it as a local title, `chats.title_of`; `about` what the bucket is, `chats.about`: its kind, id, title or name, format, and in a work folder its path and the work folder's name; `dir` as listed; a comment thread's turn names its thread and the comment it is, and `thread` is the thread's entry with its PDF place, whose source line the computer finds on its own disk: [local_agents.md](local_agents.md) "A comment sent to an agent"; `tools` Gamma's tools for the turn, below): queued → running in one locked write keyed by the run (the same run again: the same answer, with a new token in place of the one the lost answer carried; another: 409; 404 not this computer's turn; 409 an agent off there or another agent's, left queued, a co-author's the agent no longer serves, a work folder this computer does not keep or paused there, a directory no longer offered, a bucket gone or no longer in the work folder its conversation works in, failed with why). |
-| GET | `/api/computers/threads/{id}/picture?at=now\|before` | The JPEG of the region of a thread whose turn a run of this computer holds running (`chats.holds_thread`: the run's holder the token, the turn's conversation of that thread, its owner the token's account), as `GET /api/annotations/{id}/picture` draws it, which the computer fetches beside the thread for its prompt; 404 "No thread of a turn on this computer has that id." for any other thread, and when the entry has no such picture; 400 for another `at`. |
-| POST | `/api/computers/chats/{turn}/write` | `{run, seq, fields}` → `{ok}` or `{ok, stale: true}` when `seq` is not above the last written (an end of a thread's turn that wrote no reply is answered in its thread here, `threads.settle`): the agent message's `text` (through `prompt.inert`), `steps` (a path not relative stored as `outside`), `changes` (a path not relative left out), `changed`, `built`, `error`, `fresh`, `asks` (what the agent asks that this server may answer, where the computer relays its asks: each `{id, kind: command \| files, once: true, command?, command_shown?, marked?, lines?, inner?, shell?, background?, cwd?, host?, paths?, diff?, reason?, at, expires_at}`, at most 20, a command, a place or a diff longer than the computer shows whole 400, never cut; those answered here left out, below), `waiting` (a flag: an ask of the turn waits for an answer on the computer alone, [local_agents.md](local_agents.md#asking-on-this-computer)), `state`, `model`, `effort`, its `ended_at` this server's clock (an end writes `asks` empty and `waiting` false and deletes the turn's token and the answers kept for it; any other write keeps the token alive); 409 another run, a turn no longer running, or a gone conversation. |
+| GET | `/api/computers/chats` | `{turns: [{id, conversation_id, bucket, agent, dir: {kind, id}, at}], stops: [{id, run}], answers: [{id, run, ask, decision, note}]}`: the turns queued for this computer (its account's conversations with it, and the people its agent serves; oldest first, at most 20; none in a work folder paused there, none of a bucket gone, each of an agent on there: `registry.taking`), `dir` where its agent works by an id (`far_turns.dir_of`: `vault` a work folder's, `offered` a directory's, `own` "" for one of its own; never a path), the runs of its turns asked to stop, and the answers given here to what its running turns ask (`far_turns.answers_of`, below). |
+| POST | `/api/computers/chats/{turn}/claim` | `{run, agent}` → `{turn: {id, conversation_id, bucket, title, text, selections, model, effort, speed, for: {id, username}, thread_id?, comment_id?}, history, about, dir: {kind, id}, seen, thread?, tools: {url, token} \| null}` (`for` the account the turn is for, the token's own or a co-author's; `title` the conversation's, which names a new Codex thread; the computer cuts it as a local title, `chats.title_of`; `about` what the bucket is, `chats.about`: its kind, id, title or name, format, and in a work folder its path and the work folder's name; `dir` as listed; a comment thread's turn names its thread and the comment it is, and `thread` is the thread's entry with its PDF place, whose source line the computer finds on its own disk: [local_agents.md](local_agents.md) "A comment sent to an agent"; `tools` Gamma's tools for the turn, below): queued → running in one locked write keyed by the run (the same run again: the same answer, with a new token in place of the one the lost answer carried; another: 409; 404 not this computer's turn; 409 an agent off there or another agent's, left queued, a co-author's the agent no longer serves, a work folder this computer does not keep or paused there, a directory no longer offered, a bucket gone or no longer in the work folder its conversation works in, failed with why). |
+| GET | `/api/computers/threads/{id}/picture?at=now\|before` | The JPEG of the region of a thread whose turn a run of this computer holds running (`far_turns.holds_thread`: the run's holder the token, the turn's conversation of that thread, its owner the token's account), as `GET /api/annotations/{id}/picture` draws it, which the computer fetches beside the thread for its prompt; 404 "No thread of a turn on this computer has that id." for any other thread, and when the entry has no such picture; 400 for another `at`. |
+| POST | `/api/computers/chats/{turn}/write` | `{run, seq, fields}` → `{ok}` or `{ok, stale: true}` when `seq` is not above the last written (an end of a thread's turn that wrote no reply is answered in its thread here, `threads.settle`): the agent message's `text` (through `prompt.inert`), `steps` (a path not relative stored as `outside`), `changes` (a path not relative left out), `changed`, `built`, `error`, `fresh`, `asks` (what the agent asks that this server may answer, where the computer relays its asks: each `{id, kind: command \| files, once: true, command?, command_shown?, marked?, lines?, inner?, shell?, background?, cwd?, host?, paths?, diff?, reason?, at, expires_at}`, at most 20, a command, a place or a diff longer than the computer shows whole 400, never cut; those answered here left out, below), `waiting` (a flag: an ask of the turn waits for an answer on the computer alone, [local_agents.md](local_agents.md#asking-on-this-computer)), `state`, `model`, `effort`, `speed`, its `ended_at` this server's clock (an end writes `asks` empty and `waiting` false and deletes the turn's token and the answers kept for it; any other write keeps the token alive); 409 another run, a turn no longer running, or a gone conversation. |
 
 **What the agents ask, answered here** (step 4.3 of [the
 plan](../research/agents-as-participants-plan.md), decision 7). Where the
@@ -207,7 +204,7 @@ thread's chip reads *Codex is waiting for you* with *Answer in the chat*.
 `POST /api/local-agents/chat/turns/{turn}/asks/{ask}` answers it, by the
 turn's person or the agent's owner (`chats.readable`; another account 404),
 `once` or `deny` with a note (`chat` 400): the answer is kept with the run
-(`computer_chat_runs.answers`, pages.db step 69, `chats.answer_run`), the ask
+(`computer_chat_runs.answers`, pages.db step 69, `far_turns.answer_run`), the ask
 leaves the message at once, and the computer is woken (`chat`), whose
 listing hands it the answer (`answers`). The computer's own bar lists the
 ask too, and the first answer is the one: one here after the computer's is
@@ -228,10 +225,10 @@ alone. With the link's `asks` off nothing is relayed: the message says
 workspace alone, named with the computer's agent's id here,
 `computer:<computer>:codex`, so its comments, resolves and highlights read
 *Codex on TIM-PC* as the computer is called here: `agents.of_token`,
-`registry.far_name`), living `chats.TOKEN_S` from the claim and renewed by
+`registry.far_name`), living `far_turns.TOKEN_S` from the claim and renewed by
 the run's writes (at most once a minute), kept in the run's row
 (`computer_chat_runs.token`, step 68) and deleted at the turn's end
-however it ends (`chats._close`: an end written, a Stop that ends it here,
+however it ends (`far_turns._close`: an end written, a Stop that ends it here,
 the computer's channel taken back, its message gone) and by a retried
 claim, whose new token replaces it. `url` is this server's MCP endpoint
 as another computer reaches it (`routers/computers.py` `_mcp_url`): its
@@ -242,7 +239,8 @@ computer takes them only at the origin its channel speaks to this server
 at.
 
 The announce's assistants carry their `models` for the chat's model
-chip (at most 32, 8 efforts each); an announce is at most 128 KiB.
+chip (at most 32, 8 efforts each, with their speeds); an announce is at
+most 128 KiB.
 
 ### Sessions over the channel (step 5)
 

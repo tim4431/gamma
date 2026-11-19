@@ -678,7 +678,7 @@ def test_socket_cross_page_move_and_ai_edit(guest):
         assert recv(s, "ops")["ops"] == [{"op": "delete", "id": blk["id"]}]
         assert recv(d, "reload")
         # an AI tool edit runs in a worker thread; its op still lands in the room
-        from gamma.ai_tools import run_agent_tool
+        from gamma.ai_tools.registry import run_agent_tool
         scope = {"type": "page", "page_id": dst["id"]}
         run_agent_tool(workspace_of(guest_name()), scope, "read_block", {"block_id": blk["id"]})  # a replace needs a read
         text, action = run_agent_tool(workspace_of(guest_name()), scope, "edit_block",

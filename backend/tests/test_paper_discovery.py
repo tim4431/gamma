@@ -19,7 +19,7 @@ import gamma.openalex as openalex
 import gamma.routers.metadata as metadata_mod
 import gamma.routers.pdf as pdf_mod
 from gamma import paper_links
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 
 from ai_fixtures import folder, org  # noqa: F401  (org is a fixture)
 from test_ai_tools_web import Upstream, _text_pdf
@@ -181,7 +181,7 @@ def test_search_papers_narrows_by_kind_and_open_access(three_registries):
 
 
 def test_a_work_listed_twice_in_one_reply_shrinks_to_one_line(three_registries):
-    from gamma.ai_tools import Tally
+    from gamma.ai_tools.base import Tally
 
     records = web.search_papers("cooling")
     tally = Tally()

@@ -78,8 +78,17 @@ link from the guide or a design page to them lands.
 
 The [design pages](../design/README.md) explain how Gamma is designed and
 why, for people who use it: the models, the rules and the reasoning, in
-the user guide's plain words. They state a rule, not its mechanics, and end
-by linking the `docs/dev/` and `docs/research/` files that hold those. A
+the user guide's plain words. Each leads with what a user can count on
+and the idea behind it, stays brief on the rest, states a rule rather than
+its mechanics, and ends by linking the `docs/dev/` and `docs/research/`
+files that hold those. A model with parts and arrows is a `mermaid` fence,
+which GitHub draws and the site draws at build time: give it an
+`accTitle`, define each node before the edges that use it, prefer
+flowcharts and sequence diagrams, and keep it within the column (the
+site's strict build fails a diagram wider than 720px). A `text` fence is
+for a picture made of characters, such as a file tree. GitHub's
+`> [!NOTE]` and `> [!IMPORTANT]` set off what a page promises
+([sites/README.md](../../sites/README.md#what-the-build-does)). A
 change to a rule a design page states updates that page in the same
 commit, as it does the topic doc. A design page names a number only where
 the number is the design (30 days in Recently deleted), not a tunable

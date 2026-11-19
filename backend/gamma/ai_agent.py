@@ -63,9 +63,13 @@ from . import ai_permissions, ai_steer
 from .ai_client import UpstreamError, failure_kind, partial_json_object
 from .ai_context import canonical_tool, elide_live_results
 from .ai_protocols.base import reasoning_text, truncated_stop
-from .ai_tools import (CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, MUTATING_TOOLS,
-                       TREE_DELETES, approval_preview, ensure_tally, find_selection, listed_pages, run_agent_tool,
-                       settled_action, skipped_fetch, tool_action, tool_permission, unanswered_fetch)
+from .ai_tools.base import CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, ensure_tally
+from .ai_tools.folders import TREE_DELETES
+from .ai_tools.notes import find_selection
+from .ai_tools.organizing import listed_pages
+from .ai_tools.registry import (MUTATING_TOOLS, approval_preview, run_agent_tool, settled_action, tool_action,
+                                tool_permission)
+from .ai_tools.web import skipped_fetch, unanswered_fetch
 from .logbuf import log
 
 # Tool calls of one round that run at the same time. Reads are network- or
@@ -482,7 +486,7 @@ class AgentLoop:
             if changes:
                 # What this message may still change: a call naming several
                 # pages changes at most that many, or is refused whole before
-                # any card (ai_tools._batch_answer). The gate's preview reads
+                # any card (ai_tools.organizing._batch_answer). The gate's preview reads
                 # the same scope.
                 self.scope["changes_left"] = None if self.max_changes is None else self.max_changes - self.mutations
             if self.gate:

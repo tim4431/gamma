@@ -1,5 +1,5 @@
 """Reading a URL for the chat: one guarded GET of a page, a file or a PDF,
-read for the model (``fetch_url`` in ``ai_tools.py``, and ``fetch_paper``'s
+read for the model (``fetch_url`` in ``ai_tools/web.py``, and ``fetch_paper``'s
 page fallback in gamma/ai_web.py), and the windows a long one is read in.
 
 ``get`` is the one page GET both readers use: the browser's headers,

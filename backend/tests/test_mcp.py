@@ -9,7 +9,7 @@ import time
 import pytest
 
 from conftest import account_of, doc_props, login, make_folder, make_page, make_user, thread_on
-from gamma.ai_tools import agent_tools, mcp_tools, run_agent_tool
+from gamma.ai_tools.registry import agent_tools, mcp_tools, run_agent_tool
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.integrations import resolve_token
 
@@ -692,11 +692,23 @@ def test_a_connection_edits_notes_only_where_it_may(client, connection):
                 workspaces.delete(gone)
 
 
+def test_a_release_build_names_its_plugin_version():
+    """A release's server says which plugin its release ships and how each
+    assistant updates, which an older skill tells the user; a development
+    build says nothing of it."""
+    from gamma.mcp_server import plugin_hint
+
+    said = plugin_hint("1.14.0")
+    assert said.startswith(" This server is Gamma 1.14.0, and the Gamma plugin of its release is version 1.14.0.")
+    assert "claude plugin update gamma@gamma-local" in said and "setup command again" in said
+    assert plugin_hint("1.14.0-dev.7") == plugin_hint("") == ""
+
+
 def test_the_question_shows_a_change_line_by_line():
     """Gamma's question is plain text, as a client shows it: what kind of
     change and how much, the lines removed and added, a kept line beside
     them with its links as their text, and where the page is."""
-    from gamma.ai_tools import text_diff
+    from gamma.ai_tools.base import text_diff
     from gamma.integrations import Connection
     from gamma.mcp_server import QUESTION_LINES, _question
 

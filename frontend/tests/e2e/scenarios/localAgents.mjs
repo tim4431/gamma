@@ -14,7 +14,7 @@ import { TOURS } from "../../../src/guide/tours/index.js";
 // secret, a desktop user agent) with local agents on and the stand-ins of
 // backend/tests/fake_agents/ in place of the CLIs, so no real agent ever
 // runs: the SyncTeX sample paper as a work folder with its .tex sources
-// tracked, no Feedback button anywhere, Codex turned on for the computer by
+// tracked, Codex turned on for the computer by
 // the vault's maker; a passage of main.tex and one of a library PDF
 // commented with Send to Codex ticked, each a turn of its thread answered
 // there under Codex's name, the .tex edited and shown so, a question of
@@ -134,7 +134,6 @@ export async function localAgentScenarios(env) {
     await server.start();
     await server.manage("create-user", "la-user", "la-pw");
     const user = await new Account(server, "la-user", "la-pw").login();
-    const home = `${server.base}/?ws=${user.ws}`;
     const at = (id) => `${server.base}/?page=${id}&ws=${user.ws}`;
     const desktop = (opts = {}) => user.context(browser, { userAgent: DESKTOP_UA, ...opts });
     // What the page asks the desktop shell, recorded as window.shellAsks: no shell runs here.
@@ -288,28 +287,6 @@ export async function localAgentScenarios(env) {
       assert(codex.found && codex.ready, `Codex is found and signed in: ${JSON.stringify(codex)}`);
       assertEq(codex.label, "Codex");
       assertEq(link.agent ?? null, null, "the folder has no agent yet");
-    });
-
-    await step("local-agents: no Feedback button is left: not in the synced folder's list, the vault chip's menu or the Comments window", async () => {
-      const ctx = await desktop();
-      const page = await openPage(ctx, `${home}&folder=${link.folder_id}`);
-      try {
-        await page.locator('[data-guide="home.select"]').waitFor({ timeout: 15000 });
-        assertEq(await page.getByRole("button", { name: "Feedback", exact: true }).count(), 0, "none in the folder's list bar");
-        await page.goto(at(main.id));
-        await waitForPdf(page, 1);
-        await page.locator(".vaultChip").click();
-        const card = page.locator(".vaultPopover");
-        await card.waitFor();
-        assertEq(await card.getByText("Feedback…", { exact: true }).count(), 0, "none in the vault chip's menu");
-        await page.locator(".vaultChip").click();
-        await card.waitFor({ state: "detached" });
-        await openComments(page);
-        assertEq(await page.locator(".dockWindow:has(.commentsPanel)").getByRole("button", { name: "Feedback", exact: true }).count(), 0,
-          "none in the Comments window");
-        assertEq(await page.getByRole("button", { name: "Feedback", exact: true }).count(), 0, "none in the page header");
-        assertNoProblems(page);
-      } finally { await ctx.close(); }
     });
 
     await step("local-agents: the vault's maker turns Codex on for the computer", async () => {
@@ -799,7 +776,7 @@ export async function localAgentScenarios(env) {
     });
 
     // Step 3c: the rest of the computer side.
-    await step("local-agents: the passage chip names its source line, the strip's menu asks the shell, and a model and effort chosen reach Codex as its reply is typed", async () => {
+    await step("local-agents: the passage chip names its source line, the strip's menu asks the shell, and a model, effort and speed chosen reach Codex as its reply is typed", async () => {
       const before = heard().length;
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
@@ -830,8 +807,18 @@ export async function localAgentScenarios(env) {
           !(await items.allInnerTexts()).some((s) => s.includes("Hidden")), "the models Codex lists, not its hidden ones");
         await items.filter({ hasText: "GPT Fake Mini" }).click();
         await modelChip.click();
-        await page.locator(".uiSelectMenu .ctxMenuItem").filter({ hasText: /^\s*medium\s*$/i }).click();
-        await until(async () => /GPT Fake Mini · medium/i.test(await modelChip.innerText()), { what: "the chip shows the choice" });
+        const sections = page.locator(".uiSelectMenu .ctxMenuLabel");
+        await until(async () => (await sections.allInnerTexts()).some((s) => /effort/i.test(s)), { what: "the menu's sections" });
+        assert(!(await sections.allInnerTexts()).some((s) => /speed/i.test(s)), "a model with no other tier offers no speed");
+        await items.filter({ hasText: /^\s*GPT Fake\s*$/ }).click();
+        await modelChip.click();
+        assert((await sections.allInnerTexts()).some((s) => /speed/i.test(s)) &&
+          (await items.allInnerTexts()).some((s) => /Default \(standard\)/.test(s)), "its speeds, the default named");
+        await items.filter({ hasText: /^\s*medium\s*$/i }).click();
+        await modelChip.click();
+        await items.filter({ hasText: /^\s*fast\s*$/i }).click();
+        await until(async () => /GPT Fake · medium/i.test(await modelChip.innerText())
+          && await dock.locator(".chatModelChip .chatSpeedGlyph").count() === 1, { what: "the chip shows the choice, the speed its glyph" });
 
         const replies = dock.locator(".chatBubble.ai");
         const earlier = await replies.count();
@@ -849,12 +836,14 @@ export async function localAgentScenarios(env) {
         const first = CHAT_REPLY.split(" ")[0];
         assert([...seen].some((s) => s.includes(first) && !s.includes(CHAT_REPLY)),
           `a part of the reply was seen before the whole: ${JSON.stringify([...seen])}`);
+        assertEq(await dock.locator(".chatMsgModel .chatSpeedGlyph").count(), 1, "the reply's model row: the speed it ran at");
         assertNoProblems(page);
       } finally { await ctx.close(); }
       const since = heard().slice(before);
       const thread = since.find((e) => ["thread/start", "thread/resume"].includes(e.in?.method))?.in.params;
       const turn = since.find((e) => e.in?.method === "turn/start")?.in.params;
-      assertEq(JSON.stringify([thread?.model, turn?.effort]), JSON.stringify(["gpt-fake-mini", "medium"]), "the model and the effort chosen");
+      assertEq(JSON.stringify([thread?.model, turn?.effort, turn?.serviceTierForTurn]), JSON.stringify(["gpt-fake", "medium", "priority"]),
+        "the model, the effort and the speed chosen");
     });
 
     // Step 2.8 of docs/research/agents-as-participants-plan.md: a chat with no AI service.

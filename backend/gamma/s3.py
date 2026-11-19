@@ -1,19 +1,21 @@
 """The S3-compatible bucket the backup tasks' snapshots and the off-site
-copies go to (gamma/bucket_snapshots.py, gamma/offsite.py,
+copies go to (gamma/snapshot_copies.py, gamma/offsite.py,
 docs/dev/debugging.md "Snapshots and copies in a bucket"): AWS S3,
 Cloudflare R2, MinIO, through boto3, which is imported only when a
 ``Client`` is made (``requirements-s3.txt``: the Docker image and the
 desktop app have it, a plain checkout does not).
 
-A ``Client`` keeps whole files under the bucket's prefix: ``put_object`` (a
+A ``Client`` is a backup store (gamma/backup_store.py ``Store``) that
+keeps whole files under the bucket's prefix: ``put_object`` (a
 local file, streamed up by boto3's managed transfer, in parts past 8 MB),
 ``get_object`` (down into a local file, written whole), ``put_bytes`` and
 ``get_bytes`` (a small object in one request), ``list_objects``
 (``(key, size, mtime)`` under a prefix) and ``delete_object``. ``check``
 lists the prefix once and says why a bucket cannot work. Keys are relative
-to the prefix and checked by ``check_key``. A call the bucket refuses, or
-cannot be reached for, raises ``S3Error``, an OSError; settings that name
-no bucket that can work raise ``S3ConfigError``.
+to the prefix and checked by ``backup_store.check_key``. A call the bucket
+refuses, or cannot be reached for, raises ``S3Error``, a ``StoreError``;
+settings that name no bucket that can work raise ``S3ConfigError``, a
+``StoreConfigError``.
 """
 
 from __future__ import annotations
@@ -23,18 +25,18 @@ import secrets
 from pathlib import Path
 
 from . import net_proxy
+from .backup_store import StoreConfigError, StoreError, check_key
 
 CONNECT_TIMEOUT_S = 10
 READ_TIMEOUT_S = 60
 LIST_PAGE = 1000  # what one listing returns at most, and what ``check`` counts up to
 
 
-class S3Error(OSError):
-    """The bucket refused a call or could not be reached. An OSError, so the
-    callers that handle a failing disk handle a failing bucket alike."""
+class S3Error(StoreError):
+    """The bucket refused a call or could not be reached."""
 
 
-class S3ConfigError(ValueError):
+class S3ConfigError(StoreConfigError):
     """Settings that name no bucket that can work: none named, boto3 not
     installed, half a key pair, no credentials, an endpoint that is no URL,
     or (``check``) a bucket that is not there, keys it refuses, an endpoint
@@ -52,20 +54,6 @@ def where(bucket: str, endpoint: str = "", prefix: str = "") -> str:
     """The bucket and prefix as the log, the state file and the restore's
     messages name them: ``s3://<bucket>/<prefix>`` and the endpoint."""
     return f"s3://{bucket}/{key_prefix(prefix)}" + (f" at {endpoint}" if endpoint else "")
-
-
-def check_key(key: str, *, prefix: bool = False) -> str:
-    """``key`` when it can name an object: segments joined by ``/``, none
-    empty, ``.`` or ``..``, none holding a backslash or a control character,
-    at most 1024 characters. ``prefix``: a listing's, which may end in
-    ``/``. ValueError otherwise."""
-    if not isinstance(key, str) or not key or len(key) > 1024:
-        raise ValueError(f"unsafe object key: {key!r}")
-    parts = (key[:-1] if prefix and key.endswith("/") else key).split("/")
-    for part in parts:
-        if not part or part in (".", "..") or "\\" in part or any(ord(c) < 32 or ord(c) == 127 for c in part):
-            raise ValueError(f"unsafe object key: {key!r}")
-    return key
 
 
 class Client:

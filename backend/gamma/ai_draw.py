@@ -2,7 +2,7 @@
 "Drawing on pages"): shapes as a new handwriting group, a text box, a
 picture and a page of paper. Each is one block a person's client would
 make (handwriting.md "The stroke file", text_boxes.md, pictures.md,
-notebooks.md); the registry (gamma/ai_tools.py ``draw``, ``add_text_box``,
+notebooks.md); the registry (gamma/ai_tools/drawing.py ``draw``, ``add_text_box``,
 ``place_picture``, ``add_sheet``) inserts it through the op path under the
 agent's stamp and records its revert.
 

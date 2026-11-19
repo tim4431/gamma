@@ -1,6 +1,6 @@
 // Taking back the agent's note changes from the reply that made them. Each
 // edit, new note, move or deletion the agent made carries `revert` (what
-// undoing it needs, recorded by its tool — gamma/ai_tools.py), and so do a
+// undoing it needs, recorded by its tool — gamma/ai_tools/), and so do a
 // folder or label it deleted and a page tool's rename, move or label change
 // (`revert.pages`, one page or many); POST /api/ai/revert
 // undoes it as a merge into the notes or the library as they are now

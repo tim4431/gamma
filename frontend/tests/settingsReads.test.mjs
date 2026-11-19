@@ -86,7 +86,9 @@ test("a pane's reads go out together with what they lead to; a prefetch reads on
   assert.deepEqual(asked, [], "a prefetch reads nothing it has");
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.ok(!PANE_READS.backups(who).includes("/admin/offsite"), "an account that is not an admin reads no bucket");
+  assert.ok(!PANE_READS.backups(who).includes("/admin/gdrive"), "nor Google Drive's connection");
   assert.ok(PANE_READS.backups({ admin: true }).includes("/admin/offsite"));
+  assert.ok(PANE_READS.backups({ admin: true }).includes("/admin/gdrive"));
   assert.equal(PANE_READS.server().filter((path) => path === "/admin/settings").length, 1, "the Server pane reads its settings once");
   const people = (w) => PANE_READS.agents(w).find((read) => read?.path === "/local-agents/people");
   assert.equal(people({ signedIn: true }), undefined, "a browser asks no other server whom an agent may serve");

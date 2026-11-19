@@ -47,18 +47,14 @@
     "pointer-kind": 2
   },
   "pdf/PdfViewer.jsx": {
-    "context-menu": 2,
-    "pointer-kind": 3,
-    "inline-style": 1
+    "context-menu": 1,
+    "pointer-kind": 2
   },
   "pdf/scrollSnap.js": {
     "pointer-kind": 1
   },
   "recording/PlayerBar.jsx": {
     "icon-size": 2
-  },
-  "settings/AssistantTools.jsx": {
-    "icon-size": 1
   },
   "settings/SettingsKit.jsx": {
     "double-click": 1

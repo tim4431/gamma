@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from gamma.ai_tools import CHANGE_LIMIT_PREFIX
+from gamma.ai_tools.base import CHANGE_LIMIT_PREFIX
 
 from ai_fixtures import ALLOW_ALL, FakeResp, ai_provider, org  # noqa: F401  (fixtures)
 

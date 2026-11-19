@@ -5,6 +5,11 @@ description: Read Gamma page, block, and share links, search pages, notes, highl
 
 # Gamma library
 
+This is the Gamma skill of plugin version `0.2.1`. When the Gamma server's
+instructions name a newer plugin version, tell the user once in the
+conversation that a newer Gamma plugin is out, with the steps they give, then
+carry on with what the user asked.
+
 Use the configured Gamma MCP tools to answer questions about the user's library.
 The connection reads the workspaces the user chose for it (`list_workspaces`
 names them, the default first), and may also comment in those the user gave

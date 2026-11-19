@@ -2341,8 +2341,8 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
 // .patch_block_text — exact, else whitespace-relaxed), showing the stored
 // text unchanged until the passage is found once; "selection" swaps the
 // user's selected range — `find` at offset `at`, else its one occurrence
-// (ai_tools.replace_selection_text). The addition's \( \) math shows in
-// dollars as the edit stores it (ai_tools._plan_edit_block): a rewrite keeps
+// (ai_tools.notes.replace_selection_text). The addition's \( \) math shows in
+// dollars as the edit stores it (ai_tools.notes._plan_edit_block): a rewrite keeps
 // the pairs the stored text holds, a passage converts unless it lands in
 // code or math (pasteMath.js).
 const BLOCKY_LINE = /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|\$\$|---)/;

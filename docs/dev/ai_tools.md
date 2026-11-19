@@ -1,7 +1,8 @@
 # Agent tools
 
 What the library agent's tools do, how each one is used, and the guardrails
-around them. The registry lives in `gamma/ai_tools.py`; the surrounding wiring
+around them. The tools live in `gamma/ai_tools/`, a module per family with its executors
+and their registry entries (the package's docstring maps them); the surrounding wiring
 — scopes, permissions, the tool loop, replay — is in [ai.md](ai.md).
 
 Every tool is one `TOOLS` entry declaring its wire spec, Settings permission
@@ -679,7 +680,7 @@ flowchart LR
 The agent's reach outside the library, read-only: `search_papers`,
 `related_papers` and `search_web` under **Search online** (`web_search`),
 `fetch_paper`, `fetch_url` and `read_paper` under **Fetch documents**
-(`web_read`). The executors are in `ai_tools.py`; the code under them
+(`web_read`). The executors are in `ai_tools/web.py`; the code under them
 depends one way, `html_markdown ← web_page ← web_fetch ← ai_web`, with the
 search engines beside them:
 
@@ -838,7 +839,7 @@ or a host with a path to the bare host in its IDNA form, and several sites,
 an IP address or a name without a dot are an `error:` naming the shape
 wanted, as an unknown `recency` is. It is armed only when
 `search_services.web_engine` finds an engine for this chat (the TOOLS
-entry's `needs: "web_engine"`, met through `ai_tools.available(scope)`; the
+entry's `needs: "web_engine"`, met through `ai_tools.registry.available(scope)`; the
 chat scope carries `web_engine`).
 
 Each result is a title link, the page's date when the engine reports one,

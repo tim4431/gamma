@@ -6078,18 +6078,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     abortable: (abort) => updateTask(id, { cancel: abort }),
   });
 
+  // One file's transfer `run(track)`, on a row of its own named `name` of
+  // `kind` (done with `doneInfo(result)`, its size by default, or failed),
+  // or on a batch's `track` when one is given, which keeps its own rows.
+  async function onUploadRow(file, name, kind, track, run, doneInfo = () => fmtBytes(file.size)) {
+    if (track) return run(track);
+    const id = addTask({ name, kind, info: fmtBytes(file.size) });
+    try {
+      const result = await run(rowTrack(id));
+      updateTask(id, { state: "done", info: doneInfo(result) });
+      return result;
+    } catch (err) {
+      updateTask(id, { state: "failed", info: "failed" });
+      throw err;
+    }
+  }
+
   // `folder`: the id of the folder the page is filed in ("" = none).
   // `track`: a batch's, in place of a row of its own.
   async function uploadOnePdf(file, folder = "", track = null) {
-    const transferId = track ? null : addTask({ name: uploadName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) });
-    let src;
-    try {
-      src = await resolvePdfSource({ file }, transferId, track || rowTrack(transferId));
-    } catch (err) {
-      if (transferId) updateTask(transferId, { state: "failed", info: "failed" });
-      throw err;
-    }
-    if (transferId) updateTask(transferId, { state: "done", info: fmtBytes(file.size) });
+    const src = await onUploadRow(file, uploadName(file, "upload.pdf"), "upload", track,
+      (own) => resolvePdfSource({ file }, null, own));
     const block = await getOrCreateBlockForDoc(src);
     if (folder) {
       // A PDF already in the library on a sub-page is filed where its top
@@ -6112,18 +6121,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   async function importOneMarkdown(file, folder = "", track = null) {
     const filename = uploadName(file, "note.md");
-    const transferId = track ? null : addTask({ name: filename, kind: "file", info: fmtBytes(file.size) });
     const form = new FormData();
     form.append("file", file, filename);
     form.append("folder", folder);
-    try {
-      const data = await apiJson(`${API}/import/markdown`, { method: "POST", body: form });
-      if (transferId) updateTask(transferId, { state: "done", info: `${data.imported || 0} notes` });
-      return { data, kind: "markdown" };
-    } catch (err) {
-      if (transferId) updateTask(transferId, { state: "failed", info: "failed" });
-      throw err;
-    }
+    const data = await onUploadRow(file, filename, "file", track, () => apiJson(`${API}/import/markdown`, { method: "POST", body: form }),
+      (answer) => `${answer.imported || 0} notes`);
+    return { data, kind: "markdown" };
   }
 
   // A file of any other format as a library page of its own
@@ -6131,16 +6134,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // which answers the page that already owns the file when one does).
   async function uploadOneDocument(file, folder = "", track = null) {
     const name = uploadName(file);
-    const transferId = track ? null : addTask({ name, kind: "upload", info: fmtBytes(file.size) });
-    const { progress, abortable } = track || rowTrack(transferId);
-    try {
-      const { page } = await uploadOneFile(file, { folderId: folder, name, onProgress: progress, onAbortable: abortable });
-      if (transferId) updateTask(transferId, { state: "done", info: fmtBytes(file.size) });
-      return page;
-    } catch (err) {
-      if (transferId) updateTask(transferId, { state: "failed", info: "failed" });
-      throw err;
-    }
+    const { page } = await onUploadRow(file, name, "upload", track, ({ progress, abortable }) =>
+      uploadOneFile(file, { folderId: folder, name, onProgress: progress, onAbortable: abortable }));
+    return page;
   }
 
   // One item of an upload (uploadFiles' {file, route}) the way its route

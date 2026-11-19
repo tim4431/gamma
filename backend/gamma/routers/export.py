@@ -1992,7 +1992,7 @@ def start_export(ws: str, *, owner: str, user: str, payload: ExportJob, scope=No
     ``token``) when one starts it. ``translations`` are the page's or the
     folder's papers' translated views, checked by the caller. The job as
     ``jobs.start`` answers it. What ``POST /api/jobs/export`` and the chat's
-    ``export`` tool (gamma/ai_tools.py) start; a known ``mode`` is the
+    ``export`` tool (gamma/ai_tools/pages.py) start; a known ``mode`` is the
     caller's to check."""
     translations = translations or {}
     mode, folder, page_id = payload.mode, payload.folder, payload.page_id

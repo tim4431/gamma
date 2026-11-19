@@ -58,7 +58,7 @@ How each works now is in the dev docs named.
   16-bit, interlaced, GIF, WebP) decode with Pillow up to 40 MP, a 25 MP
   screenshot in about 0.65 s, keeping transparency as a soft mask
   ([dev/pdf_typesetting.md](../dev/pdf_typesetting.md)).
-- **The library as the AI lists it** (`ai_tools.py`). `list_pages`
+- **The library as the AI lists it** (`ai_tools/reading.py`). `list_pages`
   stopped at 400 pages with no way to page. It now lists in library
   order, which edits never change, in batches (`limit`, `after`,
   [dev/ai_tools.md](../dev/ai_tools.md)).
@@ -140,7 +140,7 @@ Left as they are, each for a reason:
 |---|---|---|
 | Use journal sign-ins is Allow or Off, no Ask | `chat/chatSettings.js` `STATES_OF` | It is part of a fetch, not a call to approve |
 | Ask is Off where no card can show (no stream, no signed-in account) | `ai_tools.tool_states` `can_ask` | Nowhere to ask; it never turns into Allow |
-| A folder or label deletion too large to record its revert is refused | `ai_tools._tree_revert` (200,000 characters, `MAX_OPS` blocks) | It is what makes every deletion revertible |
+| A folder or label deletion too large to record its revert is refused | `ai_tools.folders._tree_revert` (200,000 characters, `MAX_OPS` blocks) | It is what makes every deletion revertible |
 | A folder with a share link is not deleted | `_plan_delete_folder` | The deletion would stop the link for good |
 | The approval card waits 10 minutes, then declines | `ai_permissions.APPROVAL_TIMEOUT` | A thread waits in memory; timing out never allows |
 
@@ -148,7 +148,7 @@ Product choices a setting could take, not decided:
 
 | Rule | Where | Setting today |
 |---|---|---|
-| `delete_block` deletes a subtree too large to record without a revert, where `delete_folder` refuses | `ai_tools._run_delete_block` (`_DELETE_REVERT_MAX`) | None; the result says it cannot be reverted |
+| `delete_block` deletes a subtree too large to record without a revert, where `delete_folder` refuses | `ai_tools.notes._run_delete_block` (`_DELETE_REVERT_MAX`) | None; the result says it cannot be reverted |
 | Recently deleted keeps a page 30 days | `trash.KEEP_DAYS` | None |
 | 200 changes a message, apart from the rounds | `ai_tools.MAX_TOOL_ACTIONS` | Lifted only with Unlimited rounds |
 | 10 web searches and 20 saved papers a message; 12 rounds for a `read_paper` helper | `MAX_WEB_SEARCHES`, `MAX_SAVES`, `ai_agent.HELPER_ROUNDS` | None; Unlimited rounds does not lift them |

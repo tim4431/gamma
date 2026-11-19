@@ -44,7 +44,7 @@ A thread on a range of a text file (a highlight with `text_position`,
 (`gamma/annotations/anchors.py`; [annotations.md](annotations.md) "The anchor").
 A note under a range takes the range's place. No version of the file is
 kept for it (`kept.KEPT_FORMATS`: the range carries the text around it,
-which is all its run needs), and its feedback entry names the file's own
+which is all its run needs), and its annotation entry names the file's own
 lines as its source, never SyncTeX's. When the file changes, the range is
 placed again by its quote ([highlight_relocation.md](highlight_relocation.md#text-files))
 and the thread follows its block; its card and its popover say it moved
@@ -345,7 +345,7 @@ of the page or the picture then, the region picture's crop, and a range's
 first and last line (`lines`). `comments.create` computes it from the rows, under
 its lock; the source line SyncTeX maps it to is added after the commit
 (`gamma/annotations/kept.py`). It never changes with the block: it is the
-place as commented, which the feedback reader compares with the block now.
+place as commented, which the annotations reader compares with the block now.
 A reply holds none, and nothing is backfilled for a root from before step
 54, whose place is read from its block. While its thread is open, the file
 it names is held from the upload sweep ([user_db.md](user_db.md) "What
@@ -1032,7 +1032,7 @@ old first line, where its tag stands), in a column of its own beside the
 text (below, "The code view's column"). A note's threads, the
 page's own and the notes pane's controls keep the popover, and the notes
 pane has no comments section. On the server a thread on a region is a
-`region` anchor and a feedback entry of that kind ([annotations.md](annotations.md)
+`region` anchor and an annotation entry of that kind ([annotations.md](annotations.md)
 "The anchor").
 
 **When it shows.** While the document has a highlight with an open thread,

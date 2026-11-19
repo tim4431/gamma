@@ -15,7 +15,9 @@ import pytest
 import gamma.routers.clip as clip_mod
 import gamma.routers.pdf as pdf_mod
 from conftest import account_of, login, make_folder, make_label, make_user, mark_work_folder, work_props, workspace_of
-from gamma.ai_tools import MAX_SAVES, Tally, approval_preview, run_agent_tool
+from gamma.ai_tools.base import Tally
+from gamma.ai_tools.registry import approval_preview, run_agent_tool
+from gamma.ai_tools.web import MAX_SAVES
 from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page, folder_paths
 from gamma.db import connect_pages_db

@@ -477,7 +477,7 @@ def test_claude_gets_gammas_server_and_its_tools_under_its_flags(monkeypatch, wo
     assert UNREACHED.token not in log.read_text(encoding="utf-8")
     # an ask turn: the same, under its own flags
     assert claude.command(["claude"], ask=True, stream=True, gamma_url=UNREACHED.url) == [
-        "claude", *claude.ASK_FLAGS, "--mcp-config", claude.mcp_config(UNREACHED.url),
+        "claude", *claude.ASK_FLAGS, *claude.settings_flags(ask=True), "--mcp-config", claude.mcp_config(UNREACHED.url),
         "--allowedTools", "mcp__gamma_turn", claude.STREAM_FLAG]
 
 

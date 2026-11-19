@@ -2,7 +2,7 @@
 folder or label it deleted, and putting it back again.
 
 Each note tool's action records what its change needs to be undone and
-redone (``revert`` on the action, gamma/ai_tools.py): an edit the block's
+redone (``revert`` on the action, gamma/ai_tools/): an edit the block's
 text just before and just after the write, a new block the text it was
 made with and where it went, a move the parent and key it left and the
 ones it went to, a deletion every block of the subtree it took. A folder's
@@ -48,7 +48,9 @@ like any other.
 import json
 
 from . import textmerge
-from .ai_tools import BATCH_MAX, cross_page_refusal, text_diff
+from .ai_tools.base import text_diff
+from .ai_tools.notes import cross_page_refusal
+from .ai_tools.organizing import BATCH_MAX
 from .blocks_store import (FOLDERS, LABELS, TRASH, TREES, existing_in, fetch_subtree, filing, free_position,
                            load_props, named, page_root_id, sub_pages, tree_children, write_lock)
 from .db import connect_pages_db

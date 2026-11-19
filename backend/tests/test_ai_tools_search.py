@@ -4,7 +4,7 @@ page-scoped chat can reach."""
 
 from conftest import doc_props, make_folder
 from gamma import storage
-from gamma.ai_tools import agent_tools, run_agent_tool
+from gamma.ai_tools.registry import agent_tools, run_agent_tool
 from gamma.db import connect_data_db
 from gamma.documents.model import stored_name
 from gamma.search import indexer

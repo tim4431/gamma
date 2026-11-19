@@ -22,6 +22,21 @@ PLUGIN_FILES = (*MANIFEST_PATHS, "README.md", "skills/gamma/SKILL.md",
 # The dsh bundle: package.json declares dsh.bundle; its "files" must list the rest.
 DSH_FILES = ("package.json", "README.md", "cordis.patch.yml", "dsh-gamma.js", "skills/gamma/SKILL.md")
 SOURCE = Path(__file__).resolve().parents[1] / "plugins" / "gamma"
+SKILL = "skills/gamma/SKILL.md"
+# The skill names its own plugin version, so an older one knows it is older
+# when the Gamma server's instructions name a newer (mcp_server.plugin_hint).
+SKILL_VERSION = re.compile(r"(Gamma skill of plugin version `)([^`]+)(`)")
+
+
+def skill_version(text: str) -> str:
+    """The plugin version a skill's text names, "" for none."""
+    found = SKILL_VERSION.search(text)
+    return found[2] if found else ""
+
+
+def stamp_skill(text: str, version: str) -> str:
+    """The skill's text naming plugin version ``version``."""
+    return SKILL_VERSION.sub(lambda m: m[1] + version + m[3], text, count=1)
 
 
 def load_manifests(source: Path = SOURCE) -> list[dict]:
@@ -40,6 +55,8 @@ def load_manifests(source: Path = SOURCE) -> list[dict]:
             raise ValueError(f"dsh package.json disagrees with the plugin manifests on {key}.")
     if sorted(package.get("files", [])) != sorted(f for f in DSH_FILES if f not in ("package.json", "README.md")):
         raise ValueError("dsh package.json files must match the bundle allowlist.")
+    if skill_version((source / SKILL).read_text(encoding="utf-8")) != manifests[1].get("version"):
+        raise ValueError("The skill's plugin version disagrees with the plugin manifests.")
     return [*manifests, package]
 
 
@@ -56,6 +73,8 @@ def write_dsh_bundle(destination: Path, version: str | None = None) -> Path:
             for relative in sorted(DSH_FILES):
                 if relative == "package.json":
                     data = (json.dumps(package, indent=2) + "\n").encode()
+                elif relative == SKILL and version:
+                    data = stamp_skill((SOURCE / relative).read_bytes().decode("utf-8"), version).encode("utf-8")
                 else:
                     data = (SOURCE / relative).read_bytes()
                 info = tarfile.TarInfo(f"package/{relative}")

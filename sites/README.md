@@ -73,7 +73,26 @@ sites/
    sidebar lists the documentation's sections (the user guide, the design
    pages), each with its pages, and the open page's headings; on a narrow screen `site/docnav.js`,
    which runs right after it in the page and is not deferred, folds it before
-   the first paint. The user guide's interactive demos
+   the first paint. From 1280px the open page's headings move to an
+   *On this page* column on the right, where `site.js` marks the section
+   being read. A page has the trail Docs / its section above its title and
+   the pages before and after it in its section below.
+
+   The Markdown keeps GitHub's meaning, so a document reads the same in the
+   repository. A `mermaid` fence, which GitHub draws itself, becomes an
+   inline SVG at build time through
+   [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid) (a
+   layout in plain JavaScript, no browser): the page runs no script for it
+   and fetches nothing, its font import is dropped, its colours are `--dg-*`
+   variables that `styles.css` sets from the site's tokens, so it follows
+   light and dark, and its `accTitle`/`accDescr` label it. A diagram that
+   does not render fails the build, and one wider than the column (720px),
+   which would shrink until it reads badly, fails `--strict`. A `text`
+   fence (a file tree, a layout drawn in characters) is a light box with no
+   Copy button. GitHub's alerts (`> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`,
+   `> [!WARNING]`, `> [!CAUTION]`) are callouts, and a two-column table
+   whose every row starts with a link to a page of the site is shown as
+   cards (the design pages' table of pages). The user guide's interactive demos
    (`docs/user_guide/demos/`, a page and its script each, since the site's
    CSP allows no inline script) are copied as they are under `/docs/demos/`,
    where the guide's links to them land. The design pages' pictures

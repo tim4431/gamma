@@ -14,7 +14,7 @@ import pytest
 
 from conftest import account_of, login, make_folder, make_user, mark_work_folder, thread_on, workspace_of
 from gamma import ai_context, folder_links, gamma_sync, highlights, mcp_export, pdf_meta, storage
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.db import connect_data_db, connect_pages_db
 from gamma.documents import text as doc_text
 from gamma.documents.model import page_document

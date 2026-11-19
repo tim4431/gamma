@@ -6,7 +6,7 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 [ai_tools.md](ai_tools.md); how long papers reach the model is
 [ai_context.md](ai_context.md). Code: `gamma/ai_settings.py`,
 `gamma/ai_protocols/` (one adapter per wire), `gamma/ai_client.py`,
-`gamma/ai_catalog.py`, `gamma/ai_context.py`, `gamma/ai_tools.py`,
+`gamma/ai_catalog.py`, `gamma/ai_context.py`, `gamma/ai_tools/`,
 `gamma/chatgpt_oauth.py`, `gamma/routers/ai.py`. PDF translation
 (`gamma/routers/translate.py`), the handwriting selection's Redraw as
 shapes and Convert to text (`gamma/routers/ink_ai.py`) and the stored chat
@@ -1022,7 +1022,8 @@ muted "offline" for another computer that is away, an amber "not ready"
 (`.agentProblem`) for one with a problem, the whole sentence its title; it
 stays pickable, and the chat then says why. The chip then reads the agent
 first, "Codex on TIM-PC · GPT-5.5 · high" or "Gamma AI · GPT-5 · high"
-(`agentChoice`, then the model and effort, the model ellipsized first),
+(`agentChoice`, then the model and effort, the model ellipsized first, the
+speed chosen its glyph after them, a computer agent's as Gamma AI's),
 named "Agent, model and reasoning effort"; with Gamma AI alone it is the
 model chip it always was ("GPT-5 · high", "Model, reasoning effort and
 speed"). It is shown in every bucket (a page, a folder, the library) and even when
@@ -1030,7 +1031,7 @@ Gamma AI is off or unset, as long as there is an agent to pick. A viewer
 of the workspace has Gamma AI alone.
 
 The bucket's pick lasts the tab's life (`chat/computer/chatSide.js`
-`useChatAgent`), as a computer agent's model and effort do; a bucket never
+`useChatAgent`), as a computer agent's model, effort and speed do; a bucket never
 picked shows Gamma AI, unless no AI service is connected and a computer's
 agent can answer (`pickAgent`; a pick is the agent's id, another
 computer's `computer:<computer>:<name>`, which History, a thread's *Open
@@ -1438,7 +1439,7 @@ Reasoning models burn invisible tokens — keep `max_tokens` generous (empty
 responses raise with the finish reason). `/api/ai/models` feeds the chat
 panel's model chip and the prompt editor (four editable prompts: chat system,
 metadata extraction, PPT citation — defaults in `ai.py` — and the library-agent
-base prompt, default in `ai_tools.py`).
+base prompt, default in `ai_tools/prompt.py`).
 
 ### Pictures
 
@@ -1555,7 +1556,7 @@ note's, and the saved conversation points at them, so `upload_gc.referenced`
 reads the `chats` and `chat_history` rows for `/api/uploads/` names beside
 the blocks ([user_db.md](user_db.md) "Stored files"): a picture lives while
 a chat or a note names it, and 30 days more. A written block may only name
-uploads that exist (`missing_uploads` in `ai_tools.py`); `clip_region`
+uploads that exist (`missing_uploads` in `ai_tools/notes.py`); `clip_region`
 stores a region or a handwriting view for the notes to embed
 ([ai_tools.md](ai_tools.md)).
 
@@ -1859,7 +1860,7 @@ A call of a tool whose permission is Ask waits for the user
    is an error chip, and the model hears that the folder or label changed
    while the card waited (`CHANGED_WHILE_ASKING`). A call naming several pages runs with
    its card's `digest` (`run_agent_tool(…, approved=)`): planned again (a
-   rename, move or label under the write lock, `ai_tools._batch_write`), it
+   rename, move or label under the write lock, `ai_tools.organizing._batch_write`), it
    writes nothing when a listed page or the target changed while the card
    waited (`ai_tools.BATCH_CHANGED`).
    Declined, or unanswered after `APPROVAL_TIMEOUT` (10 minutes), the call

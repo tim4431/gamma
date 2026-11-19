@@ -1,7 +1,7 @@
 """The agent's scholarly reach: searching the registries, following a
 paper's citations, and reading a paper that is not in the library
 (``search_papers`` / ``related_papers`` / ``fetch_paper`` in
-``ai_tools.py``; general web search is gamma/search_services.py, reading
+``ai_tools/web.py``; general web search is gamma/search_services.py, reading
 any web page gamma/web_fetch.py).
 
 Nothing here writes to a workspace. ``search_papers`` asks three registries

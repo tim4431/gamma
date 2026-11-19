@@ -5,9 +5,9 @@ computer (test_local_agents_runner's fixtures).
 
 The probe lists the models each agent offers without using one (Codex's
 ``model/list``, its pages followed and the hidden left out; Claude Code's
-``initialize``), in the listing and the strip; a turn asks for a model and
-an effort the agent listed (Codex's thread and turn, Claude Code's
-``--model`` and ``--effort``), any other refused; a chat turn's reply grows
+``initialize``), in the listing and the strip; a turn asks for a model, an
+effort and a speed the agent listed (Codex's thread and turn, Claude Code's
+``--model``, ``--effort`` and ``fastMode``), any other refused; a chat turn's reply grows
 as its deltas come and the whole message takes their place; the terminal
 route gives the shell the conversation's session to resume, to the vault's
 maker only, never while a turn works, never a session of another form,
@@ -36,15 +36,16 @@ from test_local_agents_runner import _folder, _until, disk  # noqa: F401: the di
 from test_vault_routes import _page_of
 
 OWNER, EDITOR = "laex_owner", "laex_editor"
+NO_SPEED = {"speeds": [], "speed": None}
 CODEX_MODELS = [{"id": "gpt-fake", "label": "GPT Fake", "efforts": ["low", "medium", "high"], "effort": "medium",
-                 "default": True},
+                 "default": True, "speeds": ["standard", "fast"], "speed": "standard"},  # ultrafast: not offered
                 {"id": "gpt-fake-mini", "label": "GPT Fake Mini", "efforts": ["low", "medium"], "effort": "low",
-                 "default": False}]
+                 "default": False, **NO_SPEED}]
 CLAUDE_MODELS = [{"id": "default", "label": "Default (recommended)", "efforts": ["low", "medium", "high"],
-                  "effort": None, "default": True},
+                  "effort": None, "default": True, "speeds": ["standard", "fast"], "speed": "standard"},
                  {"id": "sonnet", "label": "Sonnet", "efforts": ["low", "medium", "high", "max"], "effort": None,
-                  "default": False},
-                 {"id": "haiku", "label": "Haiku", "efforts": [], "effort": None, "default": False}]
+                  "default": False, **NO_SPEED},
+                 {"id": "haiku", "label": "Haiku", "efforts": [], "effort": None, "default": False, **NO_SPEED}]
 
 
 @pytest.fixture(scope="module")
@@ -131,13 +132,37 @@ def test_a_choice_is_one_the_agent_listed():
     assert catalog.refused_choice("claude", CLAUDE_MODELS, "haiku", "low") == (
         "Claude Code does not offer that effort for this model.")
     assert catalog.refused_choice("claude", [], "", "low") != ""  # no default model known: no effort
+    assert catalog.refused_choice("codex", CODEX_MODELS, "", "", "fast") == ""  # the default model's
+    assert catalog.refused_choice("codex", CODEX_MODELS, "gpt-fake", "high", "standard") == ""
+    for model, speed in (("gpt-fake-mini", "fast"), ("", "ultrafast"), ("", "flex")):
+        assert catalog.refused_choice("codex", CODEX_MODELS, model, "", speed) == (
+            "Codex does not offer that speed for this model."), (model, speed)
+    assert catalog.refused_choice("claude", [], "", "", "fast") != ""
     assert events.model("", "x", [], None, True) is None
     assert events.model(" m ", "", ["low", 3, ""], "", 1) == {"id": "m", "label": "m", "efforts": ["low"],
-                                                             "effort": None, "default": False}
+                                                             "effort": None, "default": False, **NO_SPEED}
+    # the speeds Gamma knows, cheapest first; a default speed not listed is none
+    assert events.model("m", "", [], None, True, ["fast", "warp", "standard", "flex"], "fast")["speeds"] == [
+        "flex", "standard", "fast"]
+    assert events.model("m", "", [], None, True, ["standard", "fast"], "flex")["speed"] is None
+    # Codex: its fast tier is priority (an older Codex says fast), the config's tier its default speed
+    listed = {"model": "m", "serviceTiers": [{"id": "priority", "name": "Fast"}, {"id": "ultrafast"}]}
+    assert [(m["speeds"], m["speed"]) for m in codex._models([listed], "priority")] == [
+        (["standard", "fast"], "fast")]
+    assert codex._models([{**listed, "defaultServiceTier": "default"}], "priority")[0]["speed"] == "standard"
+    assert codex._models([{"model": "m", "additionalSpeedTiers": ["fast"]}])[0]["speeds"] == ["standard", "fast"]
+    for unknown in ([{"id": "ultrafast"}], [], None):   # no tier Gamma knows: no choice of speed
+        assert codex._models([{"model": "m", "serviceTiers": unknown}], "priority")[0]["speeds"] == []
     assert claude.command(["claude"], stream=True, model="sonnet", effort="max", session="5e55-s") == [
         "claude", *claude.FLAGS, "--include-partial-messages", "--model", "sonnet", "--effort", "max",
         "--resume", "5e55-s"]
     assert claude.command(["claude"], model="default", effort="low") == ["claude", *claude.FLAGS, "--effort", "low"]
+    # a speed is the fastMode setting, in the one --settings a turn with ask has too
+    assert claude.command(["claude"], speed="fast") == ["claude", *claude.FLAGS, "--settings", '{"fastMode":true}']
+    assert claude.command(["claude"], ask=True, speed="standard") == [
+        "claude", *claude.ASK_FLAGS, "--settings", '{"permissions":{"ask":["Bash"]},"fastMode":false}']
+    assert claude.command(["claude"], ask=True) == ["claude", *claude.ASK_FLAGS, "--settings",
+                                                    '{"permissions":{"ask":["Bash"]}}']
 
 
 def test_a_turn_runs_the_model_and_effort_asked_for(lab, disk, monkeypatch):
@@ -159,6 +184,7 @@ def test_a_turn_runs_the_model_and_effort_asked_for(lab, disk, monkeypatch):
     started = [m["params"] for m in sent if m.get("method") == "thread/start"][-1]
     turn = [m["params"] for m in sent if m.get("method") == "turn/start"][-1]
     assert started["model"] == "gpt-fake-mini" and turn["effort"] == "low" and "model" not in turn
+    assert "serviceTierForTurn" not in turn and "serviceTier" not in started  # no speed: the thread's own
     # none chosen: the agent's default, nothing said
     _say(lab.owner, f.page, "Again.")
     assert runner.wait_idle(60)
@@ -166,6 +192,38 @@ def test_a_turn_runs_the_model_and_effort_asked_for(lab, disk, monkeypatch):
     resumed = [m["params"] for m in requests_in(disk.log) if m.get("method") == "thread/resume"][-1]
     assert "model" not in resumed and "effort" not in [m["params"] for m in requests_in(disk.log)
                                                        if m.get("method") == "turn/start"][-1]
+
+
+def _turn_started(log) -> dict:
+    return [m["params"] for m in requests_in(log) if m.get("method") == "turn/start"][-1]
+
+
+def test_a_turn_runs_at_the_speed_asked_for(lab, disk, monkeypatch):
+    f = _folder(lab, disk)
+    catalog.probe("codex", fresh=True)
+    assert _say(lab.owner, f.page, model="gpt-fake-mini", speed="fast", status=400)["detail"] == (
+        "Codex does not offer that speed for this model.")
+    made = _say(lab.owner, f.page, speed="fast")                         # the default model's fast tier
+    assert made["conversation"]["messages"][1]["speed"] == "fast"
+    assert runner.wait_idle(60)
+    assert (_reply(lab, f.page)["state"], _reply(lab, f.page)["speed"]) == ("done", "fast")
+    started = [m["params"] for m in requests_in(disk.log) if m.get("method") == "thread/start"][-1]
+    # the turn's tier alone, never the thread's: the next turn, or the person's codex resume, runs at its own
+    assert _turn_started(disk.log)["serviceTierForTurn"] == "priority" and "serviceTier" not in started
+    assert "serviceTier" not in _turn_started(disk.log)
+    _say(lab.owner, f.page, "Again, at standard speed.", speed="standard")
+    assert runner.wait_idle(60)
+    assert _turn_started(disk.log)["serviceTierForTurn"] == "default"
+    _say(lab.owner, f.page, "And as Codex is set up.")
+    assert runner.wait_idle(60)
+    assert _reply(lab, f.page)["speed"] is None and "serviceTierForTurn" not in _turn_started(disk.log)
+    # the tier the user's config sets is the default speed of the models that offer it
+    script_agent(monkeypatch, disk.log, config={"service_tier": "priority"})
+    try:
+        assert [m["speed"] for m in catalog.probe("codex", fresh=True)["models"]] == ["fast", None]
+    finally:
+        script_agent(monkeypatch, disk.log)
+        catalog.probe("codex", fresh=True)
 
 
 def test_claude_code_runs_the_model_and_effort_asked_for(lab, disk):
@@ -177,7 +235,13 @@ def test_claude_code_runs_the_model_and_effort_asked_for(lab, disk):
     assert runner.wait_idle(60)
     argv = turns_in(disk.log)[-1]["argv"]
     assert argv[argv.index("--model") + 1] == "sonnet" and argv[argv.index("--effort") + 1] == "max"
-    assert claude.STREAM_FLAG in argv
+    assert claude.STREAM_FLAG in argv and "--settings" not in argv
+    assert _say(lab.owner, g.page, model="sonnet", speed="fast", status=400)["detail"] == (
+        "Claude Code does not offer that speed for this model.")
+    _say(lab.owner, g.page, "Quickly.", speed="fast")                    # the default model has fast mode
+    assert runner.wait_idle(60)
+    argv = turns_in(disk.log)[-1]["argv"]
+    assert json.loads(argv[argv.index("--settings") + 1]) == {"fastMode": True}
 
 
 # --- the reply as it is typed ----------------------------------------------------------------------

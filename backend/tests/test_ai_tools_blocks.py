@@ -5,7 +5,8 @@ edit preview and the cursor / attached-block focus section."""
 import json
 import re
 
-from gamma.ai_tools import agent_system, run_agent_tool
+from gamma.ai_tools.prompt import agent_system
+from gamma.ai_tools.registry import run_agent_tool
 
 from ai_fixtures import ALLOW_ALL, FakeResp, ai_provider, children, folder, notes, org, props  # noqa: F401  (fixtures)
 
@@ -508,7 +509,7 @@ def test_create_block_writes_backslash_math_in_dollars(notes):
     """Notes write math only in dollars: a model's \\( … \\) and \\[ … \\]
     (GPT's habit) are stored as $ … $ and $$ … $$, and so recorded for the
     revert and the approval card; an escaped bracket stays as written."""
-    from gamma.ai_tools import approval_preview
+    from gamma.ai_tools.registry import approval_preview
     c, ids = notes
     scope = folder(ids["sandbox"])
     page = _math_page(c, ids, "math in dollars")

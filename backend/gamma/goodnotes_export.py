@@ -53,7 +53,7 @@ from .highlights import is_highlight
 from .notability_export import box_runs
 from .notebook import paper_ops, sheets_of
 from .pdf_export import AREA_FILL_SHARE, MARKUP_SUBTYPES, display_size, page_frame, still_embedded
-from .pdf_image import browser_orientation, svg_png
+from .pdf_image import SVG_DRAW_SIDE, shown_upright, svg_png
 from .pdf_typeset import num
 from .picture import is_picture, normalize_picture, picture_page, picture_type, stack_order
 from .text_box import PAD, box_page, normalize_text_box
@@ -61,7 +61,6 @@ from .text_box import PAD, box_page, normalize_text_box
 C = gw.CANVAS
 PAPER_KEY = "/GammaPaper"   # a sheet's paper PDF: the paper, as JSON
 HIGHLIGHTER_ALPHA = 0.5     # every GoodNotes highlighter's alpha (docs/research/goodnotes-onenote-import.md)
-SVG_PNG_SIDE = 2048         # the longer side of the PNG an SVG picture goes into a notebook as
 VARIES = 0.05               # a stroke whose drawn width strays this far from its median is "of varying width"
 MAX_VERTICES = 512          # of a fill's polygon
 INSET = 10.0                # a GoodNotes text box's insets, canvas units
@@ -71,9 +70,6 @@ NO_SURFACE = "page has no PDF and no sheets of paper"
 LINES = {"underline": (0.09, 1.0), "strikeout": (0.08, 0.56)}
 SQUIGGLY_BAND = 0.24        # the wavy underline's band at the foot of the line, its period twice its height
 MIN_LINE_PT = 0.75          # 1.5 px at the viewer's scale 2
-_ORIENT = {2: (Image.Transpose.FLIP_LEFT_RIGHT,), 3: (Image.Transpose.ROTATE_180,),
-           4: (Image.Transpose.FLIP_TOP_BOTTOM,), 5: (Image.Transpose.TRANSPOSE,), 6: (Image.Transpose.ROTATE_270,),
-           7: (Image.Transpose.TRANSVERSE,), 8: (Image.Transpose.ROTATE_90,)}
 _WHOLE = {"x": 0, "y": 0, "w": 1, "h": 1}
 
 # What a page loses on its way into a notebook, by kind, as the export's
@@ -424,7 +420,7 @@ class _Page:
                 made = (self.draft.attach(path), gw.JPEG if kind == "image/jpeg" else gw.PNG)
             elif kind == "image/svg+xml":
                 try:
-                    png, _w, _h = svg_png(data, SVG_PNG_SIDE)
+                    png, _w, _h = svg_png(data, SVG_DRAW_SIDE)
                 except ValueError:
                     self.left_out["picture svg"] += 1
                     made = False
@@ -495,8 +491,7 @@ def pixels(data: bytes, kind: str, pic: dict) -> tuple[bytes, int] | None:
             image = source.convert("RGBA") if source.mode not in ("RGB", "RGBA", "L") else source.copy()
     except (OSError, ValueError, Image.DecompressionBombError, SyntaxError):
         return None
-    for turn in _ORIENT.get(browser_orientation(data), ()):
-        image = image.transpose(turn)
+    image = shown_upright(image, data)
     w, h = image.size
     c = pic["crop"]
     left, top = min(w - 1, round(c["x"] * w)), min(h - 1, round(c["y"] * h))

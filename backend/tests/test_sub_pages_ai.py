@@ -11,7 +11,7 @@ import pytest
 
 from conftest import doc_props, login, make_folder, make_label, make_user
 from gamma import ai_context
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.db import connect_pages_db
 
 from ai_fixtures import folder, org  # noqa: F401  (org is a fixture)

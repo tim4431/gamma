@@ -1288,7 +1288,7 @@ W:
   the synced folder was detached."), and the desktop app forgets the vault
   as *Stop syncing…* forgets one, its directory as it is but for `.gamma/`. A
   computer offline finds it at its next round. The chat turns queued for a
-  computer in its pages fail at once (`chats.fail_detached`, its pages
+  computer in its pages fail at once (`far_turns.fail_detached`, its pages
   read before the let go unstamps them; a let go refused fails none).
 - **A work folder of another server** kept here is detached through that
   server from the sync panel (`_letting_go`, above), or on that server's
@@ -1385,7 +1385,7 @@ its check.
   pages it reaches, a work folder's files among them. `?within=<folder>`
   lists a folder's pages whatever their flag (the HTTP vault reads it).
 - `block_search(q="")`, the `[[` popup's recent pages (`IN_LISTED`).
-- `ai_tools._run_list_pages` at the root (a file not in the library only
+- `ai_tools.reading._run_list_pages` at the root (a file not in the library only
   where the chat's folder or the `folder` argument files it, a page of the
   chat's context always), `list_labels` and `label=`.
 - `clip.library_folders`: the folders offered are the filing targets, the
@@ -1406,7 +1406,8 @@ its check.
   library; an Opened files PDF may still be looked up by hand),
   `POST /jobs/metadata` (`skipped`, counted when there are some; a batch
   of no library document is 400). Both leave out Opened files PDFs too.
-- `zotero_preview`, as its commit does.
+- The Zotero import's preview, as the import does
+  (`test_a_work_folders_file_of_the_same_pdf_is_no_page_of_the_item`).
 - `ws_backup`'s live documents and its merge, on both sides.
 - On the client: the record lookup on open (`isLibraryPdf`, so an Opened
   files PDF is looked up by hand only), and the Paper metadata button,
@@ -1465,8 +1466,8 @@ into a work folder or one of its directories (`import_review.destination`).
 - A link by path in a block embedded from another note stays a plain link
   (it is relative to that note, which the open note's context does not
   describe).
-- The search's file hits (step 4's `search/hits.py`, for members and the
-  chat) give a path from W's top; only `GET /api/files` and
+- The search's file hits (`search/hits.py`, for members and the chat)
+  give a path from W's top; only `GET /api/files` and
   `GET /api/folders/{id}/at` measure a folder share's paths from the
   shared folder.
 - Quick open's file search reads every file's name for a query with no
@@ -1481,7 +1482,7 @@ into a work folder or one of its directories (`import_review.destination`).
   is resolved on the server and reaches them.
 - Label views list library pages only.
 - A work folder of another server is made of an empty folder of it only
-  (no takeover over HTTP), and no agent answers it yet.
+  (no takeover over HTTP).
 - A deselected file's last edits are pushed until the next whole round.
 - A note's link to a file stays its stored address
   (`/api/uploads/<hash><ext>`), a chip, where the vault does not make it
