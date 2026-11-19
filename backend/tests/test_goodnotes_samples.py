@@ -23,6 +23,7 @@ from pypdf import PdfReader
 
 from conftest import make_user
 from gamma import goodnotes as gn, goodnotes_import as gi, goodnotes_map as gm, ink, notability_map as nm
+from gamma import note_app_import
 from gamma.blocks_store import block_to_dict, fetch_subtree
 from gamma.db import connect_pages_db
 from gamma.import_zip import new_walk, walk_zip
@@ -56,7 +57,7 @@ def imported(path: Path) -> tuple[str, dict]:
     own, once for the module."""
     ws = make_user("gns_" + hashlib.sha256(str(path).encode()).hexdigest()[:12], "gns-password")
     with open(path, "rb") as f, connect_pages_db(ws) as conn:
-        return ws, gi.import_goodnotes(ws, f, conn, name=path.name, actor="gns")
+        return ws, note_app_import.import_note_apps(ws, f, conn, name=path.name, actor="gns")
 
 
 @pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda path: path.name)
@@ -192,6 +193,6 @@ def test_the_fixture_imports_as_a_sheet_with_its_ink():
 def test_the_fixture_imported_again_is_skipped():
     ws, report = imported(FIXTURE)
     with open(FIXTURE, "rb") as f, connect_pages_db(ws) as conn:
-        again = gi.import_goodnotes(ws, io.BytesIO(f.read()), conn, name=FIXTURE.name, actor="gns")
+        again = note_app_import.import_note_apps(ws, io.BytesIO(f.read()), conn, name=FIXTURE.name, actor="gns")
     assert (again["pages_created"], again["pages_skipped"]) == (0, 1)
     assert again["pages"][0]["id"] == report["pages"][0]["id"] and again["pages"][0]["action"] == "skip"

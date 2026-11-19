@@ -21,9 +21,6 @@ const FORMATS = {
 // Whether a source of the Import dialog goes through the review (the rest
 // import at once, or pick files of their own).
 export const reviewsImport = (source) => Object.hasOwn(FORMATS, source);
-// The endpoints of one app alone (scripts', and a review staged before the
-// card took both), reopened on the card.
-const NOTE_APPS = ["notability", "goodnotes"];
 export function importFormat(source, file) {
   const format = FORMATS[source];
   if (!format) throw new Error("Unsupported import source");
@@ -33,7 +30,7 @@ export function importFormat(source, file) {
 // the endpoint, so a Notion review reopens as Markdown's).
 export function dialogSource(endpoint) {
   return Object.keys(FORMATS).find((source) => FORMATS[source].endpoint === endpoint)
-    || (endpoint === "markdown-file" ? "markdown" : NOTE_APPS.includes(endpoint) ? "noteapps" : "zotero");
+    || (endpoint === "markdown-file" ? "markdown" : "zotero");
 }
 // The upload, and its review read by a background job (POST
 // /api/jobs/import-preview): resolves to that job, whose params name the

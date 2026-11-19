@@ -287,7 +287,7 @@ Import → Summary.
 
 - The review is a background job ([tasks.md](tasks.md)):
   `POST /api/jobs/import-preview` takes the file, its `source` (`zotero`,
-  `markdown-zip`, `markdown-file`, `obsidian`, `gamma`, `note-apps`, `notability`, `goodnotes`), an optional `folder` (the
+  `markdown-zip`, `markdown-file`, `obsidian`, `gamma`, `note-apps`), an optional `folder` (the
   destination folder's id, `""` the library's top; 400 when it is no
   folder, or is a work folder or one of its directories, which follow the
   disk ([work_folders.md](work_folders.md); `import_review.destination`))
@@ -1277,7 +1277,7 @@ rechecks the current library, and leaves actual results and warnings in the dial
 
 ## Notability notes
 
-`POST /api/import/notability` (View menu ≡ → Import… → Notability & GoodNotes;
+`POST /api/import/note-apps` (View menu ≡ → Import… → Notability & GoodNotes;
 `gamma/notability_import.py`, which reads a note through
 `gamma/notability.py` and `gamma/notability_archive.py` and places it through
 `gamma/notability_map.py`) imports Notability's "Note" export. A `.note` is a
@@ -1291,10 +1291,9 @@ shared with the [GoodNotes import](#goodnotes-notebooks)
 (`gamma/note_app_import.py`). The upload is one `.note` or `.ntb`, several picked together (the
 dialog packs them into one `.zip`), a `.zip` of them (a library's export),
 or a zip of an unzipped note folder (`.nbn`, iCloud's form). Each note
-becomes one page. It is a source of the
-reviewed import above (`source` `note-apps` from the dialog's card, which
-reads GoodNotes notebooks in the same upload; `notability` alone for
-scripts), so the import itself is the
+becomes one page. It is read by the
+reviewed import's `note-apps` source above, which reads GoodNotes
+notebooks in the same upload, so the import itself is the
 `import` job. The format, its sources and what was decided where they
 disagree are in [research/notability-format.md](../research/notability-format.md).
 
@@ -1728,15 +1727,15 @@ the same way.
 
 ## GoodNotes notebooks
 
-`POST /api/import/goodnotes` (View menu ≡ → Import… → Notability & GoodNotes;
+`POST /api/import/note-apps` (View menu ≡ → Import… → Notability & GoodNotes;
 `gamma/goodnotes_import.py`, which reads a notebook through
 `gamma/goodnotes.py`, `gamma/goodnotes_codec.py` and `gamma/rtf.py` and
 places it through `gamma/goodnotes_map.py`) imports GoodNotes' own format,
 the `.goodnotes` its iPad, iPhone and Mac apps export. The upload is one
 `.goodnotes`, several picked together (the dialog packs them into one
 `.zip`), a `.zip` of a folder's export, or a `.goodnotes.zip` backup. Each
-notebook becomes one page. It is a source of the reviewed import (`source`
-`note-apps` from the dialog's card, `goodnotes` alone for scripts), and it shares the run over the upload, its guards, the
+notebook becomes one page. It is read by the reviewed import's `note-apps`
+source, with Notability's notes in the same upload, and it shares the run over the upload, its guards, the
 commit, the storing of pictures and the report with the Notability import
 (`gamma/note_app_import.py`): what [Notability notes](#notability-notes)
 says of one note at a time, of folders, of a 507 and a note skipped, of the

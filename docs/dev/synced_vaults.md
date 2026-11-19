@@ -39,7 +39,18 @@ Code:
 - `gamma/routers/folder_links.py`: `/api/folder-links*`.
 - `gamma/vault/`: the engine, a package whose `__init__` imports nothing
   (`folder_links` imports it inside its functions to break a cycle):
-  - `sync.py`: a folder vault's rounds (`Round`, `sync`, `sync_page`).
+  - `sync.py`: a folder vault's rounds (`sync`, `sync_page`), the whole
+    round (`run`): open, push, pull.
+  - `round.py`: one round's state and the steps its parts share (`Round`),
+    a file as a round read it (`Read`), a note's base (`Base`).
+  - `journal.py`: what a round that died left in the journal, settled.
+  - `push.py`: push, the scan against the rows (`_classify`), the guard,
+    directories renamed, files moved, removed and deselected.
+  - `pages.py`: a changed or new file into its page: a note merged, a
+    document read in place, a new page.
+  - `pull.py`: pull, Gamma's changes onto the disk.
+  The parts are functions taking the round, and import one way: `round`,
+  `journal`, `pages`, then `push` and `pull`, then `sync`.
   - `kinds.py`: the class registry, what a file is to a vault by its name
     and what a round does with each class ("The classes").
   - `remote.py`: what a round reads and writes Gamma through and what both
@@ -81,7 +92,7 @@ Code:
   (`notesLock.js`), Gamma's file editor (`FileSourceDialog.jsx`), *Add to
   library…* (`FolderPickerDialog.jsx`); the merge chip's side in
   `frontend/src/collaboration/conflictKinds.js` and `MergeResolver.jsx`.
-- `desktop/main.js`, `desktop/lib/keeping.js`, `desktop/ui/bar.html`,
+- `desktop/lib/vaults.js`, `desktop/main.js`, `desktop/lib/keeping.js`, `desktop/ui/bar.html`,
   `desktop/preload.js`, `desktop/lib/sidecar.js`: the shell's part ("The
   desktop app").
 
@@ -356,7 +367,7 @@ carries another document goes. A vault's file (its page has a `vault_files`
 row of a class read in place, `pdf` or `file`) is its round's alone: one
 replacer per file (`_in_vault`). The round also refreshes the row of a file
 touched with the same bytes (`linked_files.restat`, from
-`Round._push_file`), which otherwise read as nothing until its bytes
+`pages._push_file`), which otherwise read as nothing until its bytes
 changed.
 
 **The upload route** (`GET /api/uploads/<name>`): a name with no file,
@@ -897,7 +908,7 @@ rectangles come back if the text does.
 
 ## A round
 
-`vault.sync.sync(link)` is a folder vault's whole round, `Round.run`: open
+`vault.sync.sync(link)` is a folder vault's whole round, `sync.run`: open
 the vault, push, then pull, each where its switch is on, and ask again for
 any relocation run that waits. A round reads and writes Gamma through a
 **remote**, the small interface of what it needs there: the pages below
@@ -1021,10 +1032,10 @@ steps for its files where they differ by class: `read`, `known` (the shape
 `pair_moves` compares), `weight` (the progress bytes), `pending_text` (the
 journal's text), `new`, `change`, `moved`, `left`, `swept`, `link_name`
 (the upload a note's link to it reads), `pull` and `place`. The round
-dispatches to the class (`Round._read`, `_push_file`, `_push_new`, `_left`,
-`_sweep`, `_pull_page`, `_place` …); a step that is one class's alone stays
-a `Round` method the class calls (`_write_notes`, `_copy_pdf`,
-`_merge_into`, `_push_doc`). Pairing a PDF with its notes stays the round's:
+dispatches to the class (`Round._read`, `pages._push_file`, `_push_new`,
+`pull._left`, `_sweep`, `_pull_page`, `_place` …); a step that is one
+class's alone stays a function of its part that the class calls
+(`pull._write_notes`, `_copy_pdf`, `pages._merge_into`, `_push_doc`). Pairing a PDF with its notes stays the round's:
 it is between two classes. The remotes' document calls take the document,
 not a PDF: `link_doc(path, seen, page_id, ext)`, `unlink_doc`,
 `restat_doc`, `replace_doc(…, format=, ext=)`, `store_doc`, `set_doc` (one
@@ -1053,7 +1064,7 @@ stat refresh the row and its linked row (`restat_doc`). A move relinks and
 refiles, the title and `file_name` following the new leaf; a new name that
 says another format or extension (`notes.txt` to `notes.log`, `a.txt` to
 `a.png`) settles the document again with the same hash, the linked row
-under the new name first (`Round._file_doc`); a rename that changes the
+under the new name first (`push._file_doc`); a rename that changes the
 class (`a.txt` to `a.md`) never pairs: a removal and a new page. Gone, it is
 a tombstone and its page goes to Recently deleted as any file's; left out or
 left by a mirror's trash, it stays where it is (an in-place tombstone), and
@@ -1070,7 +1081,7 @@ making every attachment of a vault a library page would fill the library.
 
 ### Push
 
-Push compares the scan with the rows (`Round._classify`, which reads and
+Push compares the scan with the rows (`push._classify`, which reads and
 hashes the new and changed files and writes nothing):
 
 - **Changed**: a stat that moved, or the racy rule (`vault.disk.moved`): a
@@ -1344,7 +1355,7 @@ unmarked folder gets the round above, unchanged. In a work folder:
 - **New pages** are its files: `work_folder`, `file_name` (the file's leaf,
   the PDF's for a paper), `library: true` while the vault's switch says so
   for a note or a PDF (`Kind.in_library`; a file of another format never
-  joins the library by it), and `doc.size` on every document (`Round._create`,
+  joins the library by it), and `doc.size` on every document (`pages._create`,
   `_new_pdf`, `_new_file`). A file of another format is titled by its leaf
   (`main.tex`, `fig.png`), a PDF by its stem. The front matter's `parent:`
   makes no sub-page. New files are made PDFs first, then the other
@@ -1421,7 +1432,7 @@ unmarked folder gets the round above, unchanged. In a work folder:
 **The selection.** `.gammaignore` at the vault's root says what it tracks;
 none is the default, notes, PDFs and pictures (`ignore_rules.DEFAULT_TEXT`),
 so a taken-over vault's pictures become pages.
-`Round._read_rules` reads it once a round, a page's round too. The state's
+`sync._read_rules` reads it once a round, a page's round too. The state's
 `selection` holds the hash of the text the last whole round read (`""` for
 none): a file gone since **stops** the vault ("its .gammaignore is gone: put
 it back, or choose its files again") rather than reading every note and PDF
@@ -1876,7 +1887,7 @@ at any point, the row's state being the commit point:
    second), its own. A PDF keeps its page and identity (`ours`); one changed
    on disk whose page's PDF Gamma replaced too is kept as the client kept it
    (`BOTH_PDF`) until it changes or a force decides. A note gets a base
-   that names none of its blocks (`vault.sync._unknown`): one as the client
+   that names none of its blocks (`vault.round._unknown`): one as the client
    wrote it keeps its hash, so the first pull writes it once more by the
    lens, its old bytes to the history, and its base is known from then on;
    one changed on disk keeps none, so it is kept and reported (`UNKNOWN`)
@@ -2060,7 +2071,7 @@ A file vault of a page on another server pushes through
 ## The desktop app
 
 The shell's part is in [desktop/docs/architecture.md](../../desktop/docs/architecture.md).
-In short, from `desktop/main.js`: the shell starts its local servers with
+In short, from `desktop/main.js` and `desktop/lib/vaults.js`: the shell starts its local servers with
 `GAMMA_FOLDER_LINKS=1` and a secret new at each start (`GAMMA_SHELL_SECRET`,
 `lib/sidecar.js`), and sends it as `X-Gamma-Shell` on the routes that take
 a path, only to a local server of its own (`shellWord`). The ways in are a

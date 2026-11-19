@@ -21,7 +21,7 @@ does) and the vault's server *the server*.
 |---|---|
 | the server (every Gamma server) | `gamma/computers/registry.py`, `gamma/routers/computers.py`, `gamma/local_agents/far_turns.py` (the turns a computer takes), the `computer` scope in `gamma/integrations.py` and `gamma/auth.py` |
 | the host (the desktop app's own server) | `gamma/computers/channel.py`, `gamma/routers/computer_links.py`, a check in `folder_links.tick` |
-| the desktop shell | `desktop/main.js` (`showComputer`, the panel's actions, `releaseRemote`, Settings' `addLinkedServer`, `removeLinkedServer`, `setLinkAsks`), `desktop/lib/keeping.js` (the panel's words and Settings' questions) |
+| the desktop shell | `desktop/lib/thisComputer.js` (`showComputer`, Settings' `addLinkedServer`, `removeLinkedServer`, `setLinkAsks`), `desktop/lib/syncPanel.js` (the panel's actions), `desktop/lib/vaults.js` (`releaseRemote`), `desktop/lib/keeping.js` (the panel's words and Settings' questions) |
 | the client | `frontend/src/vault/usePageComputer.js`, `vaultState.js` (`readComputers`, `computerChip`), `VaultChip.jsx`, the `{t: "computer"}` case in `collaboration/collabSession.js`, Settings' connections, `settings/SettingsAgents.jsx` (`AnsweredServers`), `settings/answeredServers.js` (its rows) |
 
 ## The credential: a token of the `computer` scope

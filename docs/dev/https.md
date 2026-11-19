@@ -20,7 +20,7 @@ the critiques behind it are in the research note
 | where a host is | `gamma/host_scope.py`, `desktop/lib/hostScope.js` |
 | HSTS | `gamma/auth.py` (`_hsts`) |
 | the address move, the plain-http rule | `gamma/remote_servers.py`, `gamma/routers/remote_servers.py` |
-| the shell's verify proc, the certificate card, the pins it keeps | `desktop/lib/certs.js`, `desktop/main.js`, `desktop/ui/launcher.html` ([desktop.md](desktop.md)) |
+| the shell's verify proc, the certificate card, the pins it keeps | `desktop/lib/certs.js`, `desktop/lib/addresses.js`, `desktop/ui/launcher.html` ([desktop.md](desktop.md)) |
 | users.db | `server_addresses`, `tls_pins` ([user_db.md](user_db.md)) |
 
 ## Setting up a NAS

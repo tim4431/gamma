@@ -442,7 +442,7 @@ backend pytest (Python 3.12, `requirements.txt` + `requirements-dev.txt`,
 test at 300 s, after which it fails with every thread's stack instead of
 holding the job), the frontend lint, unit tests + build (Node 22,
 `npm run lint`, `npm test`, `npm run build`, then `npm run budget`: what the first screen downloads and the lazy boundaries, [frontend-refactor.md](frontend-refactor.md#the-startup-budget)) followed by the desktop shell's unit
-tests (`node --test desktop/test/*.test.js`: the pure modules,
+tests (`node --test desktop/test/*.test.js`: the modules of `desktop/lib/`,
 `main.js` under a stand-in for Electron and the one switch for test
 windows, Node's built-ins only, so no install), the browser suite
 (`npm run e2e -- --continue --jobs 3 --shard <k>/3`, the three shards as a

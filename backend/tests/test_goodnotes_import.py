@@ -11,7 +11,7 @@ import pytest
 import goodnotes_fixtures as gx
 import notability_fixtures as fx
 from conftest import login, make_user, workspace_of
-from gamma import jobs, storage
+from gamma import note_app_import, storage
 from gamma.db import connect_pages_db, ws_uploads_dir
 
 LINE = [(10.0, 20.0), ((15.0, 20.0), (20.0, 20.0)), ((25.0, 20.0), (30.0, 25.0))]
@@ -29,7 +29,7 @@ def send(client, data: bytes, name: str = "notebooks.zip", *, folder: str = "", 
     fields = {"folder": folder}
     if selected is not None:
         fields["selected"] = json.dumps(selected)
-    return client.post("/api/import/goodnotes/preview" if preview else "/api/import/goodnotes",
+    return client.post("/api/import/note-apps/preview" if preview else "/api/import/note-apps",
                        files={"file": (name, data, "application/zip")}, data=fields)
 
 
@@ -91,25 +91,6 @@ def test_a_preview_writes_nothing_and_lists_each_notebook(accounts):
         ("Export/Biology/Cells.goodnotes", "source"), ("Export/Physics/Waves.goodnotes", "source"),
         ("Export/readme.txt", "not_imported")}
     assert plan["pages_created"] == 0 and plan["ok"] is True
-
-
-def test_the_review_imports_the_selected_notebook(accounts):
-    owner = accounts["gni_owner"]
-    upload = gx.zip_of({"A.goodnotes": paper_notebook("Reviewed one", seed=3),
-                        "B.goodnotes": paper_notebook("Reviewed two", seed=4)})
-    r = owner.post("/api/import/review", data={"source": "goodnotes"},
-                   files={"file": ("pair.zip", upload, "application/zip")})
-    assert r.status_code == 200, r.text
-    plan = r.json()
-    chosen = next(p for p in plan["pages"] if p["title"] == "Reviewed two")
-    started = owner.post("/api/jobs/import", json={"review_id": plan["review_id"], "selected": chosen["selection_ids"]})
-    assert started.status_code == 200, started.text
-    jobs.wait(started.json()["id"])
-    job = owner.get(f"/api/jobs/{started.json()['id']}").json()
-    assert job["state"] == "done", job.get("error")
-    result = job["result"]
-    assert result["pages_created"] == 1 and [p["title"] for p in result["pages"]] == ["Reviewed two"]
-    assert result["strokes_imported"] == 1
 
 
 # --- what a notebook becomes ----------------------------------------------------------------
@@ -305,13 +286,6 @@ def test_folders_follow_the_export_s_tree(accounts):
     assert folders == {"Lab book": [["Courses", "Chemistry"]], "Inbox book": []}
 
 
-def test_an_upload_without_a_notebook_is_refused(accounts):
-    owner = accounts["gni_owner"]
-    for data in (b"not a zip at all", gx.zip_of({"readme.txt": b"hello"})):
-        r = send(owner, data, "notes.zip")
-        assert r.status_code == 400 and "no GoodNotes notebooks found" in r.json()["detail"]
-
-
 def test_a_damaged_notebook_is_named_and_the_next_imported(accounts):
     owner = accounts["gni_owner"]
     upload = gx.zip_of({"A.goodnotes": b"PK\x03\x04 not a zip", "B.goodnotes": paper_notebook("Kept", seed=14),
@@ -381,4 +355,4 @@ def test_a_notebook_that_fails_to_read_is_named_and_the_next_imported(accounts, 
 def test_an_upload_is_read_before_its_destination(accounts):
     owner = accounts["gni_owner"]
     r = send(owner, b"not a zip at all", "notes.zip", folder="no-such-folder")
-    assert r.status_code == 400 and "no GoodNotes notebooks found" in r.json()["detail"]
+    assert r.status_code == 400 and r.json()["detail"] == note_app_import.NO_NOTES_REASON

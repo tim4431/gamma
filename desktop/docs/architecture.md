@@ -105,7 +105,7 @@ probed yet.
 
 The whole story, the server's side included, is
 [docs/dev/https.md](../../docs/dev/https.md); this is the shell's part
-(`main.js` "Addresses and certificates", `lib/certs.js`,
+(`lib/addresses.js`, `lib/certs.js`,
 `lib/hostScope.js`).
 
 **No redirects.** `serverApi`, through which the shell mints and revokes
@@ -488,7 +488,7 @@ pictures and untracked files, or an empty directory), the switch **Pull**,
 **Push** as *off / PDFs / everything* (*everything* shut for a remote's
 folder and for the whole library, which starts pulling only), one sentence
 saying what the first round does, and *Cancel* and *Sync*. The sentences
-are `keeping.firstRound`'s, made in `main.js` for each setting of the two
+are `keeping.firstRound`'s, made in `lib/vaults.js` for each setting of the two
 switches before the dialog shows. One that is not `ok` says why and shuts
 *Sync*: both switches off, a remote's folder asked to push everything or
 not to pull, the whole library asked to push everything
@@ -732,7 +732,7 @@ above). Its everyday actions follow as a bar of round buttons
 the directory), each named by its tooltip; the rare and the grave ones
 keep their rows, where their words warn. Each goes through
 `shell:keeping-action` (kind, server, id, action, value: `VAULT_ACTIONS` in
-`main.js`):
+`lib/syncPanel.js`):
 
 | Action | Shown | Does |
 |---|---|---|
@@ -1795,15 +1795,34 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   else — `target=_blank`, cross-origin redirects — opens in the system
   browser; a server's Gamma Cloud sign-in start is taken over, "Gamma Cloud
   sign-in"), the remote health probes, the `/api/session` read behind the
-  workspace switcher, the clone and synced-vault flows over the server's
-  API with the vault dialog and the shell's word ("Synced vaults"), the
-  focus hint, the tray and background mode, one app per profile and the
-  files and folders the system hands it (what each local server says a
-  path is, `whereIs`; a folder's vault or a new work folder, a file's page
-  or the file read where it is, the question about a lone Markdown file),
-  and an opened PDF carried to another server ("Opening files and
-  folders"), `--smoke` self-test,
-  sidecar cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives.
+  workspace switcher, the clones, the local servers started and signed
+  into, the shell's word and the native pickers and questions, the tray and
+  background mode, one app per profile, `--smoke` self-test, sidecar
+  cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives, and
+  `ctx`, the context its sections share (the six below).
+- The sections of the main process, each handed `ctx` by main.js and
+  driven through it by `test/main.test.js`:
+  - `lib/addresses.js` — a remote's address and certificate: the links
+    moved to a new address, the plain http yes before a token, the
+    certificates trusted by their fingerprint and the verify proc ("A
+    remote's address and certificate").
+  - `lib/vaults.js` — the synced vaults and work folders over the servers'
+    API: the ways in, the vault dialog, each vault's switches and rounds
+    ("Synced vaults").
+  - `lib/thisComputer.js` — this computer shown on the servers its vaults
+    sync with, its agents and the servers whose turns they answer, a vault
+    removed, a page's file on this computer and its agent's terminal, the
+    focus hint.
+  - `lib/syncPanel.js` — the readings behind the sync button and the
+    panel's actions ("The sync panel").
+  - `lib/agentAskBar.js` — the host's asks followed, the card in the bar,
+    its arming and its answer, the window brought for it ("An agent's ask
+    on this computer").
+  - `lib/systemFiles.js` — the files and folders the system hands the app
+    (what each local server says a path is, `whereIs`; a folder's vault or
+    a new work folder, a file's page or the file read where it is, the
+    question about a lone Markdown file), *Open a PDF…*, and an opened PDF
+    carried to another server ("Opening files and folders").
 - `preload.js` — exposes the `gammaShell` IPC bridge **only in the main
   frame of the bundled launcher and bar URLs** supplied by the main process;
   other local files receive no bridge. On server pages it exposes nothing,

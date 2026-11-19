@@ -18,7 +18,7 @@ import gamma.web_fetch as web_fetch
 import gamma.openalex as openalex
 import gamma.routers.metadata as metadata_mod
 import gamma.routers.pdf as pdf_mod
-from gamma import paper_links
+from gamma import paper_links, web_page
 from gamma.ai_tools.registry import run_agent_tool
 
 from ai_fixtures import folder, org  # noqa: F401  (org is a fixture)
@@ -291,7 +291,8 @@ def _publication_list(n=30, at=27):
 
 
 def test_pdf_links_keep_text_and_context_and_rank_against_the_title():
-    links = paper_links.pdf_links(_publication_list(), "https://lab.example.edu/publications/")
+    page = web_page.read(_publication_list().encode(), "https://lab.example.edu/publications/", "text/html")
+    links = page.links
     urls = [link["url"] for link in links]
     assert "https://lab.example.edu/about" not in urls  # not a document link
     assert len(urls) == len(set(urls)) == 31  # each URL once

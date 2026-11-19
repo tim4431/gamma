@@ -30,7 +30,7 @@ def bundles(data: bytes, name: str = "Notebook.goodnotes"):
     stack = contextlib.ExitStack()
     entries = []
     walk_zip(stack.enter_context(zipfile.ZipFile(io.BytesIO(data))), "", entries, new_walk(stack),
-             nested=gn.nested_zip)
+             nested=gn.nb.nested_zip)
     return gn.find_notebooks(entries, name)
 
 

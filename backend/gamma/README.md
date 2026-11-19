@@ -50,7 +50,12 @@ sync_clock.py      the sync engines' clock: when each linked workspace gets a ro
 publish.py         publishing a page to the free share host (docs/dev/mirror.md "Publishing")
 folder_links.py    synced vaults: the links' rows, making, changing and removing one, the tick and the hot loop (docs/dev/synced_vaults.md)
 vault/             the vault engine: a folder of Gamma and a directory kept in step (docs/dev/synced_vaults.md)
-vault/sync.py      a vault's rounds: Round, sync, sync_page (push, then pull)
+vault/sync.py      a vault's rounds: sync, sync_page, the whole round (run: open, push, then pull)
+vault/round.py     one round's state and the steps its parts share: Round, Read, a note's Base
+vault/journal.py   what a round that died left in the journal, settled
+vault/push.py      push: the scan against the rows, the guard, directories renamed, files moved and removed
+vault/pages.py     a changed or new file into its page: a note merged, a document read in place, a new page
+vault/pull.py      pull: Gamma's changes onto the disk
 vault/kinds.py     the class registry: what a file is to a vault by its name (notes, pdf, picture; in a work folder file, any other format as a page), and what a round does with each class
 vault/remote.py    what a round reads and writes Gamma through, shared by both remotes: Page, Info, Layout, Edit, the refusals, remote_for
 vault/local_remote.py  LocalRemote: this server's workspace, in-process

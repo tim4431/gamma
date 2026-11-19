@@ -103,7 +103,7 @@ read-only badge), `settings/SettingsZotero.jsx` (the account row),
 `settings/ZoteroLinkDialog.jsx` with `settings/zoteroPreview.js` (the link
 dialog), `settings/SettingsMirrors.jsx` (the links' rows),
 `transfers/zoteroApi.js`. The desktop shell's panel reads the links in
-`desktop/lib/keeping.js` and `desktop/main.js`.
+`desktop/lib/keeping.js` and `desktop/lib/syncPanel.js`.
 
 The parts a round runs import one way: rows, then blocks, then reads,
 then pdfs, then gone, then items, then pages; `zotero_sync_pdfs.py`
@@ -2632,7 +2632,7 @@ holds every reading only a Zotero link has, pure so node tests it.
   `editor/BlockTree.jsx`).
 - **The notice**: `app/notices.js` names `zotero-conflicts` ("Resolve the
   conflicts").
-- **The desktop bar** (`desktop/lib/keeping.js`, `desktop/main.js`
+- **The desktop bar** (`desktop/lib/keeping.js`, `desktop/lib/syncPanel.js`
   `refreshKeeping`): each local server's links (`GET /api/zotero/links`)
   are items of kind `zotero` beside its clones and synced vaults, read as
   the pill reads them; pause detaches, resume reattaches, sync runs a round

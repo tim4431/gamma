@@ -111,8 +111,8 @@ const NOT_HTTPS = /ERR_SSL_PROTOCOL_ERROR|ERR_SSL_VERSION_OR_CIPHER_MISMATCH/;
 // failures whose fix depends on it (docs/dev/https.md): its `url`, whether
 // its origin has a pinned certificate (`pinned`), whether it loaded over
 // https before (`httpsSeen`), its host's scope (lib/hostScope.js), and
-// where the window was sent from its http:// address (`sentTo`, main.js
-// sentToHttps: `{ to, hsts }`). *Use http:// instead* (`http`) is offered
+// where the window was sent from its http:// address (`sentTo`,
+// lib/addresses.js sentToHttps: `{ to, hsts }`). *Use http:// instead* (`http`) is offered
 // only to an https:// address of this network that never spoke TLS here;
 // the others get the suspicious wording with Try again, and an http://
 // address sent to https:// in this window is offered that address

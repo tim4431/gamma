@@ -692,7 +692,7 @@ case-insensitive and NFC, so one file reads the same on every system and
   folder's picture is a file). Gamma writes a file into a
   directory unasked only once: a vault whose marker names an older app's
   `ignore` globs and that has no file gets them written at its first whole
-  round (`Round._globs_written`: the header, the default, then each glob
+  round (`sync._globs_written`: the header, the default, then each glob
   left out, a `/` at either end dropped as the old scan dropped it, one
   with a `/` inside anchored at the root, a leading `!` or `#` escaped,
   then, where this reading of the glob takes other entries of the

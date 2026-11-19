@@ -56,7 +56,7 @@ class ShellAccount extends Account {
   }
 }
 
-// The desktop shell's follower of what waits on this computer (main.js
+// The desktop shell's follower of what waits on this computer (lib/agentAskBar.js
 // followAsks): GET /api/local-agents/asks held while nothing changed, read
 // again at once, its newest `{version, asks}` kept; a refusal (`refused`, a
 // bug) or a lost connection (`error`) noted and read again after a pause.
@@ -174,7 +174,7 @@ export async function remoteAskScenarios(env) {
       return until(() => waiting().find((a) => !before.has(a.id)),
         { timeout: 30000, every: 250, what: `the ask on the computer (${follower.seen.refused || follower.seen.error || `${follower.seen.reads} reads`})` });
     };
-    // the shell's answer, as main.js answerAgentAsk posts it
+    // the shell's answer, as lib/agentAskBar.js answerAgentAsk posts it
     const answer = (ask, decision, account = shell) => computer.fetch(`${computer.base}/api/local-agents/asks/${encodeURIComponent(ask.id)}`,
       { method: "POST", headers: account.headers({ "Content-Type": "application/json" }), body: JSON.stringify({ decision }) });
     // the waiting strip and pill on alice's page, and no card

@@ -76,7 +76,7 @@ try {
   const fd = new FormData();
   fd.append('file', new Blob([fs.readFileSync(notePath)], { type: 'application/octet-stream' }), path.basename(notePath));
   fd.append('folder', '');
-  await checker.api('/api/import/notability', { method: 'POST', form: fd });
+  await checker.api('/api/import/note-apps', { method: 'POST', form: fd });
   const trial = (await checker.api('/api/blocks/root/children')).children.find((p) => p.content === note.title);
   const trialInk = trial && counts(await inkByPage(checker, trial.id));
   take.check('trialImport', trial?.properties?.doc?.format === 'pdf' && sameCounts(trialInk, note.pages), { trialInk, want: note.pages });

@@ -198,7 +198,7 @@ def test_the_outline_is_the_headings_written_never_a_comment_in_code():
 def test_other_text_reads_as_it_is():
     body = b'{"items": [1, 2], "note": "<b>not markup</b>"}'
     assert read(body, "https://api.example.org/v1/items", "application/json") == (
-        "", body.decode(), "text", {}, [], len(body))
+        "", body.decode(), "text", {}, [], len(body), [])
     assert read(b"# Title\n\nplain", "https://example.org/README.md", "text/markdown").text == "# Title\n\nplain"
 
 

@@ -1,6 +1,6 @@
 // A file on the system clipboard as a file manager's Copy leaves it, so a
 // paste in Finder, Explorer, a file manager or a chat app takes the file
-// itself: a Gamma page's Copy PDF (main.js copyFileFromPage). Electron's
+// itself: a Gamma page's Copy PDF (lib/thisComputer.js copyFileFromPage). Electron's
 // clipboard writes one raw format a call, and not Windows' own file list:
 //
 // - macOS: the file's URL as `public.file-url`, which Finder's paste and

@@ -4,8 +4,10 @@ zipped note folder) → one Gamma page per note, with its PDF, handwriting,
 shapes, typed text, pictures and recordings (docs/dev/import_export.md
 "Notability notes").
 
-It is a source of the reviewed import (routers/imports.py): a preview,
-then a commit run as a background job. The run over the upload, the
+The note apps' import reads a note through ``Import``
+(gamma/note_app_import.py ``import_note_apps``, the reviewed import's
+``note-apps`` source): a preview, then a commit run as a background job.
+The run over the upload, the
 guards on it, the commit's transaction and the storing of a note's files
 are what every note app's import shares (gamma/note_app_import.py); here
 is what a Notability note is: its document (Session.plist, or an .ntb's
@@ -28,31 +30,7 @@ from . import notability_ntb as ntb
 from .documents.model import document
 from .import_zip import READ_ERRORS
 from .note_app_import import Skip, Stop, compose_pdf, page_kind
-from .storage import content_digest, display_filename, name_segment, store_pdf
-
-
-def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor: str = "",
-                 preview: bool = False, selected: set[str] | None = None, progress=None) -> dict:
-    """Import the Notability notes in the upload ``data`` into ``ws``, through
-    the open pages.db connection ``conn``. ``data`` is a seekable binary
-    file: one .note or .ntb, or a .zip of notes.
-
-    - One page per note, filed below the folder ``folder`` (an id; "" is
-      the top; 400 when it is no folder), made by ``actor``.
-    - ``name`` is the upload's file name.
-    - A ``preview`` writes nothing.
-    - ``selected``: the bundle paths to import. None means all; unknown ids
-      are a 400.
-    - ``progress`` is a job's report, called per note and per stored file.
-      A stopped job keeps the notes it finished.
-
-    Returns the report. Raises HTTPException 400 (no notes, a Supernote
-    file, a bad destination or selection), 413 (a central directory or an
-    archive past the limits) or 507 (no disk to unpack)."""
-    name = name_segment(display_filename(name))  # the note's path when it is the upload's top
-    run = Import(ws, conn, folder, actor, preview, progress)
-    return run.run_upload(data, selected, refused=nb.NO_NOTES_REASON, refuse=supernote,
-                          find=lambda entries: nb.find_bundles(entries, name), nested=nb.nested_zip)
+from .storage import content_digest, store_pdf
 
 
 def supernote(head: bytes) -> str | None:

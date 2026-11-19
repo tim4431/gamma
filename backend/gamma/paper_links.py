@@ -7,17 +7,21 @@ one paper per item with its title as the link text, so a cap applied in
 page order drops it. Each link keeps its own text and the text of the item
 it sits in (the citation around it), and ``rank`` reads those against the
 wanted title before any cap applies. Without a title the page order stays.
+
+The links are read from the tree web_page.read parses the page into, before
+it drops what a reader never sees (``Page.links``), so a page is parsed once.
 """
 
 import html
 import re
-from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
+
+from .html_markdown import El, attr
 
 LINKS_MAX = 400      # candidates kept per page
 _CONTEXT_MAX = 300   # chars of the surrounding item kept per link
 _SHORT_ITEM = 40     # an item this short ("[PDF]") borrows the one before it
-_HIDDEN = {"script", "style", "head", "template", "noscript", "svg"}
+_HIDDEN = {"head", "template", "noscript", "svg"}  # scripts and styles never reach the tree
 _BLOCKS = {"li", "p", "div", "tr", "td", "th", "dd", "dt", "article", "section", "table", "ul", "ol",
            "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "figure", "figcaption", "main", "aside"}
 _PDF_TEXT_RE = re.compile(r"\b(?:pdf|full[\s-]?text|download)\b", re.I)
@@ -30,12 +34,12 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(text or "")).strip()
 
 
-class _Links(HTMLParser):
-    """Anchors with the index of the text item (block) they sit in."""
+class _Links:
+    """A tree's anchors, each with the index of the text item (block) it
+    sits in."""
 
     def __init__(self, base: str):
-        super().__init__(convert_charrefs=True)
-        self.base, self.hidden = base, 0
+        self.base = base
         self.blocks: list[list[str]] = [[]]
         self.links: list[dict] = []
         self.anchor: dict | None = None
@@ -44,62 +48,50 @@ class _Links(HTMLParser):
         if self.blocks[-1]:
             self.blocks.append([])
 
-    def handle_starttag(self, tag, attrs):
-        if tag in _HIDDEN:
-            self.hidden += 1
-        if self.hidden:
-            return
-        if tag in _BLOCKS:
-            self._new_block()
-        if tag == "a":
-            self._close_anchor()
-            href = (dict(attrs).get("href") or "").strip()
-            if href and not href.startswith(("#", "javascript:", "mailto:")):
-                self.anchor = {"url": urljoin(self.base, href), "text": [], "block": len(self.blocks) - 1}
+    def read(self, node: El):
+        """The nodes under ``node`` in document order (the tree is at most
+        ``html_markdown.DEPTH`` deep)."""
+        for kid in node.children:
+            if isinstance(kid, str):
+                self.blocks[-1].append(kid)
+                if self.anchor is not None:
+                    self.anchor["text"].append(kid)
+                continue
+            if kid.tag in _HIDDEN:
+                continue
+            block = kid.tag in _BLOCKS
+            if block:
+                self._new_block()
+            if kid.tag == "a":
+                self.close_anchor()
+                href = attr(kid, "href").strip()
+                if href and not href.startswith(("#", "javascript:", "mailto:")):
+                    self.anchor = {"url": urljoin(self.base, href), "text": [], "block": len(self.blocks) - 1}
+            self.read(kid)
+            if kid.tag == "a":
+                self.close_anchor()
+            if block:
+                self._new_block()
 
-    def handle_endtag(self, tag):
-        if tag in _HIDDEN:
-            self.hidden = max(0, self.hidden - 1)
-            return
-        if self.hidden:
-            return
-        if tag == "a":
-            self._close_anchor()
-        if tag in _BLOCKS:
-            self._new_block()
-
-    def handle_data(self, data):
-        if self.hidden:
-            return
-        self.blocks[-1].append(data)
-        if self.anchor is not None:
-            self.anchor["text"].append(data)
-
-    def _close_anchor(self):
+    def close_anchor(self):
         if self.anchor is not None:
             self.anchor["text"] = _clean(" ".join(self.anchor["text"]))
             self.links.append(self.anchor)
             self.anchor = None
 
-    def close(self):
-        super().close()
-        self._close_anchor()
 
-
-def pdf_links(markup: str, base: str) -> list[dict]:
-    """The page's links that look like a document — a ``.pdf`` or ``/pdf``
-    path, a repository download route, "PDF" / "full text" / "Download" in
-    the link text — as ``[{url, text, context}]`` in page order, each URL
-    once (its most descriptive link), at most LINKS_MAX."""
-    parser = _Links(base)
-    try:
-        parser.feed(markup or "")
-        parser.close()
-    except Exception:  # a page too broken to parse still yields what was read
-        parser._close_anchor()
-    blocks = [_clean(" ".join(parts)) for parts in parser.blocks]
+def pdf_links(root: El, base: str) -> list[dict]:
+    """The links under ``root`` (a page as html_markdown's tree, links
+    resolved against ``base``) that look like a document — a ``.pdf`` or
+    ``/pdf`` path, a repository download route, "PDF" / "full text" /
+    "Download" in the link text — as ``[{url, text, context}]`` in page
+    order, each URL once (its most descriptive link), at most LINKS_MAX."""
+    walk = _Links(base)
+    walk.read(root)
+    walk.close_anchor()
+    blocks = [_clean(" ".join(parts)) for parts in walk.blocks]
     found: dict[str, dict] = {}
-    for link in parser.links:
+    for link in walk.links:
         url, text = link["url"], link["text"]
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or parts.username:
