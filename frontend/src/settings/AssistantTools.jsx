@@ -96,7 +96,7 @@ export function AgentToolMatrix({ perms, setPerms, disabled }) {
           <span className="settingDesc">{t("Allow runs a tool without asking. Ask shows you each call first, with what it would change. Off never offers it.")}</span>
         </th>
         {CHAT_KIND_ROWS.map(([kind, Icon, label, hint, , short]) => <th key={kind} scope="col" data-setting={label}>
-          <span className="agentToolKind" title={`${label} — ${hint}`}><Icon size={15} />{short}</span>
+          <span className="agentToolKind" title={`${label} — ${hint}`}><Icon size={14} />{short}</span>
           <PermissionPreset kind={kind} perms={perms} setPerms={setPerms} disabled={disabled} />
         </th>)}
       </tr></thead>
