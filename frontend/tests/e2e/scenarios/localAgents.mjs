@@ -14,7 +14,7 @@ import { TOURS } from "../../../src/guide/tours/index.js";
 // secret, a desktop user agent) with local agents on and the stand-ins of
 // backend/tests/fake_agents/ in place of the CLIs, so no real agent ever
 // runs: the SyncTeX sample paper as a work folder with its .tex sources
-// tracked, no Feedback button anywhere, Codex turned on for the computer by
+// tracked, Codex turned on for the computer by
 // the vault's maker; a passage of main.tex and one of a library PDF
 // commented with Send to Codex ticked, each a turn of its thread answered
 // there under Codex's name, the .tex edited and shown so, a question of
@@ -134,7 +134,6 @@ export async function localAgentScenarios(env) {
     await server.start();
     await server.manage("create-user", "la-user", "la-pw");
     const user = await new Account(server, "la-user", "la-pw").login();
-    const home = `${server.base}/?ws=${user.ws}`;
     const at = (id) => `${server.base}/?page=${id}&ws=${user.ws}`;
     const desktop = (opts = {}) => user.context(browser, { userAgent: DESKTOP_UA, ...opts });
     // What the page asks the desktop shell, recorded as window.shellAsks: no shell runs here.
@@ -288,28 +287,6 @@ export async function localAgentScenarios(env) {
       assert(codex.found && codex.ready, `Codex is found and signed in: ${JSON.stringify(codex)}`);
       assertEq(codex.label, "Codex");
       assertEq(link.agent ?? null, null, "the folder has no agent yet");
-    });
-
-    await step("local-agents: no Feedback button is left: not in the synced folder's list, the vault chip's menu or the Comments window", async () => {
-      const ctx = await desktop();
-      const page = await openPage(ctx, `${home}&folder=${link.folder_id}`);
-      try {
-        await page.locator('[data-guide="home.select"]').waitFor({ timeout: 15000 });
-        assertEq(await page.getByRole("button", { name: "Feedback", exact: true }).count(), 0, "none in the folder's list bar");
-        await page.goto(at(main.id));
-        await waitForPdf(page, 1);
-        await page.locator(".vaultChip").click();
-        const card = page.locator(".vaultPopover");
-        await card.waitFor();
-        assertEq(await card.getByText("Feedback…", { exact: true }).count(), 0, "none in the vault chip's menu");
-        await page.locator(".vaultChip").click();
-        await card.waitFor({ state: "detached" });
-        await openComments(page);
-        assertEq(await page.locator(".dockWindow:has(.commentsPanel)").getByRole("button", { name: "Feedback", exact: true }).count(), 0,
-          "none in the Comments window");
-        assertEq(await page.getByRole("button", { name: "Feedback", exact: true }).count(), 0, "none in the page header");
-        assertNoProblems(page);
-      } finally { await ctx.close(); }
     });
 
     await step("local-agents: the vault's maker turns Codex on for the computer", async () => {

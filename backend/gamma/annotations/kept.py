@@ -8,7 +8,7 @@ such a page has an open thread it keeps the bytes it shows stored
 (``uploads/<hash><ext>``), so the version the thread was opened on stays
 readable: the relocation run places a PDF's highlights again from it
 (``find_upload_file`` looks in the store before a linked path), and the
-feedback reader draws the region as it was commented on
+annotations draw the region as it was commented on
 (gamma/annotations/pictures.py).
 
 - At a thread's open (``after_comment``, a ``create``), one daemon worker,
@@ -125,7 +125,7 @@ def after_comment(ws: str, event: dict) -> None:
             elif name:
                 _claim(ws, name)
     except Exception as e:  # noqa: BLE001: a stored comment never answers an error for this
-        log.warning(f"[feedback] the kept version after a {kind} in workspace {ws} failed: {e}")
+        log.warning(f"[annotations] the kept version after a {kind} in workspace {ws} failed: {e}")
 
 
 def repair(ws: str, page_ids) -> int:
@@ -181,7 +181,7 @@ def _queue(key: tuple) -> None:
         if _working:
             return
         _working = True
-    threading.Thread(target=_work, daemon=True, name="feedback-kept").start()
+    threading.Thread(target=_work, daemon=True, name="annotations-kept").start()
 
 
 def _work() -> None:
@@ -197,7 +197,7 @@ def _work() -> None:
         try:
             _keep(*key)
         except Exception:  # noqa: BLE001: one thread's page never stops the others
-            log.exception(f"[feedback] keeping the version of page {key[1]} in workspace {key[0]} failed")
+            log.exception(f"[annotations] keeping the version of page {key[1]} in workspace {key[0]} failed")
 
 
 def _keep(ws: str, page_id: str, thread_id: str) -> None:
@@ -260,18 +260,18 @@ def _store(ws: str, page_id: str, view: dict) -> bool:
     try:
         done = store_page_bytes(ws, page_id, view["file"], view["hash"])
     except LinkError as e:
-        log.info(f"[feedback] page {page_id} in workspace {ws}: its version {view['file']} was not stored: {e}")
+        log.info(f"[annotations] page {page_id} in workspace {ws}: its version {view['file']} was not stored: {e}")
         return False
     except HTTPException as e:  # the quota (check_upload_allowed)
         why = str(e.detail)
         if _refused.get(key) != why:
             _refused[key] = why
-            log.warning(f"[feedback] page {page_id} in workspace {ws}: its version {view['file']} is not stored "
+            log.warning(f"[annotations] page {page_id} in workspace {ws}: its version {view['file']} is not stored "
                         f"while its threads are open: {why}")
         return False
     if done:
         if _refused.pop(key, None) is not None:
-            log.info(f"[feedback] page {page_id} in workspace {ws}: its version {view['file']} is stored now")
+            log.info(f"[annotations] page {page_id} in workspace {ws}: its version {view['file']} is stored now")
         _claim(ws, view["file"])
     return done
 
