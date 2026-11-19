@@ -249,6 +249,13 @@ def browser_orientation(data: bytes) -> int:
     return 1
 
 
+def shown_upright(image, data: bytes):
+    """``image``, Pillow's reading of the picture file ``data``, turned as
+    the browser shows the file (``browser_orientation``)."""
+    turn = _TRANSPOSE.get(browser_orientation(data))
+    return image.transpose(turn) if turn else image
+
+
 def _jpeg_oriented(data: bytes, orientation: int) -> bytes | None:
     """A JPEG with the orientation tag of its EXIF block set to
     ``orientation``, every other byte as it is; None when it has no such
@@ -371,8 +378,7 @@ def _decoded(data: bytes):
     if width * height > MAX_DECODED_PIXELS:
         raise ValueError(f"{width}x{height} px is past MAX_DECODED_PIXELS")
     image.load()
-    if turn := _TRANSPOSE.get(browser_orientation(data)):
-        image = image.transpose(turn)
+    image = shown_upright(image, data)
     width, height = image.size
     gray = image.mode in _GRAY_MODES
     if image.mode in ("I", "I;16"):         # 16-bit gray: convert() would clip it, not scale it
