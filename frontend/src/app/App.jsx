@@ -31,7 +31,7 @@ import { useAppJobs } from "../tasks/useAppJobs";
 import { TaskBadge, TasksButton, TasksPanel } from "../tasks/TasksTray";
 import { byteProgress, bytesInfo, progressText, relocationSummary, taskTitle } from "../tasks/taskKinds.js";
 import { isActive } from "../tasks/taskModel.js";
-import { parseGammaLink } from "../shared/model/gammaLinks.js";
+import { isSourceLink, parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
 import { API, apiJson, assetUrl, getShareToken, setShareView, withShare, withWorkspace, blockLinkUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, metaSourceInfo, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "../shared/lib/utils";
 import { ITEM_TYPES, itemTypeFields, itemTypeOf } from "../shared/lib/itemTypes.js";
@@ -8909,10 +8909,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // --- reference links: PDF text regions manually linked to papers ----------
 
-  // Match a URL against the library: DOI or arXiv id already known → that page.
-  // Any document link (PDF annotation or manual reference link): if the target
-  // paper is already in the library, open it; otherwise ask fetch-vs-browser.
-  function handleDocLink(url) {
+  // Any document link (PDF annotation or manual reference link): a link into
+  // this library (a copied highlight's or page's, whatever host it names)
+  // opens in place when its block or page is here; a paper already in the
+  // library (its DOI or arXiv id) opens its page; otherwise ask
+  // fetch-vs-browser.
+  async function handleDocLink(url) {
+    const gl = parseGammaLink(url, window.location.origin);
+    if (gl) {
+      const place = await gammaLinkPlace(gl);
+      if (place) {
+        if (isSourceLink(gl)) openPageLink(gl.pageId, gl);
+        else openLinkTarget(place);
+        return;
+      }
+    }
     const pid = findPageForUrl(url, homeBlocks);
     if (pid) {
       setStatus(t("Already in your library — opening."));
@@ -8920,6 +8931,39 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     setLinkPrompt(url);
+  }
+
+  // Where a Gamma link points in this library (link_url's opening, the link
+  // dialog's pasted link): {pageId, blockId?, title, quote?, highlight?} for
+  // a page or a live block of this workspace, else null — another
+  // server's or workspace's link, which stays a web address.
+  async function gammaLinkPlace(link) {
+    if (link.kind !== "block") {
+      const page = pagesById.get(link.pageId);
+      return page ? { pageId: page.id, title: page.content || t("Untitled") } : null;
+    }
+    try {
+      const b = await apiJson(withShare(`${API}/blocks/${encodeURIComponent(link.blockId)}`));
+      if (!b?.page_id) return null;
+      const title = pagesById.get(b.page_id)?.content || (b.page_id === b.id ? b.content : "") || t("Untitled");
+      if (b.page_id === b.id) return { pageId: b.id, title };
+      return { pageId: b.page_id, blockId: b.id, title, quote: b.properties?.quote || b.content || "",
+        highlight: b.kind === "highlight" || b.kind === "link" };
+    } catch {
+      return null;
+    }
+  }
+
+  // A link region's target opened (its press on the PDF, its note's link):
+  // a highlight or note through openBlockLink, as a block link opens, so
+  // one on this same paper scrolls there with Back to return; a page; or a
+  // web address (handleDocLink).
+  function openLinkTarget({ url, pageId, blockId }) {
+    if (blockId) {
+      if (findBlock(blocks, blockId)) pushNav();
+      openBlockLink(blockId, pageId);
+    } else if (pageId) openBlock(pageId, { pushNav: true });
+    else if (url) handleDocLink(url);
   }
 
   // A link region's target (docs/dev/pdf_citations.md): a URL, or a page
@@ -12262,10 +12306,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onMoveHighlight: readOnly || !takesHighlights ? null : startHighlightMove,
                   onOpenLinkTarget: (b) => {
                     const p = b.properties || {};
-                    if (p.link_page_id) {
-                      if (p.link_block_id) pendingJumpRef.current = p.link_block_id;
-                      openBlock(p.link_page_id, { pushNav: true });
-                    } else if (p.link_url) handleDocLink(p.link_url);
+                    openLinkTarget(p.link_page_id ? { pageId: p.link_page_id, blockId: p.link_block_id } : { url: p.link_url });
                   },
                   registerRef,
                   readOnly,
@@ -13534,108 +13575,77 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onColor={(c) => changeHighlightMark(id, { color: highlightColor(c) })}
           onPreset={(p) => changeHighlightMark(id, { color: highlightColor(p.color), style: p.style })}
           onSave={readOnly ? null : () => textHighlighter.saveLook({ style: h?.style || "highlight", color: h?.color })} />
-        {!range ? (
-          <button
-            role="menuitem"
-            className="ctxMenuItem"
-            onClick={() => {
-              setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: id, url: h?.linkTarget?.url || "" });
+        {menuGroups(
+          [
+            !range && (
+              <MenuItem key="link" icon={LinkIcon} onClick={() => {
+                setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: id, url: h?.linkTarget?.url || "" });
+                close();
+              }}>
+                {h?.linkTarget ? t("Change link…") : t("Link to page…")}
+              </MenuItem>
+            ),
+            h?.linkTarget?.url && (
+              <MenuItem key="open" icon={ExternalLinkIcon} onClick={() => { setLinkPrompt(h.linkTarget.url); close(); }}>
+                {t("Open link in browser…")}
+              </MenuItem>
+            ),
+            <MenuItem key="ref" icon={CopyIcon} onClick={() => {
+              setRefPoint({
+                pageId: focusedBlockId,
+                pageTitle: pageTitle || t("Untitled"),
+                blockId: id,
+                quote: (h?.quote || "").slice(0, 200),
+              });
+              // Also a paste-able deep link: opening it jumps straight to
+              // this highlight (in the browser, chat notes, a link dialog).
+              if (findBlock(blocks, id)) {
+                copyText(blockLinkUrl(id));
+              }
               close();
-            }}
-          >
-            {h?.linkTarget ? t("Change link…") : t("Link to page…")}
-          </button>
-        ) : null}
-        {h?.linkTarget?.url ? (
-          <button
-            role="menuitem"
-            className="ctxMenuItem"
-            onClick={() => {
-              setLinkPrompt(h.linkTarget.url);
-              close();
-            }}
-          >
-            {t("Open link in browser…")}
-          </button>
-        ) : null}
-        <button
-          role="menuitem"
-          className="ctxMenuItem"
-          onClick={() => {
-            setRefPoint({
-              pageId: focusedBlockId,
-              pageTitle: pageTitle || t("Untitled"),
-              blockId: id,
-              quote: (h?.quote || "").slice(0, 200),
-            });
-            // Also a paste-able deep link: opening it jumps straight to
-            // this highlight (in the browser, chat notes, anywhere).
-            if (findBlock(blocks, id)) {
-              copyText(blockLinkUrl(id));
-            }
-            close();
-            setStatus(t("Reference point copied — paste the link, or pick it in another paper's link dialog."));
-          }}
-        >
-          {t("Copy as reference point")}
-        </button>
-        {/* a highlight drawn dashed (matched roughly, or an area placed by
-            estimate), pending: accepted where it is, it is drawn solid */}
-        {!readOnly && placedToCheck(h?.position) ? (
-          <button
-            role="menuitem"
-            className="ctxMenuItem"
-            onClick={() => { acceptHighlightPlace(id); close(); }}
-          >
-            {t("Accept")}
-          </button>
-        ) : null}
-        {/* its place by hand: on a selection, or a lost range's closest match */}
-        {[
-          !readOnly && { key: "move", label: t("Move to a selection…"), title: range ? t("Select the lines where it belongs") : undefined,
-            run: () => startHighlightMove(id) },
-          closest && { key: "closest", label: t("Use the closest match ({n}%)", { n: roughMatchPercent(closest.position) }),
-            run: () => placeClosestMatch(id) },
-        ].filter(Boolean).map((row) => (
-          <button key={row.key} role="menuitem" className="ctxMenuItem" title={row.title} onClick={() => { row.run(); close(); }}>
-            {row.label}
-          </button>
-        ))}
-        {commentsOn ? (
-          <button
-            role="menuitem"
-            className="ctxMenuItem"
-            onClick={() => {
+              setStatus(t("Reference point copied — paste the link, or pick it in another paper's link dialog."));
+            }}>
+              {t("Copy as reference point")}
+            </MenuItem>,
+            // a highlight drawn dashed (matched roughly, or an area placed
+            // by estimate), pending: accepted where it is, it is drawn solid
+            !readOnly && placedToCheck(h?.position) && (
+              <MenuItem key="accept" icon={CheckIcon} onClick={() => { acceptHighlightPlace(id); close(); }}>
+                {t("Accept")}
+              </MenuItem>
+            ),
+            // its place by hand: on a selection, or a lost range's closest match
+            !readOnly && (
+              <MenuItem key="move" icon={LocateIcon} title={range ? t("Select the lines where it belongs") : undefined}
+                onClick={() => { startHighlightMove(id); close(); }}>
+                {t("Move to a selection…")}
+              </MenuItem>
+            ),
+            closest && (
+              <MenuItem key="closest" icon={TextSearchIcon} onClick={() => { placeClosestMatch(id); close(); }}>
+                {t("Use the closest match ({n}%)", { n: roughMatchPercent(closest.position) })}
+              </MenuItem>
+            ),
+            commentsOn && (
               // the popover hangs from the highlight on the page
-              close();
-              openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
-            }}
-          >
-            {t("Comment")}
-          </button>
-        ) : null}
-        <button
-          role="menuitem"
-          className="ctxMenuItem"
-          onPointerEnter={BlockProperties.preload}
-          onClick={() => {
-            // the popover hangs from the highlight on the page
-            close();
-            openProps(id, highlightEl(id));
-          }}
-        >
-          {t("Properties")}
-        </button>
-        <button
-          role="menuitem"
-          className="ctxMenuItem"
-          onClick={() => {
-            deleteHighlight(id);
-            close();
-          }}
-        >
-          {t("Delete")}
-        </button>
+              <MenuItem key="comment" icon={MessageSquareIcon} onClick={() => {
+                close();
+                openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
+              }}>
+                {t("Comment")}
+              </MenuItem>
+            ),
+            <MenuItem key="props" icon={BracesIcon} onPointerEnter={BlockProperties.preload}
+              onClick={() => { close(); openProps(id, highlightEl(id)); }}>
+              {t("Properties")}
+            </MenuItem>,
+          ],
+          [
+            <MenuItem key="delete" icon={TrashIcon} danger onClick={() => { deleteHighlight(id); close(); }}>
+              {t("Delete")}
+            </MenuItem>,
+          ],
+        )}
       </>
     );
   };
@@ -14393,12 +14403,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               retryRef={pdfRetryRef}
               onExternalLink={handleDocLink}
               onLinkContext={setLinkPrompt}
-              onLinkHighlight={(h) => {
-                if (h.linkTarget?.pageId) {
-                  if (h.linkTarget.blockId) pendingJumpRef.current = h.linkTarget.blockId;
-                  openBlock(h.linkTarget.pageId, { pushNav: true });
-                } else if (h.linkTarget?.url) handleDocLink(h.linkTarget.url);
-              }}
+              onLinkHighlight={(h) => { if (h.linkTarget) openLinkTarget(h.linkTarget); }}
               onJump={jumpToHighlightId}
               onHighlightJump={highlightPressed}
               onHighlightContext={setHighlightMenu}
@@ -14816,7 +14821,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         tree={libTree}
         recentViews={recentViews}
         openTabs={openTabs}
-        refPoint={refPoint && refPoint.pageId !== focusedBlockId ? refPoint : null}
+        self={linkDialog.editBlockId}
+        refPoint={refPoint && refPoint.blockId !== linkDialog.editBlockId ? refPoint : null}
+        placeOf={gammaLinkPlace}
         onLink={createLinkHighlight}
         onClose={() => setLinkDialog(null)}
       /></LazyBoundary> : null}
