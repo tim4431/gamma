@@ -3127,12 +3127,14 @@ export async function settingsScenarios(env) {
   // its secret write-only beside the callback URL to register it with, then
   // removed. Saving asks nothing of zotero.org.
   await step("settings: Server › Zotero sign-in saves this server's Zotero app, its secret write-only, and removes it", async () => {
+    await server.manage("set-admin", "settings-user", "on");
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
       await nav(page, "Server").click();
-      const section = page.locator('.settingsPane .setSection[data-setting="Zotero sign-in"]');
-      await section.locator('[data-setting="Not set up"]').getByRole("button", { name: "Set up…", exact: true }).click();
+      // (a section's data-setting is its heading's; its rows follow it, and only Zotero's says "Not set up" here)
+      await page.locator('.settingsPane .setSection[data-setting="Zotero sign-in"]').waitFor();
+      await row(page, "Not set up").getByRole("button", { name: "Set up…", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Set up a Zotero app", exact: true });
       assertEq(await dialog.getByRole("link", { name: "Open", exact: true }).getAttribute("href"), "https://www.zotero.org/oauth/apps",
         "the link to register an app");
@@ -3142,7 +3144,7 @@ export async function settingsScenarios(env) {
       await dialog.getByLabel("Client secret", { exact: true }).fill("gamma-e2e-secret");
       await dialog.getByRole("button", { name: "Save", exact: true }).click();
       await dialog.waitFor({ state: "detached" });
-      const saved = section.locator(`[data-setting="This server's Zotero app"]`);
+      const saved = row(page, "This server's Zotero app");
       assertEq(await saved.locator(".settingDesc").innerText(), "gamma-e2e-key · people connect Zotero by signing in at zotero.org",
         "the row names the saved app");
       const read = await user.api("/api/admin/zotero-app");
@@ -3153,7 +3155,7 @@ export async function settingsScenarios(env) {
       assertEq(await editor.getByLabel("Client secret", { exact: true }).getAttribute("placeholder"), "secret set — type to replace");
       await editor.getByRole("button", { name: "Remove…", exact: true }).click();
       await page.locator(".confirmModal").getByRole("button", { name: "Remove", exact: true }).click();
-      await section.locator('[data-setting="Not set up"]').waitFor();
+      await row(page, "Not set up").waitFor();
       assertEq((await user.api("/api/admin/zotero-app")).client_key, "", "removed on the server");
       assertNoProblems(page);
     } finally { await ctx.close(); }

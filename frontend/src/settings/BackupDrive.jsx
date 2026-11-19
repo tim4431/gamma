@@ -68,7 +68,7 @@ function ClientDialog({ status, confirm, onStatus, onSaved, onClose }) {
   }
   const open = (path) => (
     <a className="aiKeyLink" href={`${CONSOLE}${path}`} target="_blank" rel="noopener noreferrer">
-      {t("Open")}<ExternalLinkIcon size={12} />
+      {t("Open")}<ExternalLinkIcon size={14} />
     </a>
   );
   const field = (key, label) => ({

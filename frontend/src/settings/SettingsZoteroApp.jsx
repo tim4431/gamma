@@ -54,7 +54,7 @@ function AppDialog({ app, confirm, onSaved, onRemoved, onClose }) {
         <ol className="oauthInstructions">
           <li>
             {t("Signed in to zotero.org, register a new application: any name, the type Browser, and the callback URL below.")}{" "}
-            <a className="aiKeyLink" href={APPS} target="_blank" rel="noopener noreferrer">{t("Open")}<ExternalLinkIcon size={12} /></a>
+            <a className="aiKeyLink" href={APPS} target="_blank" rel="noopener noreferrer">{t("Open")}<ExternalLinkIcon size={14} /></a>
           </li>
           <li>{t("Paste the client key and secret Zotero shows.")}</li>
         </ol>
