@@ -196,25 +196,6 @@ def zotero_client() -> tuple[str, str]:
     return (key, secret) if key and secret else ("", "")
 
 
-# Gamma's own Google OAuth client for Drive backups (gamma/gdrive.py): a
-# "TVs and Limited Input devices" client asking for drive.file alone. Google
-# treats such a client's secret as public, as it does an installed app's
-# (docs/research/google-drive-backup.md). Empty until one is registered.
-GOOGLE_DRIVE_CLIENT = ("", "")
-
-
-def google_drive_client() -> tuple[str, str]:
-    """``GAMMA_GOOGLE_DRIVE_CLIENT_ID`` / ``GAMMA_GOOGLE_DRIVE_CLIENT_SECRET``:
-    the Google OAuth client (of the "TVs and Limited Input devices" type)
-    Drive backups connect through, when both are set; else Gamma's own
-    (``GOOGLE_DRIVE_CLIENT``); ("", "") when there is neither."""
-    client_id = os.environ.get("GAMMA_GOOGLE_DRIVE_CLIENT_ID", "").strip()
-    secret = os.environ.get("GAMMA_GOOGLE_DRIVE_CLIENT_SECRET", "").strip()
-    if client_id and secret:
-        return client_id, secret
-    return GOOGLE_DRIVE_CLIENT if all(GOOGLE_DRIVE_CLIENT) else ("", "")
-
-
 def google_oauth_base() -> str:
     """``GAMMA_GOOGLE_OAUTH_BASE``: Google's OAuth endpoints (device codes,
     tokens, revocation); https://oauth2.googleapis.com unless the browser

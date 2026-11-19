@@ -476,11 +476,13 @@ def delete_bucket_snapshot(ws: str, name: str, request: Request, store: str = "b
 
 
 # --- Google Drive (gamma/gdrive_account.py) ------------------------------------
-# Settings → Backups → Google Drive: the server's connection, made by
-# Google's device flow. Connect answers the code to enter; while it is
-# shown the pane posts /poll, which asks Google at most once per Google's
-# interval; the GET (``gdrive_account.status``) also answers the code while
-# one waits. The token never leaves the server.
+# Settings → Backups → Google Drive: the OAuth client connections are made
+# through (/client, which each server's admin registers at Google) and
+# the server's connection, made by Google's device flow. Connect answers
+# the code to enter; while it is shown the pane posts /poll, which asks
+# Google at most once per Google's interval; the GET
+# (``gdrive_account.status``) also answers the code while one waits. The
+# token and the client's secret never leave the server.
 
 class DriveConnectRequest(BaseModel):
     folder: str = gdrive_account.DEFAULT_FOLDER
@@ -490,10 +492,15 @@ class DriveFolderRequest(BaseModel):
     folder: str
 
 
+class DriveClientRequest(BaseModel):
+    client_id: str
+    client_secret: str = ""   # empty keeps the saved secret of the same client
+
+
 def _drive_call(fn, *args):
-    """400 with the reason for a folder that cannot be or no OAuth client
-    (a DriveConfigError is a ValueError), 502 when Google refuses or cannot
-    be reached."""
+    """400 with the reason for a folder or client that cannot be or no
+    OAuth client (a DriveConfigError is a ValueError), 502 when Google
+    refuses or cannot be reached."""
     try:
         return fn(*args)
     except ValueError as e:
@@ -504,7 +511,7 @@ def _drive_call(fn, *args):
 
 @router.get("/gdrive")
 def get_gdrive(request: Request):
-    """``{available, connected, email, name, folder, connected_at,
+    """``{client_id, connected, email, name, folder, connected_at,
     problem, pending: {user_code, verification_url, expires_at, interval}
     | null, error}``."""
     require_admin(request)
@@ -548,6 +555,22 @@ def disconnect_gdrive(request: Request):
     Drive."""
     require_admin(request)
     return gdrive_account.disconnect()
+
+
+@router.put("/gdrive/client")
+def set_gdrive_client(payload: DriveClientRequest, request: Request):
+    """Save the OAuth client connections are made through (another than
+    the one saved disconnects): the GET's answer; 400 for one that cannot
+    be."""
+    require_admin(request)
+    return _drive_call(gdrive_account.set_client, payload.client_id, payload.client_secret)
+
+
+@router.delete("/gdrive/client")
+def remove_gdrive_client(request: Request):
+    """Forget the OAuth client, disconnecting: the GET's answer."""
+    require_admin(request)
+    return _drive_call(gdrive_account.remove_client)
 
 
 @router.post("/gdrive/test")

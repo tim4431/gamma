@@ -1893,7 +1893,8 @@ export async function settingsScenarios(env) {
   // gamma/gdrive_account.py, docs/dev/debugging.md "Google Drive"): a
   // second server whose Google is the fake one (backend/tests/gdrive_fake.py
   // over HTTP, its device codes asking for a 2 s interval), so nothing
-  // reaches Google. A code asked for and cancelled; another entered, which
+  // reaches Google: Set up… saves the OAuth client the admin registered
+  // there. A code asked for and cancelled; another entered, which
   // the fake approves, closing the dialog; Test; a backup task copying its
   // snapshot into the folder, which Saved snapshots tags and, the snapshot
   // deleted, lists alone and deletes from Drive; the folder renamed; and
@@ -1923,10 +1924,9 @@ export async function settingsScenarios(env) {
       approve: () => fetch(`${base}/_fake/approve`, { method: "POST" }) };
   }
 
-  await step("settings: Google Drive is connected with a code, tested, copied to by a backup task, read back in Saved snapshots and disconnected", async () => {
+  await step("settings: Google Drive is set up with an admin's OAuth client, connected with a code, tested, copied to by a backup task, read back in Saved snapshots and disconnected", async () => {
     const google = await startFakeGoogle();
-    const drive = new Server({ env: { GAMMA_GOOGLE_DRIVE_CLIENT_ID: "fake-client.apps.googleusercontent.com",
-      GAMMA_GOOGLE_DRIVE_CLIENT_SECRET: "GOCSPX-fake", GAMMA_GOOGLE_OAUTH_BASE: google.base, GAMMA_GOOGLE_API_BASE: google.base } });
+    const drive = new Server({ env: { GAMMA_GOOGLE_OAUTH_BASE: google.base, GAMMA_GOOGLE_API_BASE: google.base } });
     let ctx = null;
     try {
       await drive.start();
@@ -1945,6 +1945,19 @@ export async function settingsScenarios(env) {
       const at = sections.indexOf("Google Drive");
       assertEq(sections.slice(at - 1, at + 2).join(" › "), "Bucket › Google Drive › Saved snapshots", "where the section sits");
       assertEq(await section.locator(".uiTag.admin").innerText(), "admin", "Google Drive is tagged an admin's");
+
+      // Set up…: the admin's own OAuth client, made in their Google Cloud project.
+      await row(page, "Not set up").getByRole("button", { name: "Set up…", exact: true }).click();
+      const setup = page.getByRole("dialog", { name: "Set up an OAuth client", exact: true });
+      const pages = await setup.getByRole("link").evaluateAll((els) => els.map((a) => new URL(a.href).pathname));
+      assertEq(pages.join(" "), "/apis/library/drive.googleapis.com /auth/audience /auth/clients/create", "the console's three pages");
+      await setup.getByRole("textbox", { name: "Client ID", exact: true }).fill("fake-client.apps.googleusercontent.com");
+      await setup.getByLabel("Client secret", { exact: true }).fill("GOCSPX-fake");
+      await setup.getByRole("button", { name: "Save", exact: true }).click();
+      await setup.waitFor({ state: "detached" });
+      assertEq(await row(page, "OAuth client").locator(".settingDesc").innerText(), "fake-client · from your Google Cloud project",
+        "the client row names the saved client");
+      assert(!JSON.stringify(await admin.api("/api/admin/gdrive")).includes("GOCSPX"), "the secret never reaches the browser");
 
       // Connect…: the folder, then Google's code while the dialog waits; Cancel stops waiting.
       const connect = page.getByRole("dialog", { name: "Connect Google Drive", exact: true });
