@@ -1245,8 +1245,8 @@ link the page advertises gave no PDF (or none of its N links did), no
 clipping what to do in their browser, stays for the clip UI. A URL source is
 read as the URI it spells (`web_fetch.uri`, [fetch_url](#fetch_url)), so an
 address copied from a `fetch_url` result reads too. The page's PDF links
-follow for the model to try (`paper_links.pdf_links` on the decoded HTML; a
-text body has none: a `.pdf` path, a `/pdf` or download route, "PDF",
+follow for the model to try (`web_page.Page.links`, read from the page's one
+parse before its chrome is dropped; a text body has none: a `.pdf` path, a `/pdf` or download route, "PDF",
 "full text" or "Download" in the link text; links the resolver already tried
 are left out). A lab's publication list holds hundreds of them, one paper per
 item with its title as the link text, so each link keeps its text and the text
