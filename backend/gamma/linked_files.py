@@ -65,7 +65,7 @@ from pathlib import Path
 
 from fractional_indexing import generate_key_between
 
-from . import collab, comments, config, folder_links, gamma_sync, pdf_meta, storage, workspaces, ws_backup
+from . import collab, comments, config, folder_links, gamma_sync, pdf_meta, server_options, storage, workspaces, ws_backup
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, PARENT_PAGE, TRASH, TREES, block_to_dict, create_page, folder_paths,
                            free_position, load_props, page_for_file, page_root_id, touch_page,
                            with_sub_pages, write_lock)
@@ -167,7 +167,7 @@ def _read(path: str) -> tuple[tuple, str, str]:
     ``ext`` ``_format``'s. LinkError for what stops it (theirs to hear:
     another program may hold it), a program (``_no_program``), a ``.pdf``
     that is no PDF, a file Gamma cannot show (``binary``), and one of
-    another format than PDF past the keep limit (``config.vault_keep_bytes``,
+    another format than PDF past the keep limit (``server_options.vault_keep_bytes``,
     measured before it is read through; a PDF has none)."""
     _no_program(path)
     name = Path(path).name
@@ -182,7 +182,7 @@ def _read(path: str) -> tuple[tuple, str, str]:
         raise folder_links.LinkError(f"Cannot read {path}: not a valid PDF (missing %PDF header)")
     if fmt == "binary":
         raise folder_links.LinkError(f"Gamma cannot show {name}: open it in another app.")
-    keep = config.vault_keep_bytes()
+    keep = server_options.vault_keep_bytes()
     if fmt != "pdf" and size > keep:
         raise folder_links.LinkError(f"{name} is too large for Gamma to show here (over {keep >> 20} MB).")
     try:
@@ -411,7 +411,7 @@ def _look(sink: folder_links.LocalSink, name: str, path: str, recorded: int, pag
     (``page``'s document's) has no header or end to wait for, and past the
     keep limit is left as it is (ValueError: Gamma shows no such file)."""
     pdf = page["format"] == "pdf"
-    if not pdf and os.stat(path).st_size > config.vault_keep_bytes():
+    if not pdf and os.stat(path).st_size > server_options.vault_keep_bytes():
         raise ValueError("the file is too large for Gamma to show here now")
 
     def read(p):

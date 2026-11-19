@@ -49,7 +49,7 @@ export const PANE_READS = {
   agents: ({ signedIn, desktop }) => [signedIn && "/computers", signedIn && desktop && "/computer-links",
     signedIn && desktop && { path: "/local-agents/people", later: true }],
   translation: ({ lang }) => ["/translate/engines", "/translations/stats", termsOf(lang)],
-  tools: () => ["/ai/search-services"],
+  tools: ({ admin }) => ["/ai/search-services", admin && "/admin/settings"],
   maintenance: () => ["/quota", "/metadata/status"],
 };
 export const backupsOf = (id) => `/workspaces/${encodeURIComponent(id)}/backups`;

@@ -319,7 +319,7 @@ class Protocol:
 
     @property
     def base_url(self) -> str:
-        """The default endpoint (env-overridable, config.AI_BASE_URLS)."""
+        """The default endpoint (config.AI_BASE_URLS)."""
         return AI_BASE_URLS.get(self.id, "")
 
     # --- chat --------------------------------------------------------------

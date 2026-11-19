@@ -143,7 +143,7 @@ const mark = (name) => INSPECT ? 0 : take.mark(name);
 let lib, context, sampling = false, sampler = null;
 try {
   for (const url of [ARTICLE, PDF]) curlOnce(url).catch(() => {});
-  lib = await library({ env: { GAMMA_METADATA_LOOKUP: 'on' } });
+  lib = await library({ options: { metadata_lookup: 'on' } });
   const { account, server } = lib;
   await account.file(ATOMS.id, { folders: [FOLDER] });   // the folder the popup offers (made where missing)
 

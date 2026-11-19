@@ -452,8 +452,8 @@ desktop app asks first whether to make its project a work folder,
 desktop/docs/architecture.md "Opening files and folders"). Refused, before
 anything is made: a binary (`Gamma cannot show <name>: open it in another
 app.`), and a file of another format than PDF past the keep limit
-(`config.vault_keep_bytes`, 64 MB unless `GAMMA_VAULT_KEEP_MB` says
-otherwise: `<name> is too large for Gamma to show here (over <n> MB).`),
+(`server_options.vault_keep_bytes`, 64 MB unless an admin changed it in
+Settings → Server → Work folders: `<name> is too large for Gamma to show here (over <n> MB).`),
 measured before it is read through; a PDF has no limit.
 
 Inside a vault (`_directory_vault_page`), each refused before any round: a
@@ -1051,7 +1051,7 @@ since a PDF is a PDF by its name) and its extension off its name
 the file (`{format, name, hash, ext, at: path, size}`), titled by the leaf
 (`main.tex`, `fig.png`), filed in its directory's folder, stamped as a work
 folder's file and never in the library by the switch. A file past the keep
-limit (`config.vault_keep_bytes`, `GAMMA_VAULT_KEEP_MB`, 64; PDFs and notes
+limit (`server_options.vault_keep_bytes`, Settings → Server → Work folders, 64 MB; PDFs and notes
 are never measured, by the stat its read takes, not the scan's) is
 **listed**: its first bytes read for the format, nothing hashed, no `linked_files` row, its document `{…, hash: "", at:
 listed, size}` ([documents.md](documents.md) "The listed state"); one that

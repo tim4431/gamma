@@ -115,7 +115,7 @@ def test_document_rule_7_the_size_and_the_name():
 
 
 def test_document_rule_8_a_listed_file_has_no_bytes_here():
-    """A work folder's file too large to keep (config.vault_keep_bytes): at
+    """A work folder's file too large to keep (server_options.vault_keep_bytes): at
     ``listed``, no hash and no address, its size named, never a PDF or a
     Markdown file (no limit measures them), never a copy. Its view has no
     address and no stored name, so nothing reads, stores or looks it up."""

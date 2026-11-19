@@ -249,7 +249,7 @@ once a bulk trash, when a rule needs it.
 - A file of another format than a note or a PDF has its document at `path`
   (`{format, name, hash, ext, at, size}`; its `ext` is
   `formats.vault_extension`, a blocked one `.bin`) or, past the keep limit
-  (`GAMMA_VAULT_KEEP_MB`, 64), at `listed` with no hash: the page lists it
+  (Settings → Server → Work folders, 64 MB), at `listed` with no hash: the page lists it
   without its bytes ([documents.md](documents.md) "The listed state"). Its
   title is the file's leaf, where a PDF's is its stem.
 - A file never carries `parent_page`: no sub-pages in a work folder.
@@ -1114,7 +1114,7 @@ classes" the class `file`.)
 - **Every tracked file is a page**: a note (`notes`), a PDF (`pdf`), or a
   file of any other format, pictures included (`file`: its document the
   file, read where it is, or listed without its bytes past the keep limit,
-  `GAMMA_VAULT_KEEP_MB`). A picture is no longer only what a note links:
+  Settings → Server → Work folders). A picture is no longer only what a note links:
   the default selection makes every picture a page, and a note's
   `![[fig.png]]` keeps its Gamma text `![](/api/uploads/<hash>.png)`, which
   the picture's page's row serves. A PDF by its bytes alone, under another
@@ -1495,8 +1495,6 @@ into a work folder or one of its directories (`import_review.destination`).
   page. A picture replaced on disk leaves a note's
   embed of the old address reading nothing until the note's own text
   changes.
-- The keep limit is an environment setting (`GAMMA_VAULT_KEEP_MB`), not a
-  setting in the app.
 - A clone from before step 1 shows files in its library until it upgrades:
   degraded, not lost.
 - A work folder still choosing runs no round, so a note made in Gamma in

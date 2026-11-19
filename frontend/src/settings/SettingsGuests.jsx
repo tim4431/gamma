@@ -1,26 +1,29 @@
 // Settings → Users → Guests (admins): whether this server takes guest
 // logins at all, how long a guest's throwaway account and workspace last,
-// and demo mode (the login page leads with Try the demo, the guide offers
-// the first-run tour on arrival). All three live in the server `settings`
-// table through /api/admin/settings; an environment variable
-// (GAMMA_GUEST_TTL_HOURS, GAMMA_DEMO) overrides the saved value, and the row
-// is then read-only. A server that can take no guest logins (a hosted
-// container, a share host, GAMMA_GUEST_MAX=0) has no Guests section — there
-// is nothing to switch on. docs/dev/guests.md. The settings are the Users
+// how many guests may live at once (a server option, serverOptions.js) and
+// demo mode (the login page leads with Try the demo, the guide offers the
+// first-run tour on arrival). All live in the server `settings` table
+// through /api/admin/settings; on the public demo an environment variable
+// (GAMMA_GUEST_TTL_HOURS, GAMMA_GUEST_MAX, GAMMA_DEMO) overrides the saved
+// value, and the row is then read-only. A server that can take no guest
+// logins (a hosted container, a share host, GAMMA_GUEST_MAX=0) has no Guests
+// section — there is nothing to switch on. docs/dev/guests.md. The settings are the Users
 // pane's one read of /api/admin/settings (settingsReads.js).
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { Row, Section, Toggle, UnitInput } from "./SettingsKit";
 import { useSettingsRead } from "./settingsReads.js";
-import { ClockIcon, GlobeIcon, UserIcon } from "../shared/ui/Icons";
+import { useServerOptions } from "./serverOptions.js";
+import { ClockIcon, GlobeIcon, UserIcon, UsersIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 const envHint = (name) => t("Set by {name} in the server's environment", { name });
 
 export function GuestSettings({ setStatus }) {
   const { data: saved, error: readError, set: setSaved } = useSettingsRead("/admin/settings");
+  const { error: optionError, save: saveOption } = useServerOptions({ setStatus });
   const [saveError, setError] = React.useState("");
-  const error = saveError || (!saved ? readError : "");
+  const error = saveError || optionError || (!saved ? readError : "");
   // Only the changed field: another box committing meanwhile keeps its value.
   // A switch shows its new state at once and flips back if the save fails
   // (only its own field: the other sections over these settings keep theirs).
@@ -43,12 +46,19 @@ export function GuestSettings({ setStatus }) {
     if (!Number.isFinite(n) || n < 1 || n === saved.guest_ttl_hours) return; // the box shows the stored value again
     await save({ guest_ttl_hours: n }, t("Guest workspaces now last {n} h.", { n }));
   }
+  async function commitMax(raw) {
+    const n = Number.parseInt(String(raw).trim(), 10);
+    const [lo, hi] = saved.options.ranges.guest_max;
+    if (!Number.isFinite(n) || n < lo || n > hi || n === saved.options.guest_max) return;
+    await saveOption({ guest_max: n }, t("At most {n} guests at once.", { n }));
+  }
   if (saved?.guest_logins_available === false) return null;
   if (!saved) return <Section title={t("Guests")}>
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : <p className="setNotice loadingHint">{t("Loading…")}</p>}
   </Section>;
   const ttlManaged = saved.guest_ttl_source === "environment";
   const demoManaged = saved.demo_mode_source === "environment";
+  const maxManaged = !!saved.options?.guest_max_env;
   // The other two rows only describe guests, so they are shown but idle
   // while nobody can sign in as one.
   const guests = !!saved.guest_logins;
@@ -62,6 +72,12 @@ export function GuestSettings({ setStatus }) {
       title={t("Every guest login makes a fresh throwaway account with its own workspace. It is deleted this many hours after it was made, whether or not the visitor comes back.")}>
       <UnitInput unit="h" min={1} label={t("Guest workspaces last")} value={String(saved.guest_ttl_hours ?? "")}
         disabled={ttlManaged || !guests} onCommit={commitTtl} />
+    </Row>
+    <Row icon={UsersIcon} label={t("Most guests at once")}
+      hint={maxManaged ? envHint("GAMMA_GUEST_MAX") : t("Past it, a guest login waits for a guest to expire")}
+      title={t("Each guest login makes an account with a workspace of its own. With this many guest accounts alive, the next guest login is refused until one of them expires.")}>
+      <UnitInput min={1} label={t("Most guests at once")} value={String(saved.options?.guest_max ?? "")}
+        disabled={maxManaged || !guests} onCommit={commitMax} />
     </Row>
     <Toggle icon={GlobeIcon} label={t("Demo mode")} checked={!!saved.demo_mode} disabled={demoManaged || !guests}
       hint={demoManaged ? envHint("GAMMA_DEMO") : t("The login page leads with Try the demo")}

@@ -82,6 +82,13 @@ export const TASK_KINDS = {
     retry: ({ params }) => (params.all
       ? ["workspace-copy", { ws: params.ws, ...(params.new ? { name: params.to_name } : { to: params.to }) }] : null),
   },
+  // Several copies in the bucket or in Google Drive, each restored as a new
+  // workspace (Settings → Backups › Cloud copies' Restore all…, admins).
+  "copies-restore": {
+    icon: "import", open: "settings:backups",
+    title: ({ params }) => tn("Restore {n} workspace from the cloud", "Restore {n} workspaces from the cloud", params.count || 0),
+    retry: ({ params }) => ["bucket-restore-many", { items: params.items || [] }],
+  },
   // A backup task's copy in the bucket or in Google Drive (`store`),
   // downloaded (Settings → Backups, admins).
   "bucket-download": {

@@ -20,8 +20,8 @@ import pymupdf
 import pytest
 
 from conftest import account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, workspace_of
-from gamma import (collab, config, folder_links, gamma_sync, inbox, pdf_meta, publish, storage, sync_engine, workspaces,
-                   zotero_sync)
+from gamma import (collab, config, folder_links, gamma_sync, inbox, pdf_meta, publish, server_options, storage,
+                   sync_engine, workspaces, zotero_sync)
 from gamma.vault import disk as vault_disk, kinds, store as vault_store, sync as vault_sync
 from gamma.vault.local_remote import LocalRemote
 from gamma.blocks_store import FOLDERS, block_kind, new_block_id
@@ -681,7 +681,7 @@ def test_detaching_a_work_folder_keeping_its_files_stores_every_format_and_trash
     before and one too large to keep listed still; the directory folders that
     hold them stay; on disk nothing moves but Gamma's own marker and
     ``.gamma/``."""
-    monkeypatch.setattr(config, "vault_keep_bytes", lambda: 1000)
+    monkeypatch.setattr(server_options, "vault_keep_bytes", lambda: 1000)
     root = disk / "Kept whole"
     files = {".gammaignore": "# every file\n", "main.tex": "\\documentclass{article}\n", "run.py": "print(1)\n",
              "figures/plot.png": b"\x89PNG a plot", "Paper.pdf": _pdf("kept whole"), "notes.md": "a note\n",

@@ -85,8 +85,9 @@ entries through `_arxiv_entry_meta` — `_fetch_doi`, `_crossref_search`) also
 back the chat agent's `search_papers` tool, with OpenAlex as its third
 registry (`gamma/openalex.py`; [ai_tools.md](ai_tools.md)).
 Every registry call goes through `_http_get` (20 s timeout);
-`GAMMA_METADATA_LOOKUP=off` makes it fail at once, so every lookup finds
-nothing (an offline server; the browser suite sets it — a slow Crossref
+paper lookups switched off (Settings → Server → Online services, server
+option `metadata_lookup`) make it fail at once, so every lookup finds
+nothing (an offline server; the browser suite turns them off — a slow Crossref
 otherwise held a page's first open, and a test's `networkidle` wait, for
 up to 40 s).
 

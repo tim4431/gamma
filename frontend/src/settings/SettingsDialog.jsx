@@ -21,6 +21,7 @@ import { AppearanceSettings } from "./SettingsAppearance";
 import { ToolbarSettings } from "./SettingsToolbars";
 import { AgentToolMatrix } from "./AssistantTools";
 import { OnlineSearchSettings } from "./OnlineSearch";
+import { SearchServicesForEveryone } from "./SettingsServerOptions";
 import { KeyboardSettings } from "./SettingsKeyboard";
 import { AiSettings, gammaAiConnection } from "./SettingsAi";
 import { SettingsAgents } from "./SettingsAgents";
@@ -1023,7 +1024,7 @@ function ContextSize({ value }) {
 
 // The master switch and each chat kind's permissions, the two fetching and
 // reading helpers, the online search services and the tool limits.
-function ToolUsageSettings({ value }) {
+function ToolUsageSettings({ value, admin, setStatus }) {
   return (
     <>
       <Section title={t("Tools")} scope="account" prefs={SECTION_PREFS.tools["Tools"]}>
@@ -1045,6 +1046,7 @@ function ToolUsageSettings({ value }) {
       <Section title={t("Online search")}>
         <OnlineSearchSettings />
       </Section>
+      {admin ? <SearchServicesForEveryone setStatus={setStatus} /> : null}
       <Section title={t("Tool limits")} scope="account" prefs={SECTION_PREFS.tools["Tool limits"]}>
         <Row icon={RefreshIcon} label={t("Tool rounds")}
           hint={t("AI ↔ tool round-trips per message")}
@@ -1449,7 +1451,7 @@ export default function SettingsDialog({
                 </> : null}
                 {pane === "tools" ? <>
                   <PaneHead icon={SlidersIcon} title={t("Tool usage")} />
-                  <ToolUsageSettings value={context} />
+                  <ToolUsageSettings value={context} admin={!!users?.isAdmin} setStatus={library?.setStatus} />
                 </> : null}
                 {pane === "integrations" ? <IntegrationSettings key={getCurrentWorkspace()} workspaceId={getCurrentWorkspace()} setStatus={library?.setStatus} /> : null}
                 {pane === "account" ? <>

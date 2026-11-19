@@ -11,22 +11,21 @@ neither; Anthropic's and the Codex backend's carry both).
 goes through (a short, UI-friendly timeout)."""
 
 import json
-import os
 import re
 import threading
 import time
 from urllib.request import Request as URLRequest, urlopen
 
-from . import ai_protocols
+from . import ai_protocols, server_options
 from .logbuf import log
 
 FETCH_TIMEOUT = 5
 MODELS_DEV_URL = "https://models.dev/api.json"
 MODELS_DEV_TIMEOUT = 15
-# GAMMA_MODEL_CATALOG=off keeps the server from asking models.dev (an
-# offline server, the browser suite): model facts then come from the
+# The model catalog switched off (Settings → Server → Online services,
+# server_options ``model_catalog``: an offline server, the browser suite)
+# keeps the server from asking models.dev: model facts then come from the
 # providers' own listings alone.
-MODEL_CATALOG = os.environ.get("GAMMA_MODEL_CATALOG", "").strip().lower() not in ("0", "off", "false", "no")
 # Like the Codex version: a good answer is kept for hours; a failed lookup
 # is retried after minutes, the last good answer served meanwhile.
 WINDOW_TTL = 6 * 3600
@@ -116,7 +115,7 @@ def _models_dev_index() -> dict:
     """models.dev's catalog as {lowercased model id: [(provider key, {window,
     efforts, images, output})]}, cached; also indexed by the part after a
     "vendor/" prefix."""
-    if not MODEL_CATALOG:
+    if not server_options.get("model_catalog"):
         return {}
     with _models_dev_lock:
         now = time.time()

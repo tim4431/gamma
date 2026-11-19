@@ -23,7 +23,7 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import config, folder_links, md_lens
+from .. import folder_links, md_lens, server_options
 from ..blocks_store import block_kind
 from ..folder_links import COUNTS, DIRECTIONS
 from ..folder_sync import ID_KEY, ROOT
@@ -478,7 +478,7 @@ class Round:
         if st is None or disk._placeholder(st):
             return None
         if self.work:
-            return None if st.st_size > config.vault_keep_bytes() else self.remote.link_file(disk.path(self.root, rel))
+            return None if st.st_size > server_options.vault_keep_bytes() else self.remote.link_file(disk.path(self.root, rel))
         name = self.remote.link_file(disk.path(self.root, rel))
         store.put(self.id, rel, kind=kinds.PICTURE.name, hash=name, size=st.st_size, mtime_ns=st.st_mtime_ns,
                   file_id=str(st.st_ino))

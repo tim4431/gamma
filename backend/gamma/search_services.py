@@ -7,8 +7,8 @@ General web search (the ``search_web`` tool) goes through one of ``ENGINES``:
 - ``brave`` — the Brave Search API, with the account's key.
 - ``tavily`` — Tavily's search API, with the account's key.
 - ``searxng`` — a SearXNG instance's JSON API: the account's own URL
-  (through the SSRF guard, so a public host), else the server's
-  ``GAMMA_SEARXNG_URL`` (the admin's instance, which may be private).
+  (through the SSRF guard, so a public host), else the one an admin set
+  for every account (server_options ``searxng_url``, which may be private).
 - ``ai`` — the chat's own AI connection, when its wire has a hosted search
   tool (OpenAI, the ChatGPT sign-in, Anthropic: what Codex and Claude use).
   One short call per search on that connection, counted as chat usage.
@@ -42,7 +42,6 @@ and reads an engine it does not know as Automatic.
 import email.utils
 import html
 import json
-import os
 import re
 from datetime import date, datetime
 from urllib.error import HTTPError, URLError
@@ -51,7 +50,7 @@ from urllib.request import Request, urlopen
 
 from fastapi import HTTPException
 
-from . import ai_client, ai_protocols, ai_usage, openalex
+from . import ai_client, ai_protocols, ai_usage, openalex, server_options
 from .db import get_pref, page_now, update_pref
 from .logbuf import log
 from .net_guard import guarded_urlopen
@@ -66,7 +65,6 @@ RESULTS_MAX = 20
 _TITLE_MAX, _SNIPPET_MAX, _DATE_MAX = 300, 400, 40
 BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
 TAVILY_URL = "https://api.tavily.com/search"
-SERVER_SEARXNG_URL = os.environ.get("GAMMA_SEARXNG_URL", "").strip()
 TEST_QUERY = "Python programming language"
 
 
@@ -246,7 +244,7 @@ def _searxng(saved: dict) -> tuple[str, bool]:
     own = (saved.get("searxng") or {}).get("url") or ""
     if own:
         return own, True
-    return SERVER_SEARXNG_URL, False
+    return server_options.get("searxng_url"), False
 
 
 def _searxng_search(saved, query, limit, *, recency, site, **_):
@@ -427,7 +425,7 @@ def masked(user_id: str, can_edit: bool) -> dict:
             fields[f["id"]] = ("…" + value[-4:] if len(value) > 8 else "set") if f["secret"] and value else value
         row = {"id": sid, "label": service["label"], "configured": _complete(sid, conf),
                "web": sid in ENGINES, "fields": fields, "updated_at": conf.get("updated_at", "")}
-        if sid == "searxng" and not row["configured"] and SERVER_SEARXNG_URL:
+        if sid == "searxng" and not row["configured"] and server_options.get("searxng_url"):
             row["server"] = True  # the admin's instance serves this account
         rows.append(row)
     return {"engine": saved.get("engine") or "auto", "services": rows, "can_edit": can_edit}

@@ -389,6 +389,38 @@ def test_the_copies_in_drive_through_the_api(drive, google):
                                                          "store": "drive"}).status_code == 400
 
 
+def test_several_copies_come_back_as_new_workspaces_in_one_job(drive, google):
+    """Cloud copies' Restore all: the workspaces this server lacks, each
+    from its copy, in one job; a copy that cannot be restored is reported,
+    its workspace goes again, and the rest go on."""
+    make_user("gd_many", "gd-many-pw", is_admin=1)
+    make_user("gd_many_member", "gd-many-member-pw")
+    boss, member = login("gd_many", "gd-many-pw"), login("gd_many_member", "gd-many-member-pw")
+    ws = workspace_of("gd_many")
+    make_page(boss, "Brought back")
+    snap = ws_backup.create(ws, label="manual", uploads=False)
+    zipped = (ws_backup.store_dir(ws) / f"{snap['name']}.zip").read_bytes()
+    lost = [workspaces.new_workspace_id() for _ in range(2)]
+    broken = workspaces.new_workspace_id()
+    for gone in lost:
+        drive.put_bytes(f"snapshots/{gone}/{snap['name']}.zip", zipped)
+    drive.put_bytes(f"snapshots/{broken}/{snap['name']}.zip", b"not a zip")
+    items = [{"ws": w, "name": snap["name"], "store": "drive", "label": f"Lost {i}"}
+             for i, w in enumerate(lost + [broken])]
+    assert member.post("/api/jobs/bucket-restore-many", json={"items": items}).status_code == 403
+    assert boss.post("/api/jobs/bucket-restore-many", json={"items": items + items[:1]}).status_code == 400
+
+    job = _job(boss, "bucket-restore-many", {"items": items})
+    assert job["state"] == "done", job["error"]
+    assert job["kind"] == "copies-restore" and job["params"]["count"] == 3
+    assert [r["workspace"] for r in job["result"]["restored"]] == lost
+    assert [(f["ws"], f["name"]) for f in job["result"]["failed"]] == [(broken, "Lost 2")]
+    assert all(workspaces.role_of(w, account_of("gd_many")) == "owner" for w in lost)
+    assert not workspaces.get(broken)  # its workspace went again
+    job = _job(boss, "bucket-restore-many", {"items": [items[2]]})
+    assert job["state"] == "failed" and "no copy could be restored: Lost 2" in job["error"]
+
+
 # --- the transport ---------------------------------------------------------------------
 
 def test_the_transport_answers_streams_and_drops_the_token_on_another_host(monkeypatch):

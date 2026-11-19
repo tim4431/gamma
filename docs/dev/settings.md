@@ -739,7 +739,11 @@ AI:
   goes through (Automatic, your AI connection, Brave Search, Tavily, SearXNG
   or Off) and the Brave, Tavily, SearXNG and optional OpenAlex settings,
   stored on the server like the translation keys ([ai_tools.md](ai_tools.md)
-  "Online search services"). Last,
+  "Online search services"). Admins then get **Online search for every
+  account** (`SettingsServerOptions.jsx`): the SearXNG instance and the
+  OpenAlex key an account without its own uses (the server options
+  `searxng_url` and the write-only `openalex_key`), each with Set up… or
+  Edit… and Remove. Last,
   **Tool limits**: tool rounds per message, **Unlimited rounds**
   (`toolRoundsUnlimited`, which also lifts the 200-change limit and keeps
   the number for when it is off) and the read window.
@@ -892,11 +896,22 @@ Library:
   snapshot also in the bucket is tagged "in the bucket", and a copy only
   the bucket holds is a row of its own with a cloud icon, "only in the
   bucket", and Download (a `bucket-download` job, saved when it ends),
-  Restore (Replace… / Merge…, a `bucket-restore` job) and Delete (from the
-  bucket). The copies of a workspace this list has no group for get a
-  group of their own after the others, named as the bucket recorded it and
-  tagged "not on this server" (or "another account's"), whose copies offer
-  Restore as new… in place of Restore: the way back after a lost disk.
+  Restore (Replace… / Merge… / As a new workspace…, a `bucket-restore`
+  job) and Delete (from the bucket). Below Google Drive, admins with a
+  store set up get **Cloud copies**
+  ([CloudCopies.jsx](../../frontend/src/settings/CloudCopies.jsx)): a row
+  per store ("s3://… · 12 copies · 4 workspaces · 1.2 GB", Browse…), and
+  when some are only in the cloud, "2 workspaces are only in the cloud"
+  with Restore all… and a row per workspace (its newest copy's date, size
+  and store; Restore… and, with several, "3 copies…"). Restore all… opens
+  "Restore workspaces from the cloud", every one checked, and Restore 2
+  workspaces starts one `copies-restore` job, whose progress shows in the
+  section and whose end says what came back. Browse… opens "Cloud copies":
+  All / Bucket / Google Drive, Find a workspace, Refresh, then each
+  workspace's copies under its name, tagged "on this server", "not on this
+  server" or "another account's", each row the same as above with its
+  store named; a workspace's "3 copies…" opens it on that workspace
+  alone.
   With `GAMMA_S3_BUCKET` set, the environment supplies every field: the
   summary's hint says where the bucket is and what sets it
   ("127.0.0.1:1/gamma-env · set by GAMMA_S3_BUCKET", the sentence "Set by
@@ -980,7 +995,11 @@ Administration (admins only):
   server's Zotero app" with its key and Edit…; the dialog links
   zotero.org/oauth/apps, shows the callback URL to register it with (or
   asks for the public URL first), and takes the client key and the
-  write-only secret, with Remove…; [zotero_sync.md](zotero_sync.md)), on a hosted container the
+  write-only secret, with Remove…; [zotero_sync.md](zotero_sync.md)),
+  **Online services** (`SettingsServerOptions.jsx`: the switches **Paper
+  lookups**, `metadata_lookup`, and **AI model catalog**, `model_catalog`),
+  **Work folders** where this server keeps them (the largest file a work
+  folder keeps, `vault_keep_mb`), on a hosted container the
   **Plan** (`HostedPlan`, [cloud_accounts.md](cloud_accounts.md) "Hosted
   containers"), the shared AI provider, shared workspaces,
   **Databases** (Check databases: a quick check of every database file as
@@ -1080,17 +1099,18 @@ stays in whole tokens, so the row converts both ways and a figure out of
 range snaps back to the stored one.
 
 **Guests** (Users, [SettingsGuests.jsx](../../frontend/src/settings/SettingsGuests.jsx))
-has three rows over `/api/admin/settings`: the **Guest sign-in** switch
+has four rows over `/api/admin/settings`: the **Guest sign-in** switch
 (`guest_logins`, on unless an admin turns it off — off, the login page
 shows no guest button and `POST /api/login-guest` is a 403), **Guest
 workspaces last** (a `UnitInput` in hours, `guest_ttl_hours`, saved on Enter
-or blur) and the **Demo mode** switch (`demo_mode`: the login page leads
-with Try the demo and folds the password form behind Admin sign-in; the
-guide offers the first-paper tour on arrival). The last two describe guests
-only, so they are disabled while guest sign-in is off. Each reports its
-source like the public URL; when it is `environment`
-(`GAMMA_GUEST_TTL_HOURS`, `GAMMA_DEMO`) the control is disabled and the hint
-names the variable ([guests.md](guests.md)). The section is left out where
+or blur), **Most guests at once** (the server option `guest_max`, 1 or
+more, saved through `serverOptions.js`) and the **Demo mode** switch
+(`demo_mode`: the login page leads with Try the demo and folds the password
+form behind Admin sign-in; the guide offers the first-paper tour on
+arrival). The last three describe guests only, so they are disabled while
+guest sign-in is off. Where the public demo's environment sets one
+(`GAMMA_GUEST_TTL_HOURS`, `GAMMA_GUEST_MAX`, `GAMMA_DEMO`) the control is
+disabled and the hint names the variable ([guests.md](guests.md)). The section is left out where
 no switch could bring guests back (`guest_logins_available: false` in
 `GET /api/admin/settings`: a hosted container, a share host,
 `GAMMA_GUEST_MAX=0`).

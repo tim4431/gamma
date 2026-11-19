@@ -26,7 +26,7 @@ import pymupdf
 from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_label, make_page, make_user,
                       thread_on, workspace_of)
 from gamma import (app as app_mod, backups, comments, config, db, db_maintenance, folder_links, gamma_sync, integrity,
-                   jobs, linked_files, offsite, pdf_meta, seed, storage, upload_gc, workspaces, ws_backup)
+                   jobs, linked_files, offsite, pdf_meta, seed, server_options, storage, upload_gc, workspaces, ws_backup)
 from gamma.ai_context import pdf_path
 from gamma.ai_tools import registry
 from gamma.annotations import kept
@@ -367,7 +367,7 @@ def test_a_binary_a_program_and_a_file_past_the_keep_limit_are_refused(owner, di
                        (_disk_file(disk, "run.bat", "echo hi\n")[0], "Gamma does not open programs (.bat).")):
         r = _open(owner, path)
         assert r.status_code == 400 and r.json()["detail"] == said, r.text
-    monkeypatch.setattr(config, "vault_keep_bytes", lambda: 10)
+    monkeypatch.setattr(server_options, "vault_keep_bytes", lambda: 10)
     r = _open(owner, _disk_file(disk, "big.txt", "x" * 100)[0])
     assert r.status_code == 400 and r.json()["detail"].startswith("big.txt is too large for Gamma to show here")
     f, _data, _doc = _disk_pdf(disk, "big.pdf", "LF a PDF has no keep limit")

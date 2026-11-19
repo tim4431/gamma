@@ -88,12 +88,11 @@ model registry from the account's own entries followed by the server's shared
 ones (ids are `<entryId>:<model>`; the wire format comes from the entry's
 `protocol`, never from the provider id; the default model is the account's
 own first model, else the server's first) — AI endpoints must use it, not
-module-level config constants for credentials or model routing. Env vars set
-each protocol's administrator-controlled default base URL
-(`config.AI_BASE_URLS`: `GAMMA_AI_ANTHROPIC_BASE_URL`, or `GAMMA_AI_BASE_URL`
-when it is unset, as older `.env` files name it; `GAMMA_AI_OPENAI_BASE_URL`,
-`GAMMA_AI_CHATGPT_BASE_URL`). Only `GAMMA_` variables count: an
-`ANTHROPIC_BASE_URL` in the environment is not read.
+module-level config constants for credentials or model routing. Each
+protocol's default base URL is the provider's own (`config.AI_BASE_URLS`);
+another endpoint is a connection's own base URL, and no environment
+variable moves the default (an `ANTHROPIC_BASE_URL` a shell exports is not
+read either).
 
 The client offers one connection's models at a time. `providerModels` in
 `chat/modelPrefs.js` cuts the registry down to the active connection (the
@@ -858,9 +857,10 @@ tooltip names the tier, since the glyph carries no text). The line comes a
 second time, corrected, when the provider's report says the turn ran at
 another speed than the one asked for (see "Speed" below); the chat keeps
 the latest.
-`GAMMA_MODEL_CATALOG=off` keeps the server from asking models.dev at all (an
-offline server; the browser suite sets it); model facts then come from the
-providers' listings alone.
+The AI model catalog switched off (Settings → Server → Online services,
+server option `model_catalog`) keeps the server from asking models.dev at
+all (an offline server; the browser suite turns it off); model facts then
+come from the providers' listings alone.
 
 ### Speed (service tier)
 

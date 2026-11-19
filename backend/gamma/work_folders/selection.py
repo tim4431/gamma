@@ -36,7 +36,7 @@ from collections import Counter, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import config
+from .. import server_options
 from ..vault import disk as vault_disk, kinds, store as vault_store
 from ..db import connect_pages_db
 from ..documents.formats import format_of
@@ -497,7 +497,7 @@ def preview(link: dict, selection: dict) -> dict:
     cap, leaving, joined, text, rules_ours}`` — the files it tracks, what
     they weigh and how many of each format, those past the keep limit
     (``large``: files of other formats than notes and PDFs over
-    ``keep_bytes``, ``config.vault_keep_bytes``, which the vault lists
+    ``keep_bytes``, ``server_options.vault_keep_bytes``, which the vault lists
     without their bytes), whether they are more than the vault's rounds read
     (``cap_of``), the pages that leave (``_leaving``), the ``.gammaignore``
     it writes (``text``), and whether that replaces nothing a person wrote
@@ -512,7 +512,7 @@ def preview(link: dict, selection: dict) -> dict:
     chosen = evaluate(link, selection)
     files, selected = chosen.walk.files, chosen.selected
     formats = Counter(files[p][1] if files[p][1] in _SHOWN else "other" for p in selected)
-    cap, keep = cap_of(link), config.vault_keep_bytes()
+    cap, keep = cap_of(link), server_options.vault_keep_bytes()
     large = {p for p in selected if files[p][0] > keep and kinds.class_of(p, work=True) is kinds.FILE}
     out = {"files": len(selected), "bytes": sum(files[p][0] for p in selected),
            "by_format": {k: formats[k] for k in (*_SHOWN, "other")},
