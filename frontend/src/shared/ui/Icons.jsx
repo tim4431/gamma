@@ -168,6 +168,10 @@ export const ArrowUpDownIcon = (p) => (
 export const PlusIcon = (p) => (
   <Icon {...p}><path d="M12 5v14" /><path d="M5 12h14" /></Icon>
 );
+// Add a passage to a highlight: lines of text, a plus after the last.
+export const TextPlusIcon = (p) => (
+  <Icon {...p}><path d="M3 6h18" /><path d="M3 12h12" /><path d="M3 18h7" /><path d="M18 13v8" /><path d="M14 17h8" /></Icon>
+);
 export const MinusIcon = (p) => (
   <Icon {...p}><path d="M5 12h14" /></Icon>
 );

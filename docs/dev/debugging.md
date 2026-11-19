@@ -1642,6 +1642,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   the palette, on a phone-sized touch screen, and in Chinese. `--group block-properties`.
 - `pdf.mjs`: upload + page by attachment, the viewer's text layer, a
   highlight from a text selection (overlay, quote row, persisted position),
+  Add a passage… over a column break (the left column's foot added ahead
+  of the right column's top, the note badge in the right column) and a
+  highlight joined with its note kept under it,
   the find bar hitting page 2, an AI citation link
   highlighting its quote on the cited page ([pdf_citations.md](pdf_citations.md)),
   the chat's coverage pills against a mocked `/api/ai/chat` (a selection's

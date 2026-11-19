@@ -1390,9 +1390,15 @@ on the right, Files first on the left, which is empty by default).
   A finger's, a pen's or a script's selection (a release far from the
   text) has it at once; an area drag too, its box drawn under it. The text
   highlighter's bar over the highlight it made waits the same way.
-- **Move mode.** While a highlight waits for its new place (App's
-  `moveHighlightId`), `.pdfMoving` lets the pointer through every
-  highlight (app.css), so a drag over highlighted text selects it.
+- **Move mode.** While a highlight waits for its new place (a `move`
+  wait, `pdf/useHighlightWait.js`), `.pdfMoving` lets the pointer through
+  every highlight (app.css), so a drag over highlighted text selects it.
+- **Add a passage.** While a highlight waits for another passage of its
+  page (an `extend` wait), it is drawn as the active one and lets the
+  pointer through, as the page's link regions do, so the text beside and
+  under it selects; the page's other highlights take a press, which joins
+  them to it. The tip over a selection has the one button *Add to the
+  highlight* (`TipAddHere`), and an area drag opens nothing.
 - **Tabs.** A page's notes keep their place for the session: leaving a
   page records the row at the notes' top and how far into it they were
   scrolled (App's `notesPlaceRef`, `captureScrollPos`), and its tab lands

@@ -16,6 +16,9 @@ import { folderPapers, paperLayout } from "../pdf/folderTranslation.js";
 import { useFolderTranslations } from "../pdf/useFolderTranslations.js";
 import { docIdOf } from "../pdf/pdfSource";
 import { discardApplied, discardOutcome, discardStep, discardUndone, noteSummary, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
+import { canJoin, joinHighlights, takesParts, withPart } from "../shared/model/highlightParts.js";
+import { waitingFor } from "../pdf/highlightWait.js";
+import { useHighlightWait } from "../pdf/useHighlightWait.js";
 import { basePixels } from "../pdf/pageRaster";
 import { DEFAULT_HIGHLIGHT, LINK_COLOR, highlightColor, normalizeColor } from "../shared/model/palette.js";
 import { presetName, withStyle } from "../shared/model/markStyle.js";
@@ -4777,13 +4780,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   const scrollToRef = useRef(() => {});
   const flashTimerRef = useRef(null);
-  const [attachModeBlockId, setAttachModeBlockId] = useState(null);
-  const attachModeBlockIdRef = useRef(null);
-  // A highlight being moved (its menu's "Move to a selection…", a lost
-  // one's row button): the next selection on the PDF becomes its place
-  // instead of making a new highlight (docs/dev/highlight_relocation.md).
-  const [moveHighlightId, setMoveHighlightId] = useState(null);
-  const moveHighlightIdRef = useRef(null);
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
   const blockRefs = useRef({});
@@ -8283,15 +8279,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // A selection let go of in a viewer that takes highlights (the PDF's, the
   // code view's onAnchor), its position stored under `place`: a highlight
-  // waiting to be moved takes its place; else the link dialog (the PDF's
+  // waiting for another passage takes it as one; a highlight waiting to be
+  // moved takes its place; else the link dialog (the PDF's
   // tip alone has Link), or a highlight in the armed highlighter's look or
   // the popup's pick: a swatch (a palette colour, stored at its alpha) in
   // the style picked with it, or a highlighter's. Nothing here changes a
   // highlighter. A comment's passage is the wash, which marks it
   // commented. Returns the new highlight's id.
   function finishSelection(position, quote, hideTip, extras, place = POSITION_KEY.pdf) {
-    if (moveHighlightIdRef.current) {
-      moveHighlightTo(moveHighlightIdRef.current, position, quote, place);
+    if (hlWait.current("extend") && place === POSITION_KEY.pdf) {
+      addPassageTo(hlWait.current("extend"), position, quote, extras?.first);
+      hideTip?.();
+      return undefined;
+    }
+    if (hlWait.current("move")) {
+      moveHighlightTo(hlWait.current("move"), position, quote, place);
       hideTip?.();
       return undefined;
     }
@@ -8600,49 +8602,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Leaving the page closes its paper menu.
   useEffect(() => { setPaperMenu(false); setNbCurrent(""); }, [focusedBlockId]);
 
-  useEffect(() => { attachModeBlockIdRef.current = attachModeBlockId; }, [attachModeBlockId]);
-  useEffect(() => { moveHighlightIdRef.current = moveHighlightId; }, [moveHighlightId]);
-
-  // Attach mode (a note's ⊕ waits for a click on a highlight) and move mode
-  // (a highlight waits for a selection) each end the other, so one banner
-  // shows and the PDF's next click or selection means one thing. Both are
-  // entered only through these; the setters are stable, so the callbacks
-  // are too and BlockRow's memo holds.
-  const startAttachMode = useCallback((blockId) => {
-    setMoveHighlightId(null);
-    setAttachModeBlockId(blockId);
-  }, []);
-  // A move started from a highlight's review card (its Move…) is
-  // remembered, {id, prior} (prior: the card's step in effect, when it had
-  // one): once the selection has moved the highlight, the card opens on it
-  // again, as it was, its Move… pressed ("Moved"), pressing it again
-  // undoing the move (pdf/HighlightReview.jsx). Any other start of a move
-  // forgets it.
-  const moveFromReviewRef = useRef(null);
-  const startHighlightMove = useCallback((blockId) => {
-    moveFromReviewRef.current = null;
-    setAttachModeBlockId(null);
-    setMoveHighlightId(blockId);
-  }, []);
-  const startReviewMove = useCallback((blockId, prior = null) => {
-    startHighlightMove(blockId);
-    moveFromReviewRef.current = { id: blockId, prior };
-  }, [startHighlightMove]);
-
-  // Escape ends whichever mode is on.
-  useEffect(() => {
-    if (!attachModeBlockId && !moveHighlightId) return;
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      setAttachModeBlockId(null);
-      setMoveHighlightId(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [attachModeBlockId, moveHighlightId]);
-  // Another page, or another file on this one, ends a move: the selection
-  // it waits for would be on a PDF the highlight was not picked from.
-  useEffect(() => { setMoveHighlightId(null); }, [focusedBlockId, docId, doc?.url]);
+  // What the PDF's next press or selection is for while a note or a
+  // highlight waits for one (pdf/useHighlightWait.js, one at a time, ended
+  // by Escape): a note's ⊕ waits for the highlight it links to (attach), a
+  // highlight for its new place (its menu's "Move to a selection…", a lost
+  // one's row button, its review card's Move…: move;
+  // docs/dev/highlight_relocation.md) or for another passage of its page
+  // (its menu's "Add a passage…": extend; shared/model/highlightParts.js).
+  // Another page, or another file on this one, ends a move or an extension.
+  // The commands are stable, so BlockRow's memo holds.
+  const hlWait = useHighlightWait(`${focusedBlockId || ""}\n${docId || ""}\n${doc?.url || ""}`);
+  const attachModeBlockId = waitingFor(hlWait.wait, "attach");
+  const moveHighlightId = waitingFor(hlWait.wait, "move");
+  const extendHighlightId = waitingFor(hlWait.wait, "extend");
+  const { startAttach: startAttachMode, startMove: startHighlightMove, startExtend: startHighlightExtend, startReviewMove } = hlWait;
 
   // The highlight takes the selection's place, and its text as its quote:
   // a tree edit like any other (ops, undo). Whatever marked it lost or
@@ -8655,10 +8628,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // position is stored under (a text file's lines: a lost or rough range
   // put back by hand).
   function moveHighlightTo(blockId, position, quote, place = POSITION_KEY.pdf) {
-    setMoveHighlightId(null);
-    const from = moveFromReviewRef.current;
+    hlWait.end();
+    const from = hlWait.takeReviewMove();
     const fromReview = from?.id === blockId;
-    moveFromReviewRef.current = null;
     const block = blockId ? findBlock(blocks, blockId) : null;
     if (readOnly || !position || !block) return;
     setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({
@@ -8674,6 +8646,46 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       position: block.properties?.[place], quote: block.properties?.quote || "", prior: from.prior,
     }, position) : null;
     if (step) pdfReviewRef.current?.(blockId, { done: step, scroll: false });
+  }
+
+  // A selection while highlight `blockId` waits for another passage (its
+  // menu's Add a passage…): the passage is added to it (withPart), `first`
+  // whether it reads before the highlight (the viewer's text order; when
+  // it cannot tell, after). A passage on another page leaves it waiting,
+  // with a word on why. A tree edit like any other (ops, undo).
+  function addPassageTo(blockId, position, quote, first) {
+    const block = findBlock(blocksRef.current, blockId);
+    const pos = block?.properties?.pdf_position;
+    if (block && position?.pageNumber !== pos?.pageNumber) {
+      setStatus(t("A highlight's passages are on one page: select text on page {n}.", { n: pos?.pageNumber }));
+      return;
+    }
+    hlWait.end();
+    const joined = !readOnly && block ? withPart(pos, blockQuote(block), position, quote, { before: !!first }) : null;
+    if (!joined) return;
+    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({
+      ...b, properties: applyPatch(b.properties, { pdf_position: joined.position, quote: joined.quote || null }),
+    })));
+    setStatus(t("Passage added to the highlight."));
+    triggerFlash(blockId);
+  }
+  // A press on another highlight while one waits for another passage: the
+  // pressed one joins it (joinHighlights), `first` whether it reads before
+  // it; what was written on it stays under the one it joined, a comment
+  // thread on it too (the block that holds it is kept as a note). One that
+  // cannot join (another page, an area, a link) leaves it waiting.
+  function joinWaitingHighlight(fromId, first) {
+    const intoId = hlWait.current("extend");
+    if (!intoId || readOnly) return;
+    if (!canJoin(blocksRef.current, intoId, fromId)) {
+      setStatus(t("Only a passage highlighted on the same page can join this highlight."));
+      return;
+    }
+    hlWait.end();
+    const keep = (comments.threadsByBlock.get(fromId)?.length || 0) > 0;
+    setBlocks((prev) => joinHighlights(prev, intoId, fromId, { before: !!first, keep }) || prev);
+    setStatus(t("Highlights joined."));
+    triggerFlash(intoId);
   }
 
   // Use closest match on a lost highlight's review card: it takes the place
@@ -8887,7 +8899,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       properties: applyPatch(b.properties, { linked_highlight_id: highlight.id,
         ...(page ? { pdf_position: { pageNumber: page } } : {}) }),
     })));
-    setAttachModeBlockId(null);
+    hlWait.end();
   }
 
   function unlinkHighlightFromBlock(blockId) {
@@ -10454,9 +10466,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // fed as a click on the PDF feeds it (quote as the selection, an area or a
   // region as a picture).
   function highlightPressed(hlId, additive) {
-    if (attachModeBlockIdRef.current) {
+    if (hlWait.current("attach")) {
       const picked = highlights.find((h) => h.id === hlId);
-      if (picked) linkHighlightToBlock(attachModeBlockIdRef.current, picked);
+      if (picked) linkHighlightToBlock(hlWait.current("attach"), picked);
       return;
     }
     if (findBlock(blocks, hlId)) { scrollToBlock(hlId); reveal(hlId); }
@@ -13594,6 +13606,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         {[
           !readOnly && { key: "move", label: t("Move to a selection…"), title: range ? t("Select the lines where it belongs") : undefined,
             run: () => startHighlightMove(id) },
+          // another passage of its page under the same note: a selection, or another highlight
+          !readOnly && !range && takesParts(h?.position) && { key: "extend", label: t("Add a passage…"),
+            title: t("Select more text on its page, or press another highlight there, to make them one highlight"),
+            run: () => startHighlightExtend(id) },
           closest && { key: "closest", label: t("Use the closest match ({n}%)", { n: roughMatchPercent(closest.position) }),
             run: () => placeClosestMatch(id) },
         ].filter(Boolean).map((row) => (
@@ -14165,13 +14181,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {attachModeBlockId && (
         <div className="attachModeBanner">
           {t("Click a PDF highlight to link it")}
-          <button onClick={() => setAttachModeBlockId(null)}>{t("Cancel")}</button>
+          <button onClick={hlWait.end}>{t("Cancel")}</button>
         </div>
       )}
       {moveHighlightId && (
         <div className="attachModeBanner" data-move-highlight={moveHighlightId}>
           {t("Select the text where this highlight belongs")}
-          <button onClick={() => setMoveHighlightId(null)}>{t("Cancel")}</button>
+          <button onClick={hlWait.end}>{t("Cancel")}</button>
+        </div>
+      )}
+      {extendHighlightId && (
+        <div className="attachModeBanner" data-extend-highlight={extendHighlightId}>
+          {t("Select text to add to this highlight, or press another highlight on its page to join them")}
+          <button onClick={hlWait.end}>{t("Cancel")}</button>
         </div>
       )}
       {transMenu && (
@@ -14415,6 +14437,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               selComment={commentsOn && canComment}
               highlighter={textHighlighter.on ? textHighlighter.tint : ""}
               moveMode={!!moveHighlightId}
+              // a highlight waiting for another passage: a selection, or a press on another highlight
+              extendId={extendHighlightId || ""}
+              onJoinHighlight={readOnly ? undefined : joinWaitingHighlight}
               // a dashed or hollow highlight's review card (pdf/HighlightReview.jsx): its actions are an
               // editor's; a lost one's picture is of the file it was measured on, when not this one
               onAcceptHighlight={readOnly ? undefined : acceptHighlightPlace}

@@ -29,6 +29,19 @@ test("a sliver rect left by the selection is ignored", () => {
   assert.deepEqual(noteBadgeAnchor([r(5, 5, 6, 9)]), r(5, 5, 6, 9));
 });
 
+test("a passage a column break cuts anchors in the column it ends in, not at the lower line", () => {
+  // the left column's foot, then the right column's top: its last rect is in the right column
+  const rects = [r(60, 720, 900, 745), r(60, 745, 520, 770), r(1010, 300, 1900, 325), r(1010, 325, 1300, 350)];
+  assert.deepEqual(noteBadgeAnchor(rects), r(1010, 325, 1300, 350));
+  // the same passage stored the other way round ends in the left column
+  assert.deepEqual(noteBadgeAnchor([...rects.slice(2), ...rects.slice(0, 2)]), r(60, 745, 520, 770));
+});
+
+test("glyphs of one line, a word's space apart, stand in one column", () => {
+  assert.deepEqual(noteBadgeAnchor([r(100, 400, 140, 412), r(146, 400, 200, 412)]), r(100, 400, 200, 412));
+  assert.deepEqual(noteBadgeAnchor([r(146, 400, 200, 412), r(100, 400, 140, 412)]), r(100, 400, 200, 412));
+});
+
 test("nothing to anchor", () => {
   assert.equal(noteBadgeAnchor([]), null);
   assert.equal(noteBadgeAnchor(null), null);
