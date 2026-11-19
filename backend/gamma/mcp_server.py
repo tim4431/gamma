@@ -53,6 +53,7 @@ from .integrations import Connection, set_asks
 from .server_settings import mcp_allowed_hosts
 from .mcp_export import EXPORT_DESCRIPTION, EXPORT_SCHEMA, export_page
 from .mcp_links import LINK_SCHEMA, holders, resolve_link
+from .version import VERSION
 from .workspaces import list_for_user
 
 # The chat registry's tools offered here: its reading tools that stay inside
@@ -109,6 +110,24 @@ CANNOT_ASK = ("Gamma asks the user before each change this connection makes, and
 MAX_BODY = 65536
 MAX_SESSIONS = 1000
 SESSION_IDLE = 1800
+def plugin_hint(version: str) -> str:
+    """What the instructions end with on a release build ``version``
+    (``X.Y.Z``; nothing for a ``-dev`` build or a checkout run by hand): the
+    plugin version of the same release, and how each assistant updates to
+    it, which a client whose Gamma skill names an older version tells the
+    user once (plugins/gamma/skills/gamma/SKILL.md; docs/dev/mcp.md "An
+    older plugin")."""
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version or ""):
+        return ""
+    return (f" This server is Gamma {version}, and the Gamma plugin of its release is version {version}. If the "
+            "Gamma skill you loaded names an older plugin version, tell the user once in this conversation that a "
+            "newer Gamma plugin is out, then carry on: Codex and DeepSeek Harness update by running Gamma's setup "
+            "command again (Gamma's Settings → AI → Integrations); Claude Code by extracting the release's "
+            "gamma-claude-code-plugin ZIP over its gamma-marketplace folder, then `claude plugin marketplace "
+            "update gamma-local` and `claude plugin update gamma@gamma-local`. A new session loads it. A skill as "
+            "new or newer, or none, needs nothing said.")
+
+
 INSTRUCTIONS = (
     "When the user pastes a Gamma page, block, folder, or share link, call read_gamma_link with the URL. "
     "It resolves the reference and reads the page, including a linked note or PDF passage; a "
@@ -154,7 +173,7 @@ INSTRUCTIONS = (
     "restricted to the "
     "workspaces this connection may read; list_workspaces names them. Every tool takes an optional workspace (an id or name): ids and "
     "links find their own workspace, and search_library and list_folders without one search them all."
-)
+) + plugin_hint(VERSION)
 WORKSPACE_ARG = {"type": "string", "minLength": 1, "maxLength": 200,
                  "description": "The workspace to read, by id or name (list_workspaces). Leave it out to read "
                                 "the one holding the ids you pass, else the default one (a read_page by path "

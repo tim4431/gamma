@@ -692,6 +692,18 @@ def test_a_connection_edits_notes_only_where_it_may(client, connection):
                 workspaces.delete(gone)
 
 
+def test_a_release_build_names_its_plugin_version():
+    """A release's server says which plugin its release ships and how each
+    assistant updates, which an older skill tells the user; a development
+    build says nothing of it."""
+    from gamma.mcp_server import plugin_hint
+
+    said = plugin_hint("1.14.0")
+    assert said.startswith(" This server is Gamma 1.14.0, and the Gamma plugin of its release is version 1.14.0.")
+    assert "claude plugin update gamma@gamma-local" in said and "setup command again" in said
+    assert plugin_hint("1.14.0-dev.7") == plugin_hint("") == ""
+
+
 def test_the_question_shows_a_change_line_by_line():
     """Gamma's question is plain text, as a client shows it: what kind of
     change and how much, the lines removed and added, a kept line beside

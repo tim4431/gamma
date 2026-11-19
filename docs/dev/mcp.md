@@ -878,6 +878,24 @@ If `gamma-local` is already registered from another directory, keep using it or
 remove that marketplace registration in Codex before switching to release setup.
 Setup does not remove existing marketplaces or plugins.
 
+### An older plugin
+
+An installed plugin does not update itself: setup registers it from a local
+folder (`gamma-local`), so neither client has an upstream copy to refresh
+from. What updates is the server, whose instructions every client reads again
+at each session's `initialize`. A release build (`version.VERSION` an
+`X.Y.Z`; a `-dev` build or a checkout says nothing) ends them with the plugin
+version of its own release and how each assistant updates to it
+(`mcp_server.plugin_hint`): Codex and DeepSeek Harness by running the setup
+command again, Claude Code by extracting the release's ZIP over its
+`gamma-marketplace` folder and running `claude plugin marketplace update
+gamma-local` and `claude plugin update gamma@gamma-local`. The skill names
+its own plugin version (`SKILL.md`'s first line, which
+`package_plugins.load_manifests` holds to the manifests and the release
+stamps, `stamp_skill`) and tells the user once a conversation when the
+server's is newer. The comparison is the model's, so it is a hint; a skill
+older than the hint itself has no such line and says nothing.
+
 ### Build and publish
 
 `plugins/gamma` is one skills-based plugin for Codex and Claude Code. Its workflow

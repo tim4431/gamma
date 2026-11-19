@@ -32,7 +32,9 @@ are missing, inspect `/mcp` or `claude mcp get gamma` before retrying sign-in.
 Copy the Gamma page URL from your browser and paste it with your question.
 A share link works too.
 
-To update an extracted marketplace, replace its contents with the newer release.
+When the Gamma server you connect to is newer than this plugin, the assistant
+says so once in a conversation, with the steps for it. To update an extracted
+marketplace, replace its contents with the newer release.
 Then run `claude plugin marketplace update gamma-local`
 and `claude plugin update gamma@gamma-local`, then start a new session. For local
 development, load this directory directly with `claude --plugin-dir ./plugins/gamma`

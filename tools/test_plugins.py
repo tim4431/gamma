@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 from zipfile import ZipFile
 
-from package_plugins import DSH_FILES, MANIFEST_PATHS, build, write_dsh_bundle
+from package_plugins import DSH_FILES, MANIFEST_PATHS, build, skill_version, stamp_skill, write_dsh_bundle
 from release_plugins import release
 
 
@@ -88,6 +88,9 @@ class SharedPluginTest(unittest.TestCase):
                 for relative in MANIFEST_PATHS:
                     manifest = json.loads(bundle.read(f"gamma-marketplace/plugins/gamma/{relative}"))
                     self.assertEqual(manifest["version"], "1.2.3-preview.1")
+                # the skill names its plugin version too: an older one tells the user a newer is out
+                skill = bundle.read("gamma-marketplace/plugins/gamma/skills/gamma/SKILL.md").decode()
+                self.assertEqual(skill_version(skill), "1.2.3-preview.1")
             for sums in (p for p in assets if p.name.endswith("SHA256SUMS.txt")):
                 for line in sums.read_text().splitlines():
                     digest, name = line.split("  ")
@@ -111,7 +114,7 @@ class SharedPluginTest(unittest.TestCase):
                 self.assertEqual(package["version"], "1.2.3")
                 self.assertEqual(package["dsh"], {"bundle": {"patch": "./cordis.patch.yml"}})
                 self.assertEqual(bundle.extractfile("package/skills/gamma/SKILL.md").read(),
-                                 (source / "skills/gamma/SKILL.md").read_bytes())
+                                 stamp_skill((source / "skills/gamma/SKILL.md").read_bytes().decode(), "1.2.3").encode())
                 patch = bundle.extractfile("package/cordis.patch.yml").read().decode()
             # No per-user values: dsh-gamma.js reads the saved connection when dsh starts.
             self.assertIn("name: ./dsh-gamma.js", patch)
@@ -136,6 +139,19 @@ class SharedPluginTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "disagrees with the plugin manifests on version"):
                 write_dsh_bundle(Path(tmp) / "dsh-gamma.tgz")
             self.assertFalse((Path(tmp) / "dsh-gamma.tgz").exists())
+
+    def test_a_skill_naming_another_version_fails(self):
+        read_text = Path.read_text
+
+        def changed_skill(path, *args, **kwargs):
+            text = read_text(path, *args, **kwargs)
+            return stamp_skill(text, "99.0.0") if path.name == "SKILL.md" else text
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(Path, "read_text", changed_skill):
+            target = Path(tmp) / "package"
+            with self.assertRaisesRegex(ValueError, "skill's plugin version disagrees"):
+                build(target)
+            self.assertFalse(target.exists())
 
     def test_partial_claude_release_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as tmp:
