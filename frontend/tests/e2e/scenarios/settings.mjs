@@ -2342,9 +2342,10 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  // Data → Duplicate… (docs/dev/workspaces.md "Copies between workspaces"):
+  // Manage → Duplicate… (docs/dev/workspaces.md "Copies between workspaces"):
   // a new personal workspace with a copy of every page, made by a job; the
   // dialog offers the copy's name, and the pill says it is done and opens it.
+  // The row's Data menu no longer has it.
   await step("settings: Duplicate… copies every page into a new personal workspace, which the pill opens", async () => {
     const source = await user.api("/api/workspaces", { method: "POST", body: { name: "Dup source" } });
     await user.api(`/api/blocks?ws=${source.id}`, { method: "POST", body: { parent_id: "root", content: "Duplicated page" } });
@@ -2352,9 +2353,13 @@ export async function settingsScenarios(env) {
     try {
       await openSettings(page);
       await nav(page, "Workspaces").click();
-      await page.locator(".settingsPane .aiProvRow").filter({ hasText: "Dup source" })
-        .getByRole("button", { name: "Data", exact: true }).click();
-      await page.locator(".ctxMenuItem", { hasText: "Duplicate…" }).click();
+      const sourceRow = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Dup source" });
+      await sourceRow.getByRole("button", { name: "Data", exact: true }).click();
+      await page.locator(".ctxMenuItem", { hasText: "Export everything (.zip)" }).waitFor();
+      assertEq(await page.locator(".ctxMenuItem", { hasText: "Duplicate…" }).count(), 0, "the Data menu has no Duplicate…");
+      await page.keyboard.press("Escape");
+      await sourceRow.getByRole("button", { name: "Manage", exact: true }).click();
+      await page.getByRole("button", { name: "Duplicate…", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Duplicate “Dup source”", exact: true });
       await dialog.waitFor();
       assertEq(await dialog.getByRole("textbox").inputValue(), "Dup source (copy)");

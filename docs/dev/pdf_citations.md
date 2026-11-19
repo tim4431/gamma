@@ -6,8 +6,9 @@ A highlight block can make a PDF region clickable through
 `properties.link_url` or `link_page_id`; `link_block_id` additionally
 targets a particular highlight on the destination page, by its block id (a
 highlight's id is its block's, [api.md](api.md) "The highlight shape"):
-"Copy as reference point" on a highlight keeps that id for another paper's
-link dialog and copies the highlight's block link (`?block=<id>`). Pasted
+"Copy as reference point" on a highlight keeps that id for the link dialog
+(another highlight's, on this paper or another) and copies the highlight's
+block link (`?block=<id>`). Pasted
 into a note or the chat, that link lands on the passage as the deep link
 does: App's `openBlockLink`, which every block link, `[[ref]]`, backlink and
 inbox item opens through, shows the block's row in the notes and, for a
@@ -19,20 +20,34 @@ another, both through `pendingJumpRef`). The link dialog
 (`library/PagePicker.jsx`): its field takes a DOI, an arXiv id or a web
 address (`isLinkInput`; `normalizeLinkInput` makes it a URL), and "Link to …"
 leads the list while it reads as one, or else searches the pages as Ctrl+P
-does. With nothing typed it lists Remove link for a passage that links
-already, the copied reference point, then the pages the passage names
-(`scorePaperMatch` 6 or more: its DOI or arXiv id, the authors, title
-words) as Best matches before the recent pages. "Change link…" opens with
-a URL link's address in the field. App derives the viewer's `linkTarget`
-(`{url, pageId, blockId}`) from those properties, and opening the link jumps to the block
-once the page is up. `linkProps` writes them and drops (null) the keys the
+does. A Gamma link in the field (`parseGammaLink`, whatever host it names:
+a copied highlight's `?block=`, a page's `?page=`) that App's
+`gammaLinkPlace` finds in this workspace (`GET /blocks/{id}` for a block,
+the library listing for a page) leads instead as the highlight or page it
+names, and picking it links there (`{pageId, blockId}`), not to the
+address; a highlight on this same paper is offered too (a cross-reference
+to a figure), the one being linked and this page itself are not. One
+another server or workspace holds stays a "Link to …" address. With
+nothing typed it lists Remove link for a passage that links already, the
+copied reference point (any highlight but the one being linked), then the
+pages the passage names (`scorePaperMatch` 6 or more: its DOI or arXiv id,
+the authors, title words) as Best matches before the recent pages.
+"Change link…" opens with a URL link's address in the field, so a Gamma
+link stored as an address is turned into a highlight link by picking the
+row it resolves to. App derives the viewer's `linkTarget`
+(`{url, pageId, blockId}`) from those properties, and `openLinkTarget`
+opens one, the PDF region's press and its note's link alike: a block
+through `openBlockLink` (on this page it scrolls there, Back returning;
+on another the page opens and lands on it), a page through `openBlock`, an
+address through `handleDocLink`. `linkProps` writes them and drops (null) the keys the
 target does not set, all three when the link is removed; an empty string,
 which older clients stored, reads as unset everywhere. A new link region
 is made in `LINK_COLOR` (`shared/model/palette.js`, a light blue wash).
 The block table's `kind` calls such a block a `link`; the viewer draws it
-as a highlight. `handleDocLink` resolves a DOI
-or arXiv URL against the current library first, opening the existing page
-when found; otherwise it offers fetching the paper or opening the browser.
+as a highlight. `handleDocLink` opens a Gamma link whose block or page
+`gammaLinkPlace` finds here in place (a citation at its passage), resolves
+a DOI or arXiv URL against the current library, opening the existing page
+when found, and otherwise offers fetching the paper or opening the browser.
 
 ## AI citation links
 

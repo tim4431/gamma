@@ -139,9 +139,11 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
         text += f"The user is viewing {where}; tools reach its pages and the explicitly attached context pages below.\n"
     references = scope.get("context_pages") or []
     if references:
+        own = "page" if scope.get("type") == "page" else "folder's pages"
         text += ("The user attached these library page IDs as context: " + json.dumps(references)
-                 + ". Read and search tools can access them, including their documents' text and notes. "
-                 "Attachments outside the original page/folder scope are read-only. "
+                 + f". The tools reach them as they reach this chat's {own}, for reading and for changes "
+                 "alike: the read and search tools their documents' text and notes, and the tools that "
+                 "edit notes, comment, highlight or draw work on them too. "
                  "Match @ mentions to their titles and Gamma page IDs in context.\n")
     text += coverage_lines(scope.get("coverage") or [], "read_page" in names)
     text += f"Available tools: {', '.join(names)}. Any other tool is disabled in the user's settings."

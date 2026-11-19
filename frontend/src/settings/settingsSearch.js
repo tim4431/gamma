@@ -157,6 +157,7 @@ const entries = [
   e("workspaces", t("Your storage"), t("Storage"), t("all personal workspaces"), "storage quota space used disk"),
   e("workspaces", t("Members"), t("Manage"), t("Invite people, by account or e-mail, and set roles, in a shared workspace's Manage page"), "invite invitation members roles sharing owner editor viewer people email e-mail mail", t("Shared")),
   e("workspaces", t("Export workspace"), t("Data"), t("The Data menu on a workspace's row; Export all for every one"), "export download zip data import merge", t("Personal")),
+  e("workspaces", t("Duplicate"), t("Manage"), t("a new personal workspace with a copy of every page"), "duplicate copy workspace", t("Personal")),
   e("workspaces", t("Delete workspace"), t("Manage"), t("In a workspace's Manage page, under Danger zone"), "delete remove leave destroy", t("Personal")),
   e("backups", t("Backups"), null, t("Server-kept snapshots and the tasks that take them."), "snapshot backup"),
   e("backups", t("Periodic backup tasks"), null, t("Hourly, daily, weekly or monthly snapshots"), "automatic scheduled tasks hourly daily weekly monthly cron retention schedule"),

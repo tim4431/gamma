@@ -282,9 +282,9 @@ export default function ChatDock({
   // open paper, with the handwriting on it (App), when a paper is open.
   chatImages, setChatImages, chatPictureBudget = DEFAULT_PICTURE_BUDGET, onAttachView,
   chatModel, setChatModel, chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatSystem,
-  // What a message sent while a reply runs does: "queue" or "steer"
+  // What a message sent while a reply runs does: "steer" or "queue"
   // (Settings → AI → Chat; chat/enterKey.js followUpSteers).
-  chatFollowUp = "queue",
+  chatFollowUpMode = "steer",
   dictationModel, dictationLang,
   chatContextChars, setChatContextChars, multiContextChars,
   // openAiKeysEditor({service, entry}?) opens Settings → Connections: with
@@ -1723,8 +1723,8 @@ export default function ChatDock({
   // it with the PDF passages selected, and the draft stays until the server
   // made its turn. While a reply runs it joins the conversation's queue,
   // with what goes with it, and is handed to the reply at once when the
-  // follow-up preference says Steer (`other`, Ctrl/⌘+Shift+Enter: when it
-  // says Queue; chat/enterKey.js followUpSteers). One that cannot steer
+  // follow-up preference says Steer, the default (`other`, Ctrl/⌘+Enter:
+  // when it says Queue; chat/enterKey.js followUpSteers). One that cannot steer
   // stays queued. `text` a dictation's, sent in the composer's place.
   async function sendChatMessage({ other = false, text = chatInput } = {}) {
     if (replying) {
@@ -1733,7 +1733,7 @@ export default function ChatDock({
       if (onComputer) { setPdfSelections([]); setChatQuotes(NO_QUOTES); }
       chatQueue.enqueue(queueKey, item);
       setChatInput("");
-      if (followUpSteers(chatFollowUp, other)) steerQueued(item.id);
+      if (followUpSteers(chatFollowUpMode, other)) steerQueued(item.id);
       return;
     }
     if (onComputer) {
@@ -2317,15 +2317,15 @@ export default function ChatDock({
   const stop = onComputer ? (side.stopId ? { onClick: () => side.chat.stop(side.stopId), label: t("Stop {agent}", { agent: side.label }) } : null)
     : busyHere ? { onClick: stopChat, label: t("Stop generating") } : null;
   // While the reply runs, Send queues the message or hands it to the reply
-  // at once (Steer), as the follow-up preference says; Ctrl/⌘+Shift+Enter
-  // does the other.
-  const steersFirst = followUpSteers(chatFollowUp);
+  // at once (Steer), as the follow-up preference says; Ctrl/⌘+Enter does
+  // the other.
+  const steersFirst = followUpSteers(chatFollowUpMode);
   const queueLabel = steersFirst ? (onComputer
-    ? t("Steer: into {agent}'s turn now ({key} queues it for when {agent} is done)", { agent: side.label, key: chordLabel("Mod-Shift-Enter") })
-    : t("Steer: into the reply now ({key} queues it for when the reply ends)", { key: chordLabel("Mod-Shift-Enter") }))
+    ? t("Steer: into {agent}'s turn now ({key} queues it for when {agent} is done)", { agent: side.label, key: chordLabel("Mod-Enter") })
+    : t("Steer: into the reply now ({key} queues it for when the reply ends)", { key: chordLabel("Mod-Enter") }))
     : onComputer
-      ? t("Queue: sent when {agent} is done ({key} steers it into its turn now)", { agent: side.label, key: chordLabel("Mod-Shift-Enter") })
-      : t("Queue: sent when the reply ends ({key} steers it into the reply now)", { key: chordLabel("Mod-Shift-Enter") });
+      ? t("Queue: sent when {agent} is done ({key} steers it into its turn now)", { agent: side.label, key: chordLabel("Mod-Enter") })
+      : t("Queue: sent when the reply ends ({key} steers it into the reply now)", { key: chordLabel("Mod-Enter") });
   // Why a queued message's Steer is off while the reply runs ("" when it is
   // on): Gamma AI's reply took no steer id, a computer agent's turn has not
   // started, or the message carries what only a message of its own takes.
@@ -2455,10 +2455,14 @@ export default function ChatDock({
         {visibleMessages.length ? setupCard : null}
       </div>
       {/* Text selected in the transcript: Ask about this quotes it into the
-          composer, its menu copies it or makes a note of it. */}
+          composer, Copy copies it, Create note makes a note of it. */}
       {!readOnly ? (
         <ChatSelectionTip box={chatBox} onAsk={quoteInComposer}
-          onCopy={async (md, html) => { if (!(await copyRich(html, md))) setStatus(t("Couldn't copy the selection.")); }}
+          onCopy={async (md, html) => {
+            const copied = await copyRich(html, md);
+            if (!copied) setStatus(t("Couldn't copy the selection."));
+            return copied;
+          }}
           note={onChatNote ? { where: noteWhere, make: makeChatNote,
             structured: aiOff || !aiInfo?.enabled ? t("Needs an AI service: connect one in Settings → Connections") : "" } : null} />
       ) : null}

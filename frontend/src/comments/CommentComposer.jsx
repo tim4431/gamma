@@ -6,9 +6,10 @@
 // (editor/useMentionMenu.js), the "/" menu of the
 // commands that write text (editor/useSlashMenu.js: no page, sheet, upload
 // or embed), and inside $…$ the live preview and \command completion
-// (editor/useMathUi.js). Return breaks the line as in a note, continuing a
-// list or quote; Shift+Return or Ctrl/⌘+Return sends (chat/enterKey.js
-// sendsOnShiftEnter). An open picker, menu or completion takes
+// (editor/useMathUi.js). Return sends, as in the chat; Shift+Return breaks
+// the line as in a note, continuing a list or quote (chat/enterKey.js
+// sendsOnEnter: on an on-screen keyboard Return breaks the line and the
+// button sends). An open picker, menu or completion takes
 // ↑ ↓ Enter Tab and Escape first; Escape without one is the caller's
 // (`onCancel` for an edit, else `onEscape`: the popover closes). The field
 // keeps its own undo history. Unsent text is kept by `draftKey` for as long
@@ -25,7 +26,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { t } from "../shared/i18n/i18n.js";
 import { chordLabel, composing } from "../shared/lib/hotkeys.js";
 import { touchTyping } from "../shared/lib/pointer.js";
-import { sendsOnShiftEnter } from "../chat/enterKey.js";
+import { sendsOnEnter } from "../chat/enterKey.js";
 import { BlockCmEditor } from "../editor/BlockCmEditor";
 import { LatexAcPopup, MathLivePreview } from "../editor/LatexEditor";
 import { MentionContext, MentionMenuPopup } from "../editor/MentionMenu";
@@ -163,10 +164,10 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
   // an `@name` it adds does.
   const hint = onCancel ? editHint({ agents, text, initial, refused }) : ticked ? sendNote(target) : null;
   // The button's name is its action, ticked "Send to Codex" (sendTo.js
-  // sendLabel); its hover names its key too ("Shift+Enter", "⇧↩" on a
-  // Mac), on an on-screen keyboard, where Shift+Return breaks the line,
-  // Ctrl/⌘+Enter (sendsOnShiftEnter).
-  const send = sendLabel(ticked ? target : null, submitLabel, chordLabel(touchTyping() ? "Mod-Enter" : "Shift-Enter"));
+  // sendLabel); its hover names its key too ("Enter", "↩" on a Mac), on an
+  // on-screen keyboard, where Return breaks the line, Ctrl/⌘+Enter
+  // (sendsOnEnter).
+  const send = sendLabel(ticked ? target : null, submitLabel, chordLabel(touchTyping() ? "Mod-Enter" : "Enter"));
   const fieldLabel = ticked ? tickedPlaceholder(target, placeholder, !!thread) : placeholder;
   const submit = async () => {
     if (!trimmed || tooLong) return;
@@ -197,7 +198,7 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
     }
     if (fieldKey(e)) { e.stopPropagation(); return; }
     if (e.key !== "Enter" || !ta) return;
-    if (sendsOnShiftEnter(e)) { e.preventDefault(); submit(); return; }
+    if (sendsOnEnter(e)) { e.preventDefault(); submit(); return; }
     // A line break: a list or quote continues (mdLines.enterPlan), as in a
     // note, but not inside a code fence or $$…$$, where only a quote's marks
     // go on; otherwise the editor's own.

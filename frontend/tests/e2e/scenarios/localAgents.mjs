@@ -192,7 +192,7 @@ export async function localAgentScenarios(env) {
       await until(() => tick.isChecked(), { what: "Send to Codex ticked" });
       await fresh.locator(".commentField .cm-content").click();
       await page.keyboard.type(body);
-      await page.keyboard.press("Shift+Enter");
+      await page.keyboard.press("Enter");
     };
     // The thread whose first comment is `body` on the page, once Codex's
     // reply `reply` is its second comment.
@@ -326,7 +326,7 @@ export async function localAgentScenarios(env) {
         await thread.locator(".cmMentionChip", { hasText: "@codex" }).waitFor();
         await until(() => tick.isChecked(), { what: "@codex ticks the box" });
         await page.keyboard.type("fix this only");
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         // the chip follows the turn, with Stop, then the agent's reply lands under its name
         const chip = thread.locator(".commentTurn .stateTag");
         await until(async () => (await chip.innerText().catch(() => "")).trim().startsWith("Codex is working"),
@@ -374,7 +374,7 @@ export async function localAgentScenarios(env) {
         assertEq((await thread.locator(".commentField .cm-placeholder").last().innerText()).trim(), "Reply to Codex…");
         assertEq(await thread.locator(".commentSend").last().getAttribute("aria-label"), "Send to Codex", "the button says what it starts");
         await page.keyboard.type("keep the British spelling");
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         await thread.locator(".commentItem.reply", { hasText: CHAT_REPLY }).nth(1).waitFor({ timeout: 40000 });
         assertNoProblems(page);
       } finally { await ctx.close(); }
@@ -557,7 +557,7 @@ export async function localAgentScenarios(env) {
         await fresh.locator(".commentField .cm-content").click();
         await page.keyboard.press("End");
         await page.keyboard.type(GUIDE_ASK.slice(2));
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         await answered(paper.id, GUIDE_ASK, GUIDE_REPLY);
         assertEq(await page.locator("[data-guide-offer]").count(), 0, "the hint had this load's one offer");
         await page.reload();
@@ -680,7 +680,7 @@ export async function localAgentScenarios(env) {
         await until(() => heard().some((e) => e.in?.method === "turn/start" && JSON.stringify(e.in.params.input).includes(STEER_ASK)),
           { timeout: 15000, what: "Codex began its turn" });
         await box.fill(STEER);
-        await box.press("Enter");
+        await box.press("ControlOrMeta+Enter"); // queued: Enter would steer it at once
         const row = dock.locator(".chatQueueRow", { hasText: STEER });
         await row.getByRole("button", { name: "Steer", exact: true }).click();
         const steered = dock.locator(".chatBubble.user", { hasText: STEER });

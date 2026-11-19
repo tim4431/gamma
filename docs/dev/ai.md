@@ -631,7 +631,9 @@ and a `$$…$$` alone on its line as display math (`remarkLoneDisplayMath`,
 [diagrams.md](diagrams.md)), so a wide formula scrolls in its own box
 instead of widening the transcript. The transcript keeps its scrollbar's
 room (`scrollbar-gutter: stable`), so a reply growing past the window does
-not rewrap it.
+not rewrap it. Its pill's label changing under a long conversation does
+not give the page a scrollbar either (`MorphText`,
+[ui-design.md](ui-design.md#things-that-change-in-place)).
 
 `gather_inputs` returns the context in two parts, and `build_messages`
 places them apart on purpose. The **document part** (the pages' sections:
@@ -1150,12 +1152,15 @@ row: Enter keeps, Escape leaves it) and Move up / down.
   A reload loses it, as Codex's.
 - **Steer** hands a queued message to the reply under way. What a message
   sent while a reply runs does is the account's **follow-up** preference
-  (`chatFollowUp`, Settings → AI → Chat, Codex's "Follow-up behavior"):
-  Queue, the default, or Steer, which queues and steers at once. Enter, the
-  send button and a dictation's ↑ do what it says, Ctrl/⌘+Shift+Enter
-  (`enterKey.js` `steersOnEnter`) the other (`followUpSteers`); the box's
-  placeholder ("Queue a follow-up…", "Steer the reply…") and the button's
-  title say which. A message that cannot steer stays queued.
+  (`chatFollowUpMode`, Settings → AI → Chat, Codex's "Follow-up behavior"):
+  Steer, the default, which queues and steers at once, or Queue. Enter, the
+  send button and a dictation's ↑ do what it says, Ctrl/⌘+Enter
+  (`enterKey.js` `othersOnEnter`) the other (`followUpSteers`), as in
+  Codex; the box's placeholder ("Steer the reply…", "Queue a follow-up…")
+  and the button's title say which. A message that cannot steer stays
+  queued. The preference replaced `chatFollowUp` (Queue by default) under a
+  name and key of its own, since a first load stores a preference's default
+  too: every account moved to Steer once, and a choice made since stays.
   The stream's head ends with `{"steer": id}` (`gamma/ai_steer.py`: an
   inbox per streamed reply, in memory, bound to its account, closed when
   the stream ends). `POST /api/ai/chat/steer/{id}` carries the text, the
@@ -1231,15 +1236,19 @@ note, for Gamma AI and a computer's agent alike (`chat/ChatSelectionTip.jsx`,
 - **The popup.** A selection gets the selection popup the PDF's and the
   code view's text get (`TipFrame`, `pdf/selectionTip.js`): a mouse's once
   the hand moves on from the release, a finger's once its handles have been
-  still for 350 ms. It holds **Ask about this** and the ⋯ of the
-  selection's menu; its buttons act on the press, so the selection stays.
-  A press elsewhere, a scroll of the transcript or the selection going puts
-  it away. A workspace viewer's chat has none.
-- **The menu.** A right-click on the selected text, or the popup's ⋯,
-  opens a `ContextMenu`: Ask about this, Copy, and **Create note** ▸ *As it
-  is* / *Structured by AI*. A right-click elsewhere keeps the browser's
-  menu. Every row acts on the selection as it was when the popup or the
-  menu opened.
+  still for 350 ms. Every action is a button of its own, no ⋯: **Ask
+  about this**, **Copy** (a check for a moment), and where a note can be
+  made **Create note** (as it reads) and **Structured note** (rewritten by
+  the AI; greyed with its reason where no AI service is connected), each
+  title saying where the note goes. Ask and the notes act on the press, so
+  the selection stays; Copy on the click, as the system's Copy. A press
+  elsewhere, a scroll of the transcript or the selection going puts it
+  away. A workspace viewer's chat has none.
+- **The menu.** A right-click on the selected text opens the same as a
+  `ContextMenu`: Ask about this, Copy, and **Create note** ▸ *As it is* /
+  *Structured by AI*. A right-click elsewhere keeps the browser's menu.
+  Every action takes the selection as it was when the popup or the menu
+  opened.
 - **What is taken.** The selection's Markdown source, what Ctrl+C puts on
   the clipboard (`shared/ui/Widgets.jsx` `selectionMarkdown`: formulas as
   their TeX, lists, links and emphasis as written; Copy puts the HTML
@@ -1319,9 +1328,11 @@ optional notes/highlights. The multi-paper text budget is shared by valid pages;
 selection still centers the open paper's excerpt. Tool-enabled chats also
 receive document maps labelled with page IDs.
 
-Explicit references expand `read_page`, `read_block`, and `search_library`
-access within the current workspace, even outside the original page/folder.
-They never expand the editing scope. PDF and file search hits identify their
+Explicit references put the pages in the chat's tool scope within the current
+workspace, even outside the original page/folder, for reading and for changes
+alike: the read and search tools reach them, and so do the note editors, the
+comment, highlight and drawing tools, and in a folder chat the page organizers,
+each under its own permission. PDF and file search hits identify their
 Gamma page IDs so the assistant can read further or cite the matching paper
 or line, including when titles are identical. References are resolved server-side;
 missing pages and non-page blocks are ignored.
@@ -1578,8 +1589,9 @@ What it can reach depends on where the chat is opened — every chat declares an
 - `"page"` — the page chat (`page_id` = the focused page, with or without a
   document, a PDF or a text file): tools reach only that page — the reading tools plus the note-block
   editors; the page-level organizers (list/rename/move, folders and labels)
-  don't exist there. The reading tools reach the pages inside it too, as
-  attachments widen reading and never editing ([ai_tools.md](ai_tools.md)).
+  don't exist there. The reading tools reach the pages inside it too, for
+  reading only, and every tool reaches the pages attached with @
+  ([ai_tools.md](ai_tools.md)).
 
 The request also carries `permissions`, the tool map of the chat's KIND with
 one state per permission (see below), and `granted`, the permissions this

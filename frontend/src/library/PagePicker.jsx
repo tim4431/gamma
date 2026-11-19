@@ -14,7 +14,8 @@
 // "Link to …" for a typed DOI). A pick runs an action's `run` or calls
 // `onPick(page)`; the caller closes the picker. `label` names the dialog,
 // `placeholder` the field, which opens holding `initialQuery`; `note` says
-// what a pick does, beside the keys.
+// what a pick does, beside the keys; `onQuery` hears each edit of the field
+// (the link dialog looks up a pasted Gamma link's place).
 import React, { useMemo, useState } from "react";
 import { SearchIcon } from "../shared/ui/Icons";
 import Palette from "../shared/ui/Palette";
@@ -27,7 +28,7 @@ const NO_ACTIONS = () => [];
 
 export default function PagePicker({
   label, placeholder = label, initialQuery = "", note, hint, pages, exclude, tree, recentViews, openTabs,
-  first, firstTitle, actions = NO_ACTIONS, sections, onPick, onClose,
+  first, firstTitle, actions = NO_ACTIONS, sections, onQuery, onPick, onClose,
 }) {
   const [query, setQuery] = useState(initialQuery);
   const q = query.trim();
@@ -55,7 +56,7 @@ export default function PagePicker({
       icon={<SearchIcon size={16} />}
       placeholder={placeholder}
       query={query}
-      onQuery={setQuery}
+      onQuery={(next) => { setQuery(next); onQuery?.(next); }}
       rows={rows}
       sectionTitle={sectionTitle}
       renderRow={rowOf}

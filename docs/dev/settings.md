@@ -712,8 +712,8 @@ AI:
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
 - **Chat**: three sections. **Chat** holds the default reasoning effort,
-  the default speed, the follow-up while a reply runs (`chatFollowUp`,
-  a Queue / Steer `Segmented`, [ai.md](ai.md#queue-and-steer)) and the
+  the default speed, the follow-up while a reply runs (`chatFollowUpMode`,
+  a Steer / Queue `Segmented`, [ai.md](ai.md#queue-and-steer)) and the
   snapshot-clearing switch. The effort menu
   lists every level, since each model gets the nearest one it takes
   ([ai.md](ai.md#reasoning-effort)). A speed reaches only models whose
@@ -789,11 +789,12 @@ Library:
 
 - **Workspaces**: storage meter, personal and shared workspaces, New
   workspace, Export all, and last the clones. Each row has Open, a Data menu (export,
-  Duplicate…, import) and Manage; a clone's and a Zotero link's More has Duplicate… too, whose
-  dialog names the copy and says what it leaves behind ([workspaces.md](workspaces.md)
-  "Copies between workspaces"). Manage opens an inline page under one breadcrumb head,
+  import) and Manage. Manage opens an inline page under one breadcrumb head,
   "Workspaces › <name>", with Open workspace at its right end: General,
   Access, Members and the Danger zone, every row saving at once, no footer.
+  General's Duplicate… (a clone's and a Zotero link's More, which have no
+  Manage) opens a dialog that names the copy and says what it leaves behind
+  ([workspaces.md](workspaces.md) "Copies between workspaces").
   Rename and invite are small editor dialogs. The invite dialog's *Find
   by* switch, On this server / E-mail, shows while `server-config`'s
   `cloud.email_invites.members` is true; E-mail takes an address and an

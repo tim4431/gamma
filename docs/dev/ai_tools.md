@@ -77,8 +77,8 @@ chat's page (`blocks_store.page_ancestors`), `_scope_pages` the page's
 descendants (`page_descendants`), so `read_page`, `read_block`, the view
 tools, `read_chats`, `cite` and `search_library` reach them. A changing
 tool's scope has no `inside` (nor does an approval card's preview): the
-note editors still edit the chat's own page alone, and a page above it is
-out of reach. The prompt says so ("the read and search tools the pages
+note editors edit the chat's own page and the attached ones, never a page
+inside it, and a page above it is out of reach. The prompt says so ("the read and search tools the pages
 inside it too").
 
 Pages in Recently deleted are out of the tools' reach, the MCP adapter's
@@ -89,10 +89,13 @@ tools are the exception: `list_deleted` lists them and `restore_page` brings
 them back. `delete_page` moves library pages there, and deleting a folder
 or a label never deletes one.
 
-Attached library pages (`context_pages` in the tool scope) extend reading access
-beyond the current page or folder. `_scope_pages` combines the base scope and
-these references for reads and search. `run_agent_tool` removes `context_pages`
-before dispatching a mutation, so attachments do not grant editing access.
+Attached library pages (`context_pages` in the tool scope, the pages the user
+@-mentions) extend the chat's reach beyond the current page or folder, for
+every tool: `_page_in_scope` takes them for a read and for a change alike, and
+`_scope_pages` combines the base scope and these references for search. So a
+page chat edits, comments on, highlights and draws on a paper the user attached
+as on its own page, each change under its permission's Allow / Ask / Off, and
+the prompt says so. A page's inside stays reading only.
 
 ## The tools
 

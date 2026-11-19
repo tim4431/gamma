@@ -2,7 +2,7 @@
 // workspaces (just you; several per account, all under your quota) and the
 // shared ones you belong to (admin-made), each row with Open, Export,
 // Import and Manage — a dialog with rename, storage, members and roles
-// (shared), Make default (personal), Leave, Delete. Plus your account's
+// (shared), Make default (personal), Duplicate, Leave, Delete. Plus your account's
 // storage meter, New workspace (a personal one), Export all and, last, the
 // clones of workspaces on other Gamma servers and the workspaces linked to
 // a Zotero library (MirrorsSection in SettingsMirrors.jsx), which Personal
@@ -23,11 +23,11 @@ import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, Empty, FormNotice, QuotaMeter, UnitInput, AccountPicker, PersonRow, Segmented, WorkspaceFolder } from "./SettingsKit";
 import { duplicateName, zoteroPdfsNote } from "../transfers/workspaceCopy.js";
 import { copyPreview } from "../transfers/exportApi";
-import { MirrorsSection, duplicateItem, useMirrors, useZoteroLinks } from "./SettingsMirrors";
+import { MirrorsSection, useMirrors, useZoteroLinks } from "./SettingsMirrors";
 import { useSettingsRead } from "./settingsReads.js";
 import { parseStamp } from "../library/libraryUtils";
 import {
-  CheckIcon, DatabaseIcon, ExportIcon, FoldersIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, MailIcon, PenIcon,
+  CheckIcon, DatabaseIcon, DuplicateIcon, ExportIcon, FoldersIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, MailIcon, PenIcon,
   PlusIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
 } from "../shared/ui/Icons";
 import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
@@ -381,8 +381,10 @@ function WorkspacePage({ title, subtitle, action, onClose, children }) {
 
 // One workspace, everything its owner (or, with `admin`, a server admin)
 // can do to it, in the settings-row grammar: General (name, storage,
-// default, kind, join), Access (shared; admins edit, owners read), Members
-// (shared) and the Danger zone (leave, delete — each hint says what is lost).
+// default, duplicate, kind, join), Access (shared; admins edit, owners read),
+// Members (shared) and the Danger zone (leave, delete — each hint says what
+// is lost). `onDuplicate` opens the Duplicate dialog (Settings → Workspaces
+// passes it; the admin's Server pane does not, so the row is not there).
 // `canOpen` / `onOpen` wire the Open button; `onLeft` fires after the
 // caller leaves it (the pane switches away if it was the open one). Delete
 // starts a background job on `tasks` (workspace-delete), whose row shows
@@ -391,7 +393,7 @@ function WorkspacePage({ title, subtitle, action, onClose, children }) {
 // `inline` (Settings → Workspaces) makes it a WorkspacePage with Open
 // workspace at the head's right and no footer — every row saves at once.
 // Elsewhere it is a SubDialog.
-export function ManageWorkspaceDialog({ wsId, me, admin, accounts, tasks, confirm, setStatus, canOpen, onOpen, onClose, onLeft, personalCount, inline = false }) {
+export function ManageWorkspaceDialog({ wsId, me, admin, accounts, tasks, confirm, setStatus, canOpen, onOpen, onClose, onLeft, onDuplicate, personalCount, inline = false }) {
   const ws = useWorkspace(wsId);
   const deleting = useActiveJobs(tasks, "workspace-delete", "ws").has(wsId);
   const emailInvites = useEmailInvites();
@@ -533,6 +535,12 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, tasks, confir
                   <span className="settingDesc">{t("page links only")}</span>
                 </Row>
               ) : null}
+              {onDuplicate ? (
+                <Row icon={DuplicateIcon} label={t("Duplicate")} hint={t("a new personal workspace with a copy of every page")}
+                  title={t("A new personal workspace of yours with a copy of every page; this one stays as it is")}>
+                  <button className="uiBtn sm" disabled={ws.busy || deleting} onClick={onDuplicate}>{t("Duplicate…")}</button>
+                </Row>
+              ) : null}
               {admin && isPersonal ? (
                 <Row icon={UsersIcon} label={t("Convert to shared")} hint={t("let people in; the owner stays owner, it stops counting against them")}>
                   <button className="uiBtn sm" disabled={ws.busy} onClick={() => convert("shared")}>{t("Make shared")}</button>
@@ -620,20 +628,17 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, tasks, confir
   );
 }
 
-// One "Data" menu per workspace row: export (everything / databases),
-// Duplicate… (a new personal workspace with a copy of every page, which
-// anyone who may read it makes: `duplicate(w)` opens its dialog) and, for
-// editors and owners, import (merge / restore). Export downloads an
+// One "Data" menu per workspace row: export (everything / databases) and,
+// for editors and owners, import (merge / restore). Export downloads an
 // /api/export zip of that workspace; Import restores or merges one into it
-// (owners restore, editors merge).
-export function WorkspaceDataMenus({ w, exportWorkspace, importWorkspace, duplicate, closeSettings, disabled }) {
+// (owners restore, editors merge). Duplicate… is in Manage.
+export function WorkspaceDataMenus({ w, exportWorkspace, importWorkspace, closeSettings, disabled }) {
   const run = (fn) => { closeSettings?.(); fn(); }; // progress shows in the status pill, the confirm wants the screen
   const items = [
     { icon: ExportIcon, label: T("Export everything (.zip)"), title: t("A zip of {name}: its databases + every uploaded PDF", { name: w.name }),
       onClick: () => run(() => exportWorkspace(w.id, true)) },
     { icon: DatabaseIcon, label: T("Export databases only (.zip)"), title: T("A small zip with just the databases — no uploaded PDFs"),
       onClick: () => run(() => exportWorkspace(w.id, false)) },
-    ...(duplicate ? [duplicateItem(w, duplicate)] : []),
   ];
   if (w.role !== "viewer") {
     items.push({ icon: PlusIcon, label: T("Merge a backup into it…"), title: T("Add the backup's pages that are not there yet; nothing existing changes"),
@@ -755,7 +760,7 @@ export function WorkspacesSettings({ value, onServer, onAccount }) {
         <span className="aiProvActions">
           {!current ? <button className="uiBtn sm" disabled={!!job} onClick={() => { closeSettings?.(); switchWorkspace(w.id); }}>{t("Open")}</button> : null}
           <WorkspaceDataMenus w={w} exportWorkspace={exportWorkspace} importWorkspace={importWorkspace} closeSettings={closeSettings}
-            duplicate={duplicateWorkspace ? setDuplicating : null} disabled={!!job} />
+            disabled={!!job} />
           <button className="uiBtn sm" disabled={!!job} onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
             <PenIcon size={14} /> {t("Manage")}
           </button>
@@ -765,15 +770,28 @@ export function WorkspacesSettings({ value, onServer, onAccount }) {
     );
   }
 
-  if (manage) return (
-    <ManageWorkspaceDialog inline
-      wsId={manage} me={me} admin={isAdmin} accounts={accounts} tasks={tasks} confirm={confirm} setStatus={setStatus}
-      canOpen={manage !== currentId} personalCount={personal.filter((w) => !deleting.has(w.id)).length}
-      onOpen={() => { closeSettings?.(); switchWorkspace(manage); }}
-      onClose={() => { setManage(null); refresh(); refreshSession?.(); }}
-      onLeft={left}
-    />
-  );
+  // the copy runs as a job: its progress, and Open once it is done, show in the pill
+  const duplicateDialog = duplicating ? (
+    <DuplicateDialog w={duplicating} onClose={() => setDuplicating(null)}
+      onSubmit={(name) => { setDuplicating(null); closeSettings?.(); duplicateWorkspace(duplicating.id, name); }} />
+  ) : null;
+
+  if (manage) {
+    const managed = all.find((w) => w.id === manage); // its row, which the Duplicate dialog reads
+    return (
+      <>
+        <ManageWorkspaceDialog inline
+          wsId={manage} me={me} admin={isAdmin} accounts={accounts} tasks={tasks} confirm={confirm} setStatus={setStatus}
+          canOpen={manage !== currentId} personalCount={personal.filter((w) => !deleting.has(w.id)).length}
+          onOpen={() => { closeSettings?.(); switchWorkspace(manage); }}
+          onClose={() => { setManage(null); refresh(); refreshSession?.(); }}
+          onLeft={left}
+          onDuplicate={duplicateWorkspace && managed ? () => setDuplicating(managed) : null}
+        />
+        {duplicateDialog}
+      </>
+    );
+  }
 
   return (
     <>
@@ -829,11 +847,7 @@ export function WorkspacesSettings({ value, onServer, onAccount }) {
           hint={t("A separate library of your own — work, life, play")}
           submitLabel={t("Create and open")} busy={busy} error={createError} onSubmit={submitCreate} onClose={() => setCreating(false)} />
       ) : null}
-      {duplicating ? (
-        // the copy runs as a job: its progress, and Open once it is done, show in the pill
-        <DuplicateDialog w={duplicating} onClose={() => setDuplicating(null)}
-          onSubmit={(name) => { setDuplicating(null); closeSettings?.(); duplicateWorkspace(duplicating.id, name); }} />
-      ) : null}
+      {duplicateDialog}
     </>
   );
 }

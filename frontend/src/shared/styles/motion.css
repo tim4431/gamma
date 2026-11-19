@@ -144,8 +144,16 @@
 
 /* A label that changes in place (MorphText): the letters the two texts
    share stay put; between them the old part blurs out as the new one
-   blurs in, in one cell whose width eases from the one to the other. */
-.morph.moving { white-space: nowrap; }
+   blurs in, in one cell whose width eases from the one to the other.
+   Moving, the label holds its hidden text (absolute, below): else that
+   text's box is the nearest positioned one's beyond every scroller round
+   the label, laid out where the label stands in the scroller's content,
+   and a label low in a long list (the chat's pill under a conversation)
+   stretched the page past the window: a page scrollbar came for the
+   morph and every column narrowed and widened again. Only while moving:
+   at rest a positioned label would drop out of the text its parent's
+   background paints (.shimmerText). */
+.morph.moving { white-space: nowrap; position: relative; }
 /* Mid-swap the label's text stays, unseen, for assistive technology and
    whatever reads it; what moves is drawn beside it from its data-text. */
 .morphShow [data-text]::before {
