@@ -67,6 +67,8 @@ import time
 from pathlib import Path
 from urllib.parse import quote, urlencode, urlsplit
 
+from fastapi import HTTPException
+
 from .. import config, gamma_sync, remote_servers
 from ..db import account_names, connect_pages_db, connect_users_db, page_now
 from ..logbuf import log
@@ -304,9 +306,17 @@ class LocalChatHome:
         return workspaces.at_least(workspaces.role_of(self.ws, user_id), "editor")
 
     def cannot_write(self) -> str:
-        from .runner import _cannot_write
+        """Why this server or the workspace takes no writes now, "" when
+        they do: what fails a turn before its agent edits anything."""
+        from .. import hosted, workspaces
 
-        return _cannot_write(self.ws)
+        refused = hosted.read_only()
+        if not refused:
+            try:
+                workspaces.refuse_writes(self.ws)
+            except HTTPException as e:
+                refused = str(e.detail)
+        return refused
 
     def owner_name(self, user_id: str) -> str:
         with connect_users_db() as users:
@@ -332,9 +342,6 @@ class LocalChatHome:
                       for c, source in zip(chosen, sources)]
         return about, selections
 
-    def vault_file(self, turning, link: dict) -> str:
-        return _vault_file(turning, link)
-
     def thread(self, turning, place: dict, context: dict) -> dict | None:
         """The thread a thread's turn answers as it is now
         (``threads.entry_of``), its file named as the vault's rows name it,
@@ -354,10 +361,11 @@ class LocalChatHome:
         return chats.write_reply(self.ws, turning.conversation_id, turning.turn_id, fields)
 
 
-def _vault_file(turning, link: dict) -> str:
+def vault_file(turning, link: dict) -> str:
     """The page's path in the vault as this computer's rows of it name it,
     "" when they name none: what an ask on this computer names, never a
-    word the other server gave."""
+    word the other server gave (``HttpChatHome.where``'s fallback to the
+    claim's path or title is the prompt's alone)."""
     from ..annotations import entries
     from ..vault import store as vault_store
 
@@ -503,7 +511,7 @@ class HttpChatHome:
         thread = answer.get("thread") if isinstance(answer.get("thread"), dict) else None
         person = turn.get("for") if isinstance(turn.get("for"), dict) else {}
         return {"text": str(turn.get("text") or ""), "selections": selections[:chats.MAX_SELECTIONS],
-                "earlier": earlier[-6:], "title": chats.title_of(str(turn.get("title") or "")),
+                "earlier": earlier[-chats.EARLIER:], "title": chats.title_of(str(turn.get("title") or "")),
                 "thread_id": thread_id, "thread": thread if thread_id and thread and thread.get("id") == thread_id
                 else None, "for": {"id": str(person.get("id") or self.account),
                                    "username": events.one_line(str(person.get("username") or self.username), 64)}}
@@ -660,12 +668,6 @@ class HttpChatHome:
                 turning._fail("This page is no longer a file of the synced folder.")
         about["work_folder"] = about.get("work_folder") or root.name
         return about, selections
-
-    def vault_file(self, turning, link: dict) -> str:
-        """The page's path from this computer's vault rows alone, "" for
-        none (``where``'s fallback to the claim's path or title is the
-        prompt's): what an ask on this computer names."""
-        return _vault_file(turning, link)
 
     def thread(self, turning, place: dict, context: dict) -> dict | None:
         """The thread a thread's turn answers, as the claim gave it: in a

@@ -460,13 +460,13 @@ def test_the_announce_names_the_agents_on_for_the_channels_account_and_never_a_p
 def test_a_turn_pushes_nothing_while_its_vault_is_paused_or_gone(lab, nas):
     f = _made(lab, nas, "RC paused push", agent="")
     nas.pushed.clear()
-    turning = SimpleNamespace(link_id=f.id, name="t1")
+    turning = SimpleNamespace(link_id=f.id, turn_id="t1")
     folder_links.set_paused(f.id, True)                                  # its maker keeps the edits off the NAS
-    runner._Turning._push(turning)
-    runner._Turning._push(SimpleNamespace(link_id="no-such-link", name="t1"))
+    runner._ChatTurn._push(turning)
+    runner._ChatTurn._push(SimpleNamespace(link_id="no-such-link", turn_id="t1"))
     assert nas.pushed == []
     folder_links.set_paused(f.id, False)
-    runner._Turning._push(turning)
+    runner._ChatTurn._push(turning)
     assert nas.pushed == [(f.id, {"direction": "push"})]
 
 

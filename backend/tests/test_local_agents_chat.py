@@ -436,7 +436,7 @@ def test_a_turn_reads_gamma_with_a_token_of_its_own_gone_when_it_ends(lab, disk,
 
 
 def test_a_turns_token_lives_as_long_as_its_deadline(lab, monkeypatch):
-    turning = runner._Turning(lab.ws, "paper", "", {"stop": threading.Event()})
+    turning = SimpleNamespace(turn_id="paper")
     token_id, _ = integrations.mint_turn(lab.user, lab.ws, "Codex", 60)
     turning._token, turning._token_until = token_id, time.monotonic() + 60
 
@@ -447,9 +447,9 @@ def test_a_turns_token_lives_as_long_as_its_deadline(lab, monkeypatch):
     try:
         # a deadline within its life renews nothing; one past it, the token lives TOKEN_SLACK_S past it
         held = expires()
-        turning._keep_tools(time.monotonic() + 30)
+        runner._ChatTurn._keep_tools(turning, time.monotonic() + 30)
         assert expires() == held
-        turning._keep_tools(time.monotonic() + 600)
+        runner._ChatTurn._keep_tools(turning, time.monotonic() + 600)
         assert abs(expires() - (time.time() + 600 + runner.TOKEN_SLACK_S)) <= 2
         # a renewal that failed is tried again a minute later, not at the watch's next tick
         tried = []
@@ -460,10 +460,10 @@ def test_a_turns_token_lives_as_long_as_its_deadline(lab, monkeypatch):
 
         monkeypatch.setattr(integrations, "renew_turn", locked)
         deadline = time.monotonic() + 1200
-        turning._keep_tools(deadline)
-        turning._keep_tools(deadline + 0.1)
+        runner._ChatTurn._keep_tools(turning, deadline)
+        runner._ChatTurn._keep_tools(turning, deadline + 0.1)
         assert len(tried) == 1
-        turning._keep_tools(deadline + runner.TOKEN_SLACK_S + 1)
+        runner._ChatTurn._keep_tools(turning, deadline + runner.TOKEN_SLACK_S + 1)
         assert len(tried) == 2
     finally:
         integrations.drop(token_id)

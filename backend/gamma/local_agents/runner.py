@@ -19,9 +19,9 @@ message as the turn goes: its text, its steps (relative paths, a command's
 program), what changed, its end. Its agent streams (``delta``): the
 message's last paragraph grows as the agent writes it, and the whole
 message, when it comes, takes its place. It runs the model, effort and
-speed its turn asked for (``queue_chat``). A turn runs through ``_Turning``, which
-gives a turn of this server Gamma's tools (``_tools``: a token of the
-person's for the workspace, gamma/local_agents/tools.py), deleted as the
+speed its turn asked for (``queue_chat``). A turn of this server has
+Gamma's tools (``_tools``: a token of the person's for the workspace,
+gamma/local_agents/tools.py), deleted as the
 turn ends, however it ends; a watchdog thread stops it on the person's
 Stop, its agent turned off (``stop_agent``), the vault paused or removed,
 the server closing, or ``RUN_TIMEOUT_S`` after the turn began.
@@ -112,8 +112,6 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
-from fastapi import HTTPException
 
 from .. import agents, config, integrations, remote_servers
 from ..blocks_store import new_block_id
@@ -631,6 +629,16 @@ def relays_changed(link_id: str) -> None:
         turning._show_later()
 
 
+def _stop_where(reason: str, match) -> None:
+    """Set the stop of each running turn ``match(key, run)`` picks, ``reason``
+    why, unless its stop is set already."""
+    with _lock:
+        for key, run in _active.items():
+            if match(key, run) and not run["stop"].is_set():
+                run["reason"] = reason
+                run["stop"].set()
+
+
 def stop_link(link_id: str, why: str = "") -> None:
     """Stop the turn of the vault ``link_id``, if one runs: the vault was
     paused, relinked, removed or its push lowered (what fits is read when
@@ -639,11 +647,7 @@ def stop_link(link_id: str, why: str = "") -> None:
     ``detached`` for a work folder its other server detached. The turns
     queued for it stay: each, taken, finds the vault as it is now and fails
     with why."""
-    with _lock:
-        for run in _active.values():
-            if run["link_id"] == link_id and not run["stop"].is_set():
-                run["reason"] = why or LINK
-                run["stop"].set()
+    _stop_where(why or LINK, lambda key, run: run["link_id"] == link_id)
 
 
 def stop_channel(link_id: str, why: str) -> None:
@@ -651,11 +655,7 @@ def stop_channel(link_id: str, why: str) -> None:
     ``why`` a key of ``STOPPED`` (``unlinked``: this computer no longer
     answers that server). One queued fails when it is taken (its channel
     gone)."""
-    with _lock:
-        for (ws, _turn_id), run in _active.items():
-            if ws == link_id and not run["stop"].is_set():
-                run["reason"] = why
-                run["stop"].set()
+    _stop_where(why, lambda key, run: key[0] == link_id)
 
 
 def stop_dirs(paths) -> None:
@@ -664,11 +664,7 @@ def stop_dirs(paths) -> None:
     fails when it is taken (``_ChatTurn._work``: its place is no longer
     that directory)."""
     gone = {_place(path) for path in paths}
-    with _lock:
-        for run in _active.values():
-            if not run["link_id"] and run["dir"] in gone and not run["stop"].is_set():
-                run["reason"] = LINK
-                run["stop"].set()
+    _stop_where(LINK, lambda key, run: not run["link_id"] and run["dir"] in gone)
 
 
 def stop_person(agent: str, server: str, ws: str, account: str) -> None:
@@ -697,13 +693,9 @@ def stop_person(agent: str, server: str, ws: str, account: str) -> None:
 
 def stop_agent(agent: str) -> None:
     """Stop every turn of ``agent``, which was turned off (why is read when
-    each ends: ``_Turning._link_reason``). What waits in the queues stays:
+    each ends: ``_ChatTurn._link_reason``). What waits in the queues stays:
     each, taken, fails with why."""
-    with _lock:
-        for run in _active.values():
-            if run["agent"] == agent and not run["stop"].is_set():
-                run["reason"] = LINK
-                run["stop"].set()
+    _stop_where(LINK, lambda key, run: run["agent"] == agent)
 
 
 def release_account(user_id: str) -> None:
@@ -1094,29 +1086,24 @@ class _Stop(Exception):
     """The turn ends here; its state and the words were set."""
 
 
-def _cannot_write(ws: str) -> str:
-    """Why this server or the workspace takes no writes now, "" when they
-    do: what fails a turn before its agent edits anything."""
-    from .. import hosted, workspaces
+# --- a chat turn -------------------------------------------------------------------------------
 
-    refused = hosted.read_only()
-    if not refused:
-        try:
-            workspaces.refuse_writes(ws)
-        except HTTPException as e:
-            refused = str(e.detail)
-    return refused
+class _ChatTurn:
+    """One turn of a conversation (the module doc): the person's message
+    worked by one turn of its agent where the conversation works
+    (``chats.place_of``; ``link_id`` its vault, "" for none), the agent's message
+    written as the turn goes (at most every ``CHAT_EVERY_S``) and at its
+    end. ``go`` never raises and always ends the turn: its message (unless
+    it is gone) and its row, which keeps this computer's record of a
+    failure; a message that cannot be written leaves the row open for
+    ``recover`` (another server's, for the channel's next announce there
+    too). Where the conversation lives is its home's
+    (``home.chat_home_for``). Its agent runs in the directory (``_turn``),
+    watched (a stop, the deadline) and its events followed (``_heard``)."""
 
-
-class _Turning:
-    """One turn of an agent in its directory (``_turn``), watched (a stop,
-    the deadline) and its events followed (``_heard``), and why a stop the
-    vault set was set (``_stop_words``)."""
-
-    def __init__(self, ws: str, name: str, link_id: str, run: dict):
-        self.ws, self.name, self.link_id, self.run = ws, name, link_id, run
+    def __init__(self, ws: str, turn_id: str, link_id: str, run: dict, chat: dict):
+        self.ws, self.turn_id, self.link_id, self.run = ws, turn_id, link_id, run
         self.stop = run["stop"]
-        self.agent, self.label = "", "the agent"
         self.owner = ""                 # the account that turned the agent on, whose agent works
         self.person = ""                # the account the turn is for: the owner, or a co-author it serves
         self.turn = None
@@ -1127,201 +1114,6 @@ class _Turning:
         self._token = ""                          # their token's id, deleted at the end (``_drop_tools``)
         self._token_until = 0.0                   # when it expires, or a failed renewal is tried again (monotonic)
         self._tooled = False                      # ``_tools`` ran
-
-    def _tools(self) -> None:
-        """Gamma's tools for a turn of this server (``tools.mint``), once:
-        the token of the account the turn is for (its person: the owner, or
-        a co-author's) of the workspace, named with the agent's id,
-        living the turn's timeout and ``TOKEN_SLACK_S``. A turn mints them
-        before its prompt, which says whether it has them."""
-        if self._tooled:
-            return
-        self._tooled = True
-        minted = tools.mint(self.person or self.owner, self.ws, self.agent, _run_timeout() + TOKEN_SLACK_S)
-        if minted:
-            self.gamma, self._token = minted
-            self._token_until = time.monotonic() + _run_timeout() + TOKEN_SLACK_S
-            log.info(f"[agents] Gamma's tools for {self.label} on {self.name}")
-
-    def _keep_tools(self, deadline: float) -> None:
-        """The turn's deadline is ``deadline`` (monotonic): its token lives
-        that long, renewed at most once a minute (``TOKEN_SLACK_S`` past the
-        deadline); a renewal that failed is tried again a minute later."""
-        if self._token and deadline > self._token_until:
-            self._token_until = deadline + TOKEN_SLACK_S
-            try:
-                integrations.renew_turn(self._token, self._token_until - time.monotonic())
-            except Exception as e:  # noqa: BLE001 — the watch goes on
-                log.warning(f"[agents] renewing the token of {self.name}: {e}")
-
-    def _drop_tools(self) -> None:
-        """The turn ended, however it ended: its token is deleted, so a call
-        of the agent's after it is refused. Never raises: an expired token
-        reads nothing either, and the next start deletes what is left."""
-        if not self._token:
-            return
-        try:
-            integrations.drop(self._token)
-        except Exception as e:  # noqa: BLE001
-            log.warning(f"[agents] deleting the token of {self.name}: {e}")
-        else:
-            log.info(f"[agents] the token of {self.name} deleted")
-        self._token, self.gamma = "", None
-
-    def _turn(self, argv: list[str], root: Path, text: str, session: str, *, images=(), ask: bool = False,
-              stream: bool = False, model: str = "", effort: str = "", speed: str = "", title: str = "") -> dict:
-        """One turn of the agent on ``text`` (``session`` one to resume;
-        ``ask``, it may ask; ``stream``, its text as it is written; its
-        ``model``, ``effort`` and ``speed``; ``title`` a new session's name) with
-        Gamma's tools (``_tools``), watched, its events followed → its done.
-        A turn before it is closed first. The tools live as long as this
-        turn's deadline, counted from now (``_keep_tools``: what came
-        between the mint and the start, a snapshot of a large folder, or a
-        turn before it)."""
-        if self.turn is not None:
-            self.turn.close()
-        self._tools()
-        self._keep_tools(time.monotonic() + _run_timeout())
-        self.turn = events.start(self.agent, argv=argv, cwd=str(root), prompt=text, images=list(images),
-                                 session=session, ask=ask, stream=stream, model=model, effort=effort,
-                                 speed=speed, gamma=self.gamma, title=title)
-        if self.turn.pid:
-            self._started(self.turn.pid)
-        ended = threading.Event()
-        threading.Thread(target=self._watch, args=(self.turn, ended), name=f"agent-watch-{self.name}",
-                         daemon=True).start()
-        try:
-            return self._follow()
-        finally:
-            ended.set()
-
-    def _resume_refused(self, done: dict, session: str) -> bool:
-        """Whether a turn that resumed ``session`` failed as one whose
-        session this computer no longer has: before any step, neither
-        stopped nor out of time, and not because Gamma's tools did not start
-        (``gamma_down``: a session afresh would fail alike, and the
-        conversation's would be lost) nor because another process holds it
-        (``busy``: afresh would fork it)."""
-        return bool(session and not done["ok"] and not done.get("gamma_down") and not done.get("busy")
-                    and not self.steps and not self.stop.is_set() and not self.timed_out)
-
-    def _started(self, pid: int) -> None:
-        """The turn's process is ``pid``: what the record keeps."""
-
-    def _record(self, done: dict) -> str:
-        """This computer's record of the turn: its error and the agent's
-        stderr tail."""
-        parts = [done.get("error") or ""]
-        tail = self.turn.stderr_tail() if self.turn is not None else ""
-        if tail:
-            parts.append(f"stderr:\n{tail}")
-        return "\n".join(p for p in parts if p)
-
-    def _watch(self, turn, ended: threading.Event) -> None:
-        """Stop the turn on its stop or at its deadline, counted from
-        the turn's start (not from the queue's wait, nor while an ask waits
-        for the person, ``_waiting``); between, ``_tick``."""
-        deadline = last = time.monotonic()
-        deadline += _run_timeout()
-        while not ended.is_set():
-            now = time.monotonic()
-            if self._waiting():
-                deadline += now - last
-                self._waited(now - last)
-                self._keep_tools(deadline)
-            last = now
-            if self.stop.is_set():
-                turn.stop()
-                self._stopping()
-                return
-            if now >= deadline:
-                self.timed_out = True
-                turn.stop()
-                self._stopping()
-                return
-            self._tick()
-            ended.wait(0.1)
-
-    def _waiting(self) -> bool:
-        """Whether the turn waits for the person now (an ask): its deadline
-        moves meanwhile."""
-        return False
-
-    def _waited(self, seconds: float) -> None:
-        """The turn waited ``seconds`` more for the person (``_waiting``)."""
-
-    def _stopping(self) -> None:
-        """Called on the watching thread once it stopped the turn."""
-
-    def _tick(self) -> None:
-        """Called on the watching thread every tenth of a second while the
-        turn runs."""
-
-    def _follow(self) -> dict:
-        """The turn's events, each heard (``_heard``) → its done."""
-        done = None
-        stream = self.turn.events()
-        try:
-            for event in stream:
-                done = self._heard(event) or done
-        finally:
-            stream.close()  # a turn left early still ends its process (events.Turn)
-        return done or events.done(ok=False, error=f"{self.label} stopped unexpectedly.")
-
-    def _heard(self, event: dict) -> dict | None:
-        """One event of the turn → itself when it is the done."""
-        raise NotImplementedError
-
-    def _stop_words(self) -> str:
-        reason = self.run["reason"]
-        return STOPPED[reason if reason in STOPPED else self._link_reason()]
-
-    def _push(self) -> None:
-        """A work folder of another server pushes what the turn changed now,
-        not at the next round (no hot round runs for it); a vault paused
-        (its maker keeps the edits off that server), choosing its files or
-        gone pushes nothing: the next round after it resumes does."""
-        from .. import folder_links  # local: folder_links imports this package's modules inside functions
-
-        try:
-            link = folder_links.get_link(self.link_id)
-            if link is None or link["status"].get(folder_links.PAUSED) or folder_links.choosing(link):
-                return
-            folder_links.run_in_background(self.link_id, direction="push")
-        except Exception as e:  # noqa: BLE001 — the next round pushes it
-            log.warning(f"[agents] pushing what {self.name} of vault {self.link_id} changed: {e}")
-
-    def _link_reason(self) -> str:
-        """Why the vault stopped its turn, from what it is now."""
-        from .. import folder_links  # local: folder_links imports this package's modules inside functions
-
-        link = folder_links.get_link(self.link_id)
-        if link is None:
-            return "removed"
-        if not store.owns(self.owner, self.agent):
-            return "off"
-        if link["status"].get(folder_links.PAUSED):
-            return "paused"
-        return "changed"
-
-
-# --- a chat turn -------------------------------------------------------------------------------
-
-class _ChatTurn(_Turning):
-    """One turn of a conversation (the module doc): the person's message
-    worked by one turn of its agent where the conversation works
-    (``chats.place_of``; ``link_id`` its vault, "" for none), the agent's message
-    written as the turn goes (at most every ``CHAT_EVERY_S``) and at its
-    end. ``go`` never raises and always ends the turn: its message (unless
-    it is gone) and its row, which keeps this computer's record of a
-    failure; a message that cannot be written leaves the row open for
-    ``recover`` (another server's, for the channel's next announce there
-    too). Where the conversation lives is its home's
-    (``home.chat_home_for``)."""
-
-    def __init__(self, ws: str, turn_id: str, link_id: str, run: dict, chat: dict):
-        super().__init__(ws, turn_id, link_id, run)
-        self.turn_id = turn_id
         # Where the conversation lives: this server's pages.db, or another
         # server's (a remote turn's key names its channel).
         self.home = home.chat_home_for(ws, turn_id, chat)
@@ -1405,20 +1197,152 @@ class _ChatTurn(_Turning):
         store.end_turn(self.turn_id, state=self.end["state"], error=(self.end["record"] or "")[-MAX_ERROR:])
 
     def _tools(self) -> None:
-        """A turn of this server mints Gamma's tools (``_Turning._tools``);
-        another server's takes those its claim handed it, once, where their
+        """Gamma's tools for the turn, once. A turn of this server mints them
+        (``tools.mint``): the token of the account the turn is for (its
+        person: the owner, or a co-author's) of the workspace, named with
+        the agent's id, living the turn's timeout and ``TOKEN_SLACK_S``.
+        Another server's takes those its claim handed it, where their
         address is that server's own (``home.HttpChatHome.gamma``), and its
-        message says why it runs without them (``preface``)."""
-        if not self.home.remote:
-            super()._tools()
-            return
+        message says why it runs without them (``preface``). A turn has them
+        before its prompt, which says whether it has them."""
         if self._tooled:
             return
         self._tooled = True
-        self.gamma, why = self.home.gamma()
-        if self.gamma is not None:
-            log.info(f"[agents] Gamma's tools of the other server for {self.label} on {self.name}")
-        self.preface = why
+        if self.home.remote:
+            self.gamma, self.preface = self.home.gamma()
+            if self.gamma is not None:
+                log.info(f"[agents] Gamma's tools of the other server for {self.label} on {self.turn_id}")
+            return
+        minted = tools.mint(self.person or self.owner, self.ws, self.agent, _run_timeout() + TOKEN_SLACK_S)
+        if minted:
+            self.gamma, self._token = minted
+            self._token_until = time.monotonic() + _run_timeout() + TOKEN_SLACK_S
+            log.info(f"[agents] Gamma's tools for {self.label} on {self.turn_id}")
+    def _keep_tools(self, deadline: float) -> None:
+        """The turn's deadline is ``deadline`` (monotonic): its token lives
+        that long, renewed at most once a minute (``TOKEN_SLACK_S`` past the
+        deadline); a renewal that failed is tried again a minute later."""
+        if self._token and deadline > self._token_until:
+            self._token_until = deadline + TOKEN_SLACK_S
+            try:
+                integrations.renew_turn(self._token, self._token_until - time.monotonic())
+            except Exception as e:  # noqa: BLE001 — the watch goes on
+                log.warning(f"[agents] renewing the token of {self.turn_id}: {e}")
+
+    def _drop_tools(self) -> None:
+        """The turn ended, however it ended: its token is deleted, so a call
+        of the agent's after it is refused. Never raises: an expired token
+        reads nothing either, and the next start deletes what is left."""
+        if not self._token:
+            return
+        try:
+            integrations.drop(self._token)
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[agents] deleting the token of {self.turn_id}: {e}")
+        else:
+            log.info(f"[agents] the token of {self.turn_id} deleted")
+        self._token, self.gamma = "", None
+
+    def _turn(self, argv: list[str], root: Path, text: str, session: str, *, images=(), ask: bool = False,
+              stream: bool = False, model: str = "", effort: str = "", speed: str = "", title: str = "") -> dict:
+        """One turn of the agent on ``text`` (``session`` one to resume;
+        ``ask``, it may ask; ``stream``, its text as it is written; its
+        ``model``, ``effort`` and ``speed``; ``title`` a new session's name) with
+        Gamma's tools (``_tools``), watched, its events followed → its done.
+        A turn before it is closed first. The tools live as long as this
+        turn's deadline, counted from now (``_keep_tools``: what came
+        between the mint and the start, a snapshot of a large folder, or a
+        turn before it)."""
+        if self.turn is not None:
+            self.turn.close()
+        self._tools()
+        self._keep_tools(time.monotonic() + _run_timeout())
+        self.turn = events.start(self.agent, argv=argv, cwd=str(root), prompt=text, images=list(images),
+                                 session=session, ask=ask, stream=stream, model=model, effort=effort,
+                                 speed=speed, gamma=self.gamma, title=title)
+        if self.turn.pid:
+            store.turn_running(self.turn_id, self.turn.pid)   # the process the turn's row keeps
+        ended = threading.Event()
+        threading.Thread(target=self._watch, args=(self.turn, ended), name=f"agent-watch-{self.turn_id}",
+                         daemon=True).start()
+        try:
+            return self._follow()
+        finally:
+            ended.set()
+
+    def _resume_refused(self, done: dict, session: str) -> bool:
+        """Whether a turn that resumed ``session`` failed as one whose
+        session this computer no longer has: before any step, neither
+        stopped nor out of time, and not because Gamma's tools did not start
+        (``gamma_down``: a session afresh would fail alike, and the
+        conversation's would be lost) nor because another process holds it
+        (``busy``: afresh would fork it)."""
+        return bool(session and not done["ok"] and not done.get("gamma_down") and not done.get("busy")
+                    and not self.steps and not self.stop.is_set() and not self.timed_out)
+
+    def _record(self, done: dict) -> str:
+        """This computer's record of the turn: its error and the agent's
+        stderr tail."""
+        parts = [done.get("error") or ""]
+        tail = self.turn.stderr_tail() if self.turn is not None else ""
+        if tail:
+            parts.append(f"stderr:\n{tail}")
+        return "\n".join(p for p in parts if p)
+
+    def _watch(self, turn, ended: threading.Event) -> None:
+        """Stop the turn on its stop or at its deadline, counted from
+        the turn's start (not from the queue's wait, nor while an ask waits
+        for the person, ``_waiting``); between, ``_tick``."""
+        deadline = last = time.monotonic()
+        deadline += _run_timeout()
+        while not ended.is_set():
+            now = time.monotonic()
+            if self._waiting():
+                deadline += now - last
+                self._waited(now - last)
+                self._keep_tools(deadline)
+            last = now
+            if self.stop.is_set():
+                turn.stop()
+                self._stopping()
+                return
+            if now >= deadline:
+                self.timed_out = True
+                turn.stop()
+                self._stopping()
+                return
+            self._tick()
+            ended.wait(0.1)
+
+    def _follow(self) -> dict:
+        """The turn's events, each heard (``_heard``) → its done."""
+        done = None
+        stream = self.turn.events()
+        try:
+            for event in stream:
+                done = self._heard(event) or done
+        finally:
+            stream.close()  # a turn left early still ends its process (events.Turn)
+        return done or events.done(ok=False, error=f"{self.label} stopped unexpectedly.")
+
+    def _stop_words(self) -> str:
+        reason = self.run["reason"]
+        return STOPPED[reason if reason in STOPPED else self._link_reason()]
+
+    def _push(self) -> None:
+        """A work folder of another server pushes what the turn changed now,
+        not at the next round (no hot round runs for it); a vault paused
+        (its maker keeps the edits off that server), choosing its files or
+        gone pushes nothing: the next round after it resumes does."""
+        from .. import folder_links  # local: folder_links imports this package's modules inside functions
+
+        try:
+            link = folder_links.get_link(self.link_id)
+            if link is None or link["status"].get(folder_links.PAUSED) or folder_links.choosing(link):
+                return
+            folder_links.run_in_background(self.link_id, direction="push")
+        except Exception as e:  # noqa: BLE001 — the next round pushes it
+            log.warning(f"[agents] pushing what {self.turn_id} of vault {self.link_id} changed: {e}")
 
     def _opened(self) -> list[dict]:
         """The threads its agent opened for the turn's owner since the turn
@@ -1526,7 +1450,7 @@ class _ChatTurn(_Turning):
         owner = self.person_name or "the owner"
         about, selections = self.home.where(self, place, context)
         # what an ask names: never the other server's word
-        self.file = self.home.vault_file(self, link) if link is not None else ""
+        self.file = home.vault_file(self, link) if link is not None else ""
         earlier = context["earlier"]
         session = self._session(place)
         held = sessions.held(self.agent, session) if session else ""
@@ -1618,14 +1542,22 @@ class _ChatTurn(_Turning):
         return self.asked
 
     def _link_reason(self) -> str:
-        """Why its stop was set, a turn of no vault's: its agent turned off,
-        else its directory no longer offered (``stop_dirs``)."""
-        if self.link_id:
-            return super()._link_reason()
-        return "off" if not store.owns(self.owner, self.agent) else "unoffered"
+        """Why its stop was set, from what is now: a turn of a vault's, the
+        vault gone, its agent turned off, the vault paused, else changed; a
+        turn of no vault's, its agent turned off, else its directory no
+        longer offered (``stop_dirs``)."""
+        from .. import folder_links  # local: folder_links imports this package's modules inside functions
 
-    def _started(self, pid: int) -> None:
-        store.turn_running(self.turn_id, pid)
+        if not self.link_id:
+            return "off" if not store.owns(self.owner, self.agent) else "unoffered"
+        link = folder_links.get_link(self.link_id)
+        if link is None:
+            return "removed"
+        if not store.owns(self.owner, self.agent):
+            return "off"
+        if link["status"].get(folder_links.PAUSED):
+            return "paused"
+        return "changed"
 
     def _heard(self, event: dict) -> dict | None:
         """One event of the turn: its session kept, its text and steps

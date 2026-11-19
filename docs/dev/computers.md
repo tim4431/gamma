@@ -2,21 +2,18 @@
 
 The desktop app's own server keeps synced vaults, some of them of another
 Gamma server (a NAS, a hosted one: [synced_vaults.md](synced_vaults.md)).
-That other server used to see only the files a vault pushed. Now the
-computer announces itself to it over a channel of its own, and the server
-shows the vault's maker, in any window (a browser, an iPad, the desktop
+The computer announces itself to that server over a channel of its own,
+and the server shows the vault's maker, in any window (a browser, an iPad, the desktop
 window on that server), that the folder or file is kept on *TIM-PC*,
 whether that computer is online or since when it is not, and which
 assistants are there (Codex, Claude Code). The same channel then carries
 work the other way: the turns of that computer's agent asked for from the
 server ("The agents' turns there"), and sessions over the channel.
 
-This is step 4a of [agent-collab.md](../research/agent-collab.md) ("How
-the server sees a vault"). The later steps build on the channel: 4b work
-folders of another server, 4c their agent the computer's, 4d the chat's
-computer side relayed, and with it the turns of the comments sent to its
-agent (step 3.5 of the agents-as-participants plan, whose step 3.7 removed
-the Sends 4c first ran there). The words below call the
+The design is step 4a of [agent-collab.md](../research/agent-collab.md)
+("How the server sees a vault"). The channel also carries the work
+folders of another server, the turns of the computer's agent in the chat
+and those of the comments sent to it. The words below call the
 desktop app's own server *the host* (as [synced_vaults.md](synced_vaults.md)
 does) and the vault's server *the server*.
 

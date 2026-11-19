@@ -621,8 +621,8 @@ def test_an_end_or_a_failure_left_open_leaves_waiting_false(lab, nas, monkeypatc
 def test_the_card_names_a_file_only_from_the_vaults_rows(lab, nas):
     f = _made(lab, nas, "RA file", shown=False, agent="")
     link = {"id": f.id}
-    assert home._vault_file(SimpleNamespace(bucket=f.page), link) == "main.pdf"
-    assert home._vault_file(SimpleNamespace(bucket="aPageThere"), link) == ""   # never the NAS's path or title
+    assert home.vault_file(SimpleNamespace(bucket=f.page), link) == "main.pdf"
+    assert home.vault_file(SimpleNamespace(bucket="aPageThere"), link) == ""   # never the NAS's path or title
 
 
 def test_the_shells_secret_is_off_the_environment_once_read(monkeypatch):

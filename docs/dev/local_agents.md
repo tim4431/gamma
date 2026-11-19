@@ -14,18 +14,13 @@ folder's, one the computer offers, one of its own), with Gamma's tools, and
 shows what the agent is doing as it goes. The owner may name co-authors who
 use the agent too, on the files of a synced folder ("A co-author's turn").
 
-The design, the survey of both CLIs and the later steps (`@codex` in a
-comment, the chat window's agent side, a remote server seeing the
-computer) are the research note [agent-collab.md](../research/agent-collab.md);
-this is step 1 as built. Backend: the package `gamma/local_agents/` and
+The design and the survey of both CLIs are the research notes
+[agent-collab.md](../research/agent-collab.md) and
+[agents-as-participants-plan.md](../research/agents-as-participants-plan.md).
+Backend: the package `gamma/local_agents/` and
 `gamma/routers/local_agents.py`, with small parts in `gamma/comments.py`,
 `gamma/folder_links.py`, the folder-links router and `gamma/routers/shell.py`
-(the shell's word). Step 2.1 of
-[agents-as-participants-plan.md](../research/agents-as-participants-plan.md)
-made the agents the computer's, where they were each vault's; its step 3.7
-removed the Feedback dialog's Send, whose requests an agent here once
-claimed and answered (vaults.db keeps its `agent_runs` and `agent_threads`
-tables, unread: "What this computer keeps").
+(the shell's word).
 
 | Module | What |
 |---|---|
@@ -193,8 +188,8 @@ through all of these.
 `runner.register()`, from `app.create_app`, registers `runner.shutdown` at
 exit. Every turn, a chat's ("The chat's computer side") and a comment
 thread's ("A comment sent to an agent"), waits in the queue of the
-directory its agent works in and runs as a `_ChatTurn` over `_Turning`, the
-turn plumbing this section describes.
+directory its agent works in and runs as a `_ChatTurn`, whose plumbing
+this section describes.
 
 - **The queue.** A turn is queued under `(ws, turn id)` (`runner.queue_chat`;
   a turn of another server's page under `(link id, turn id)`,
@@ -219,7 +214,7 @@ turn plumbing this section describes.
   deadline, is started once more afresh (Claude Code has no fallback of its
   own; Codex falls back to a new thread itself), unless Gamma's tools did
   not start for it (the done's `gamma_down`, `events.GammaDown`: afresh
-  would fail alike, and replace the session; `_Turning._resume_refused`) or
+  would fail alike, and replace the session; `_ChatTurn._resume_refused`) or
   another process holds the session (the done's `busy`,
   `events.SessionBusy`: afresh would fork it). A session a terminal or an
   editor has open fails the turn with why before any process starts
@@ -758,7 +753,7 @@ bucket moved into or out of a work folder kept here) archives the active
 conversation and starts a new one, as another agent does. A page of a work
 folder no vault here keeps, kept by a computer of the account's with an
 agent there, has its turns run on that computer ("The chat on another
-server's page"), until step 4 of the plan links computers in Settings.
+server's page").
 
 The chat draws such a conversation wherever the composer's chip picks a
 computer's agent ("The client"): on a page, a folder or the library, in
@@ -836,9 +831,8 @@ steps").
   `MAX_RUNS` slots: one directory never has two agents. A turn belongs to
   the computer: no connection holds it, so closing the tab or the window
   stops nothing.
-- **`_ChatTurn`** (over `_Turning`, "The queue and the turn": the
-  snapshot, `events.start`, the watchdog, following the events, the
-  changed files):
+- **`_ChatTurn`** ("The queue and the turn": the snapshot,
+  `events.start`, the watchdog, following the events, the changed files):
   1. Checks again what its route checked (`home.place`): where it works,
      still the conversation's (`chats.place_of` for its account and
      `dir`: else "The synced folder is no longer kept on this computer.",
@@ -1428,7 +1422,7 @@ Step 2.7 of
 gives a turn of this server Gamma's read tools, and step 3.3 its writing
 tools (`comment`, `resolve`, `highlight`, [mcp.md](mcp.md) "The Comment
 level"): the agent calls this server's own MCP endpoint ([mcp.md](mcp.md))
-with a token of the turn's (`tools.py`, `runner._Turning._tools`). What it
+with a token of the turn's (`tools.py`, `runner._ChatTurn._tools`). What it
 writes is signed and stamped as this computer's agent, for the turn's owner,
 and the owner can delete it; notes it changes only through the turn's asks.
 
