@@ -324,6 +324,25 @@ test("a computer turn's row: the agent and the page, waiting for the person whil
   assert.equal(trayBadge([job({}), turn()], quietKinds), "running");
 });
 
+test("a paper handed to the browser: named by its title, waiting for you until the Connector takes it, and stoppable", () => {
+  const params = { request: "r 1", host: "harvest.aps.org", wall: "captcha", source: "doi:10.1103/PhysRevA.1", title: "" };
+  const paper = (more = {}, fields = {}) => job({ id: "paper-r1", kind: "paper-handoff", readonly: true,
+    params: { ...params, ...more }, progress: { phase: "browser", item: "harvest.aps.org" }, ...fields });
+  assert.equal(taskTitle(paper({ title: "Robust cooling of ions" })), "Get “Robust cooling of ions” in your browser");
+  assert.equal(taskTitle(paper()), "Get “doi:10.1103/PhysRevA.1” in your browser", "no title: the identifier asked for");
+  assert.equal(taskTitle(paper({ source: "https://harvest.aps.org/v2/x" })), "Get “harvest.aps.org” in your browser",
+    "an address: its site");
+  assert.equal(taskInfo(paper()), "Waiting for you in your browser · harvest.aps.org");
+  // nobody has taken it up: it waits for the person, no spinner, the accent dot
+  assert.equal(waitsForYou(paper()), true);
+  assert.equal(trayBadge([job({}), paper()], quietKinds), "ready");
+  const working = paper({}, { progress: { phase: "connector", item: "harvest.aps.org" } });
+  assert.equal(waitsForYou(working), false);
+  assert.equal(taskInfo(working), "Gamma Connector is on it · harvest.aps.org");
+  assert.deepEqual(taskActions(paper()), ["stop"]);
+  assert.equal(stopPath(paper()), "/ai/handoffs/r%201/stop");
+});
+
 test("a computer turn's row opens its conversation: its thread's, a co-author's, else the chat's own", () => {
   const params = { bucket: "p1", turn: "t1", agent: "codex", label: "Codex", title: "Draft", conversation: "c1" };
   const turn = (more = {}) => job({ id: "computer-t1", kind: "computer-turn", params: { ...params, ...more }, readonly: true });

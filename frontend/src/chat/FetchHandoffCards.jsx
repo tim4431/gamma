@@ -18,7 +18,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, isPdfFile } from "../shared/lib/utils";
 import { xhrUpload } from "../shared/lib/xhrUpload.js";
-import { IS_DESKTOP } from "../shared/lib/connector.js";
+import { IS_DESKTOP, connectorTab as askConnector } from "../shared/lib/connector.js";
 import { CheckIcon, ExternalLinkIcon, ShieldIcon, UploadIcon } from "../shared/ui/Icons";
 import { IconSwap } from "../shared/ui/MotionWidgets";
 import { t } from "../shared/i18n/i18n.js";
@@ -57,25 +57,6 @@ function useConnector(id, active, round) {
     return () => { window.removeEventListener("message", onMessage); timers.forEach(clearTimeout); };
   }, [id, active, round]);
   return status;
-}
-
-// Ask the Connector to open ("open", `background` for an unfocused tab), show
-// ("show") or let go of ("close") request `id`'s tab. Resolves to its
-// answer's status ("opened", "queued", "shown", "none", "closed", or the
-// request's status when it no longer waits), or "" when none came in time.
-function askConnector(id, act, { background = false } = {}) {
-  return new Promise((resolve) => {
-    const done = (status) => { window.removeEventListener("message", onMessage); clearTimeout(timer); resolve(status); };
-    const onMessage = (e) => {
-      const d = e.data;
-      if (e.source !== window || e.origin !== window.location.origin || d?.source !== "gamma-connector"
-          || d.type !== "connector-tab" || d.id !== id || d.do !== act) return;
-      done(String(d.status || ""));
-    };
-    const timer = setTimeout(() => done(""), 2000);
-    window.addEventListener("message", onMessage);
-    window.postMessage({ source: "gamma-app", type: "connector-tab", id, do: act, background }, window.location.origin);
-  });
 }
 
 function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState, live = false, onNeverWait }) {
@@ -224,7 +205,8 @@ function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState, live = fals
         {noteText ? <> {noteText}</> : null}
         {connectorText ? <> {connectorText}</> : null}
       </div>
-      {handoff.source && !settled ? <div className="chatHandoffSource" title={handoff.source}>{handoff.source}</div> : null}
+      {/* the paper by its title when the model gave one, else the source it asked for */}
+      {handoff.source && !settled ? <div className="chatHandoffSource" title={handoff.source}>{handoff.title || handoff.source}</div> : null}
       {error ? <div className="chatHandoffError" role="alert">{error}</div> : null}
       {!settled && !readOnly && skipping ? (
         <div className="chatHandoffInstead">

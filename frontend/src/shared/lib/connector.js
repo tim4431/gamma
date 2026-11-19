@@ -38,3 +38,26 @@ export function askConnectorHere({ tries = [0, 1500, 3000], timeout = 4500 } = {
     timers.push(setTimeout(() => done(false), timeout));
   });
 }
+
+// Ask the Connector to open ("open", `background` for an unfocused tab),
+// show ("show") or let go of ("close") the tab of the chat's handoff
+// request `id` (chat/FetchHandoffCards.jsx; Background tasks' Stop closes
+// it too). Resolves to its answer's status ("opened", "queued", "shown",
+// "none", "closed", or the request's status when it no longer waits), or ""
+// when none came in time.
+export function connectorTab(id, act, { background = false } = {}) {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined") { resolve(""); return; }
+    const origin = window.location.origin;
+    const done = (status) => { window.removeEventListener("message", onMessage); clearTimeout(timer); resolve(status); };
+    const onMessage = (e) => {
+      const d = e.data;
+      if (e.source !== window || e.origin !== origin || d?.source !== "gamma-connector"
+          || d.type !== "connector-tab" || d.id !== id || d.do !== act) return;
+      done(String(d.status || ""));
+    };
+    const timer = setTimeout(() => done(""), 2000);
+    window.addEventListener("message", onMessage);
+    window.postMessage({ source: "gamma-app", type: "connector-tab", id, do: act, background }, origin);
+  });
+}

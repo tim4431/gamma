@@ -88,8 +88,11 @@ export function afterFollow(job, read, now = Date.now()) {
 }
 
 // A running task that waits for the person (a computer turn's ask, phase
-// "asking"): nothing spins for it, in its row or on the tray button.
-export const waitsForYou = (task) => task?.state === "running" && task.progress?.phase === "asking";
+// "asking"; a paper the chat handed to their browser that nothing has
+// taken up yet, phase "browser"): nothing spins for it, in its row or on
+// the tray button.
+const YOUR_TURN = new Set(["asking", "browser"]);
+export const waitsForYou = (task) => task?.state === "running" && YOUR_TURN.has(task.progress?.phase);
 
 // What the tray button shows: "ready" (an accent dot) while a task waits
 // for the person, else "running" (a spinner) while anything runs or waits

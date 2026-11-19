@@ -10,7 +10,8 @@ of work meet there:
   indexer. A job lives
   on the server (`gamma/jobs.py`), so it goes on when the tab or the dialog
   that started it closes, and every tab and device of the account sees it.
-- **This tab's own work**: a PDF loading in the viewer, a file uploading
+- **This tab's own work**: a PDF loading in the viewer (a link resolving
+  first, its Stop aborting the resolve: `resolvePdfSource`), a file uploading
   (its bytes and the time left at the rate kept so far, `taskKinds`
   `byteProgress`, patched once per visible percent), a folder or many files
   uploading as one batch (local kind `uploads`, whose click opens its
@@ -156,9 +157,16 @@ jobs".
   Settings → Backups, and a failure raises the `backup-failed` notice —
   and the AI chat's blocked paper fetches (`gamma/fetch_handoff.py`) as
   `paper-handoff` while one waits for the user's browser, so a card whose
-  reply has scrolled away is still somewhere to find. A click on that row
-  opens the publisher's page; the chat's own card settles the request
-  ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A third,
+  reply has scrolled away is still somewhere to find. The row is named by
+  the paper's title (`params.title`, else the DOI or arXiv id asked for,
+  else the site), and its line says whose turn it is and the site
+  (`progress.item`). While nothing has taken it up (phase `browser`) it
+  waits for the person, as an ask does. A click on that row opens the
+  publisher's page; the chat's own card settles the request, and so does
+  the row's Stop, which goes to the request's own stop route
+  (`POST /api/ai/handoffs/{id}/stop`, not `cancelJob`), and `useAppJobs`
+  `stopTask` then asks Gamma Connector to close the background tab it kept
+  for it ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A third,
   `computer-turn`, is a chat turn of an agent on this computer queued or
   running for the account, or for a co-author its agent serves
   (`params.person`; [local_agents.md](local_agents.md) "Its model, its
@@ -167,9 +175,9 @@ jobs".
   co-author's, else the page's own; a turn of another workspace, only its
   page), and its Stop goes to
   the turn's own stop route, not `cancelJob`. While one asks the person
-  (`progress.phase` `asking`, taskModel `waitsForYou`) its row has a still
-  shield and no bar, and the tray button the accent dot instead of the
-  spinner.
+  (`progress.phase` `asking`, or a paper handoff's `browser`: taskModel
+  `waitsForYou`) its row has a still shield and no bar, and the tray
+  button the accent dot instead of the spinner.
 - `GET /api/jobs/{id}` is one job with its `result`.
 - `POST /api/jobs/{id}/cancel`, `DELETE /api/jobs/{id}` and
   `POST /api/jobs/clear` stop, remove and clear jobs.
@@ -319,7 +327,9 @@ keeps it with the job,
   Finished, a new one fades in, and one removed leaves from where it stood
   while the rest close up.
 - A row has its title, elapsed or finish time, bar and detail, plus Stop,
-  Download, Start again and Remove. A click on an export or import row
+  Download, Start again and Remove. Stop goes through the panel's `onStop`
+  (`useAppJobs` `stopTask`: the store's `cancel`, plus what a kind leaves
+  outside the server, a paper handoff's Connector tab). A click on an export or import row
   opens its dialog on that job again; a backup row opens Settings → Backups.
 - `TaskProgress` is the progress block the dialogs show; for a row of this
   tab's (the upload dialog's batch) it shows the row's own line and how

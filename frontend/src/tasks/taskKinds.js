@@ -157,11 +157,16 @@ export const TASK_KINDS = {
     retry: () => ["db-check", {}],
   },
   // A paper the AI chat could not download, waiting for the user's own
-  // browser (gamma/fetch_handoff.py). Read-only here: the chat's card
-  // settles it, and a click opens the publisher's page.
+  // browser (gamma/fetch_handoff.py), named by its title when the model gave
+  // one (else its DOI or arXiv id, else the site); its line says whose turn
+  // it is and the site. A click opens the publisher's page; the chat's card
+  // settles it, and so does Stop, which lets the request go (a reply waiting
+  // on it goes on without the paper) and the Connector's tab with it
+  // (useAppJobs stopTask).
   "paper-handoff": {
     icon: "cloudDownload", open: "handoff",
-    title: ({ params }) => t("Get “{host}” in your browser", { host: named(params.host) }),
+    title: ({ params }) => t("Get “{title}” in your browser", { title: named(handoffName(params)) }),
+    stop: ({ params }) => `/ai/handoffs/${encodeURIComponent(params?.request || "")}/stop`,
   },
   // A turn of a computer's agent in the chat's computer side, queued or
   // running on this computer (docs/dev/local_agents.md "The chat's computer
@@ -204,6 +209,13 @@ export const TASK_KINDS = {
   ai: { icon: "sparkles", quiet: true },
   batch: { icon: "file" }, // the library's bulk actions over many pages (library/pageBatch.js)
 };
+
+// What names a paper handoff's row: the paper's title, else the source the
+// model asked for when it is an identifier, else the site.
+function handoffName(params = {}) {
+  const source = String(params.source || "");
+  return params.title || (source && !/^https?:\/\//i.test(source) ? source : params.host || source);
+}
 
 // What a computer turn's row opens in its bucket's chat in place of the
 // chat's own (chat/computer/chatSide.js showInChat): the conversation of
