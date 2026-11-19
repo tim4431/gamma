@@ -13,7 +13,7 @@ import unicodedata
 from urllib.parse import unquote
 
 from .documents.formats import IMAGE_MEDIA_TYPES
-from .note_markup import LITERAL_SPANS
+from .note_markup import LITERAL_SPANS, ref_token, table_pipe
 
 _MD_EXTS = (".md", ".markdown")
 _NOTION_ID_RE = re.compile(r"(?<!\s)\s+[0-9a-f]{32}$", re.I)
@@ -62,6 +62,43 @@ def _split_ext(path: str):
 
 def _norm_heading(text: str) -> str:
     return re.sub(r"\s+", " ", _HEADING_PUNCT_RE.sub(" ", text)).strip().lower()
+
+
+def wiki_parts(m):
+    """A ``_WIKILINK_RE`` match's ``(bang, target, sub, alias)``, the
+    backslash of a pipe escaped in a table's cell its pipe's, not the
+    target's."""
+    bang, target, sub, alias = m.groups()
+    if alias is not None and sub.endswith("\\"):
+        sub = sub[:-1]
+    elif alias is not None and not sub and target.endswith("\\"):
+        target = target[:-1]
+    return bang, target, sub, alias
+
+
+def unlabel(label: str) -> str:
+    """A Markdown link's label as its words: the backslash before a bracket
+    or a backslash taken off (gamma/vault/links.py ``_label`` puts it on)."""
+    return re.sub(r"\\([\\\[\]])", r"\1", label or "")
+
+
+def _folded_words(text) -> str:
+    """Text as two spellings of a name compare: its escapes read, in one case
+    and spacing."""
+    text = re.sub(r"\\([!-/:-@\[-`{-~])", r"\1", str(text or ""))
+    return unicodedata.normalize("NFC", " ".join(text.split())).lower()
+
+
+def label_alias(label: str, *names) -> str | None:
+    """A Markdown link's label as the words of the ``[[id|words]]`` mention
+    it becomes, or None when it says what the mention shows anyway: one of
+    ``names`` (its note's file name, its title), in any case and spacing,
+    or holds brackets: a link of its own (``[[One]](Two.md)``, whose
+    wikilink is read first), which words cannot hold."""
+    words = " ".join(unlabel(label).split())
+    if not words or "[" in words or _folded_words(words) in {_folded_words(n) for n in names}:
+        return None
+    return words
 
 
 def _walk(nodes):
@@ -162,6 +199,13 @@ class Links:
         dialect = self.run.dialect
         return resolve_path(base_dir, href, lower, stems, self.assets_by_name, dialect.page_exts, dialect.absent_csv)
 
+    def names(self, path, page_id):
+        """What a mention of the note at ``path`` shows anyway: its file's
+        name, that name without a Notion id, its title."""
+        stem = _split_ext(posixpath.basename(path))[0]
+        plan = self.run.plan_of.get(page_id)
+        return stem, _clean_stem(stem), plan.title if plan is not None else ""
+
     def block_target(self, page_id, sub):
         """``#Heading`` / ``#^id`` inside a link to ``page_id`` → the block it
         names, else the page itself."""
@@ -189,14 +233,18 @@ class Links:
             if path in targets:
                 report["links_resolved"] += 1
                 sub = unquote(href.partition("#")[2])
-                return f"[[{self.block_target(targets[path], '#' + sub if sub else '')}]]"
+                pid = targets[path]
+                words = not bang and run.dialect.label_words(plan)
+                alias = label_alias(label, *self.names(path, pid)) if words else None
+                return ref_token(self.block_target(pid, '#' + sub if sub else ''), alias,
+                                 pipe=table_pipe(m.string, m.start()))
             url = run.store_asset(path)
             if not url:
                 return m.group(0)
             return f"{bang}[{label}]({url}{title})"
 
         def wiki_repl(m):
-            bang, target, sub, alias = m.groups()
+            bang, target, sub, alias = wiki_parts(m)
             target = target.strip()
             if target:
                 path = self.resolve(base_dir, target)
@@ -213,9 +261,13 @@ class Links:
                 bid = self.block_target(pid, sub)
                 # An embed of one anchored block is a synced block; a whole
                 # note or a section has no single block to sync (a Gamma
-                # embed shows one block), so those are mentions.
+                # embed shows one block), so those are mentions. A link's
+                # alias is the mention's words; an embed's is none, as in
+                # Obsidian.
                 anchored = sub.split("#")[-1].startswith("^") and bid != pid
-                return f"![[{bid}]]" if bang and anchored else f"[[{bid}]]"
+                if bang and anchored:
+                    return f"![[{bid}]]"
+                return ref_token(bid, None if bang else alias, pipe=table_pipe(m.string, m.start()))
             url = run.store_asset(path)
             if not url:
                 return m.group(0)

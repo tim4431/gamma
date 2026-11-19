@@ -178,13 +178,27 @@ def markup(plan, groups: list, boxes: list) -> list[dict]:
 def import_note_apps(ws: str, data, conn, folder: str = "", *, name: str = "", actor: str = "",
                      preview: bool = False, selected: set[str] | None = None, progress=None) -> dict:
     """Import the Notability notes and the GoodNotes notebooks in the upload
-    ``data``, in one review: one .note, .ntb or .goodnotes, several picked
-    together, or a .zip holding either or both. Each is found and read by
-    its own app's import (``notability_import.import_notes``,
-    ``goodnotes_import.import_goodnotes``, whose parameters, report and
-    refusals these are), over one walk of the upload. A preview's
-    ``stage`` names each note's app (``note_apps``: path → "notability" or
-    "goodnotes"), which the import job's params carry for the setup guide."""
+    ``data`` into ``ws``, through the open pages.db connection ``conn``, in
+    one review. ``data`` is a seekable binary file: one .note, .ntb or
+    .goodnotes, several picked together, or a .zip holding either or both.
+    Each is found and read by its own app's ``Import``
+    (gamma/notability_import.py, gamma/goodnotes_import.py), over one walk
+    of the upload.
+
+    - One page per note, filed below the folder ``folder`` (an id; "" is
+      the top; 400 when it is no folder), made by ``actor``.
+    - ``name`` is the upload's file name.
+    - A ``preview`` writes nothing. Its ``stage`` names each note's app
+      (``note_apps``: path → "notability" or "goodnotes"), which the import
+      job's params carry for the setup guide.
+    - ``selected``: the bundle paths to import. None means all; unknown ids
+      are a 400.
+    - ``progress`` is a job's report, called per note and per stored file.
+      A stopped job keeps the notes it finished.
+
+    Returns the report. Raises HTTPException 400 (no notes, a Supernote
+    file, a bad destination or selection), 413 (a central directory or an
+    archive past the limits) or 507 (no disk to unpack)."""
     from . import goodnotes_import, notability_import  # they import this module
 
     name = name_segment(display_filename(name))  # a note's path when it is the upload's top

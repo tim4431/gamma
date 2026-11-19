@@ -1,5 +1,5 @@
 // A terminal of this computer opened in a directory, running a command line:
-// a page's "Continue in a terminal" (main.js terminalFromPage), the agent's
+// a page's "Continue in a terminal" (lib/thisComputer.js terminalFromPage), the agent's
 // session of a computer chat resumed where the agent works. The command line
 // is the open server's answer, never the page's, and always an argv: each
 // terminal gets it as separate arguments, spawned with no shell between.

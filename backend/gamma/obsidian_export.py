@@ -11,9 +11,10 @@ labels, ``aliases``, ``source``, ``doi``, ``authors``, ``year``).
 
 Links resolve against the export set: a ``[[id]]`` mention of a page in the
 export becomes ``[[Title]]`` (``[[dir/Title]]`` when two exported pages share
-a name), a mention of a block ``[[Title#^id]]`` and a ``![[embed]]``
-``![[Title#^id]]`` — the target block gets `` ^id`` written after it (only
-blocks that are actually linked carry an anchor). Highlights are
+a name), a mention of a block ``[[Title#^id]]``, a ``[[id|words]]`` the
+same with ``|words`` as its alias, and a ``![[embed]]`` ``![[Title#^id]]`` —
+the target block gets `` ^id`` written after it (only blocks that are
+actually linked carry an anchor). Highlights are
 ``[!quote]`` callouts whose title links the bundled PDF's page
 (``[[Paper.pdf#page=3|p. 3]]``); the PDF is also the quoted
 ``source: "[[Paper.pdf]]"`` property. A text box on a PDF page is a note
@@ -41,9 +42,9 @@ from .blocks_store import (FOLDERS, LABELS, PATH_SEP, filing, folder_paths, fold
                            load_props, page_parents, top_of)
 from .documents.model import page_document
 from .highlights import is_highlight, is_link, page_of
-from .markdown_export import _BLOCK_REF_RE, _link_label, block_text, resolve_block_links
+from .markdown_export import _link_label, block_text, resolve_block_links
 from .markdown_import import _FENCE_LINE_RE, EMPTY_ITEM_RE, LIST_BLOCK_RE, item_rest, yaml_list, yaml_text
-from .note_markup import obsidian_image_sizes
+from .note_markup import BLOCK_REF_RE, obsidian_image_sizes, ref_alias, table_pipe
 from .notebook import is_sheet
 from .picture import is_picture, markdown_of, picture_page
 from .recording import heading as recording_heading, is_recording, segments_of
@@ -258,20 +259,24 @@ def page_dir(folder) -> str:
 # --- links -------------------------------------------------------------------
 
 def resolve_links(md, ctx: VaultContext, page_id):
-    """``[[id]]`` / ``![[id]]`` → Obsidian links into the export set; targets
-    outside it fall back to the readable export's rendering."""
+    """``[[id]]`` / ``![[id]]`` → Obsidian links into the export set, a
+    ``[[id|words]]`` keeping its words as the alias (``\\|`` in a table's
+    row, as Obsidian writes it); targets outside it fall back to the readable
+    export's rendering."""
     def repl(m):
         is_embed, block_id = m.group(1), m.group(2)
         ref = ctx.resolve_ref(block_id) if ctx.resolve_ref else None
         target_page = ref.get("page_id") if ref else None
         if not ref or target_page not in ctx.page_file:
             return resolve_block_links(m.group(0), ctx.resolve_ref, None, page_id)
+        alias = ref_alias(m)
+        alias = table_pipe(md, m.start()) + alias if alias else ""
         text = "" if target_page == page_id else ctx.link_text[target_page]
         if block_id == target_page:                 # the page itself
-            return f"{is_embed}[[{text or ctx.link_text[target_page]}]]"
-        return f"{is_embed}[[{text}#^{ctx.note_anchor(block_id)}]]"
+            return f"{is_embed}[[{text or ctx.link_text[target_page]}{alias}]]"
+        return f"{is_embed}[[{text}#^{ctx.note_anchor(block_id)}{alias}]]"
 
-    return _BLOCK_REF_RE.sub(repl, md)
+    return BLOCK_REF_RE.sub(repl, md)
 
 
 def referenced_blocks(texts, ctx: VaultContext):
@@ -279,7 +284,7 @@ def referenced_blocks(texts, ctx: VaultContext):
     target block lives inside an exported page (a page's own root needs
     none — it is linked by title)."""
     for text in texts:
-        for m in _BLOCK_REF_RE.finditer(text or ""):
+        for m in BLOCK_REF_RE.finditer(text or ""):
             block_id = m.group(2)
             ref = ctx.resolve_ref(block_id)
             if ref and ref.get("page_id") in ctx.page_file and block_id != ref["page_id"]:

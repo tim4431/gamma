@@ -2,7 +2,7 @@
 // one place the scripts (e2e.js, security.e2e.js, smoke.js) take it from.
 // `env` opens the window minimized (main.js TEST_MINIMIZED) unless the run is
 // headed (tools/headed.cjs). `printShellLines` passes on the `[shell]` lines
-// the shell logs in place of a message box (main.js errorBox, an uncaught
+// the shell logs in place of a message box (lib/systemFiles.js errorBox, an uncaught
 // error), which the Playwright driver would otherwise keep.
 const headed = require('../../tools/headed.cjs');
 

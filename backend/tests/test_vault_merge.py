@@ -267,7 +267,7 @@ def test_changes_of_different_words_merge_clean(base, file_text, stored, both):
 ])
 def test_a_merge_read_again_from_the_same_base_is_left_as_it_is(base, file_text, stored):
     """A block Gamma moved to another page and edited took the file's change
-    there (``Round._follow``), and the round died after it or planned its own
+    there (``pages._follow``), and the round died after it or planned its own
     page again: the same change merged into the text it gave went in a second
     time (``alpha beta gtyped ptyped ptyped``), or a word both sides deleted
     read as a clash that took Gamma's other words. A change the text holds is

@@ -81,9 +81,6 @@ RIBBON_FORMATS = ("vA(v)A(u)A(u)A(v)A(v)A(u)A(u)A(u)A(u)A(v)", "vuA(v)A(u)A(u)A(
 PENCIL_FORMAT = "vuA(v)A(S(uuuuu))A(S(uuuuuuuuuuu))A(S(uu))A(v)A(S(uu))A(S(uuuu))A(u)"
 KNOWN_FORMATS = frozenset((*FLAT_FORMATS, *RIBBON_FORMATS, PENCIL_FORMAT))
 
-NO_NOTEBOOKS_REASON = ("no GoodNotes notebooks found: upload one or more .goodnotes files, or a .zip of them "
-                       "(GoodNotes on an iPad, iPhone or Mac: a document's ⋯ menu → Export → GoodNotes)")
-
 LEFT_OUT = {
     "stroke": ("{n} stroke could not be read and was left out", "{n} strokes could not be read and were left out"),
     "shape": ("{n} shape could not be read and was left out", "{n} shapes could not be read and were left out"),
@@ -208,13 +205,6 @@ class Budget:
 
 def _leaf(path: str) -> str:
     return path.rsplit("/", 1)[-1]
-
-
-def nested_zip(name: str) -> bool:
-    """walk_zip's ``nested``: a ``*.zip`` opens in place (a folder's export,
-    a ``.goodnotes.zip`` backup); a ``.goodnotes`` is opened by the import
-    when it reads it."""
-    return name.lower().endswith(".zip")
 
 
 def notebook_members(entries: list[ZipEntry]) -> nb.Members | None:

@@ -23,6 +23,7 @@ from gamma.db import connect_pages_db
 from gamma.documents.model import stored_name
 from gamma.annotations import files as annotation_files
 from gamma.ops import commit_ops, restore_page, trash_page
+from gamma.folder_sync import ROOT
 from gamma.vault.local_remote import LocalRemote
 from gamma.work_folders import marks, takeover
 from test_vault_sync import Vault, _pdf, insert
@@ -459,4 +460,4 @@ def test_a_kept_vault_leaves_out_a_work_folder_moved_into_its_folder(owner):
     mark_work_folder(owner, work)
     assert set(LocalRemote(ws, kept, user).layout().folders) == {sub}
     assert set(LocalRemote(ws, work, user).layout().folders) == {directory}
-    assert not {work, directory} & set(LocalRemote(ws, vault_sync.ROOT, user).layout().folders)
+    assert not {work, directory} & set(LocalRemote(ws, ROOT, user).layout().folders)

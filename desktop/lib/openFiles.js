@@ -76,7 +76,7 @@ function placeKey(p, platform = process.platform) {
 }
 
 // The label of the broad place `dir` is (`places`: `[{ label, path }]`, the
-// Desktop, Documents, a cloud drive's root… as main.js knownPlaces lists
+// Desktop, Documents, a cloud drive's root… as lib/vaults.js knownPlaces lists
 // them), or ''. The place itself only: a directory inside one is a project.
 function broadPlace(dir, places, platform = process.platform) {
   const key = placeKey(dir, platform);
@@ -169,8 +169,8 @@ function docIdOf(file) {
   });
 }
 
-// The workspaces of another server an opened PDF may be carried to (main.js
-// carryPage), from that server's `/api/session` answer: those the account
+// The workspaces of another server an opened PDF may be carried to
+// (lib/systemFiles.js carryPage), from that server's `/api/session` answer: those the account
 // writes in, the personal one first, and no clone, whose pages are its
 // origin's.
 function carryPlaces(info) {

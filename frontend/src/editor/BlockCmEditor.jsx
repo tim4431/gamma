@@ -5,7 +5,7 @@
 // [[block-ref]]) whose text the caret is NOT touching renders in place;
 // moving the caret into it (arrow keys, or clicking the rendered chip)
 // expands it back to source.
-import React, { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
+import React, { useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Annotation, Compartment, EditorState, Prec, StateEffect, StateField, Transaction } from "@codemirror/state";
 import {
   Decoration, EditorView, WidgetType, keymap,
@@ -23,6 +23,10 @@ import { codeFences } from "../shared/lib/mdCode.js";
 import { scanImageSyntax, scanMarks } from "./mdMarks";
 import { mathTex, parseTable, protectedSpans, scanImages, scanMathSpans, scanTables } from "./mdScan";
 import { NO_MENTIONS, mentionChip, mentionChipClass, proseMentions } from "./mentions.js";
+import { CHIP_RE, refTargetTitle, refWords } from "./refLabels.js";
+import { applyLinkChange, linkMarkdown, linkSpanAt, linkSpans, pastedLink, spanWords, tablePipe } from "./linkEdit.js";
+import { setLinkCardHost } from "./linkCardHost.js";
+import { LinkCardContext, LinkCardSurface, describeLink, useSiteTitle } from "../shared/ui/LinkCard.jsx";
 import { pasteMath } from "./pasteMath.js";
 import { copiedText, isSourceCopy, sourceCopied } from "./sourceCopy.js";
 import { assetUrl } from "../shared/lib/utils";
@@ -61,16 +65,21 @@ class MathWidget extends WidgetType {
 }
 
 class RefChipWidget extends WidgetType {
-  constructor(label, embed, trashed) {
+  constructor(label, embed, trashed, title) {
     super();
     this.label = label;
     this.embed = embed; // ![[id]] transclusion — chip in the editor, card when rendered
     this.trashed = trashed; // its page is in Recently deleted: the label is that page's title
+    this.title = title; // a [[id|words]]'s: what the words name
   }
-  eq(other) { return other.label === this.label && other.embed === this.embed && other.trashed === this.trashed; }
+  eq(other) {
+    return other.label === this.label && other.embed === this.embed && other.trashed === this.trashed
+      && other.title === this.title;
+  }
   toDOM(view) {
     const span = document.createElement("span");
     span.className = "blockRefChip cmRefChip" + (this.embed ? " cmEmbedChip" : "") + (this.trashed ? " trashedRef" : "");
+    if (this.title) span.title = this.title;
     span.textContent = (this.embed ? "⧉ " : "") + this.label;
     span.addEventListener("mousedown", (e) => {
       e.preventDefault();
@@ -447,15 +456,17 @@ function buildInlineDecos(state, ctx) {
     }
   }
 
-  for (const m of text.matchAll(/!?\[\[([a-zA-Z0-9_-]+)\]\]/g)) {
+  for (const m of text.matchAll(CHIP_RE)) {
     const from = m.index, to = m.index + m[0].length;
     if (overlapsClaimed(from, to)) continue;
     claimed.push([from, to]);
     if (touched(from, to)) continue;
-    const ref = ctx.labels?.[m[1]];
-    const label = ref?.content || ref?.trashed?.title || m[1];
+    const ref = ctx.labels?.[m[1]], embed = m[0].startsWith("!");
+    // A [[id|words]] shows its words, what it names as the title.
+    const words = embed ? "" : refWords(m[2]);
+    const label = words || ref?.content || ref?.trashed?.title || m[1];
     ranges.push(Decoration.replace({
-      widget: new RefChipWidget(label, m[0].startsWith("!"), !!ref?.trashed),
+      widget: new RefChipWidget(label, embed, !!ref?.trashed, words && ref ? refTargetTitle(ref) : undefined),
     }).range(from, to));
   }
 
@@ -945,6 +956,70 @@ function pasteWithMath(e, view) {
   view.dispatch(view.state.replaceSelection(text), { userEvent: "input.paste", scrollIntoView: true });
 }
 
+// An address pasted over selected words, in any note editor: the words
+// linked to it ([words](url), a copied page link [[id|words]]: linkEdit.js
+// pastedLink), not replaced by it. Not in code or math, nor with files on
+// the clipboard; true when it took the paste.
+function pasteLinkOver(e, view) {
+  const sel = view.state.selection.main;
+  if (view.state.readOnly || sel.empty || e.clipboardData?.files?.length) return false;
+  const doc = view.state.doc.toString();
+  if (protectedSpans(doc).some((s) => sel.from < s.to && sel.to > s.from)) return false;
+  const md = pastedLink(doc.slice(sel.from, sel.to), e.clipboardData?.getData("text/plain") || "",
+    window.location.origin, tablePipe(doc, sel.from));
+  if (!md) return false;
+  e.preventDefault();
+  view.dispatch({ changes: { from: sel.from, to: sel.to, insert: md }, selection: { anchor: sel.from + md.length },
+    userEvent: "input.paste", scrollIntoView: true });
+  return true;
+}
+
+// The link card of the editor (shared/ui/LinkCard.jsx), under the link
+// `card.span` the caret is in (linkEdit.js linkSpans) or, from Ctrl+K on
+// words that are no link, the selection a new link takes ({kind: "new"}).
+// Its edits are the editor's own changes; the span is found again by its
+// text if the note changed under an open form, and nothing is written when
+// it is gone.
+function EditorLinkCard({ view, card, labels, blockId, onEditing, onClose }) {
+  const ctx = useContext(LinkCardContext);
+  const { span } = card;
+  const href = span.kind === "md" || span.kind === "bare" ? span.href : "";
+  const siteTitle = useSiteTitle(href, !!href);
+  const info = span.kind === "new" ? { title: "", target: null }
+    : describeLink(span.kind === "ref" ? { kind: "ref", id: span.id, words: span.words } : { kind: "url", href, label: spanWords(span) },
+      { labels, ctx, siteTitle });
+  const write = (change) => {
+    const doc = view.state.doc.toString();
+    let at = span;
+    if (doc.slice(span.from, span.to) !== span.text) {
+      const i = span.text ? doc.indexOf(span.text) : Math.min(span.from, doc.length);
+      if (i < 0) return;
+      at = { ...span, from: i, to: i + span.text.length };
+    }
+    let insert;
+    if (at.kind === "new") insert = linkMarkdown(change.to, change.words, tablePipe(doc, at.from));
+    else {
+      const next = applyLinkChange(doc, at, change);
+      if (next == null) return;
+      insert = next.slice(at.from, next.length - (doc.length - at.to));
+    }
+    view.dispatch({ changes: { from: at.from, to: at.to, insert }, selection: { anchor: at.from + insert.length }, userEvent: "input" });
+  };
+  const edit = view.state.readOnly ? null : {
+    words: span.kind === "new" ? span.words : spanWords(span), isNew: span.kind === "new",
+    canRemove: span.kind === "ref" || span.kind === "md", excludeId: blockId,
+    onSave: write, onRemove: () => write({ remove: true, shown: info.title }),
+  };
+  const anchorRect = () => {
+    const len = view.state.doc.length;
+    const a = view.coordsAtPos(Math.min(span.from, len), 1), b = view.coordsAtPos(Math.min(span.to, len), -1) || a;
+    if (!a) return view.dom.getBoundingClientRect();
+    return { left: a.left, right: b.right, top: Math.min(a.top, b.top), bottom: Math.max(a.bottom, b.bottom) };
+  };
+  return <LinkCardSurface info={info} edit={edit} pinned editing={card.editing} anchorRect={anchorRect}
+    onEditing={onEditing} onClose={onClose} />;
+}
+
 const noteCopy = (view) => sourceCopied(copiedText(view.state),
   { marks: codeMarksAt(view.state.doc.toString(), view.state.selection.main.from) });
 
@@ -972,6 +1047,50 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   // starts it afresh (see the sync below).
   const historyCompartment = useRef(new Compartment()).current;
   const ownHistoryRef = useRef(ownHistory);
+  // The link card ({span, editing}: EditorLinkCard). It shows while the
+  // caret, put there by a press or a key, stands inside a link; typing hides
+  // it. Its form (Ctrl+K, a Link button, its ✎) holds it until it closes.
+  const [linkCard, setLinkCard] = useState(null);
+  const linkCardRef = useRef(null);
+  linkCardRef.current = linkCard;
+  const linkCardUpdate = useRef(null);
+  linkCardUpdate.current = (u) => {
+    const cur = linkCardRef.current;
+    if (cur?.editing) return;
+    if (u.docChanged) { if (cur) setLinkCard(null); return; }
+    if (!u.selectionSet && !u.focusChanged) return;
+    const sel = u.state.selection.main;
+    const doc = u.state.doc.toString();
+    const span = u.view.hasFocus && sel.empty ? linkSpanAt(doc, sel.head) : null;
+    if (!span || !(span.from < sel.head && sel.head < span.to)) { if (cur) setLinkCard(null); return; }
+    if (cur && cur.span.from === span.from && cur.span.to === span.to) return;
+    setLinkCard({ span: { ...span, text: doc.slice(span.from, span.to) }, editing: null });
+  };
+  // Ctrl+K and the Link buttons (linkCardHost.js): the form, on the link the
+  // caret is on, else a new link on the selected words.
+  const openLinkForm = useRef(null);
+  openLinkForm.current = () => {
+    const view = viewRef.current;
+    if (!view || view.state.readOnly) return;
+    const doc = view.state.doc.toString();
+    const sel = view.state.selection.main;
+    const span = sel.empty ? linkSpanAt(doc, sel.head) : linkSpans(doc).find((s) => s.from <= sel.from && sel.to <= s.to);
+    const text = span ? doc.slice(span.from, span.to) : doc.slice(sel.from, sel.to);
+    setLinkCard(span ? { span: { ...span, text }, editing: "text" }
+      : { span: { kind: "new", from: sel.from, to: sel.to, words: text, text }, editing: "link" });
+  };
+  // A press outside the editor and its open form closes the form, and the
+  // editor too (its blur skipped the card's fields).
+  useEffect(() => {
+    if (!linkCard?.editing) return undefined;
+    const away = (e) => {
+      if (e.target.closest?.(".linkCard")) return;
+      setLinkCard(null);
+      if (!hostRef.current?.contains(e.target)) cbRef.current.onBlur?.();
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [!!linkCard?.editing]);
 
   const api = useMemo(() => ({
     get value() { return viewRef.current ? viewRef.current.state.doc.toString() : ""; },
@@ -1022,8 +1141,18 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         // outliner semantics from blockTree; anything not preventDefault-ed
         // falls through to the default editing keymap.
         Prec.highest(EditorView.domEventHandlers({
-          keydown: (e) => { cbRef.current.onKeyDown?.(e); return e.defaultPrevented; },
+          keydown: (e) => {
+            // The link card takes Escape before the editor closes.
+            if (e.key === "Escape" && linkCardRef.current && !linkCardRef.current.editing) {
+              e.preventDefault();
+              setLinkCard(null);
+              return true;
+            }
+            cbRef.current.onKeyDown?.(e);
+            return e.defaultPrevented;
+          },
           paste: (e, view) => {
+            if (pasteLinkOver(e, view)) return true;
             cbRef.current.onPaste?.(e);
             if (!e.defaultPrevented) pasteWithMath(e, view);
             return e.defaultPrevented;
@@ -1037,7 +1166,11 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
           // only a blur while the window itself has focus (clicking away)
           // closes the editing session. Content is safe either way: every
           // keystroke already went through onChange → debounced autosave.
-          blur: () => { if (document.hasFocus()) cbRef.current.onBlur?.(); },
+          // The focus going into the link card's form keeps the session.
+          blur: (e) => {
+            if (e.relatedTarget?.closest?.(".linkCard")) return;
+            if (document.hasFocus()) cbRef.current.onBlur?.();
+          },
           // The iPad keyboard's undo and redo keys (and three-finger
           // swipes) arrive as these input types, not as Ctrl+Z: an editor
           // given `onUndo` (a note row's) hands them to the page's block
@@ -1096,10 +1229,12 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
           }
           else if (u.selectionSet) cbRef.current.onSelect?.({ target: api });
         }),
+        EditorView.updateListener.of((u) => linkCardUpdate.current?.(u)),
       ],
     });
     const view = new EditorView({ state, parent: hostRef.current });
     viewRef.current = view;
+    setLinkCardHost(view, () => openLinkForm.current?.());
     if (autoFocus) view.focus();
     // Caret placement on entering edit mode: at the clicked character when
     // the click mapped to a source offset (clickToSource.js), else at the
@@ -1171,6 +1306,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
       host.removeEventListener("dragover", onObjOver, true);
       host.removeEventListener("drop", onObjDrop, true);
       stopDrag?.();
+      setLinkCardHost(view, null);
       view.destroy();
       viewRef.current = null;
     };
@@ -1225,7 +1361,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   // can mention (a comment's: the agent too) arrive after it opens; refresh
   // the chip decorations when either actually changes, not on every render.
   const labelsKey = Object.entries(refLabels || {})
-    .map(([id, r]) => `${id}:${r?.content}:${r?.trashed ? "trashed" : ""}`)
+    .map(([id, r]) => `${id}:${r?.content}:${r?.page_title}:${r?.trashed ? "trashed" : ""}`)
     .concat(mentions ? [mentions.me, ...mentions.known, ...(mentions.agents || []).map((a) => `agent:${a.name}`)] : [])
     .join("\u0000");
   useEffect(() => {
@@ -1236,12 +1372,22 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   }, [labelsKey]);
 
   return (
-    <div
-      ref={hostRef}
-      className={className}
-      data-block-id={dataBlockId}
-      data-guide="notes.editor"
-    />
+    <>
+      <div
+        ref={hostRef}
+        className={className}
+        data-block-id={dataBlockId}
+        data-guide="notes.editor"
+      />
+      {linkCard && viewRef.current ? (
+        <EditorLinkCard view={viewRef.current} card={linkCard} labels={refLabels} blockId={dataBlockId}
+          onEditing={(field) => {
+            setLinkCard((c) => (c ? { ...c, editing: field } : c));
+            if (!field) viewRef.current?.focus();
+          }}
+          onClose={() => { setLinkCard(null); viewRef.current?.focus(); }} />
+      ) : null}
+    </>
   );
 });
 

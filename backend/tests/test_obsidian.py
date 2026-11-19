@@ -156,7 +156,7 @@ def test_vault_import_pages_links_embeds_and_properties(guest):
     did = deep["id"]
     assert "hidden" not in text and "whole block comment" not in text.lower()
     assert "Intro paragraph with a comment  inside." in text
-    assert f"See [[{did}]] and [[{did}]] and [[{method['id']}]]." in text
+    assert f"See [[{did}]] and [[{did}|the alias]] and [[{method['id']}]]." in text   # an alias: the words
     assert f"Block link: [[{key['id']}]] and embed ![[{key['id']}]]." in text
     assert f"Whole-note embed [[{did}]] and section [[{method['id']}]]." in text
     setup = next(b for b in home_blocks if b["content"] == "## Setup")
@@ -165,7 +165,8 @@ def test_vault_import_pages_links_embeds_and_properties(guest):
     assert "![A diagram](/api/uploads/" in text
     assert "[paper.pdf](/api/uploads/" in text and ".pdf)" in text
     assert "[notes.txt](/api/uploads/" in text
-    assert f"Markdown link [[{did}]] and shortest [[{method['id']}]]." in text
+    # a label other than the note's name is the mention's words too
+    assert f"Markdown link [[{did}|Deep]] and shortest [[{method['id']}|Deep]]." in text
     assert "[[Nowhere]] stays" in text
     assert "> [!faq]- Folded question" in text               # the fold flag renders
     para = next(b for b in home_blocks if b["content"] == "A paragraph.")
@@ -230,6 +231,8 @@ def test_obsidian_export_writes_a_vault(guest):
         {"id": "os-2", "content": "synced: ![[ot-p]]", "properties": {}, "children": []},
         {"id": "os-3", "content": f"pic ![cap|300]({img})", "properties": {}, "children": []},
         {"id": "os-4", "content": "> [!note] kept\n> body", "properties": {}, "children": []},
+        {"id": "os-5", "content": f"the [[ot-p|finding]] of [[{target['id']}|that page]]\n\n| x |\n| --- |\n"
+                                  f"| [[{target['id']}\\|in a cell]] |", "properties": {}, "children": []},
     ])
 
     r = guest.get(f"/api/folders/{ov}/export", params={"mode": "obsidian"})
@@ -255,6 +258,9 @@ def test_obsidian_export_writes_a_vault(guest):
     assert "synced: ![[Target note#^ot-p]]" in s
     assert f"pic ![cap|300](attachments/{img.rsplit('/', 1)[1]})" in s
     assert "> [!note] kept\n> body" in s
+    # a [[id|words]]: its words the alias, a table's row's pipe escaped
+    assert "the [[Target note#^ot-p|finding]] of [[Target note|that page]]" in s
+    assert "| [[Target note\\|in a cell]] |" in s
 
 
 def test_obsidian_export_bundles_pdf_and_links_highlight_pages(guest):

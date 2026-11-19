@@ -26,6 +26,9 @@ How an HTML page is read:
   count), and a MathJax ``math/tex`` script becomes its formula. The tree
   is at most ``DEPTH`` deep, which the writer and every pass here recurse
   within.
+- The links that look like a document are read from the whole tree, before
+  anything below is dropped (``links``, gamma/paper_links.py): fetch_paper
+  offers them when a page is all it reached.
 - What a browser never shows goes: the head, noscript, templates, SVG,
   frames, embeds, media, form controls, dialogs, ``hidden`` and
   ``aria-hidden`` elements, inline ``display:none``, and code line-number
@@ -66,6 +69,7 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 from urllib.parse import urljoin
 
+from . import paper_links
 from .documents.text import OUTLINE_TEXT, _fit
 from .html_markdown import DEPTH, SPACE, El, Heading, Markdown, Parser, attr, joined, text_of, walk
 
@@ -84,6 +88,7 @@ class Page(NamedTuple):
     meta: dict     # site, description, author, published, modified, canonical, lang: the keys the page has
     outline: list  # [(offset in text, "## Heading")] of its h1–h3
     visible: int   # characters of all the text a browser shows, menus and forms included
+    links: list    # [{url, text, context}]: the links that look like a document (paper_links.pdf_links)
 
 
 # --- decoding --------------------------------------------------------------------
@@ -601,11 +606,12 @@ def read(raw: bytes, url: str, ctype: str = "") -> Page:
     the model (the module docstring says how)."""
     text = decode(raw, ctype)
     if not _is_html(text, ctype):
-        return Page("", text, "text", {}, [], len(text.strip()))
+        return Page("", text, "text", {}, [], len(text.strip()), [])
     title, base, meta = _head(text, url)
     parser = _PageParser()
     parser.feed(text)
     parser.close()
+    links = paper_links.pdf_links(parser.root, base)
     _drop_unseen(parser.root)
     body = next((n for n in walk(parser.root) if not isinstance(n, str) and n.tag == "body"), parser.root)
     visible = len(SPACE.sub(" ", "".join(n for n in walk(body) if isinstance(n, str))).strip())
@@ -630,7 +636,7 @@ def read(raw: bytes, url: str, ctype: str = "") -> Page:
                     for at, h in headings if h.level <= 3], OUTLINE_BUDGET)
     if not title and h1 is not None:
         title = SPACE.sub(" ", text_of(h1)).strip()
-    return Page(title, text, "html", meta, outline, visible)
+    return Page(title, text, "html", meta, outline, visible, links)
 
 
 def visible_chars(raw: bytes, ctype: str = "") -> int:

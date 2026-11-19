@@ -26,7 +26,7 @@ import urllib.parse
 
 from .html_markdown import El, Parser
 from .note_markup import (ALT_SIZE_RE, BARE_URL, INLINE_RE, LINK_PARTS, LINK_TARGET, LITERAL_SPANS, WIDTH_SUFFIX,
-                          alt_and_width)
+                          alt_and_width, ref_parts)
 
 MARK_STYLE = "background-color: #ffd40080"  # Gamma's ==mark== in a Zotero note
 
@@ -252,7 +252,8 @@ def _spans_html(text: str, resolve_ref, in_link: bool = False) -> str:
             opening, closing = _WRAP_TAGS[which]
             out.append(opening + _spans_html(_inner(which, body), resolve_ref, in_link) + closing)
         elif which in ("embed", "ref"):
-            out.append(_esc(_ref_text(body.strip("![]").split("|")[0].strip(), resolve_ref)))
+            name, alias = ref_parts(body)
+            out.append(_esc(alias or _ref_text(name, resolve_ref)))
         elif which == "link":
             label, href = LINK_PARTS.match(body).groups()
             out.append(f'<a href="{_attr(href)}">{_spans_html(label or href, resolve_ref, True)}</a>')
@@ -1056,7 +1057,8 @@ def _plain(text: str) -> str:
         elif which in _WRAPS or which == "color":
             out.append(_plain(_inner(which, body)))
         elif which in ("embed", "ref"):
-            out.append(body.strip("![]").split("|")[0].strip())
+            name, alias = ref_parts(body)
+            out.append(alias or name)
         elif which == "link":
             label, href = LINK_PARTS.match(body).groups()
             out.append(_plain(label) or href)

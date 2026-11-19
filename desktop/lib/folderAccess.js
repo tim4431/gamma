@@ -6,7 +6,7 @@
 // opens the same folder again on a later run. The bookmarks are kept in
 // the registry (`access`: { path, bookmark }), and every one is opened at
 // launch, before any local server starts. The PDF a page is pushed from
-// (main.js addFileVault) is picked and kept the same way, a file in place
+// (lib/vaults.js addFileVault) is picked and kept the same way, a file in place
 // of a folder.
 //
 // The local servers are child processes that inherit the app's sandbox,

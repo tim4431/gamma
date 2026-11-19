@@ -357,7 +357,7 @@
   // The sync panel's second levels: the folders of the open workspace to
   // sync with this computer ({ ws, folders, links }), and one vault's own
   // view (its key); null = the panel's list. The vault dialog
-  // (state.vaultAsk, main.js askVault) comes before both while it is up.
+  // (state.vaultAsk, lib/vaults.js askVault) comes before both while it is up.
   let chooser = null;
   let vaultView = null;
   // The dialog last shown and the one last answered (ids), and its switches as the user set them.
@@ -414,7 +414,7 @@
     renderAgentAsk(state.agentAsk || null);
   }
 
-  // An agent's question on this computer (main.js "an agent's ask on this
+  // An agent's question on this computer (lib/agentAskBar.js "an agent's ask on this
   // computer"): only the desktop's state carries `agentAsk`, so the iPad and
   // Android apps never draw it. Drawn once per ask (`askDrawn`, its key),
   // each word of it as plain text, a mark ⟨U+…⟩ in the warning colour (only
@@ -656,7 +656,7 @@
     return b;
   }
 
-  // A row's or a vault view's action (main.js keepingAction). Those that
+  // A row's or a vault view's action (lib/syncPanel.js keepingAction). Those that
   // change the vault or run a round leave the panel open on the new state;
   // the others ask first in a native dialog, or open something.
   const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'show-computer', 'hide-computer'];
@@ -818,7 +818,7 @@
     return parts.length ? parts.join(', ') : 'No notes or PDFs';
   }
 
-  // The vault dialog (main.js askVault): the directory, what was found
+  // The vault dialog (lib/vaults.js askVault): the directory, what was found
   // there, the switches Pull and Push, the sentence that says what the
   // first round does for them as they stand, Sync and Cancel. Closing the
   // panel cancels it too.
@@ -878,7 +878,7 @@
   // there or Stop showing for a vault of another server (under its State,
   // whether this computer is shown there), Remove the synced folder… (Remove
   // the vault… for a file's, Stop syncing… for a work folder, which asks what
-  // becomes of its files: main.js removeVault).
+  // becomes of its files: lib/thisComputer.js removeVault).
   function renderVault(panel, i) {
     backRow(panel, () => { vaultView = null; renderSync(); });
     panel.appendChild(label(i.name));
@@ -1161,7 +1161,7 @@
   $('btnUpdate').onclick = () => gammaShell.updateInstall();
 
   // A state with a vault dialog not shown yet opens the sync panel on it,
-  // its switches as main.js starts them; one still waiting opens the panel
+  // its switches as lib/vaults.js starts them; one still waiting opens the panel
   // again should it have closed without an answer (main.js keeps the bar
   // expanded while it waits, so the two never part).
   function takeState(s) {

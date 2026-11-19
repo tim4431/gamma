@@ -24,6 +24,7 @@ from conftest import (_tree_block, account_of, doc_props, login, make_folder, ma
                       mark_work_folder, thread_on, workspace_of)
 from gamma import comments, config, folder_links, gamma_sync, jobs, linked_files, md_lens, pdf_meta, storage
 from gamma.vault import disk as vault_disk, kinds, local_remote, merge as vault_merge, store as vault_store
+from gamma.vault import pages as vault_pages, pull as vault_pull, remote as vault_remote, round as vault_round
 from gamma.vault import sync as vault_sync
 from gamma.blocks_store import LABELS, block_kind, new_block_id, newest_change_seq, write_lock
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
@@ -1073,7 +1074,7 @@ def test_a_highlight_is_a_callout_and_one_dropped_comes_back_with_its_rectangles
     v.sync()
     written = v.text("Paper.md")
     assert written.startswith("my notes\n\n> [!quote] [[Paper.pdf#page=3|p. 3]]\n> the quoted text\n>\n> what I think\n")
-    assert f"^{vault_sync._marker(hl)}" in written
+    assert f"^{vault_round._marker(hl)}" in written
     v.write("Paper.md", "my notes\n")
     v.sync()
     assert hl not in v.blocks(page)
@@ -1142,7 +1143,7 @@ def test_a_block_link_writes_an_anchor_in_the_other_note(vault):
     block = v.find(target, "the linked block")
     v.edit(source, set_(v.find(source, "see below"), f"see [[{block}]]"))
     v.sync()
-    marker = vault_sync._marker(block)
+    marker = vault_round._marker(block)
     assert v.text("Source.md") == f"see [[Target#^{marker}]]\n"
     assert v.text("Target.md") == f"first\n\nthe linked block ^{marker}\n"
     assert v.texts(source) == [f"see [[{block}]]"]
@@ -1154,7 +1155,7 @@ def test_a_block_link_writes_an_anchor_in_the_other_note(vault):
     v.sync_page(source)
     assert v.text("Target.md") == f"first\n\nthe linked block ^{marker}\n"
     v.sync()
-    assert v.text("Target.md") == f"first ^{vault_sync._marker(other)}\n\nthe linked block ^{marker}\n"
+    assert v.text("Target.md") == f"first ^{vault_round._marker(other)}\n\nthe linked block ^{marker}\n"
     assert v.texts(source) == [f"see [[{block}]] and [[{other}]]"]
     v.quiet()
 
@@ -1215,7 +1216,7 @@ def test_a_note_that_names_its_page_by_gamma_id_is_that_page_s_until_a_force_dec
     v.write("Copied notes.md", f"---\ngamma_id: {page}\n---\nwhat the copy says\n", age=10)
     pages = v.page_count()
     status = v.sync(ok=False)
-    assert status["kept"] == [{"path": "Copied notes.md", "why": vault_sync.UNKNOWN, "force": True}]
+    assert status["kept"] == [{"path": "Copied notes.md", "why": vault_pages.UNKNOWN, "force": True}]
     assert v.page_of("Copied notes.md") == page and v.page_count() == pages and v.texts(page) == []
     assert v.sync(ok=False)["kept"] == status["kept"]                 # the same, round after round
     v.sync(force="push")
@@ -1228,7 +1229,7 @@ def test_a_round_takes_only_a_direction_and_a_force_it_knows(asked):
     """A misspelt direction read as neither push nor pull: the round did
     nothing and said it was up to date."""
     with pytest.raises(ValueError):
-        vault_sync.Round({"id": "x", "path": "x"}, None, **asked)
+        vault_round.Round({"id": "x", "path": "x"}, None, **asked)
 
 
 # --- crash safety: a kill at each point of the journal ------------------------------------------------
@@ -1995,15 +1996,15 @@ def test_a_disk_unplugged_between_the_scan_and_pull_keeps_its_rows(vault, monkey
     v.sync()
     page = v.page_of("gone.md")
     v.edit(page, {"op": "set", "id": page, "props": {"folders": None}})
-    real = vault_sync.Round._pull
+    real = vault_pull._pull
 
-    def unplug(self):
+    def unplug(rnd):
         os.rename(v.root, tmp_path / "away")
-        return real(self)
-    monkeypatch.setattr(vault_sync.Round, "_pull", unplug)
+        return real(rnd)
+    monkeypatch.setattr(vault_pull, "_pull", unplug)
     status = v.sync(ok=False)
     assert status.get("offline") and "gone.md" in v.rows()
-    monkeypatch.setattr(vault_sync.Round, "_pull", real)
+    monkeypatch.setattr(vault_pull, "_pull", real)
     os.rename(tmp_path / "away", v.root)
     v.sync()
     v.sync()
@@ -2396,7 +2397,7 @@ def test_a_force_push_keeps_a_highlight_it_deletes_with_its_quote_and_rectangles
     assert hl not in v.blocks(page)
     (kept,) = [g for g in v.rows()["Paper.md"]["gone"] if g["id"] == hl]
     assert kept["props"]["quote"] == "a sentence worth keeping" and kept["props"]["pdf_position"]["rects"]
-    assert kept["anchor"] == vault_sync._marker(hl) and kept["hash"] == md_lens.content_hash("why it matters")
+    assert kept["anchor"] == vault_round._marker(hl) and kept["hash"] == md_lens.content_hash("why it matters")
     v.quiet()
 
 
@@ -3058,7 +3059,7 @@ def test_a_split_pull_cannot_send_waits_and_never_names_a_block_gamma_lacks(vaul
 
             def apply(self, page_id, build=None, *, token="", built=None):
                 if built is not None:
-                    raise vault_sync.Changed(page_id)
+                    raise vault_remote.Changed(page_id)
                 return real(self, page_id, build, token=token, built=built)
             m.setattr(LocalRemote, "apply", apply)
         status = v.sync()
@@ -3281,16 +3282,16 @@ def test_the_change_a_moved_block_took_on_its_page_goes_in_once(vault, monkeypat
         move_across_pages(v.ws, conn, block, b, "a0", a, b, actor=v.user)
     v.edit(b, set_(block, "alpha beta gtyped"))
     v.write("a.md", "first of a\n\nalpha beta ptyped\n")
-    follow, calls = vault_sync.Round._follow, []
+    follow, calls = vault_pages._follow, []
 
-    def following(self, moved):
-        follow(self, moved)
+    def following(rnd, moved):
+        follow(rnd, moved)
         calls.append(moved)
         if len(calls) == 1 and how == "killed":
             raise Killed("after the follow")
         if len(calls) == 1:
             v.edit(a, insert(a, "typed in a meanwhile"))
-    monkeypatch.setattr(vault_sync.Round, "_follow", following)
+    monkeypatch.setattr(vault_pages, "_follow", following)
     if how == "killed":
         with pytest.raises(Killed):
             v.sync()
@@ -3428,8 +3429,8 @@ def test_a_title_with_outer_spaces_reads_back_as_it_was_written(vault):
     """Pull writes such a title quoted, which keeps its spaces, and
     push read it stripped: the file's title and the page's differed, and an
     edit of it on disk changed the page's spacing."""
-    assert vault_sync._front_props({"title": "  spaced  9  "}, "stem")[0] == "  spaced  9  "
-    assert vault_sync._front_props({"title": "   "}, "stem")[0] == "stem"
+    assert vault_round._front_props({"title": "  spaced  9  "}, "stem")[0] == "  spaced  9  "
+    assert vault_round._front_props({"title": "   "}, "stem")[0] == "stem"
     v = vault()
     v.write("n.md", "---\ntitle: First\n---\nbody\n", age=10)
     v.sync()

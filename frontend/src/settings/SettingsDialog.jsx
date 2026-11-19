@@ -231,7 +231,7 @@ function ReadingSettings({ value }) {
           onChange={value.setPdfSaveLocal}
         />
         {/* Only the desktop app reads it, from the account's profile on the
-            server it opens a file on (desktop/main.js addsToLibrary). */}
+            server it opens a file on (desktop/lib/systemFiles.js addsToLibrary). */}
         {IS_DESKTOP ? (
           <Toggle
             icon={FolderPlusIcon}

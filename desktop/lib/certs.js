@@ -1,7 +1,7 @@
 // A certificate the person trusts by its fingerprint, SSH known_hosts
 // style (docs/dev/https.md "Pinned certificates"): a NAS that made
 // its own certificate, or one signed by an authority this computer does not
-// hold. Pure: main.js answers Chromium's verify proc and the
+// hold. Pure: lib/addresses.js answers Chromium's verify proc and the
 // `certificate-error` event with these, keeps the pins in the registry
 // (registry.setPin) and hands them to its local servers, whose sidecar
 // accepts the same pins for syncing (backend/gamma/tls_trust.py).

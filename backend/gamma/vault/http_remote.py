@@ -460,7 +460,7 @@ class HttpRemote:
         the log. None where the log cannot say: the page in Recently deleted
         (its log is not served), or a 410 (the batch pruned, or more after it
         than a catch-up carries), and the round asks the page itself
-        (``Round._plan_landed``). ``since`` is for this server's own log
+        (``journal._plan_landed``). ``since`` is for this server's own log
         (``LocalRemote.landed``)."""
         path = f"/api/pages/{_q(page_id)}/ops?since={at or 0}"
         status, answer = self._ask("GET", path)
@@ -589,7 +589,7 @@ class HttpRemote:
         """A new page ``page_id`` with its blocks: the page, then its blocks
         (a crash or a refusal between leaves a page with none, which the
         journal keeps as the note's page, its blocks merged into it from no
-        base: ``Round._made``). A document it names was uploaded first
+        base: ``journal._made``). A document it names was uploaded first
         (``link_doc``), and is stored there, never read in place (its
         document at ``store``); one listed without its bytes stays so. → its
         seq. OpError 409 when a block holds the id."""

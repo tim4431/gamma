@@ -205,12 +205,15 @@ def test_single_page_md_export_materializes_embeds(guest):
     _put_children(guest, page["id"], [
         {"id": "ub1", "content": "![[os1]]", "properties": {}, "children": []},
         {"id": "ub2", "content": "ref: [[os1]]", "properties": {}, "children": []},
+        {"id": "ub3", "content": "words: [[os1|where it began]], ![[os1|x]]", "properties": {}, "children": []},
     ])
     r = guest.get(f"/api/pages/{page['id']}/export")
     assert r.status_code == 200, r.text
     assert "the origin text *(from Origin)*" in r.text
     assert "ref: the origin text" in r.text
-    assert "[[os1]]" not in r.text
+    # a [[id|words]] reads as its words; an embed's are none
+    assert "words: where it began, the origin text *(from Origin)*" in r.text
+    assert "[[os1" not in r.text
 
 
 def test_folder_export_zips_matching_pages(guest):

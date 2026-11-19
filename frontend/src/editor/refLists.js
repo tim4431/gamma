@@ -5,7 +5,7 @@
 // Pure, so node tests it (tests/refLists.test.mjs).
 import { createLibraryMatcher } from "../library/librarySearch.js";
 import { plainSnippet } from "../search/snippets.js";
-import { REF_RE } from "./refLabels.js";
+import { REF_RE, refWords } from "./refLabels.js";
 
 const PICKER_ROWS = 8;
 const RECENT_PAGES = 4; // offered before anything is typed
@@ -39,10 +39,10 @@ export function pickerCounts(pageCount, blockCount) {
 }
 
 // A block's markdown as the picker shows it: one plain line (search's
-// plainSnippet), its [[refs]] as their labels.
+// plainSnippet), its [[refs]] as their labels, a [[id|words]] its words.
 export function refBlockText(content, labelOf) {
-  const src = String(content || "").replace(REF_RE, (m, id) => {
-    const label = String(labelOf?.(id) || id).replace(/[[\]|\n]+/g, " ").trim();
+  const src = String(content || "").replace(REF_RE, (m, id, words) => {
+    const label = String(refWords(words) || labelOf?.(id) || id).replace(/[[\]|\n]+/g, " ").trim();
     return `[[${label || id}]]`;
   });
   return plainSnippet(src);
@@ -64,9 +64,10 @@ export function pageByTitle(pages, text) {
 }
 
 // The "[[query" being typed just before the caret (`before`: the text up
-// to it), as its query, or null when no picker is being typed.
+// to it), as its query, or null when no picker is being typed: a pipe ends
+// the query, what follows it being the link's words ([[id|words]]).
 export function refQueryAt(before) {
-  const m = String(before || "").match(/\[\[([^\]\n]*)$/);
+  const m = String(before || "").match(/\[\[([^\]|\n]*)$/);
   return m ? m[1] : null;
 }
 
@@ -82,10 +83,17 @@ export function refInsertEdit(value, cursor, id) {
 
 // "]]" typed by hand after a page's exact title, ending at `cursor`: that
 // title's [[id]] as {from, to, insert, page}, or null (no such page, or
-// already an id).
+// already an id). A [[title|words]] keeps its words, [[id|words]]: the
+// whole is tried as a title first (a title may hold a pipe), then what
+// stands before its first pipe.
 export function typedTitleLink(value, cursor, pages) {
   const m = String(value || "").slice(0, cursor).match(/\[\[([^[\]\n]+)\]\]$/);
-  const page = m && pageByTitle(pages, m[1]);
-  if (!page || page.id === m[1]) return null;
-  return { from: cursor - m[0].length, to: cursor, insert: `[[${page.id}]]`, page };
+  if (!m) return null;
+  const pipe = m[1].search(/\\?\|/);
+  const tries = [[m[1], ""], ...(pipe > 0 ? [[m[1].slice(0, pipe), m[1].slice(pipe)]] : [])];
+  for (const [title, words] of tries) {
+    const page = pageByTitle(pages, title);
+    if (page) return page.id === title ? null : { from: cursor - m[0].length, to: cursor, insert: `[[${page.id}${words}]]`, page };
+  }
+  return null;
 }

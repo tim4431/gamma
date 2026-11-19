@@ -960,6 +960,19 @@ instead of fixing; the fix removes its entry.
   2026-11-14): one run ended with an uncaught file-system error (its stack
   lost) while the backend suite and the frontend tests ran beside it; 18
   runs since, under the same load, passed.
+- **test_cloud_auth: test_profile_pull_push_and_debounce**
+  (`backend/tests/test_cloud_auth.py:864`, this machine, 2026-11-18): an
+  assertion failed in the full parallel suite while five browser groups
+  ran beside it; the file alone passed 41/41. Likely the debounce: with
+  `PUSH_DELAY` at 0.2 s, three quick PATCHes that take longer than that
+  under load settle apart and send two PUTs where the test counts one.
+- **notes: images and tables are objects — a press selects…**
+  (`frontend/tests/e2e/scenarios/notes.mjs:2082`, this machine,
+  2026-11-18): the press on the table's bottom margin opened no editor.
+  The screenshot shows the table under the step's 200 px image, its
+  bounding box read before the image loaded: the image pushed the table
+  down and the press missed. Seen while the backend suite ran beside the
+  run; the group run alone passed.
 
 ### What a run leaves behind
 

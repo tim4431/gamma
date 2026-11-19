@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from gamma.documents import formats
-from gamma.vault import disk, kinds, sync
+from gamma.vault import disk, kinds, round as vault_round, sync
 
 NAMES = json.loads((Path(__file__).resolve().parents[2] / "tests" / "shared" / "formats.json").read_text(encoding="utf-8"))["names"]
 IMAGES = {ext for ext, row in formats.EXTENSIONS.items() if row.format == "image"}
@@ -68,7 +68,7 @@ def test_what_a_class_reads_off_a_row_and_a_read():
     assert kinds.PICTURE.link_name("f.png", {"hash": "abc.png"}) == "abc.png" and kinds.NOTES.link_name("n.md", row) is None
     found = disk.Found("pdf", 1234, 0, "1")
     assert kinds.PDF.weight(found) == 1234 and kinds.NOTES.weight(disk.Found("notes", 1234, 0, "1")) == 0
-    read = sync.Read("p.pdf", "pdf", 10, 5, "7", 0.0, "h" * 24, text="t", pdf_id="id")
+    read = vault_round.Read("p.pdf", "pdf", 10, 5, "7", 0.0, "h" * 24, text="t", pdf_id="id")
     assert kinds.PDF.pending_text(read) == "id" and kinds.NOTES.pending_text(read) == "t"
     assert kinds.PICTURE.pending_text(read) is None
 

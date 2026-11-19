@@ -24,8 +24,8 @@ import pytest
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageStat
 
 from conftest import make_user
-from gamma import ink, notability as nb, notability_import as ni, notability_map as nm, notability_ntb as ntb
-from gamma import notebook, picture, storage
+from gamma import ink, notability as nb, notability_map as nm, notability_ntb as ntb
+from gamma import note_app_import, notebook, picture, storage
 from gamma.blocks_store import block_to_dict, fetch_subtree
 from gamma.db import connect_pages_db, ws_uploads_dir
 from gamma.import_zip import new_walk, walk_zip
@@ -61,7 +61,7 @@ def imported(path: Path) -> tuple[str, dict]:
     own, once for the module."""
     ws = make_user("nbs_" + hashlib.sha256(str(path).encode()).hexdigest()[:12], "nbs-password")
     with open(path, "rb") as f, connect_pages_db(ws) as conn:
-        return ws, ni.import_notes(ws, f, conn, name=path.name, actor="nbs")
+        return ws, note_app_import.import_note_apps(ws, f, conn, name=path.name, actor="nbs")
 
 
 @pytest.mark.parametrize("path", NOTES + NTBS, ids=lambda path: path.name)

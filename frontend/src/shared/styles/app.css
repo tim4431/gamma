@@ -69,7 +69,9 @@
   .folderNewInput,
   .fileRowRename,
   .tileRenameInput,
-  .linkNameInput
+  .linkNameInput,
+  .linkCardInput,
+  .linkCardTarget
 ) {
   box-sizing: border-box;
   background: var(--bg-input);
@@ -5713,6 +5715,40 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .citePreviewOpen:hover { color: var(--accent-bright); text-decoration: underline; }
 .citePreviewOpen kbd { font-family: inherit; }
+.citePreviewOpen svg { vertical-align: -1px; }
+
+/* The link card (shared/ui/LinkCard.jsx): the citation preview above for
+   every link, its last line the way to open it and, in a note that may be
+   edited, Edit, Copy link and Remove link on the right. Edit turns it into
+   its form: Text and Link, a search's rows under them, the buttons. */
+.linkCard { max-width: 300px; }
+.linkCardFoot { display: flex; align-items: center; gap: var(--space-2); min-height: 24px; margin-top: 4px; }
+.linkCardFoot .citePreviewOpen { margin-top: 0; }
+.linkCardTools { display: inline-flex; gap: 2px; margin: 0 -4px 0 auto; }
+.linkCard .linkCardTools .uiBtn.iconSq { width: 24px; height: 24px; min-height: 24px; color: var(--text-muted); }
+.linkCard .linkCardTools .uiBtn.iconSq:hover { color: var(--text-primary); }
+.linkCardEditing { width: 300px; max-width: calc(100vw - 16px); padding: 10px; }
+.linkCardForm { display: grid; gap: 8px; }
+.linkCardField { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 8px; }
+.linkCardField > span:first-child { color: var(--text-muted); font-size: var(--fs-2xs); }
+.linkCardInput,
+.linkCardTarget { width: 100%; min-width: 0; height: 28px; padding: 0 8px; font-size: var(--fs-sm); }
+.linkCardTarget { display: flex; align-items: center; gap: 6px; padding-right: 6px; cursor: text; }
+.linkCardTargetIcon,
+.linkCardTargetClear { display: inline-flex; flex: none; color: var(--text-muted); }
+.linkCardTargetClear { opacity: 0.6; }
+.linkCardTarget:hover .linkCardTargetClear { opacity: 1; }
+.linkCardTargetText { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linkCardRows { max-height: 220px; overflow-y: auto; margin: 0 -6px; }
+/* The [[ picker's rows a step smaller, in the card's own type. */
+.linkCardRows .refPopupItem { padding: 4px 8px; gap: 8px; }
+.linkCardRows .refPopupText { font-size: var(--fs-sm); }
+.linkCardRows .refPopupMeta { font-size: var(--fs-2xs); }
+.linkCardHint { padding: 4px 8px; color: var(--text-muted); font-size: var(--fs-2xs); }
+.linkCardActions { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.linkCardSpacer { flex: 1; }
+/* A held finger opens the card, never the system's callout for a link. */
+.linkAnchor a { -webkit-touch-callout: none; }
 .chatToolActionHead:hover:not(.plain) { color: var(--text); }
 .chatToolAction.err .chatToolActionHead { color: var(--danger); }
 .chatToolActionHead svg { flex: none; }

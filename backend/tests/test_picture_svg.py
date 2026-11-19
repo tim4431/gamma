@@ -511,7 +511,7 @@ def test_the_imports_keep_an_svg_as_it_came(guest):
     assert picture.picture_type(QUADS) == "image/svg+xml" and picture.image_size(QUADS) == (300, 150)
     n = gx.Notebook("SVG picture", seed=31)
     n.page(n.paper(), [gx.image("V", n.attach(QUADS), (110, 220, 160, 80))])
-    r = guest.post("/api/import/goodnotes", files={"file": ("SVG.goodnotes", n.bytes(), "application/zip")},
+    r = guest.post("/api/import/note-apps", files={"file": ("SVG.goodnotes", n.bytes(), "application/zip")},
                    data={"folder": ""})
     assert r.status_code == 200, r.text
     report = r.json()

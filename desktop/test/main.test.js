@@ -2486,7 +2486,9 @@ test('a start that names a file or a folder never goes hidden into the tray, a l
 // ------------------------------------------------ addresses and certificates -----
 
 test('every token minted on another server is asked of the host first, every address sent comes from remoteOf, and the shell follows no redirect', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  // main.js and its sections in lib/
+  const src = ['main.js', ...['addresses', 'vaults', 'thisComputer', 'syncPanel', 'agentAskBar', 'systemFiles'].map((s) => `lib/${s}.js`)]
+    .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
   const fns = new Map(src.split(/\n(?=(?:async )?function \w+\()/).map((f) => [(/function (\w+)/.exec(f) || [])[1], f]));
   const minting = [...fns].filter(([, f]) => /'\/api\/integrations\/tokens', \{\s*method: 'POST'/.test(f)).map(([name]) => name);
   assert.deepEqual(minting.sort(), ['addFileVault', 'addFolderVault', 'changePush', 'keepOffline', 'makeRemoteWorkFolder', 'showComputer']);
@@ -2863,7 +2865,7 @@ test('a redirect\'s links move alone when its https:// address is listed already
   }
 });
 
-test('an http:// address that sends the window to https:// on its own host is followed nowhere, and the launcher offers that address', () => {
+test('an http:// address that sends the window to https:// on its own host is followed nowhere, and the launcher offers that address', async () => {
   fresh();
   const host = server('Host');
   const nas = registry.addRemote('NAS', 'http://nas.lan:5000');
@@ -2885,11 +2887,19 @@ test('an http:// address that sends the window to https:// on its own host is fo
     shell.loadLauncher(new Error('No page'), nas.id);
     assert.deepEqual([card().summary, card().to], ['This name is HTTPS-only in this window.', 'https://nas.lan']);
     // the content view's will-redirect guard is what records it, and then opens nothing in the browser
-    const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-    assert.match(src, /cwc\.on\('will-redirect', \(event, url\) => guard\(event, url, true\)\)/);
-    assert.match(src, /if \(redirect && event\.isMainFrame !== false && sentToHttpsBy\(url\)\) return;\r?\n\s+if \(\/\^https\?:\/\.test\(url\)/);
+    shell.pretendShown(null, null);
+    await shell.showWindow();
+    const wc = windows.at(-1).contentView.views[0].webContents;
+    const opens = shell.externalOpens.length;
+    const event = { isMainFrame: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    wc.emit('will-redirect', event, 'https://nas.lan:5443/?ws=w1'); // (an address no test opened)
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(shell.externalOpens.length, opens, 'nothing opened in the browser');
+    shell.loadLauncher(new Error('No page'), nas.id);
+    assert.equal(JSON.parse(new URL(wc.getURL()).searchParams.get('error')).to, 'https://nas.lan:5443');
   } finally {
     shell.allowedOrigins.delete('http://nas.lan:5000');
+    if (shell.hasWindow()) windows.at(-1).close();
     shell.pretendShown(null, null);
   }
 });
@@ -2916,7 +2926,7 @@ const askOf = (id, more = {}) => ({
   server: { origin: 'https://nas.lab:5001', account: 'alice' }, at: '2026-11-13T10:02:00Z', expires_at: '2026-11-13T10:12:00Z', ...more,
 });
 
-// The arming timer main.js set last, still due.
+// The arming timer lib/agentAskBar.js set last, still due.
 const armTimer = () => timers.filter((t) => !t.cleared && t.ms === 1000).at(-1);
 // A timer run, as it comes due: it is not due again.
 const fire = (t) => { t.cleared = true; t.fn(); };
