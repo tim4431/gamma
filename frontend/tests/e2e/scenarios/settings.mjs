@@ -1837,8 +1837,14 @@ export async function settingsScenarios(env) {
         const ids = (await user.api("/api/workspaces/mine")).workspaces.filter((w) => w.role === "owner").map((w) => w.id);
         return ids.includes(gone) && ids.includes(gone2);
       }, { timeout: 60000, what: "both copies to come back as workspaces of their own ids" });
+      // The job ends, and keeps its result, only after its last workspace is in place.
       const listed = (await user.api("/api/jobs")).jobs.find((j) => j.kind === "copies-restore");
-      const restored = await user.api(`/api/jobs/${listed.id}`);
+      let restored;
+      await until(async () => {
+        restored = await user.api(`/api/jobs/${listed.id}`);
+        return !["queued", "running"].includes(restored.state);
+      }, { timeout: 30000, what: "the copies' restore job to end" });
+      assertEq(restored.state, "done", "the restore job ended done");
       assertEq(restored.result?.restored?.length, 2, "one job brought both back");
       await row(page, "2 workspaces are only in the cloud").waitFor({ state: "detached" });
       // Deleted from the bucket, a copy is gone from there and from the list.
