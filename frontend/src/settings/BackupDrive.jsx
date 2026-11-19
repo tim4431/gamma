@@ -2,8 +2,10 @@
 // backup tasks copy their snapshots to (BackupTasks.jsx, "Copy to Google
 // Drive"), beside the bucket (BackupBucket.jsx), into one folder of its My
 // Drive. Like the bucket it has no schedule of its own, and Saved snapshots
-// lists what it holds (SettingsBackups.jsx). Connecting is Google's device
-// flow: Connect… asks the server for a code (POST /api/admin/gdrive/connect),
+// lists what it holds (SettingsBackups.jsx). A connection is made through a
+// Google OAuth client the admin registers in their own Google Cloud project
+// and saves by Set up… (PUT /api/admin/gdrive/client; DELETE forgets it, and
+// another client disconnects). Connecting is Google's device flow: Connect… asks the server for a code (POST /api/admin/gdrive/connect),
 // the dialog shows it with Google's address, and while it is open polls the
 // server (POST /api/admin/gdrive/poll, at the interval Google gave) until
 // Google says yes, no, or the code expires; closing it stops waiting
@@ -13,15 +15,16 @@
 // (gamma/gdrive_account.py `status`). docs/dev/settings.md.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { CopyField, DialogButtons, Field, FormNotice, Row, Section, SubDialog, TestResult } from "./SettingsKit";
+import { CopyField, DialogButtons, Field, FormNotice, PasswordInput, Row, Section, SubDialog, TestResult } from "./SettingsKit";
 import { useSettingsRead } from "./settingsReads.js";
-import { CloudIcon, CloudOffIcon, ExternalLinkIcon, XIcon } from "../shared/ui/Icons";
+import { CloudIcon, CloudOffIcon, ExternalLinkIcon, KeyIcon, XIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t } from "../shared/i18n/i18n.js";
 
 export const DRIVE_READ = "/admin/gdrive";
 const ENDPOINT = `${API}${DRIVE_READ}`;
 const DEFAULT_FOLDER = "Gamma backups";
+const CONSOLE = "https://console.cloud.google.com";
 const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
 
 // Where the copies go: "someone@gmail.com › Gamma backups", "" while no
@@ -29,6 +32,75 @@ const json = (method, body) => ({ method, headers: { "Content-Type": "applicatio
 export function driveWhere(status) {
   if (!status?.connected || status.problem) return "";
   return `${status.email || t("Google Drive")} › ${status.folder}`;
+}
+
+// The client's ID as a row shows it: the part before Google's suffix.
+const shortId = (id) => id.replace(/\.apps\.googleusercontent\.com$/, "");
+
+// The OAuth client: where to make it in the Google Cloud console, its ID
+// and its secret (write-only: empty keeps the saved one, for the same ID).
+function ClientDialog({ status, confirm, onStatus, onSaved, onClose }) {
+  const saved = !!status.client_id;
+  const [draft, setDraft] = React.useState({ id: status.client_id, secret: "" });
+  const [error, setError] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const who = status.email || t("the Google account");
+
+  async function save(event) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true); setError("");
+    try { onSaved(await apiJson(`${ENDPOINT}/client`, json("PUT", { client_id: draft.id.trim(), client_secret: draft.secret.trim() }))); }
+    catch (err) { setError(err.message); setBusy(false); }
+  }
+  function remove() {
+    confirm({
+      title: T("Remove the OAuth client"),
+      message: status.connected
+        ? t("Remove this OAuth client? {email} is disconnected, and Gamma's access is revoked at Google.", { email: who })
+        : t("Remove this OAuth client? Google Drive cannot be connected until another is set up."),
+      confirmLabel: t("Remove"), danger: true,
+      onConfirm: async () => {
+        try { onStatus(await apiJson(`${ENDPOINT}/client`, json("DELETE"))); onClose(); }
+        catch (err) { setError(err.message); }
+      },
+    });
+  }
+  const open = (path) => (
+    <a className="aiKeyLink" href={`${CONSOLE}${path}`} target="_blank" rel="noopener noreferrer">
+      {t("Open")}<ExternalLinkIcon size={14} />
+    </a>
+  );
+  const field = (key, label) => ({
+    "aria-label": label, value: draft[key], spellCheck: false, autoComplete: key === "secret" ? "new-password" : "off",
+    onChange: (event) => setDraft((d) => ({ ...d, [key]: event.target.value })),
+  });
+  return (
+    <SubDialog title={saved ? t("Edit the OAuth client") : t("Set up an OAuth client")} onClose={onClose} draft={draft}>
+      <form className="settingsForm" noValidate onSubmit={save}>
+        <ol className="oauthInstructions">
+          <li>{t("In the Google Cloud console, choose or create a project and enable the Google Drive API.")} {open("/apis/library/drive.googleapis.com")}</li>
+          <li>{t("Under Google Auth Platform, set up the app for external users and publish it: while it is in testing, Google ends the connection after 7 days.")} {open("/auth/audience")}</li>
+          <li>{t("Create a client of the type “TVs and Limited Input devices” and paste its ID and secret below.")} {open("/auth/clients/create")}</li>
+        </ol>
+        <Field label={t("Client ID")}>
+          <input className="aiKeyInput" autoFocus={!saved} placeholder="123456789012-abc.apps.googleusercontent.com" {...field("id", t("Client ID"))} />
+        </Field>
+        <Field label={t("Client secret")} hint={t("Stored on the server, never shown to the browser again.")}>
+          <PasswordInput placeholder={saved ? t("secret set — type to replace") : "GOCSPX-…"} {...field("secret", t("Client secret"))} />
+        </Field>
+        {status.connected ? <p className="settingsPaneHint">{t("Another client ID disconnects {email}: connect again after saving.", { email: who })}</p> : null}
+        {error ? <FormNotice>{error}</FormNotice> : null}
+        <DialogButtons>
+          {saved ? <button type="button" className="uiBtn danger" onClick={remove}>{t("Remove…")}</button> : null}
+          <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
+          <button type="submit" className="uiBtn primary" disabled={busy || !draft.id.trim() || (!saved && !draft.secret.trim())}>
+            <MorphText>{busy ? t("Saving…") : t("Save")}</MorphText>
+          </button>
+        </DialogButtons>
+      </form>
+    </SubDialog>
+  );
 }
 
 // The connection's two steps: the folder's name, then the code to enter
@@ -166,8 +238,8 @@ function EditDialog({ status, confirm, onStatus, onClose }) {
 
 export function BackupDrive({ setStatus, confirm }) {
   const drive = useSettingsRead(DRIVE_READ);
-  const status = drive.data; // GET's {available, connected, email, folder, problem, pending, error, …}
-  const [dialog, setDialog] = React.useState(""); // "" | "connect" | "edit"
+  const status = drive.data; // GET's {client_id, connected, email, folder, problem, pending, error, …}
+  const [dialog, setDialog] = React.useState(""); // "" | "client" | "connect" | "edit"
   const [test, setTest] = React.useState(null);
 
   async function runTest() {
@@ -187,11 +259,12 @@ export function BackupDrive({ setStatus, confirm }) {
     </Section>;
   }
   const where = driveWhere(status);
+  const clientId = status.client_id;
+  const setUp = <button className="uiBtn sm" onClick={() => setDialog("client")}>{t("Set up…")}</button>;
   let row;
-  if (!status.available && !status.connected) {
-    row = <Row icon={CloudOffIcon} label={t("Not available")}
-      hint={t("Google Drive needs a Google OAuth client: set {id} and {secret} in the server's environment.",
-        { id: "GAMMA_GOOGLE_DRIVE_CLIENT_ID", secret: "GAMMA_GOOGLE_DRIVE_CLIENT_SECRET" })} />;
+  if (!clientId && !status.connected) {
+    row = <Row icon={CloudOffIcon} label={t("Not set up")}
+      hint={t("Google Drive connects through an OAuth client from your own Google Cloud project")}>{setUp}</Row>;
   } else if (!status.connected) {
     row = <Row icon={CloudIcon} label={status.pending ? t("Waiting for the code") : t("Not connected")}
       hint={t("A folder in your Google Drive, for backup tasks to copy their snapshots to")}>
@@ -210,18 +283,31 @@ export function BackupDrive({ setStatus, confirm }) {
       </span>
     </Row>;
   }
+  // The client connections are made through, under the connection once
+  // there is one to make.
+  const clientRow = !clientId && !status.connected ? null : (
+    <Row icon={KeyIcon} label={t("OAuth client")} title={clientId || undefined}
+      hint={clientId ? t("{id} · from your Google Cloud project", { id: shortId(clientId) }) : t("None: set one up, then connect again")}>
+      {clientId ? <button className="uiBtn sm" onClick={() => setDialog("client")}>{t("Edit…")}</button> : setUp}
+    </Row>
+  );
+  const changed = (value) => { drive.set(value); setTest(null); };
   return <>
     <Section title={t("Google Drive")} tag={tag}>
       {row}
+      {clientRow}
       {status.connected && status.problem ? <FormNotice>{status.problem}</FormNotice> : null}
     </Section>
+    {dialog === "client" ? (
+      <ClientDialog status={status} confirm={confirm} onStatus={changed} onClose={() => setDialog("")}
+        onSaved={(value) => { changed(value); setDialog(""); setStatus?.(t("OAuth client saved.")); }} />
+    ) : null}
     {dialog === "connect" ? (
       <ConnectDialog status={status} onStatus={(value) => drive.set(value)} onClose={() => setDialog("")}
         onConnected={(value) => { drive.set(value); setDialog(""); setStatus?.(t("Google Drive connected.")); }} />
     ) : null}
     {dialog === "edit" ? (
-      <EditDialog status={status} confirm={confirm} onStatus={(value) => { drive.set(value); setTest(null); }}
-        onClose={() => setDialog("")} />
+      <EditDialog status={status} confirm={confirm} onStatus={changed} onClose={() => setDialog("")} />
     ) : null}
   </>;
 }

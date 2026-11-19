@@ -13,6 +13,7 @@ starting account may read."""
 
 import base64
 import hashlib
+import json
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -22,8 +23,9 @@ from test_cloud_auth import cloud  # noqa: F401  (the fake account server fixtur
 from test_cloud_auth import start as cloud_start
 from zotero_fake import FULL_ACCESS, GOOD_VERIFIER, REQUEST_TOKEN, FakeZotero
 
-from gamma import cloud_auth, zotero_account, zotero_web
+from gamma import cloud_auth, zotero_account, zotero_oauth, zotero_web
 from gamma.routers import zotero as zotero_routes
+from gamma.server_settings import _peek_raw
 
 USER, PASSWORD = "zr_alice", "pw-zr_alice-123"
 OTHER, OTHER_PASSWORD = "zr_bob", "pw-zr_bob-123"
@@ -93,19 +95,19 @@ def public(monkeypatch, alice_id, bob_id):
 def fake(monkeypatch):
     """A fake Zotero, and neither a Zotero app nor cloud sign-in here
     unless the test sets one up."""
-    for name in ("GAMMA_ZOTERO_CLIENT_KEY", "GAMMA_ZOTERO_CLIENT_SECRET", "GAMMA_CLOUD_ISSUER",
-                 "GAMMA_CLOUD_DEFAULT_ISSUER"):
+    for name in ("GAMMA_CLOUD_ISSUER", "GAMMA_CLOUD_DEFAULT_ISSUER"):
         monkeypatch.delenv(name, raising=False)
     zotero_routes._probe_failed.clear()
+    zotero_oauth.forget_app()
     yield FakeZotero().install(monkeypatch)
+    zotero_oauth.forget_app()
     zotero_routes._probe_failed.clear()
 
 
 @pytest.fixture
-def zotero_app(monkeypatch, fake):
-    """This server has a Zotero app of its own."""
-    monkeypatch.setenv("GAMMA_ZOTERO_CLIENT_KEY", "gamma-consumer")
-    monkeypatch.setenv("GAMMA_ZOTERO_CLIENT_SECRET", "gamma-consumer-secret")
+def zotero_app(fake):
+    """This server has a Zotero app of its own, as an admin saves it."""
+    zotero_oauth.save_app("gamma-consumer", "gamma-consumer-secret")
     return fake
 
 
@@ -447,9 +449,29 @@ def test_signing_in_is_offered_only_with_a_zotero_app_or_the_broker(broker, fake
 
     # this server's own app wins over the broker
     monkeypatch.setenv("GAMMA_CLOUD_ISSUER", ISSUER)
-    monkeypatch.setenv("GAMMA_ZOTERO_CLIENT_KEY", "gamma-consumer")
-    monkeypatch.setenv("GAMMA_ZOTERO_CLIENT_SECRET", "gamma-consumer-secret")
+    zotero_oauth.save_app("gamma-consumer", "gamma-consumer-secret")
     assert alice.get("/api/zotero/account").json()["oauth"] == {"available": True, "mode": "server"}
+
+
+def test_an_admin_saves_this_servers_zotero_app_in_settings(fake, public):
+    """Settings → Server → Zotero sign-in: the app's key and the callback
+    URL to register it with, its secret write-only and sealed; signing in
+    uses it at once, and stops once it is removed."""
+    alice, _ = public
+    make_user("zotero_admin", "zotero-admin-pw", is_admin=1)
+    admin = _login("zotero_admin", "zotero-admin-pw", PUBLIC)
+    route, secret = "/api/admin/zotero-app", "gamma-consumer-secret"
+    assert alice.get(route).status_code == 403
+    assert admin.get(route).json() == {"client_key": "", "callback_url": PUBLIC + zotero_routes.CALLBACK_PATH}
+    assert admin.put(route, json={"client_key": "gamma-consumer"}).status_code == 400  # no secret yet
+    assert admin.put(route, json={"client_key": "a b", "client_secret": secret}).status_code == 400
+    saved = admin.put(route, json={"client_key": " gamma-consumer ", "client_secret": secret}).json()
+    assert saved["client_key"] == "gamma-consumer" and secret not in json.dumps(saved)
+    assert secret not in _peek_raw(zotero_oauth.APP_KEY)
+    assert admin.put(route, json={"client_key": "gamma-consumer"}).status_code == 200  # its secret kept
+    assert alice.get("/api/zotero/account").json()["oauth"] == {"available": True, "mode": "server"}
+    assert admin.delete(route).json()["client_key"] == ""
+    assert alice.get("/api/zotero/account").json()["oauth"] == NOT_SIGNING_IN
 
 
 def test_off_loopback_the_browser_that_started_connects_by_its_cookie(zotero_app, public, alice_id):

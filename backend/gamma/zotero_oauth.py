@@ -6,23 +6,75 @@ access step's ``oauth_token_secret`` *is* the key. The steps are
 ``request_token`` (naming the callback), the person's approval at
 ``authorize_url``, then ``access_token`` with the verifier Zotero sent to
 the callback. The consumer is this server's own Zotero application
-(``config.zotero_client``); without one, Gamma Cloud's broker runs the
-same steps with its own (cloud/gammacloud/zotero.py; the two ask for the
-same access in ``authorize_url``). Calls go to ``config.zotero_web_base()``
-through ``zotero_web._request``, the tests' single patch point.
+(``app``), which an admin registers at zotero.org and saves in Settings →
+Server → Zotero sign-in (users.db ``settings`` key ``zotero_app``, the
+secret encrypted); without one, Gamma Cloud's broker runs the same steps
+with its own (cloud/gammacloud/zotero.py; the two ask for the same access
+in ``authorize_url``). Calls go to ``config.zotero_web_base()`` through
+``zotero_web._request``, the tests' single patch point.
 """
 
 import base64
 import hashlib
 import hmac
+import json
+import re
 import secrets
+import sqlite3
 import time
 import urllib.parse
 
+from cryptography.fernet import InvalidToken
+
 from . import config, zotero_web
+from .publisher_sessions import seal, unseal
+from .server_settings import _peek_raw, _set_raw
 from .zotero_web import ZoteroAuthError, ZoteroError
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+APP_KEY = "zotero_app"                          # users.db ``settings``: this server's Zotero app
+_APP_FIELD = re.compile(r"^[\x21-\x7e]{1,128}$")  # a client key or secret: printable ASCII, no spaces
+
+
+def app() -> tuple[str, str]:
+    """This server's own Zotero app: ``(client key, client secret)``;
+    ``("", "")`` without one, or when its secret no longer decrypts (the
+    data directory's key changed)."""
+    try:
+        raw = _peek_raw(APP_KEY)
+        saved = json.loads(raw) if raw else {}
+        key = saved.get("client_key") if isinstance(saved, dict) else ""
+        secret = unseal(saved.get("client_secret") or "") if isinstance(key, str) and key else ""
+    except (sqlite3.Error, ValueError, TypeError, InvalidToken, OSError):
+        return "", ""
+    return (key, secret) if key and secret else ("", "")
+
+
+def save_app(client_key, client_secret="") -> None:
+    """Save this server's Zotero app. An empty ``client_secret`` keeps
+    the saved one, for the same key. ValueError for a key or secret that
+    cannot be."""
+    if not isinstance(client_key, str) or not isinstance(client_secret, str):
+        raise ValueError("The client key and secret must be text.")
+    client_key, client_secret = client_key.strip(), client_secret.strip()
+    if not client_key:
+        raise ValueError("Paste the client key.")
+    if not _APP_FIELD.match(client_key):
+        raise ValueError("The client key is one word, as zotero.org shows it.")
+    if not client_secret:
+        held_key, held_secret = app()
+        if held_key != client_key:
+            raise ValueError("Paste the client secret.")
+        client_secret = held_secret
+    if not _APP_FIELD.match(client_secret):
+        raise ValueError("The client secret is one word, as zotero.org shows it.")
+    _set_raw(APP_KEY, json.dumps({"client_key": client_key, "client_secret": seal(client_secret)}))
+
+
+def forget_app() -> None:
+    """Forget this server's Zotero app. Accounts it connected keep their
+    keys, which do not depend on it."""
+    _set_raw(APP_KEY, "")
 
 
 def _enc(value) -> str:

@@ -918,7 +918,14 @@ Library:
   the pane says of either store is
   [backupStores.js](../../frontend/src/settings/backupStores.js)): a
   folder in a Google account's My Drive that tasks may copy their
-  snapshots to as well, beside the bucket or instead. Its one row reads
+  snapshots to as well, beside the bucket or instead. Without an OAuth
+  client its row reads "Not set up" with Set up…, which opens "Set up an
+  OAuth client": the three Google Cloud console pages to visit (each an
+  Open link), the client ID and the write-only secret ("secret set — type
+  to replace" once saved). With one, an "OAuth client" row names it, "<id>
+  · from your Google Cloud project", with Edit… (and Remove…, which asks
+  first). Each server's admin registers their own: Gamma ships none and
+  reads none from the environment. The connection's row above it reads
   "Not connected" with Connect…, or the account's address with "Gamma
   backups · backup tasks can copy their snapshots here", Test (the folder's
   item count and the account's storage, answered beside it) and Edit….
@@ -929,17 +936,16 @@ Library:
   why and offers the folder step again. A connection waiting for its code
   reads "Waiting for the code" with Enter the code…. Edit… changes the
   folder (new copies go there) and holds Disconnect…, which asks first.
-  Without an OAuth client the row reads "Not available" and names
-  `GAMMA_GOOGLE_DRIVE_CLIENT_ID` and `_SECRET`; a connection that cannot
-  be used shows why under the row, with Connect again…. A task's editor
+  A connection that cannot be used shows why under the rows, with
+  Connect again…. A task's editor
   then has *Copy to Google Drive* (on for a new task while Drive is
   connected), its row "copies to Google Drive" and its Last run "in Google
   Drive". The listing takes Drive's copies too (`GET
   /api/admin/offsite/snapshots?store=drive`): "in Google Drive" beside "in
   the bucket", "only in Google Drive" on a copy only Drive holds, whose
   Download, Restore and Delete work on Drive's copy. `GET/PUT/DELETE
-  /api/admin/gdrive`, `POST …/connect`, `…/poll`, `…/test`, `DELETE
-  …/connect`; how it works:
+  /api/admin/gdrive`, `PUT/DELETE …/client`, `POST …/connect`, `…/poll`,
+  `…/test`, `DELETE …/connect`; how it works:
   [debugging.md](debugging.md#google-drive).
 - **Maintenance** (the pane's head says Library maintenance): workspace
   storage, rebuilding the search indexes (the notes index and the
@@ -968,7 +974,13 @@ Administration (admins only):
   defaults** (each box saves on Enter or blur), **Sign-in**, **Guests** and
   **Reports**, below.
 - **Server**: the machine itself. The dashboard (build, uptime, warnings,
-  the update check), the public server URL, on a hosted container the
+  the update check), the public server URL, **Zotero sign-in**
+  ([SettingsZoteroApp.jsx](../../frontend/src/settings/SettingsZoteroApp.jsx):
+  this server's own Zotero app, "Not set up" with Set up… or "This
+  server's Zotero app" with its key and Edit…; the dialog links
+  zotero.org/oauth/apps, shows the callback URL to register it with (or
+  asks for the public URL first), and takes the client key and the
+  write-only secret, with Remove…; [zotero_sync.md](zotero_sync.md)), on a hosted container the
   **Plan** (`HostedPlan`, [cloud_accounts.md](cloud_accounts.md) "Hosted
   containers"), the shared AI provider, shared workspaces,
   **Databases** (Check databases: a quick check of every database file as
