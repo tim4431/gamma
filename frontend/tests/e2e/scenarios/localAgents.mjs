@@ -672,6 +672,13 @@ export async function localAgentScenarios(env) {
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).waitFor({ timeout: 10000 });
         await until(async () => (await conversation()).messages.at(-1).state === "running", { timeout: 15000, what: "Codex works" });
+        // A turn takes a steer once Codex has begun its own (its turn's id,
+        // codex.py _steer); before that the steer is refused (409) and the
+        // chat sends the message as the next one. The message is running
+        // from the runner's start, before Codex is up: a loaded machine
+        // widens that.
+        await until(() => heard().some((e) => e.in?.method === "turn/start" && JSON.stringify(e.in.params.input).includes(STEER_ASK)),
+          { timeout: 15000, what: "Codex began its turn" });
         await box.fill(STEER);
         await box.press("Enter");
         const row = dock.locator(".chatQueueRow", { hasText: STEER });
