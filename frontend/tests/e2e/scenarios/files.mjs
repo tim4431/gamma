@@ -627,7 +627,10 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
     const many = Array.from({ length: 101 }, (_, i) => ({ path: `batch note ${String(i).padStart(3, "0")}.txt`, bytes: Buffer.from(`batch note ${i}\n`) }));
     let uploads = 0;
-    page.on("request", (r) => { if (r.method() === "POST" && new URL(r.url()).pathname === "/api/upload-file") uploads++; });
+    let wentUp = 0;
+    const isUpload = (r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/upload-file";
+    page.on("request", (r) => { if (isUpload(r)) uploads++; });
+    page.on("response", (r) => { if (isUpload(r.request()) && r.ok()) wentUp++; });
     await dropFolder(page, ".app", "many", many);
     let dialog = page.getByRole("dialog", { name: "Upload “many”", exact: true });
     await dialog.getByText("Each of the 101 files becomes a page of its own.", { exact: true }).waitFor();
@@ -646,6 +649,8 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     const row = page.locator(".taskRow", { hasText: "Upload “many”" });
     await row.locator(".taskBar").waitFor();
     assertEq(await page.locator(".taskRow", { hasText: "batch note 000.txt" }).count(), 0, "no row per file");
+    // the Stop after a first file is in, so some went and the rest did not
+    await until(async () => wentUp > 0, { timeout: 15000, what: "a first file of the batch to have gone up" });
     await row.getByRole("button", { name: "Stop Upload “many”", exact: true }).click();
     await until(async () => (await row.innerText()).includes("Stopped after"), { timeout: 20000, what: "the row says where the Stop left it" });
     await row.getByRole("button", { name: "Open Upload “many”", exact: true }).click();
