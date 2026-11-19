@@ -355,7 +355,14 @@ y1, x2, y2}, rects: [{x1, y1, x2, y2}, …]}`, the 1-based page, the page as
 it was measured when the place was taken (the viewer's page at its zoom
 then, an ink file's page in points, an imported annotation's page box) and
 the rectangles in that frame, top-left origin, `boundingRect` their union;
-`area: true` on an area highlight. A text highlight may also carry
+`area: true` on an area highlight. A text highlight's rectangles may
+cover more than one passage of its page (a highlight in parts: a sentence
+a column break cuts, or two places one note is about; the web app's Add a
+passage…, `shared/model/highlightParts.js`): its quote is then the
+passages' text in the order the page reads them, one space between two, as
+the relocation joins the stretches a highlight covers
+([highlight_relocation.md](highlight_relocation.md#finding-a-passage)), and
+nothing else marks the parts. A highlight is on one page. A text highlight may also carry
 `properties.style`, how it marks its passage: `underline`, `squiggly` (a
 wavy underline) or `strikeout`, drawn as a line in its colour's line tone
 (`colors.line_color`, the frontend's `lineColor`) and written to the

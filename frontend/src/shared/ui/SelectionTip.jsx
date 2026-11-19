@@ -6,7 +6,7 @@
 // (press.js tipPress; TipMarks takes it as its `act`). Imports no viewer,
 // so the code view's chunk takes it without pdf.js.
 import React from "react";
-import { CheckIcon, CopyIcon, LocateIcon, MessageSquareIcon } from "./Icons";
+import { CheckIcon, CopyIcon, LocateIcon, MessageSquareIcon, TextPlusIcon } from "./Icons";
 import { IconSwap } from "./MotionWidgets";
 import { useCopied } from "./Widgets";
 import { usePalette } from "./paletteContext.js";
@@ -39,6 +39,19 @@ export function TipMoveHere({ onMove }) {
     <div className="colorRow">
       <TipTool className="tipMoveBtn" label={t("Move the highlight here")} onPress={onMove}>
         <LocateIcon size={14} />
+      </TipTool>
+    </div>
+  );
+}
+
+// The popup's whole row while a highlight waits for another passage (App's
+// extendHighlightId): this selection is added to it, nothing else is
+// offered.
+export function TipAddHere({ onAdd }) {
+  return (
+    <div className="colorRow">
+      <TipTool className="tipAddBtn" label={t("Add to the highlight")} onPress={onAdd}>
+        <TextPlusIcon size={14} />
       </TipTool>
     </div>
   );
