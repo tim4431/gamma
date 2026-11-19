@@ -30,7 +30,7 @@ from test_picture_pdf import (QUADRANTS, WHITE, _entry, _imported, _near, _pic, 
 from test_text_box import CROP, _kids, _pdf, _put_children, _upload_pdf
 
 from gamma import ai_pictures, note_app_import, notability_export, pdf_image, pdf_text, picture, storage
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.pdf_export import annotate_pdf
 
 SVG_HEAD = b'<svg xmlns="http://www.w3.org/2000/svg"'

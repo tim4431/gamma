@@ -310,7 +310,7 @@ export const RULES = [
   // the AI client is the translated view's path to the model too
   ["backend/gamma/ai_client.py", [...CHAT, "settings", "ink-zoom", "translation"]],
   // text-search: read_page by lines and search_library's file hits, over MCP
-  ["backend/gamma/ai_tools.py", [...CHAT, "settings", "ink-zoom", "text-search"]],
+  ["backend/gamma/ai_tools/**", [...CHAT, "settings", "ink-zoom", "text-search"]],
   ["backend/gamma/ai_*.py", [...CHAT, "settings", "ink-zoom"]],
   ["backend/gamma/chatgpt_oauth.py", ["settings"]],
   ["backend/gamma/routers/ai.py", [...CHAT, "settings", "ink-zoom", "translation"]],

@@ -123,7 +123,7 @@ ai_usage.py        token usage per AI call (users.db ai_usage) and the summary S
 ai_context.py      PDF attachments, extraction, and chat context assembly
 ai_pictures.py     the chat's pictures: one size, the store, the budget, the label lines
 chat_export.py     a chat conversation as Markdown with its pictures (docs/dev/chat_history.md)
-ai_tools.py        the agent's tools: one scope-agnostic registry
+ai_tools/          the agent's tools: one scope-agnostic registry, a module per tool family
 ai_agent.py        the agent tool loop, its two user-facing pauses, and the helper a tool delegates to
 ai_permissions.py  the chat tools' Allow / Ask / Off states and the approvals a reply waits on
 ai_steer.py        the messages a user steers into their chat reply while it runs

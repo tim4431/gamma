@@ -2,7 +2,7 @@
 buckets) read back as a transcript — the current conversation, the index of
 earlier ones and their ids, windows through a long one, and the scope rules."""
 
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 
 from ai_fixtures import folder, org  # noqa: F401  (org is a fixture)
 

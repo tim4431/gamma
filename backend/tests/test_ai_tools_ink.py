@@ -12,7 +12,7 @@ import pytest
 
 from gamma import ink as inkmod
 from gamma.ai_context import handwriting_label, notes_focus_section
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.ink_view import CROP_MIN_SIDE, crop_box
 from gamma.pdf_export import page_with_ink
 

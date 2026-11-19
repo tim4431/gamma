@@ -490,7 +490,7 @@ def test_a_secrets_file_is_never_a_hit_whatever_its_bytes_were_indexed_as():
     file indexed as settings.txt and renamed to .env (same bytes, same
     hash) is no hit in any search, nor a copy of a .env whose owner is
     gone; a .env never indexed is found once renamed to a plain name."""
-    from gamma.ai_tools import run_agent_tool
+    from gamma.ai_tools.registry import run_agent_tool
 
     make_user("srch_secret", "pw")
     c = login("srch_secret", "pw")

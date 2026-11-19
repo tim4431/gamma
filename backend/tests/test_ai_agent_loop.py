@@ -758,7 +758,7 @@ def test_view_pdf_page_picture_reaches_the_next_round_not_the_chip(org, monkeypa
     w.add_blank_page(width=100, height=100)
     with open(pdf, "wb") as f:
         w.write(f)
-    monkeypatch.setattr("gamma.ai_tools.pdf_path", lambda ws, doc: pdf)
+    monkeypatch.setattr("gamma.ai_tools.viewing.pdf_path", lambda ws, doc: pdf)
     opened = []
 
     def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):

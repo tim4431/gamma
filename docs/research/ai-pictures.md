@@ -2,7 +2,7 @@
 
 A survey of how pictures reached the model before October 2026, the limits
 the code imposed and why they no longer held, and the design that replaced
-them. Read from the code (`gamma/ai_context.py`, `gamma/ai_tools.py`,
+them. Read from the code (`gamma/ai_context.py`, `gamma/ai_tools/`,
 `gamma/routers/ai.py`, `gamma/ai_protocols/*`, `frontend/src/chat/ChatDock.jsx`,
 `frontend/src/app/App.jsx`, `frontend/src/pdf/PdfViewer.jsx`) and from the
 providers' published limits. The mechanics as built are in

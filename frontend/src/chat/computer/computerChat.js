@@ -229,7 +229,7 @@ function askedStep(step, path) {
 }
 
 const ASKED = new Set(["asked", "allowed", "declined"]);
-// Gamma's tools that write as the agent (gamma/ai_tools.py WRITING_TOOLS,
+// Gamma's tools that write as the agent (gamma/ai_tools/registry.py WRITING_TOOLS,
 // gamma/local_agents/events.py GAMMA_WRITES): a call of one is worded as a
 // write.
 const GAMMA_WRITES = new Set(["comment", "resolve", "highlight"]);

@@ -69,7 +69,7 @@ MAX_REASON = 2000
 
 KINDS = ("read", "edit", "run", "search", "gamma", "other")   # gamma: a call of Gamma's tools, named by its ``tool``
 GAMMA_TOOL = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-# Gamma's tools that write as the agent (gamma/ai_tools.py WRITING_TOOLS,
+# Gamma's tools that write as the agent (gamma/ai_tools/registry.py WRITING_TOOLS,
 # frontend chat/computer/computerChat.js GAMMA_WRITES): a call of one is
 # worded as a write.
 GAMMA_WRITES = ("comment", "resolve", "highlight")

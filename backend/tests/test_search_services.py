@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 import pytest
 
 from gamma import ai_client, search_services
-from gamma.ai_tools import MAX_WEB_SEARCHES, run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
+from gamma.ai_tools.web import MAX_WEB_SEARCHES
 from gamma.db import page_now
 
 from ai_fixtures import folder, org  # noqa: F401  (org is a fixture)

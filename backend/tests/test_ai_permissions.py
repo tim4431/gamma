@@ -12,8 +12,9 @@ import pytest
 
 from gamma import ai_permissions
 from gamma.ai_permissions import permission_state
-from gamma.ai_tools import (MUTATING_TOOLS, TOOLS, agent_system, agent_tools, approval_preview,
-                            text_diff, tool_states)
+from gamma.ai_tools.base import text_diff
+from gamma.ai_tools.prompt import agent_system
+from gamma.ai_tools.registry import MUTATING_TOOLS, TOOLS, agent_tools, approval_preview, tool_states
 from gamma.db import connect_pages_db
 from gamma.ops import apply_ops
 from gamma.routers.ai import WatchedStream, keepalive_lines

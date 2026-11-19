@@ -249,7 +249,7 @@ Backend: `db.py` (the column and index, a migration step);
 `blocks_store.py` (`parent_page`, `sub_pages`, `page_chain`, the filing
 rule, `page_root_props`); `ops.py` (the set rule, the trash cascade);
 `routers/pages.py` (`PageCreate.parent_page`); `auth.py`
-(`allows_page`); `ai_tools.py` (the listing line); `trash.py` (the
+(`allows_page`); `ai_tools/reading.py` (the listing line); `trash.py` (the
 listing); `markdown_export.py`, `obsidian_export.py`, `folder_sync.py`,
 `markdown_zip_import.py` (the layout). Frontend: `slashCommands.js` and
 `App.createLinkedPage` (the command), `App.pageBlocks` / `scopePages` /

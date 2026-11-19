@@ -391,7 +391,7 @@ export const PREFS = {
   toolRoundsUnlimited: flag("gamma-ai-tool-rounds-unlimited", ACCOUNT, false),
   // Per-read_page-call cap on document text the folder/paper agent may pull.
   // The default matches the backend's fallback (READ_CHARS_CAP in
-  // gamma/ai_tools.py) — keep the two in sync.
+  // gamma/ai_tools/base.py) — keep the two in sync.
   agentReadChars: pref("gamma-ai-read-chars", ACCOUNT, 20000, CONTEXT_CHARS),
   // Off by default: rectangle snapshots stay attached until removed or sent.
   // On, a plain click elsewhere in the PDF drops them — the same gesture that

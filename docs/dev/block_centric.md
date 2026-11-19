@@ -446,7 +446,7 @@ stage.)*
   `search_library` (notes hits carry block ids, PDF hits page numbers;
   `search_pdfs` kept as a replay/dispatch alias via
   `ai_context.DEPRECATED_TOOLS`), prompts in `routers/ai.py` +
-  `ai_tools.py`. The Settings permission label "Search PDF text" is the
+  `ai_tools/prompt.py`. The Settings permission label "Search PDF text" is the
   frontend's to rename (key stays `search`).
 
 *(frontend status 2026-09-02: the Ctrl+F panel keeps `/block-search` (fuzzy /

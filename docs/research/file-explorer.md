@@ -120,7 +120,7 @@ what a page carries" and returns `{"kind": "pdf", "id", "url", "name"}`
 (`blocks_store.py:436`); its twin is `pageAttachment` in
 `frontend/src/library/libraryUtils.js`, and `tests/shared/attachment.json`
 holds both to the same answers. So a kind field exists on both sides. It
-has one value, and nothing branches on it: `ai_tools.py:516` prints it.
+has one value, and nothing branches on it: `ai_tools/reading.py` prints it.
 
 What a page stores of its document is five flat keys with rules between
 them: `doc_id`, `source_url` (stored only when the file comes from
@@ -1414,7 +1414,7 @@ whole list:
     box offers "Search inside notes, PDFs and files".
 22. The browser group `text-search` types its query again until the Files
     hit shows, since the first search starts the index; its selection rules
-    also name `chat/**`, `editor/**`, `ai_tools.py`, `mcp_server.py` and
+    also name `chat/**`, `editor/**`, `ai_tools/`, `mcp_server.py` and
     `work_folders/paths.py`, the last with `feedback`.
 23. Not built in step 4: the Files window and server-side quick open (step
     5); `text_position` anchors and a selection of lines reaching the chat

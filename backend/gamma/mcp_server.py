@@ -46,8 +46,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .ai_permissions import APPROVAL_TIMEOUT
-from .ai_tools import (WRITING_TOOLS, agent_tools, approval_preview, citation_prompt, gamma_link, mcp_tools,
-                       run_agent_tool)
+from .ai_tools.base import gamma_link
+from .ai_tools.prompt import citation_prompt
+from .ai_tools.registry import WRITING_TOOLS, agent_tools, approval_preview, mcp_tools, run_agent_tool
 from .agents import of_connection, stamp
 from .integrations import Connection, set_asks
 from .server_settings import mcp_allowed_hosts

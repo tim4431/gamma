@@ -14,7 +14,7 @@ from fractional_indexing import generate_key_between
 from conftest import account_of, login, make_folder, make_label, make_page, make_user, workspace_of
 from gamma import trash
 from gamma.search import index as text_index
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.blocks_store import TRASH
 from gamma.db import connect_data_db, connect_pages_db
 from gamma.trash import KEEP_DAYS

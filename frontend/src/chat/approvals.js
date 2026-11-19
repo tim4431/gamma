@@ -11,7 +11,7 @@ import { t, tn } from "../shared/i18n/i18n.js";
 const listOf = (items = [], total = 0) => items.join(", ")
   + (total > items.length ? t(", and {n} more", { n: total - items.length }) : "");
 
-// The page tools that take a list of pages (gamma/ai_tools.py): a card for
+// The page tools that take a list of pages (gamma/ai_tools/organizing.py): a card for
 // two or more pages carries `count`, and one line per page in its `diff`.
 const BATCH_TOOLS = new Set(["rename_page", "move_page", "label_page", "restore_page", "delete_page"]);
 export const isBatchPreview = (tool, preview) => BATCH_TOOLS.has(tool) && typeof preview?.count === "number";
@@ -133,7 +133,7 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
 }
 
 // Where a writing tool's call writes (a comment, a resolve, a highlight:
-// the preview's `place`, gamma/ai_tools.py _card_place, {kind, page?,
+// the preview's `place`, gamma/ai_tools/base.py _card_place, {kind, page?,
 // lines?, quote?}), in the user's language; "" for none.
 export function placeText(place) {
   if (!place) return "";
@@ -149,7 +149,7 @@ export function placeText(place) {
   return place.quote ? t("{place}: “{quote}”", { place: where, quote: place.quote }) : where;
 }
 
-// What a deletion takes, as the server names it (gamma/ai_tools.py
+// What a deletion takes, as the server names it (gamma/ai_tools/notes.py
 // _DELETED_KIND), in the user's language.
 export function deletedKind(what) {
   return {
@@ -160,7 +160,7 @@ export function deletedKind(what) {
 }
 
 // What a deletion takes besides itself, one line each, from its card's
-// preview (gamma/ai_tools.py _preview_delete_folder / _preview_delete_label /
+// preview (gamma/ai_tools/ _preview_delete_folder / _preview_delete_label /
 // _preview_delete_page): a folder's subfolders, the pages that lose the
 // filing and stay, and the folders whose AI chats move to the library chat's
 // history; the pages inside deleted pages, and how long Recently deleted
@@ -197,7 +197,7 @@ export function deletionNotes(tool, preview = {}) {
   return notes;
 }
 
-// What a card for several pages says besides its lines (gamma/ai_tools.py
+// What a card for several pages says besides its lines (gamma/ai_tools/organizing.py
 // _batch_preview): the folder or labels the call makes first, the pages it
 // leaves out (the assistant hears why) and the ones already so.
 export function batchNotes(preview = {}) {

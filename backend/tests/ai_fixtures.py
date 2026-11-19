@@ -9,7 +9,7 @@ import re
 import pytest
 
 from conftest import account_of, doc_props, login, make_folder, make_user, workspace_of
-from gamma.ai_tools import agent_tools
+from gamma.ai_tools.registry import agent_tools
 
 ALL_TOOLS = agent_tools("folder")  # the full registry, for the wire tests
 ALL_PERMS = ("list", "read", "block_read", "view", "search", "show", "web_search", "web_read",

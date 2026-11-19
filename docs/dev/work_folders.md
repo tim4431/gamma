@@ -1385,7 +1385,7 @@ its check.
   pages it reaches, a work folder's files among them. `?within=<folder>`
   lists a folder's pages whatever their flag (the HTTP vault reads it).
 - `block_search(q="")`, the `[[` popup's recent pages (`IN_LISTED`).
-- `ai_tools._run_list_pages` at the root (a file not in the library only
+- `ai_tools.reading._run_list_pages` at the root (a file not in the library only
   where the chat's folder or the `folder` argument files it, a page of the
   chat's context always), `list_labels` and `label=`.
 - `clip.library_folders`: the folders offered are the filing targets, the

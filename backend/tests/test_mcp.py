@@ -9,7 +9,7 @@ import time
 import pytest
 
 from conftest import account_of, doc_props, login, make_folder, make_page, make_user, thread_on
-from gamma.ai_tools import agent_tools, mcp_tools, run_agent_tool
+from gamma.ai_tools.registry import agent_tools, mcp_tools, run_agent_tool
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.integrations import resolve_token
 
@@ -708,7 +708,7 @@ def test_the_question_shows_a_change_line_by_line():
     """Gamma's question is plain text, as a client shows it: what kind of
     change and how much, the lines removed and added, a kept line beside
     them with its links as their text, and where the page is."""
-    from gamma.ai_tools import text_diff
+    from gamma.ai_tools.base import text_diff
     from gamma.integrations import Connection
     from gamma.mcp_server import QUESTION_LINES, _question
 

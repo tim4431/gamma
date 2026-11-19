@@ -763,7 +763,7 @@ folder edits that file; the sync panel no longer names an agent.
   (`comments.py:94`) becomes the threads of a scope.
 - An entry is a thread or a **highlight without one**: its file, place,
   quote, source line, picture and note. `state` filters threads only.
-- The tools in `ai_tools.py` (`:4389`, `:4416`) become
+- The tools in `ai_tools/` become
   `list_annotations` and `read_annotation`; `mcp_server.py`'s `SPREAD`
   and thread arguments follow. `ai_context.py`'s highlights section
   gives a PDF passage its page number, which it lacks today.

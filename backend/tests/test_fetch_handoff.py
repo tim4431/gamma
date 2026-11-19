@@ -17,7 +17,8 @@ from ai_fixtures import FakeResp, folder
 from conftest import account_of, login, make_folder, make_user
 from gamma import ai_web, fetch_handoff, net_guard, web_fetch
 from gamma import publisher_sessions as sessions
-from gamma.ai_tools import agent_system, run_agent_tool
+from gamma.ai_tools.prompt import agent_system
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.db import connect_users_db
 from test_ai_tools_web import _text_pdf
 from test_net_guard import transport  # noqa: F401 -- fake urllib transport fixture

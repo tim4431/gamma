@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from gamma import ai_permissions
-from gamma.ai_tools import AGENT_PROMPT, TOOLS, agent_system, agent_tools
+from gamma.ai_tools.prompt import AGENT_PROMPT, agent_system
+from gamma.ai_tools.registry import TOOLS, agent_tools
 
 from ai_fixtures import ALL_PERMS, ALL_TOOLS, folder
 
@@ -191,7 +192,7 @@ def test_the_prompts_name_text_files_beside_pdfs():
     follows a file hit with read_page(from_line=N), reports a file's line,
     and cites one with a line link whose quote is the line's own text; the
     read_page spec takes a path and lines, and needs no page_id."""
-    from gamma.ai_tools import CITATION_PROMPT
+    from gamma.ai_tools.prompt import CITATION_PROMPT
 
     text = agent_system(folder(""))
     assert "what a page, its PDF or its file says" in text

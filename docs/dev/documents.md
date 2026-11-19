@@ -367,7 +367,7 @@ highlight relocation, translation memory, the text index's live set
 (`gamma/search/index.py` `purge_unused`: a copy keeps the rows of the file
 it shows), the
 Zotero link's comparison of files, a folder chat's PDF search
-(`ai_tools._scope_pages`), and on the client `pdfStored`, the viewer's `fileId`, the translation scope, the
+(`ai_tools.base._scope_pages`), and on the client `pdfStored`, the viewer's `fileId`, the translation scope, the
 annotated PDF's translation (`translateExport.exportFile`,
 `folderTranslation.folderPapers`) and the chat's PDF ids.
 

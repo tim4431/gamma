@@ -34,13 +34,11 @@ from ..ai_client import (
     wire_protocol as _wire_protocol,
 )
 from ..ai_agent import AgentLoop, ApprovalGate, Conversation, Helper, PaperWait
-from ..ai_tools import (
-    AGENT_PROMPT,
-    CITATION_PROMPT,
+from ..ai_tools.base import READ_CHARS_MAX
+from ..ai_tools.prompt import AGENT_PROMPT, CITATION_PROMPT, agent_system
+from ..ai_tools.registry import (
     DATED_TOOLS,
     PICTURE_TOOLS,
-    READ_CHARS_MAX,
-    agent_system,
     agent_tools,
     available,
     tool_states,
@@ -188,7 +186,7 @@ class AIChatRequest(BaseModel):
     max_pictures: int = Field(default=ai_pictures.DEFAULT_BUDGET, ge=1, le=ai_pictures.MAX_BUDGET)
     files: list = Field(default_factory=list)  # uploaded PDFs as {name, data} data URLs
     stream: bool = False  # NDJSON stream of {"delta": …} lines instead of one JSON body
-    # Agent chat (gamma/ai_tools.py): agent_scope declares what this chat's
+    # Agent chat (gamma/ai_tools/): agent_scope declares what this chat's
     # tools reach — "folder" (the home/folder view; `folder` is the folder's
     # id, "" = library root) or "page" (the per-page chat; `page_id` is the
     # focused page — read tools + note editors). "" = plain chat (page_id
