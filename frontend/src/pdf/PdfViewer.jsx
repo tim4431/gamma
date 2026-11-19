@@ -19,6 +19,7 @@ import { KEEP_MARGIN, RENDER_MARGIN, cropPage, forgetPixels, installPageRaster, 
 import { installScrollSnap } from "./scrollSnap.js";
 import { ACROSS, FALLBACK_H, FALLBACK_W, PAGE_GAP, crossStart, pageAt, pageStartAt } from "./pageLayout.js";
 import { selectionParagraphs, textRuns } from "./pdfTranslate";
+import { knownScan, pageText } from "./pageText.js";
 import * as translateState from "./translateState.js";
 import { langOfKey, sameModel } from "./translateRecall.js";
 import { TransLayer } from "./TransOverlay.jsx";
@@ -896,7 +897,12 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         if (!text) {
           const page = await pdfDoc.getPage(p);
           const vp = page.getViewport({ scale: 1 });
-          const tc = await page.getTextContent();
+          // the text layer's words: a scan's OCR layer repaired (pdf/pageText.js)
+          const tc = await pageText(page);
+          // Telling a scan may have read the page's operator list, its
+          // pictures decoded with it: a page away from the view lets them go,
+          // as a translation job's segmenting does.
+          if (Math.abs(p - curPageRef.current) > 2) page.cleanup();
           if (gen !== searchGenRef.current) return Object.assign([], { stale: true });
           const items = tc.items;
           // Page string: runs joined by their PDF line break or a space,
@@ -2448,8 +2454,14 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
               // document's, none while the next one loads.
               // The settings' own request: a paper shown under another key
               // (App's paperKey) does not change what a selection asks.
-              run: (texts, signal, onPartial) => (cbRef.current.onTranslateSelection || cbRef.current.onTranslate)?.(texts, signal, onPartial,
-                { pageId: translateState.scopeOf(transUrlRef.current, translateScopeRef.current).pageId, waitBrief: false }),
+              // A selection of a scan's OCR layer says so (its page's text
+              // layer was read, so pdf/pageText.js knows the page).
+              run: async (texts, signal, onPartial) => {
+                const page = await pdfDoc?.getPage(selPopup.pageNumber).catch(() => null);
+                return (cbRef.current.onTranslateSelection || cbRef.current.onTranslate)?.(texts, signal, onPartial,
+                  { pageId: translateState.scopeOf(transUrlRef.current, translateScopeRef.current).pageId, waitBrief: false,
+                    ocr: knownScan(page) === true });
+              },
               // the workspace's glossary, for a writer of it
               addTerm: onAddTerm,
             } : null} />
@@ -2697,7 +2709,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
         const vpBase = page.getViewport({ scale: 1 });
         const textL = textRef.current;
         textL.innerHTML = "";
-        const tc = await page.getTextContent();
+        // A scan's invisible OCR layer comes repaired: one band a printed
+        // line, its words tiling it (pdf/pageText.js, pdf/scanText.js).
+        const tc = await pageText(page);
         if (cancelled) return;
         // pdf.js sizes each span (scaleX) from a canvas measure in the PDF's
         // own language, but the spans would inherit <html lang> — the

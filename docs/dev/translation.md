@@ -930,7 +930,10 @@ its last layout, stretched, until it comes back.
 ## What a request carries
 
 Geometry never leaves the client. `pdf/pdfTranslate.js` segments a page's
-pdf.js text runs into blocks:
+pdf.js text runs into blocks. The runs are those of `pdf/pageText.js`, the
+text layer's: a scan's invisible OCR layer comes repaired, one band and
+baseline a printed line ([pdf_loading.md](pdf_loading.md#a-scans-text-layer)),
+so its lines and paragraphs read as a typeset page's do.
 
 - `textRuns` maps TextContent items through the scale-1 viewport, with each
   run's real font name (`pdf/pdfFonts.js`, below) and glyph ascent and
@@ -1203,6 +1206,15 @@ order: no joined paragraph touched one of these blocks.
   memory nor the kept translations, and its answer replaces them ("Kept
   translations").
 - `before`, `after` and `section`.
+- `ocr`: sent only true, when a unit of the chunk was read from a scan's
+  OCR layer. `segmentNow` marks a page's blocks `ocr` when `pdf/pageText.js`
+  repaired its text ([pdf_loading.md](pdf_loading.md#a-scans-text-layer)); a
+  unit with such a block carries it, and so does its chunk's context, so a
+  paper with a born-digital cover (HAL's) sends it from its scanned pages
+  only. A selection translated from such a page sends it too
+  (`pageText.knownScan`). The brief's request sends it with a `head` read
+  from such pages; a stored file's opening pages the server checks itself
+  ("The paper's brief").
 
 `chunkRequest` in `app/translateClient.js` sends them with `texts`, `lang`,
 `model`, `effort`, `speed` and `stream: true`.
@@ -1335,6 +1347,12 @@ translation request never makes it.
 - **The call**: one model call with `_BRIEF_PROMPT` returns a JSON object —
   the field, notation the paper defines (at most 10 symbols), 20–30
   recurring terms with their renderings, and names that stay as written.
+  When the opening text was read from a scan's OCR layer, a rule is added to
+  spell every term as the author did, not as misread: for a stored file when
+  a page `material` reads is a scan (`Paper.scanned`,
+  `pdf_text.opening_is_scan`), for a `head` when the request says `ocr` (the
+  viewer read it from such pages). So the brief kept for a paper does not
+  depend on which page its first job started on.
   `render_brief` turns it into the system prompt's closing section (at most
   4,000 characters). It runs at the translation's effort and speed. Its
   output cap is 3,000 tokens (`_BRIEF_TOKENS`), plus 8,000 for thinking when
@@ -1504,7 +1522,13 @@ and the kept translations in `gamma/translate.py` over
   token once; keep other math, numbers, units and citation markers; one
   rendering per term, after the brief; the Terms line's renderings, over
   the brief; references such as "Fig. 2" and "Eq.
-  (3)" the target language's way; headings as headings. The target
+  (3)" the target language's way; headings as headings. A request with
+  `ocr` adds one rule (`_OCR_RULE`): the texts were read by OCR from a
+  scanned page and may hold misread characters ("ph4nom+ne" for
+  "phénomène"), which the model reads through and never carries into the
+  translation. It is set per chunk, from the pages its texts come from, and
+  is part of no key: a page's verdict does not change, and a repaired page's
+  segmentation sends texts of its own. The target
   language's conventions follow for Chinese (full-width punctuation, a space
   between Chinese and Latin text), Japanese (である調) and Korean. The brief
   closes it.

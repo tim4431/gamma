@@ -15,6 +15,7 @@ import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 import { isHeldKey } from "../shared/lib/hotkeys.js";
 import { pageFaces } from "./pdfFonts.js";
 import { segmentPage, textRuns } from "./pdfTranslate.js";
+import { pageText } from "./pageText.js";
 import { readingOrder } from "./pageFlow.js";
 import { figureRegions, markFigures } from "./pageFigures.js";
 import { markShape } from "./pageShape.js";
@@ -307,12 +308,15 @@ async function segmentNow(d, doc, pn, near) {
   if (!doc || pn < 1 || pn > doc.numPages) return [];
   const page = await doc.getPage(pn);
   const vp = page.getViewport({ scale: 1 });
-  const tc = await page.getTextContent();
+  const tc = await pageText(page);
   let fonts = FONTS.get(doc);
   if (!fonts) FONTS.set(doc, (fonts = new Map()));
   const ids = new Set(tc.items.map((it) => it.fontName));
   const faces = await pageFaces(page, ids, fonts);
   const paras = segmentPage(textRuns(tc.items, vp.transform, { faces, styles: tc.styles }));
+  // A scan's blocks were read from its OCR layer: their requests say so, and
+  // the model reads through misread letters (translatePlan.requestFields).
+  if (tc.repaired) for (const p of paras) p.ocr = true;
   if (paras.some((p) => p.translate)) markShape(paras, markFigures(paras, await figureRegions(page)));
   if (!near(pn)) page.cleanup();
   if (!d.paras.has(pn)) d.paras.set(pn, paras);
@@ -540,7 +544,7 @@ async function seedNow(d, { doc, key, pages, lookup, near, signal, seeded }) {
 // Start a job over `pages` of the document at `url`, one at a time per
 // document: pdf/translateJob.js over this document's blocks and entries,
 // segmenting with `doc` (its pdf.js document). `translate` is the chunk
-// request; `brief({pageId, head}, signal, onStage)` the request for the
+// request; `brief({pageId, head, ocr}, signal, onStage)` the request for the
 // paper's brief. `scope` is the host's (`scopeOf`):
 // the page being translated and whether the server has its PDF. The page
 // names the paper: a PDF the server has not stored is read from its opening
@@ -565,10 +569,14 @@ export function startJob(url, { doc, pages, label, key, parallel, references = f
   const segmentAt = (pn) => segment(d, doc, pn, near);
   const { pageId, stored } = scopeOf(url, scope);
   const head = stored ? null : documentHead(doc, segmentAt);
+  // The brief reads the paper's opening text. A stored file's the server
+  // checks itself for a scan's OCR layer; a head is the first pages' blocks,
+  // which say so when they were read from one.
+  const headOcr = () => [1, 2, 3].some((pn) => d.paras.get(pn)?.some((p) => p.ocr));
   const job = createTranslateJob({
     pages, label, key, parallel, references, focus, fresh, translate,
     brief: brief && (pageId || head)
-      ? async (signal, onStage) => brief({ pageId, head: head ? await head : "" }, signal, onStage) : null,
+      ? async (signal, onStage) => brief({ pageId, head: head ? await head : "", ...(head && headOcr() && { ocr: true }) }, signal, onStage) : null,
     segment: segmentAt,
     cachedParas: (pn) => d.paras.get(pn) || null,
     seed: (pn) => d.view.entries.get(pn),

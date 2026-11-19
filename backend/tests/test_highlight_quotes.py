@@ -11,6 +11,7 @@ import pytest
 from pypdf import PdfReader
 
 from conftest import doc_props, make_page
+from ocr_fixtures import scan_pdf
 
 from gamma import pdf_text
 from gamma.highlight_relocate import Doc
@@ -182,3 +183,21 @@ def test_quote_under_counts_a_glyph_by_its_centre_and_skips_read_as_one_space():
     assert quote_under(glyphs, [(0, 73, 10, 89)]) == "é"
     assert quote_under(glyphs, []) == ""
     assert quote_under(glyphs, [(0, 97, 50, 109)], limit=2) == "ab"
+
+
+def test_a_highlight_over_a_scan_s_ocr_layer_quotes_its_words():
+    """On a scanned page the glyph walk parts the words of one row with a
+    boxless space (pdf_text._glyphs): a quad over one word quotes the
+    word, and one over a row quotes its words a space apart, as quads drawn
+    over the layer by another viewer did before."""
+    def under(*words):
+        boxes = [box for k in range(len(glyphs)) for word in words
+                 if "".join(ch for ch, _b in glyphs[k:k + len(word)]) == word
+                 for _ch, box in glyphs[k:k + len(word)]]
+        return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+    with GlyphPages(scan_pdf()) as pages:
+        glyphs = pages.page(1)
+    assert quote_under(glyphs, [under("15")]) == "15"
+    assert quote_under(glyphs, [under("January", "1992)")]) == "January 1992)"
+    assert quote_under(glyphs, [under("entangle-"), under("ment")]) == "entangle- ment"

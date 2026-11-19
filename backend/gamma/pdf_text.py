@@ -10,6 +10,9 @@ page count, outline, title guess, glyphs) as it does from the text walk, so
 the search index, the manifest (pdf_meta) and the highlight import, which
 keep an unreadable file's empty answer for good, store nothing and read the
 file once it loads.
+On a scanned page under an invisible OCR layer, whose words MuPDF often
+reads as a line each, the page text and the glyph walk put the lines of
+one visual row back together (gamma/pdf_scan.py).
 Used by the AI context builder, metadata lookup, /pdf-text-status, the
 search indexer, the manifest walk and the highlight import, so extraction
 fixes land once.
@@ -32,6 +35,7 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from typing import NamedTuple
 
+from . import pdf_scan
 from .logbuf import log
 
 # Sentinel the AI context builder hands to the model when extraction raised.
@@ -103,7 +107,8 @@ _lock = _MuPdfLock()
 # not "ﬁ"; search folds them anyway, and the AI and the metadata regexes
 # read plain letters better). TEXT_DEHYPHENATE stays off: an end-of-line
 # hyphen stays as written — search re-joins the words (gamma/textnorm.py)
-# and the AI reads the page as it is. Lines end in "\n". _RAWDICT_FLAGS is the
+# and the AI reads the page as it is. Lines end in "\n" (on a scanned page
+# the lines of one visual row are joined with a space: _text). _RAWDICT_FLAGS is the
 # glyph walk's: without TEXT_PRESERVE_IMAGES, which would copy every
 # image's bytes into the dictionary (a second on an image-heavy page) for
 # boxes nobody reads.
@@ -241,7 +246,41 @@ def user_unit(page) -> float:
 
 
 def _text(page) -> str:
-    return page.get_text("text", flags=_TEXT_FLAGS) or ""
+    """The text of one page: MuPDF's plain text, each of its lines ending
+    in "\\n". On a scanned page under an invisible OCR layer
+    (``pdf_scan.is_scan_page``) MuPDF often cuts a printed line into a line a
+    word or a few, so there the lines of one visual row (``pdf_scan.rows``) are
+    joined with a space in place of the "\\n" between them. Nothing else
+    changes: the order is MuPDF's, every character stays where it was, and
+    the text is as long as before, so an offset into it (a read_page
+    continuation, an excerpt's end) means the same place either way. The
+    rows come from the lines of the same TextPage the plain text is read
+    from; when those lines, joined with "\\n", are not that text exactly,
+    the plain text is kept."""
+    textpage = page.get_textpage(flags=_TEXT_FLAGS)
+    text = page.get_text("text", textpage=textpage) or ""
+    read = []  # the text dictionary, built once if the scan check needs it
+
+    def blocks():
+        if not read:
+            read.append(page.get_text("dict", textpage=textpage)["blocks"])
+        return read[0]
+
+    if not text or not pdf_scan.is_scan_page(page, blocks):
+        return text
+    lines, boxes = [], []
+    for block in blocks():
+        for line in block.get("lines", ()):
+            lines.append("".join(span["text"] for span in line["spans"]))
+            boxes.append(line["bbox"])
+    if "".join(line + "\n" for line in lines) != text:
+        return text
+    out = [lines[0]]
+    for line, new_row in zip(lines[1:], pdf_scan.rows(boxes)):
+        out.append("\n" if new_row else " ")
+        out.append(line)
+    out.append("\n")
+    return "".join(out)
 
 
 # --- The page-text cache -----------------------------------------------------
@@ -376,6 +415,27 @@ def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1, cache:
         if pdf is not None:
             with _lock:
                 pdf.close()
+
+
+def opening_is_scan(src, char_limit: int) -> bool:
+    """Whether a page of the PDF's opening text, the pages ``extract_text``
+    reads for ``char_limit`` characters, is a scan read from its OCR layer
+    (``pdf_scan.is_scan_page``). A paper's brief made from such text is told
+    so (gamma/translate_context.py). The texts come from the cache; the
+    check takes the lock once a page."""
+    pdf = _open(src)
+    try:
+        chars = 0
+        for i, text in enumerate(iter_page_texts(src)):
+            if text.strip() and _read_page(pdf, i, pdf_scan.is_scan_page):
+                return True
+            chars += len(text)
+            if chars >= char_limit:
+                return False
+        return False
+    finally:
+        with _lock:
+            pdf.close()
 
 
 def extract_pages(src, max_pages: int = MAX_PAGES, cache: bool = True) -> list[str]:
@@ -773,7 +833,9 @@ class GlyphPages:
     glyph's advance by the font's ascender and descender, so a thin "i" or
     "." has a centre as sound as any letter's. After each of MuPDF's lines
     comes a line break with an empty box, which keeps its place in the
-    order; a glyph of zero advance (a combining mark) has one too. ``src``
+    order, or on a scanned page a space with an empty box when the next
+    line goes on in the same visual row (``_glyphs``); a glyph of zero
+    advance (a combining mark) has an empty box too. ``src``
     is a path or PDF bytes."""
 
     def __init__(self, src):
@@ -883,24 +945,29 @@ def _glyphs(page) -> list:
     """``GlyphPages``'s read of one page: the chars of MuPDF's raw text
     dictionary (blocks of text, their lines, their spans, their chars; the
     image blocks skipped), each box taken back to PDF user space, and a
-    line break after every line. A character beyond the BMP is one char
-    here. The page is read ``unrotated``: that is the space MuPDF's boxes
-    come in, and the only one in which page.transformation_matrix takes
-    them back to user space whole, page-box offset included."""
+    line break after every line. On a scanned page under an invisible OCR
+    layer (``pdf_scan.is_scan_page``), where MuPDF cuts a printed line into
+    several lines, two lines of one visual row (``pdf_scan.rows``) are parted
+    by a space without a box instead, as ``_text`` parts them: the order
+    and every glyph's box stay MuPDF's (a highlight another viewer drew
+    over the layer covers these boxes). A character beyond the BMP is one
+    char here. The page is read ``unrotated``: that is the space MuPDF's
+    boxes come in, and the only one in which page.transformation_matrix
+    takes them back to user space whole, page-box offset included."""
     mupdf = _pymupdf()
     with unrotated(page):
         to_user = ~page.transformation_matrix
         blocks = page.get_text("rawdict", flags=_RAWDICT_FLAGS)["blocks"]
+        lines = [line for block in blocks if block.get("type") == 0 for line in block["lines"]]
+        same_row = ([not new for new in pdf_scan.rows([line["bbox"] for line in lines])]
+                    if lines and pdf_scan.is_scan_page(page, lambda: blocks) else [])
     out = []
-    for block in blocks:
-        if block.get("type") != 0:
-            continue
-        for line in block["lines"]:
-            for span in line["spans"]:
-                for char in span["chars"]:
-                    box = mupdf.Rect(char["bbox"]) * to_user  # normalized: bottom < top
-                    out.append((char["c"], (box.x0, box.y0, box.x1, box.y1)))
-            out.append(("\n", (0.0, 0.0, 0.0, 0.0)))
+    for k, line in enumerate(lines):
+        for span in line["spans"]:
+            for char in span["chars"]:
+                box = mupdf.Rect(char["bbox"]) * to_user  # normalized: bottom < top
+                out.append((char["c"], (box.x0, box.y0, box.x1, box.y1)))
+        out.append((" " if k < len(same_row) and same_row[k] else "\n", (0.0, 0.0, 0.0, 0.0)))
     return out
 
 

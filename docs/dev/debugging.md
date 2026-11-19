@@ -1663,6 +1663,14 @@ The scenarios live in `tests/e2e/scenarios/`:
   focus kept on the button through the card's hiding, and the lost card's
   steps on one line on a 360 px phone in English and Chinese
   ([highlight_relocation.md](highlight_relocation.md)).
+- `scanLayer.mjs` (`--group scan-layer`): a scan's OCR layer repaired
+  ([pdf_loading.md](pdf_loading.md#a-scans-text-layer)) on a paper made in
+  the test (`tests/e2e/scanPdf.mjs`): a born-digital cover, then a picture
+  under a flipped, ink-sized layer of one paragraph. The cover's spans are
+  pdf.js's own; the scan's sit on the print, a band a line, tiling it; a drag
+  across a line selects it and its highlight lies on it; Ctrl+F marks a word
+  where it is printed; the scan's translation sends the paragraph as one
+  text with `ocr`, the cover's without.
 - `translation.mjs`: a two-column page whose paragraph runs over the column
   break: the request carries one text with `{br}`, the formulas and the
   citation marker as tokens, the page and the section; the reply fills both

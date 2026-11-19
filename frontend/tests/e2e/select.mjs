@@ -60,6 +60,7 @@ export const GROUPS = [
   { id: "auth", files: ["auth.mjs"], s: 28 },
   { id: "block-properties", files: ["blockProperties.mjs"], s: 28 },
   { id: "text-search", files: ["textSearch.mjs"], s: 28 },
+  { id: "scan-layer", files: ["scanLayer.mjs"], s: 28 },
   { id: "notebooks", files: ["notebooks.mjs"], s: 27 },
   { id: "recording", files: ["recording.mjs"], s: 27 },
   { id: "pen", files: ["pen.mjs"], s: 25 },
@@ -96,7 +97,7 @@ const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "pen", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "translation", "scan-layer", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "pen", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
 // what a change to the handwriting (src/ink/) can break: a text box's menu and a
 // picture's are placed and labelled by the ink layer's helpers; ipad, android: the host

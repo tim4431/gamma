@@ -12,10 +12,12 @@ from pathlib import Path
 
 import pymupdf
 import pytest
+from ocr_fixtures import mupdf_glyphs, scan_pdf
 
-from gamma import highlights, ink, text_box, zotero_local, zotero_sync_blocks
+from gamma import highlights, ink, pdf_text, text_box, zotero_local, zotero_sync_blocks
 from gamma import zotero_annotations as za
 from gamma.pdf_export import annotation_key, popup_text
+from gamma.pdf_text import GlyphPages
 
 W, H = 612, 792
 LINES = [(72, 100, "Attention is all you need"), (72, 130, "fast high fidelity readout"),
@@ -186,6 +188,17 @@ def test_page_chars_keeps_a_ligature_mupdf_spelled_out_as_one():
               ("1", (50, 100, 55, 108)), ("1", (50, 108, 55, 116))]   # a column of digits stays two
     assert za.page_chars(glyphs) == [("fi", glyphs[0][1]), ("d", glyphs[2][1]), ("e", glyphs[3][1]),
                                      ("1", glyphs[6][1]), ("1", glyphs[7][1])]
+
+
+def test_page_chars_of_a_scan_count_as_before_its_rows_were_joined():
+    # The glyph walk parts a scan's words with a boxless space where it put
+    # a line break before; neither is a character Zotero's reader counts.
+    scan = scan_pdf()
+    with GlyphPages(scan) as pages:
+        glyphs = pages.page(1)
+    assert any(ch == " " for ch, _box in glyphs)
+    page = pymupdf.open(stream=scan, filetype="pdf")[0]
+    assert za.page_chars(glyphs) == za.page_chars(mupdf_glyphs(page, pdf_text._RAWDICT_FLAGS))
 
 
 # --- the sort index --------------------------------------------------------------------

@@ -255,8 +255,12 @@ compares against. Later runs read each highlight from its reference's file.
 
 **The text.** `PageText` reads a page's glyphs as one string, each
 character remembering its glyph. `GlyphPages.page` gives each character
-with its box, and a boxless break after each MuPDF line. Lines are joined
-with a space, and a word hyphenated at a line's end is joined whole. Every
+with its box, and a boxless break after each MuPDF line. On a scanned page
+under an invisible OCR layer, where MuPDF cuts a printed line into several, two
+lines of one visual row are parted by a boxless space instead, the glyphs'
+order and boxes unchanged ([Documents](documents.md#scanned-pages)). Lines
+are joined with a space, and a word hyphenated at a line's end is joined
+whole, so on a scan a hyphen joins only at a row's end. Every
 character is folded: dashes to one hyphen, curly quotes straight, soft
 hyphens dropped, ligatures to letters (NFKC), case folded, whitespace
 collapsed. `normalize_quote` folds a stored quote, pdf.js's reading of a
@@ -264,7 +268,9 @@ selection, the same way.
 
 A MuPDF line holding only a number of one to five digits is left out with
 its glyphs, in both files. Such lines are margin line numbers (lineno) or a
-page number the other version lacks. Every index counts the glyphs left. A
+page number the other version lacks. A number inside a scan's row is no
+line of its own, so it stays ("Received 15 January 1992"); `rects_for_span`
+gives such a row one box. Every index counts the glyphs left. A
 run holds every page of the new file until matching ends, hence the chars
 as one string and the boxes as one flat array.
 

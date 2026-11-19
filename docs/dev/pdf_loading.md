@@ -530,6 +530,96 @@ rules and the canvas bounds; other unit tests pin the snap timing,
 cancellation and older-Safari fallback. Physical iPad GPU limits, render
 times and momentum still need a device.
 
+## A scan's text layer
+
+A scanned paper is a picture of each page with an invisible text layer an
+OCR program wrote over it (render mode 3). Old layers place their words
+badly: the worst one met (*J. Phys. II* 2, 579, 1992, from HAL) sizes each
+word from its own ink, 4 to 10 pt on one printed line, gives it a substitute
+font's width, about 0.73 of the printed word, and writes it in the picture's
+flipped pixel rows, which pdf.js's `TextLayer` draws a whole line above the
+print. Selection and highlights come out patchy, find marks miss, and the
+translation cuts a page into a hundred one-line blocks. The study behind the
+repair, with its corpus of twelve scans from seven OCR producers and 3,809
+born-digital pages, is [research/ocr.md](../research/ocr.md).
+
+Every reader of a page's text goes through `pdf/pageText.js` (`pageText`):
+the text layer and Ctrl+F in `PdfViewer.jsx`, the translation's
+segmentation (`translateState.segmentNow`), the translation bench and the
+figure tests. It reads the TextContent as before and, when the page is a
+scan with an OCR layer, hands it back repaired (`repaired: true`). So what
+a reader selects, what a search marks and what a translation sends are the
+same words in the same places.
+
+- **Which pages** (`pdf/scanDetect.js`). The rule: nearly all the glyphs the
+  page shows are invisible (Tr 3 or 7, 90%) and the pictures it paints cover
+  most of it (70%, their union: a page cut into strips counts whole). Only
+  the operator list says either, and `getOperatorList` is a pass of its own
+  through the page in the worker, images decoded, which the render does not
+  share. So a `prescreen` on the TextContent comes first and passes a page
+  only when its text shows a trace of a picture's measuring: most of it
+  flipped, most of it stretched (Tz fitted to word boxes), many sizes with
+  none dominant, or origins on a scan resolution's pixel grid. It missed none
+  of the 418 scan pages it was run on (every page of ten scans and 98 of a
+  scanned book's) and passed 4.9% of the born-digital ones, at 0.1 to 0.4 ms
+  a page. A born-digital page it passes costs an operator list too: a median
+  of about 7 ms, but up to 0.6 s on a page of many vector marks, which its
+  text layer waits for. A page it passes is confirmed (`confirm`), unless the
+  document's fonts already tell: an OCR layer's fonts draw only invisible
+  text, so after one confirmed page `ScanMemo` answers for the pages drawn
+  in the same fonts. A scanned book pays one or two operator lists (39 ms
+  median on a scan, image decoding), not one a page. The confirm had no
+  false positive on the born-digital set, LaTeXiT's invisible payloads
+  included (no covering picture). A document's pages are decided one at a
+  time, and only the verdict is kept, per page proxy (`knownScan`); the
+  TextContent is read afresh each time, as before. The operator list leaves
+  the page's decoded pictures on it, so Ctrl+F, which reads every page,
+  lets a page more than two pages from the view go again (`page.cleanup()`),
+  as a translation job's segmenting does.
+- **The repair** (`pdf/scanText.js`, `repairTextContent`, 2 to 4 ms a page).
+  Words are the selection string's, cut at white space, so what is selected
+  and copied does not change. Each gets the band its matrix implies (a
+  flipped one hangs down from its origin), and consecutive words chain into
+  printed lines in stream order, never sorted: a new line where a word's band
+  leaves the line's, where it starts before the word before it ends, or
+  across a gap of three line heights (a column gutter inside an OCR line),
+  the rule the server's rows follow too. Each line
+  takes one band: the union of its words' bands where the boxes hug each
+  word's ink (words of x-height letters drawn clearly shorter than those with
+  ascenders), else their medians. Its words then tile it, each span running
+  to where the next starts with the space folded in (`"word "`), the last
+  one ending in `hasEOL`. Where boxes hug the ink, the cut is the middle of
+  the gap; where a box is an em estimate it starts at its word, and the cut
+  lies at most 0.35 line heights before the next box. A line's ends reach out
+  by half its median gap, within a line height and the page's box
+  (`page.view`). The items come out upright, `[h, 0, 0, h, x, baseline]`
+  with the span the line's band, font ids kept (`pdfFonts`, `paperFace`), the
+  styles' ascent and descent 0.8 and -0.2 so that `textRuns` reads the band
+  `TextLayer` draws. A one-character item (a line ending in "a") is
+  `[2h, 0, 0, h, …]`: `TextLayer` stretches a one-character span to its
+  width only when its matrix is stretched by more than 1.5, and would
+  otherwise draw it at a serif's width, short of its letter; every other
+  reader takes the height from the matrix's second column and only the
+  direction from its first. Rotated items pass through as pdf.js gave them,
+  a run of them (a table on its side) keeping its own breaks; a break is
+  added only where such a run meets a repaired line.
+- **What it changes.** On the corpus's poor layers the share of words a
+  span covers whole went from 26% to 98% and the translation's blocks per
+  page from 88 to 40. On the good layers (Tesseract, CVISION, LuraDocument)
+  the words' coverage held or improved, but one band a line is not always
+  closer to the print than the layer's own: on the 1913 *Physical Review*
+  (Tesseract) the ink rises above the band's top, and the lines whose band
+  covers their ink went from 65% to 54%; the 1961 *Journal de Physique*
+  went from 53 to 56 blocks a page. A paragraph of a repaired page is one block, and its
+  requests carry `ocr` ([translation.md](translation.md#the-request)).
+  Highlights made before keep their rectangles, now under the repaired
+  spans; kept translations of a scan made before are looked up by text that
+  no longer matches and stay unused. The server reads such a page's text in
+  rows of words too ([documents.md](documents.md)).
+- **What it cannot fix**, pixel-free: wrong letters ("Rksum4"), a layer
+  drifting against its picture, a producer's baseline offset, scans with no
+  layer at all. Those need OCR of the picture, the study's next stage.
+
 ## Load phases
 
 The viewer reports each phase to the host (`onLoadState`), which drives the

@@ -40,6 +40,7 @@ import { ENDS_SENTENCE, TOKEN } from "../../src/pdf/pageFlow.js";
 import { BREAK, chunkUnits, createPlanner, requestFields } from "../../src/pdf/translatePlan.js";
 import { pageFaces } from "../../src/pdf/pdfFonts.js";
 import { figureRegions, markFigures } from "../../src/pdf/pageFigures.js";
+import { pageText } from "../../src/pdf/pageText.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND = path.resolve(HERE, "../..");
@@ -105,10 +106,11 @@ async function loadPdf(file, spec) {
   for (const pn of pageRange(spec, doc.numPages)) {
     const page = await doc.getPage(pn);
     const vp = page.getViewport({ scale: 1 });
-    const tc = await page.getTextContent();
+    // the text the viewer reads: a scan's OCR layer repaired (pdf/pageText.js)
+    const tc = await pageText(page);
     const faces = await pageFaces(page, new Set(tc.items.map((it) => it.fontName)), known);
     const runs = textRuns(tc.items, vp.transform, { faces, styles: tc.styles });
-    pages.push({ pn, width: vp.width, height: vp.height, runs, regions: await figureRegions(page) });
+    pages.push({ pn, width: vp.width, height: vp.height, runs, ocr: !!tc.repaired, regions: await figureRegions(page) });
     page.cleanup();
   }
   await doc.destroy();
@@ -123,6 +125,7 @@ async function loadPdf(file, spec) {
 function plan(pages) {
   const paras = new Map(pages.map((p) => {
     const blocks = segmentPage(p.runs);
+    if (p.ocr) for (const b of blocks) b.ocr = true;
     markFigures(blocks, p.regions);
     return [p.pn, blocks];
   }));

@@ -12,6 +12,7 @@ import time
 import pymupdf
 import pytest
 from conftest import doc_props, guest_name, workspace_of
+from ocr_fixtures import scan_pdf
 
 from gamma import highlight_relocate as hr
 from gamma import jobs, storage
@@ -172,6 +173,24 @@ def test_a_line_that_is_a_number_alone_is_left_out_of_the_page():
     assert not any(ch.isdigit() for gi in range(page.glyph_count) for ch in page.char(gi))
     # a number inside a line stays
     assert hr.PageText(_glyphs("held at 4 K for 12 hours")).text == "held at 4 k for 12 hours"
+
+
+def test_a_scan_s_ocr_layer_keeps_its_bare_numbers_and_joins_hyphens_at_row_ends_only():
+    # MuPDF reads each word of the layer as a line; the glyph walk parts the
+    # words of one row with a space, so "15" is no line of its own, "non-"
+    # inside a row stays, and "entangle-" at a row's end joins "ment".
+    scan = scan_pdf()
+    page = _texts(scan)[1]
+    assert "(received 15 january 1992)" in page.text
+    assert "the entanglement of a non- linear pair" in page.text
+    at = page.text.index("(received")
+    assert len(hr.rects_for_span(page, at, at + len("(received 15 january 1992)"))) == 1  # one box a row
+    at = page.text.index("the entanglement")
+    assert len(hr.rects_for_span(page, at, at + len("the entanglement of a"))) == 2
+    # an agent's quote of the read_page text, number and all, is placed
+    position, spelled, confidence = hr.place_quote(scan, "Received 15 January 1992", 1)
+    assert position is not None and confidence == 1.0
+    assert spelled == "Received 15 January 1992"
 
 
 def test_a_quote_folds_like_the_page():

@@ -445,6 +445,106 @@ rasters keep `pdf_text`: they need page labels and a cache the index must
 not share, since a walk over a library would evict the papers a chat is
 reading.
 
+### Scanned pages
+
+A scanned paper is a picture of each page with an OCR engine's words drawn
+over it invisibly (render mode 3 or 7), for search and selection. Many
+such layers (the APS and HAL scans above all) draw each word with its own
+text call, in a size measured from the word's ink and on a baseline of its
+own. MuPDF then cuts a printed line into several lines: about one a word
+on the HAL scan (Lounis and Cohen-Tannoudji, page 2: 348 lines for 371
+words), a few words each on the APS scans (2.6 to 2.8). The text came out
+in those pieces, a bare number in a sentence ("Received 15 January 1992")
+read as a line number to the highlight relocation, and a word ending in a
+hyphen joined the next word as if the hyphen ended a line.
+
+`gamma/pdf_scan.py` holds two rules, and `pdf_text` applies them to every
+page it reads.
+
+**Is the page a scan?** `is_scan_page(page)` is true when at least one
+glyph is shown, at least `INVISIBLE_SHARE` (0.9) of the non-space glyphs
+are invisible, and the union of the painted images covers at least
+`IMAGE_COVERAGE` (0.7) of the page. Annotations do not count: a span whose
+centre lies in an annotation's box is left out, as pdf.js's operator list
+leaves the annotations out. It runs in three steps, cheapest first, each
+only when the one before says "maybe":
+
+1. A byte scan of the page's content streams, and of every form XObject
+   the page draws (`page.get_xobjects()`: nested, and named in resources
+   the page inherits), for a `3 Tr` or `7 Tr` operator. Without one the
+   page is no scan. This ends the check on nearly every born-digital page.
+   The operator is found as a literal and its operand read just before it:
+   a pattern that starts with the operand is tried at every byte, and took
+   20 to 37 ms on a 1.6 MB content stream.
+2. The glyphs' visibility from the text dictionary, the caller's own when
+   it reads one anyway (`_text`'s, `_glyphs`'s rawdict), built only now.
+   MuPDF reports render modes 3 and 7 as a span of alpha 0.
+3. The images' boxes (`get_image_info`), their union measured on a 100 x
+   100 grid of cell centres, in the unrotated page's space that MuPDF gives
+   them in: a turned page is measured against its crop box, not its
+   turned rect.
+
+The invisible share alone does not tell a scan: LaTeXiT draws its
+equations' source as invisible size-0 text, up to 0.97 of a page's
+glyphs. The coverage keeps those pages out (0.17 at most, against 0.81 for
+the lowest scan measured). A page that cannot be read is no scan. The
+viewer applies the same rule to pdf.js's operator list
+(`frontend/src/pdf/scanDetect.js`); a threshold changes in both.
+
+**Which lines share a row?** `rows(bboxes)` takes MuPDF's line boxes in the
+page's text order and says, for each line after the first, whether it
+starts a new visual row. The lines are chained in that order. A line starts
+a new row when it overlaps the row's band (the median top and median bottom
+of the row's lines so far) by less than half the smaller height, when it
+starts before the line before it ends, or when it starts more than three
+row heights past that line's end (a column gutter). The words of a row
+stand side by side; on a layer whose lines MuPDF already reads whole, a
+line tall with a formula overlaps the one above it, and only its start
+tells it is the next line (on the Holstein scan, 81 such breaks follow a
+hyphenated word, which search would no longer join). The order is never
+re-sorted by position: a scan's stream is in reading order already, and
+sorting by y then x reorders the stacked fractions and sub- and
+superscripts on 9 of the Lounis scan's 14 pages.
+
+**What changes.** On a scan page, `pdf_text._text` joins the lines of one
+row with a space where MuPDF put a `\n`. The text is read from one TextPage:
+its plain text, and its dictionary's lines for the rows (the dictionary the
+check read, built once). When those lines,
+each followed by `\n`, are not exactly the plain text, the plain text is
+kept (2 table pages of the 1,625 scan pages measured). Only separators
+change, so the text has the same length and every character keeps its
+offset: a `read_page` continuation, an excerpt's end and the selection
+placement mean the same place either way. `pdf_text._glyphs` parts two
+lines of one row with a boxless `" "` in place of the boxless `"\n"`. The
+glyphs' order and boxes stay MuPDF's, because imported annotations were
+drawn over the layer's narrow boxes. So the highlight relocation's
+`PageText` keeps a bare number inside a row, joins a hyphenated word only
+at a row's end, and `rects_for_span` gives one box per row. `quote_under`
+and Zotero's `page_chars` read any whitespace as a gap or skip it, so they
+are unchanged. A born-digital page reads byte for byte as before.
+
+**Measured** (PyMuPDF 1.28.2): every page of the 11 scans with a layer in
+the study's corpus (1,625 pages with text, 1,305 of them from a 1,310-page
+scanned book) is a scan; the born-digital cover of the Lounis paper is not;
+none of the 3,809 pages of 122 born-digital PDFs is. On a born-digital
+page the check costs a median 0.2 ms (mean 1.0, p99 18, at most 180 ms on
+a page of a thousand forms), and a page's text 3.0 ms on average against
+2.2 before. A scan page's text costs 3 to 9 ms on average instead of 1 to
+3 ms (the 1,310-page book 5.6 ms against 1.0, so about 6 s more to index
+it), split between the text dictionary and the image boxes, which MuPDF
+finds with a text extraction of its own. The study is
+[docs/research/ocr.md](../research/ocr.md).
+
+**No index rebuild.** `textnorm.INDEX_VERSION` stays. The search index
+stores normalized text, whitespace collapsed, so a scan's rows come out
+nearly identical: on the Lounis scan, 4 differences over 14 pages, each a
+word no longer joined to the next across a hyphen inside a row
+("I-e- when" had read "I-ewhen"); none on the Holstein, Kitagawa and
+Hansch scans. A bump would re-extract every PDF of every workspace. The
+page-text cache lives in memory, so a restart reads the new text. Tests:
+`tests/test_pdf_scan.py`, with the synthetic scan of
+`tests/ocr_fixtures.py`.
+
 ## In SQL
 
 `model.py` holds the conditions that are spliced into `WHERE` clauses over

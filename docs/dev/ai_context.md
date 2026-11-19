@@ -402,6 +402,15 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   walk (`cache=False`, so a library's worth of papers does not push out the
   ones being read) bypass it. `page_count` answers from it too. Tests:
   `tests/test_pdf_text_cache.py`.
+- **Scanned pages** (`pdf_text._text`): a page's text is MuPDF's plain
+  text, a `\n` after each of its lines. On a scan under an invisible OCR
+  layer, where MuPDF cuts a printed line into several lines (about one a
+  word on the HAL scans), the lines of one visual row are joined with a
+  space, so the model reads rows instead of words and its budget is not
+  spent on line breaks. The order stays
+  MuPDF's and the length does not change, so the offsets a `read_page`
+  continuation and `pdf_excerpt` carry stay valid, and the cache needs no
+  version. The rule is in [Documents](documents.md#scanned-pages).
 
 ## Known limits
 
