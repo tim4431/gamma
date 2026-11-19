@@ -1320,6 +1320,7 @@
   "Default": "默认",
   "Default (yellow)": "默认（黄色）",
   "Default ({effort})": "默认（{effort}）",
+  "Default ({speed})": "默认（{speed}）",
   "Default asks for the model's lowest level, the fastest": "“默认”使用模型的最低强度，速度最快",
   "Default background": "默认背景",
   "Default chat model": "默认聊天模型",

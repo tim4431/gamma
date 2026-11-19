@@ -654,7 +654,7 @@ while the computer is off.
   (`vault/usePageComputer.js`), say the computer came back or went away,
   or its agent got ready or not (`useComputerChat`).
 - **A turn.** `POST /chat/turns` checks the computer is online, the work
-  folder not paused there, the agent ready, the model and effort among
+  folder not paused there, the agent ready, the model, effort and speed among
   the announced ones and `dir` among the directories offered
   (`chats.far_dir`: the work folder where that computer keeps it, else the
   one named, else the conversation's while that computer still offers it,
@@ -675,7 +675,7 @@ while the computer is off.
   while the channel's account has an agent on here), queues each turn
   where it works (`home.far_place`) under `(channel id, turn id)`, claims
   it for a run it names (the message, the selections with their places,
-  the last 6 messages, the model and effort, what the bucket is, where it
+  the last 6 messages, the model, effort and speed, what the bucket is, where it
   works, Gamma's tools), computes the selections' source lines from its
   disk in a vault, resumes the conversation's session from its own
   vaults.db as locally, runs the agent confined as a local turn (asking
@@ -806,15 +806,15 @@ steps").
   starts). The agent's: `{id, role: "agent", agent, label, turn_id, state:
   queued | running | done | failed | stopped, text, steps: [{id, kind:
   read | edit | run | search | other, status, path? | program?}], asks,
-  changes, changed, built, error, fresh, model, effort, threads?, steers?,
+  changes, changed, built, error, fresh, model, effort, speed, threads?, steers?,
   at, ended_at}`: `asks` what waits for the person ("Asking in the chat"),
   `steers` the messages the person steered into the turn that its agent
   took in (`[{id, text, selections, at, place: {text, steps}}]`, at most
   20, `place` where the reply stood then: the length of its text and how
   many steps had come; `chats.steered_of`),
   `threads` the comment threads its agent opened in the turn (a turn of
-  this server's: `threads.opened`), `model` and
-  `effort` what the turn asked for (null for the agent's default),
+  this server's: `threads.opened`), `model`,
+  `effort` and `speed` what the turn asked for (null for the agent's default),
   `path` relative to the
   directory or `"outside"`, `program` a command's program alone (as `_said`),
   `changes` the changed files (at most 200; `changed` how many),
@@ -956,27 +956,48 @@ steps").
 
 ### Its model, its typing, a terminal, the sources, Background tasks
 
-- **The model and effort** the agent offers are read with the probe, with
-  no model use (`catalog.probe(models=True)`, kept with it; not re-read at
-  a turn's start, which asks only whether the agent is ready, so a read
-  lists them again once that listing is 10 minutes old, or when there was
-  none: `catalog._listed`): Codex's `model/list` on a short-lived
-  app-server (every page, hidden models left out, 15 s at most; it does
-  the Windows sandbox check in the same process), Claude Code's
+- **The model, effort and speed** the agent offers are read with the
+  probe, with no model use (`catalog.probe(models=True)`, kept with it;
+  not re-read at a turn's start, which asks only whether the agent is
+  ready, so a read lists them again once that listing is 10 minutes old,
+  or when there was none: `catalog._listed`): Codex's `model/list` on a
+  short-lived app-server (every page, hidden models left out, 15 s at
+  most; it does the Windows sandbox check in the same process, and
+  `config/read` for the user's `service_tier`), Claude Code's
   `initialize` on a
   `claude -p --input-format stream-json … --restricted --strict-mcp-config`
   closed before any message. Shape: `[{id, label, efforts, effort (the
-  default), default}]` in `GET /api/local-agents` and the chat's
-  `computer.models`; none listed leaves the agent ready with `models: []`.
-  `POST /chat/turns` takes `model` and `effort`, each one the agent listed
-  (400 otherwise; an effort checked against the chosen model, or the
-  default one); Codex gets them on `thread/start` / `thread/resume`
-  (`model`) and `turn/start` (`effort`), Claude Code as `--model` (none
-  for its `default` entry) and `--effort`, which `--restricted` would not
-  read from the person's settings. The agent's message records them. The
-  composer's chip (`chat/AgentChip.jsx`, Gamma AI's) lists the agent's
-  models, and its efforts and where it works as sections
-  (`useComputerSide`'s `chip`); the choice is the conversation's.
+  default), default, speeds, speed (the default)}]` in `GET
+  /api/local-agents` and the chat's `computer.models`; none listed leaves
+  the agent ready with `models: []`.
+- **A model's speeds** are among `events.SPEEDS` (`flex`, `standard`,
+  `fast`, cheapest first): standard beside the tiers the agent lists for
+  it, none for a model with no other. Codex lists `serviceTiers`
+  (`priority` is its fast one, an older Codex's `additionalSpeedTiers`
+  says `fast`; `ultrafast` is not offered); Claude Code offers standard
+  and fast for a model with `supportsFastMode`. A model's `speed` is the
+  one a turn runs at when none is chosen: Codex's `defaultServiceTier`,
+  else the config's `service_tier` (a config.toml that sets `priority`
+  runs every turn at Fast), else standard; Claude Code's
+  `fast_mode_state` (off under `--restricted`). An older computer
+  announces none, so its models offer no speed on another server.
+- **A turn's choice.** `POST /chat/turns` takes `model`, `effort` and
+  `speed`, each one the agent listed (400 otherwise; an effort and a
+  speed checked against the chosen model, or the default one); Codex
+  gets them on `thread/start` / `thread/resume` (`model`) and
+  `turn/start` (`effort`, and the speed as `serviceTierForTurn`:
+  `codex.TIERS`, `priority`, `default` or `flex`, which leaves the
+  thread's own tier as it was, so the next turn and the person's
+  `codex resume` run at that), Claude Code as `--model` (none for its
+  `default` entry), `--effort` and the `fastMode` setting (`true` for
+  fast, `false` for standard) in its one `--settings`, beside a turn
+  with ask's rule, which `--restricted` would not read from the person's
+  settings. The agent's message records them. The composer's chip
+  (`chat/AgentChip.jsx`, Gamma AI's) lists the agent's models, and the
+  model's efforts and speeds and where it works as sections
+  (`useComputerSide`'s `chip`), each Default naming the model's own
+  where the agent says (*Default (fast)*), the speed chosen drawn as
+  Gamma AI's glyph; the choice is the conversation's.
 - **The reply as it is typed.** A turn's driver streams
   (`stream=True`): Codex keeps
   `item/agentMessage/delta`, Claude Code runs with
@@ -1031,7 +1052,14 @@ steps").
 
 Checked against the real CLIs (Codex 0.167.0, Claude Code 2.1.318): both
 list their models with no model use, stream a reply in deltas, and take a
-chosen model and effort.
+chosen model and effort. Their speeds were read with no model use too:
+Codex's `model/list` names `priority` (*Fast*) on every model and
+`ultrafast` on one, and its `thread/start` takes `fast` (as `priority`),
+`priority`, `flex` and `default` (an unknown tier, or one the model
+lacks, comes back null); Claude Code's `initialize` reports
+`fast_mode_state` `on` under `--restricted` with `--settings
+'{"fastMode":true}'`, and `off` for a model without fast mode. No turn
+was run at a chosen speed against either (it uses the person's plan).
 
 ## Sessions started elsewhere
 
@@ -1949,11 +1977,12 @@ nobody else learns it exists), 403 for a token or the guest
   computer that is away and an amber "not ready" after one with a problem
   (`computerChat.agentHint`, the sentence the row's title; still
   pickable), then the picked one's models and
-  efforts (Gamma AI's speed too); where a computer's agent works outside a
+  efforts and speeds (Gamma AI's and the computer agent's model's); where a computer's agent works outside a
   synced folder is the bar's folder chip (below, "The strip"), in every
   bucket: a page, a folder, the library. The chip reads the agent, then its model and effort ("Codex on
-  TIM-PC · GPT-5.5 · high", the model ellipsized first), named "Agent,
-  model and reasoning effort". A viewer has Gamma AI alone. The agent shown is the bucket's
+  TIM-PC · GPT-5.5 · high", the model ellipsized first, a speed chosen its
+  glyph after them), named "Agent, model and reasoning effort" (with a
+  speed, "Agent, model, reasoning effort and speed (fast)"). A viewer has Gamma AI alone. The agent shown is the bucket's
   pick for the tab's life (`chatSide.js` `useChatAgent`, beside
   `showInChat`, which the Background tasks rows and a thread's *Open in
   chat* call, so the first screen does not load the side's state), else
@@ -1975,12 +2004,12 @@ nobody else learns it exists), 403 for a token or the guest
   is to end, with `version` so an unchanged one answers `same`, and
   numbers its reads so only the newest lands; `useComputerSide` is what
   ChatDock reads of it (the messages, Stop's turn, whether a message can
-  go, the chip's models and efforts, the Allowed in this chat chip, where
+  go, the chip's models, efforts and speeds, the Allowed in this chat chip, where
   a conversation that begins works, the passages' source lines); and
   `computerChat.shownMessages`, pure, maps each message: the person's to
   `{role: "user", text, passages}` (its passages' pages as the bubble's
   chips), the agent's to `{role: "ai", text, partial, pill, actions,
-  asks, files, notice, model, effort}`: `partial` while its turn is queued
+  asks, files, notice, model, effort, speed}`: `partial` while its turn is queued
   or running (the reply as it is typed, Stop in Send's place), `pill` the
   steps pill's words (`turnLabel`: "Codex is working: Editing
   sections/intro.tex", while queued "Starting Codex…" or "Waiting for
@@ -2500,8 +2529,9 @@ are drawn in the bar over the whole window and answered with `POST
   for alone, the claim's `about` and `dir`, the queued turns failed by an
   announce that no longer takes them.
 - `tests/test_local_agents_extras.py`: the probe listing the models, a
-  choice one the agent listed, a turn running the model and effort asked
-  for (Codex's thread and turn, Claude Code's flags), both drivers
+  choice one the agent listed, a turn running the model, effort and
+  speed asked for (Codex's thread and turn, the speed the turn's alone;
+  Claude Code's flags; a config's tier the default speed), both drivers
   streaming a chat turn's text, the reply growing then replaced by the
   whole message, the terminal route for Codex and Claude Code (and the
   strip's `session` agreeing with it), the sources of the selections, the
@@ -2661,8 +2691,9 @@ are drawn in the bar over the whole window and answered with `POST
   until allowed once, declined with a note (Codex's steer), allowed in this
   chat and the same command answered unasked in the next turn; the passage
   chip's source line, the strip's menu asking the shell (the asks
-  recorded, no shell in the browser suite), a model and effort chosen in
-  the chip reaching Codex, the reply seen part-way as it is typed, a
+  recorded, no shell in the browser suite), a model, effort and speed
+  chosen in the chip reaching Codex (a model with no other tier offering
+  no speed, the one chosen the chip's glyph and the reply's), the reply seen part-way as it is typed, a
   running turn's Background tasks row and its Stop; with no AI service, a
   library PDF's chat that is Codex's, the setup card picking Codex again
   after Gamma AI, a directory offered picked in the composer's folder chip

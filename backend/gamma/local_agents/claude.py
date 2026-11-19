@@ -36,7 +36,7 @@ steer is refused.
 
 A turn with ``ask`` (a chat turn of a folder whose agent may ask) has flags
 of its own (``ASK_FLAGS``): Bash among the tools and an ask rule for it
-(``--settings``, which loads under ``--restricted``), so that every command
+(``ASK_SETTINGS`` in ``--settings``, which loads under ``--restricted``), so that every command
 reaches Gamma as a permission prompt (``--permission-prompt-tool stdio``,
 the control protocol the Agent SDK speaks: stream-json both ways). It
 writes ``initialize`` and the prompt as a user message (``client_composed``:
@@ -61,8 +61,14 @@ A turn with ``stream`` (a chat turn) adds ``--include-partial-messages``:
 each ``stream_event`` ``content_block_delta`` of type ``text_delta`` is a
 ``delta`` event, and the ``assistant`` text block that follows is the whole
 message. A turn's ``model`` and ``effort`` are ``--model`` (none for the
-listing's ``default``) and ``--effort``. What Claude Code offers is
-``models``: ``initialize``'s answer, no message written.
+listing's ``default``) and ``--effort``, its ``speed`` the ``fastMode``
+setting in ``--settings`` (``FAST_MODE``: fast on, standard off; Claude
+Code 2.1.318's ``initialize`` reports ``fast_mode_state`` ``on`` with it,
+``off`` for a model without fast mode). What Claude Code offers is
+``models``: ``initialize``'s answer, no message written, a model with
+``supportsFastMode`` offering standard and fast, its default the
+``fast_mode_state`` (off under ``--restricted``, which reads no settings
+file that would turn it on).
 
 A turn with ``gamma`` (Gamma's tools, gamma/local_agents/tools.py) adds
 ``--mcp-config`` with one HTTP server, ``gamma_turn`` (``events.MCP_NAME``):
@@ -100,8 +106,10 @@ FLAGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json"
 ASK_FLAGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
              "--replay-user-messages", "--restricted",
              "--permission-mode", "acceptEdits", "--permission-prompt-tool", "stdio", "--strict-mcp-config",
-             "--tools", "Read,Edit,Write,Glob,Grep,Bash", "--disallowedTools", "WebFetch,WebSearch",
-             "--settings", json.dumps({"permissions": {"ask": ["Bash"]}}, separators=(",", ":"))]
+             "--tools", "Read,Edit,Write,Glob,Grep,Bash", "--disallowedTools", "WebFetch,WebSearch"]
+ASK_SETTINGS = {"permissions": {"ask": ["Bash"]}}   # a turn with ask: in its one --settings
+FAST_MODE = {"fast": True, "standard": False}       # a turn's speed as the fastMode setting
+FAST_STATES = {"on": "fast", "off": "standard"}     # initialize's fast_mode_state as a speed
 # A turn with ask runs each Bash call in the folder (Claude Code's documented
 # setting: the shell goes back to the project's directory after every call),
 # so the cwd an ask names is the one the command runs in.
@@ -184,13 +192,21 @@ def mcp_config(url: str) -> str:
         separators=(",", ":"))
 
 
+def settings_flags(*, ask: bool = False, speed: str = "") -> list[str]:
+    """A turn's one ``--settings``: a turn with ask's rule (``ASK_SETTINGS``)
+    and its speed's ``fastMode`` (``FAST_MODE``); [] for neither."""
+    settings = {**(ASK_SETTINGS if ask else {}), **({"fastMode": FAST_MODE[speed]} if speed in FAST_MODE else {})}
+    return ["--settings", json.dumps(settings, separators=(",", ":"))] if settings else []
+
+
 def command(argv: list[str], *, session: str = "", ask: bool = False, stream: bool = False, model: str = "",
-            effort: str = "", gamma_url: str = "") -> list[str]:
-    """The whole command line of a turn: ``--model`` and ``--effort`` said
-    each time (``--restricted`` reads no settings file that would); with
-    ``gamma_url``, Gamma's server and its tools allowed (``GAMMA_TOOLS``),
-    the token never in it."""
-    out = list(argv) + (ASK_FLAGS if ask else FLAGS)
+            effort: str = "", speed: str = "", gamma_url: str = "") -> list[str]:
+    """The whole command line of a turn: ``--model``, ``--effort`` and the
+    speed's ``fastMode`` said each time (``--restricted`` reads no settings
+    file that would), in the one ``--settings`` a turn with ask has too
+    (``settings_flags``); with ``gamma_url``, Gamma's server and its tools
+    allowed (``GAMMA_TOOLS``), the token never in it."""
+    out = list(argv) + (ASK_FLAGS if ask else FLAGS) + settings_flags(ask=ask, speed=speed)
     if gamma_url:
         out += ["--mcp-config", mcp_config(gamma_url), "--allowedTools", GAMMA_TOOLS]
     if stream:
@@ -206,10 +222,12 @@ def command(argv: list[str], *, session: str = "", ask: bool = False, stream: bo
 
 def models(argv: list[str]) -> list[dict]:
     """The models Claude Code offers (``initialize``'s ``models``, ``{value,
-    displayName, supportsEffort, supportedEffortLevels}``) as Gamma keeps
-    them (``events.model``; ``default`` the entry Claude Code picks itself);
-    [] when it does not say within ``MODELS_S``. Starts and closes one
-    process, which uses no model. Never raises."""
+    displayName, supportsEffort, supportedEffortLevels, supportsFastMode}``)
+    as Gamma keeps them (``events.model``; ``default`` the entry Claude Code
+    picks itself; a model with fast mode offering standard and fast, at the
+    speed ``fast_mode_state`` says); [] when it does not say within
+    ``MODELS_S``. Starts and closes one process, which uses no model. Never
+    raises."""
     try:
         child = procs.spawn(list(argv) + MODELS_FLAGS, cwd=tempfile.gettempdir())
     except (OSError, ValueError) as e:
@@ -234,13 +252,16 @@ def models(argv: list[str]) -> list[dict]:
                     or response.get("request_id") != INIT:
                 continue
             body = response.get("response") if isinstance(response.get("response"), dict) else {}
+            state = body.get("fast_mode_state")
+            speed = FAST_STATES.get(state) if isinstance(state, str) else None
             out, seen = [], set()
             for item in body.get("models") or []:
                 if not isinstance(item, dict):
                     continue
                 kept = events.model(item.get("value"), item.get("displayName"),
                                     item.get("supportedEffortLevels") if item.get("supportsEffort") else [],
-                                    None, item.get("value") == DEFAULT_MODEL)
+                                    None, item.get("value") == DEFAULT_MODEL,
+                                    list(FAST_MODE) if item.get("supportsFastMode") is True else [], speed)
                 if kept and kept["id"] not in seen:
                     seen.add(kept["id"])
                     out.append(kept)
@@ -259,9 +280,10 @@ class ClaudeTurn(events.Turn):
     label = LABEL
 
     def __init__(self, argv: list[str], *, cwd: str, prompt: str, session: str, ask: bool = False,
-                 stream: bool = False, model: str = "", effort: str = "", gamma: events.Gamma | None = None):
+                 stream: bool = False, model: str = "", effort: str = "", speed: str = "",
+                 gamma: events.Gamma | None = None):
         super().__init__(command(argv, session=session, ask=ask, stream=stream, model=model, effort=effort,
-                                 gamma_url=gamma.url if gamma else ""),
+                                 speed=speed, gamma_url=gamma.url if gamma else ""),
                          cwd=cwd, ask=ask, env=ASK_ENV if ask else None, gamma=gamma)
         self.stream = stream
         self._tools: dict[str, dict] = {}   # tool_use id → its started event
@@ -467,11 +489,12 @@ def _user_line(text: str, uuid: str = "") -> dict:
 
 
 def start(*, argv: list[str], cwd: str, prompt: str, session: str = "", images: list[str] = (), ask: bool = False,
-          stream: bool = False, model: str = "", effort: str = "", gamma: events.Gamma | None = None) -> ClaudeTurn:
+          stream: bool = False, model: str = "", effort: str = "", speed: str = "",
+          gamma: events.Gamma | None = None) -> ClaudeTurn:
     """Start ``claude -p`` in ``cwd`` for one turn of ``prompt`` (``session``
     one to resume; ``ask``, it may ask to run commands; ``stream``, its text
-    as it is written; ``model``, ``effort``; ``gamma``, Gamma's tools).
-    ``images`` are not passed: the prompt names the pictures, which Claude
-    Code opens with Read."""
+    as it is written; ``model``, ``effort``, ``speed``; ``gamma``, Gamma's
+    tools). ``images`` are not passed: the prompt names the pictures, which
+    Claude Code opens with Read."""
     return ClaudeTurn(list(argv), cwd=cwd, prompt=prompt, session=session, ask=ask, stream=stream, model=model,
-                      effort=effort, gamma=gamma)
+                      effort=effort, speed=speed, gamma=gamma)

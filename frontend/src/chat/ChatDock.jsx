@@ -2284,9 +2284,9 @@ export default function ChatDock({
   // The composer's model chip (AgentChip), "Allowed in this chat" and Stop,
   // for the agent shown: Gamma AI's models, efforts and speeds, or the
   // computer agent's (useComputerSide). The chip words them (the agent
-  // first while there are several).
+  // first while there are several), the speed chosen its glyph.
   const knobs = !aiOff && headerModel;
-  const chip = onComputer ? side.chip : {
+  const chip = onComputer ? { ...side.chip, glyph: <SpeedGlyph speed={side.chip.speed} /> } : {
     label: knobsLabel(speed),
     text: knobs ? [headerModel.model, effort].filter(Boolean).join(" · ") : "",
     glyph: knobs ? <SpeedGlyph speed={speed} /> : null, speed: knobs ? speed : "",

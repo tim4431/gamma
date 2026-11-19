@@ -275,20 +275,30 @@ def unwrap_shell(command: str) -> tuple[str, str] | None:
 
 
 MAX_MODELS = 50       # models an agent's listing keeps
+# The speeds an agent's model may run at, cheapest first, as the chat's chip
+# names them: the service tiers of ai_protocols.SPEED_ORDER and "standard",
+# the usual one, which an agent's own default need not be (Codex's
+# ``service_tier`` in its config.toml). Each driver says them its own way.
+SPEEDS = ("flex", "standard", "fast")
 
 
-def model(model_id, label, efforts, effort, default) -> dict | None:
+def model(model_id, label, efforts, effort, default, speeds=None, speed=None) -> dict | None:
     """A model an agent offers, as Gamma keeps it: ``{id, label, efforts,
-    effort, default}``, ``efforts`` the reasoning efforts it takes (none
-    for a model without), ``effort`` its own default one (None when the
-    agent names none), ``default`` whether the agent uses it when none is
-    chosen; None for an entry without an id."""
+    effort, default, speeds, speed}``, ``efforts`` the reasoning efforts it
+    takes (none for a model without), ``effort`` its own default one (None
+    when the agent names none), ``default`` whether the agent uses it when
+    none is chosen, ``speeds`` the ``SPEEDS`` it may run at (none for a
+    model with no choice of speed), ``speed`` the one it runs at when none
+    is chosen (None when the agent does not say, or names one not listed);
+    None for an entry without an id."""
     if not isinstance(model_id, str) or not model_id.strip():
         return None
     efforts = [e.strip()[:40] for e in efforts if isinstance(e, str) and e.strip()] if isinstance(efforts, list) else []
     effort = effort.strip()[:40] if isinstance(effort, str) and effort.strip() else None
+    speeds = [s for s in SPEEDS if s in speeds] if isinstance(speeds, list) else []
     return {"id": model_id.strip()[:100], "label": one_line(label if isinstance(label, str) else "", 100)
-            or model_id.strip()[:100], "efforts": efforts, "effort": effort, "default": default is True}
+            or model_id.strip()[:100], "efforts": efforts, "effort": effort, "default": default is True,
+            "speeds": speeds, "speed": speed if speed in speeds else None}
 
 
 def cut_diff(text: str, limit: int = MAX_DIFF) -> str:
@@ -631,8 +641,8 @@ def start(name: str, *, title: str = "", **kw) -> Turn:
     """Start a turn of the agent ``name`` (``codex``, ``claude``): the
     driver's ``start`` with ``argv``, ``cwd``, ``prompt``,
     ``session``, ``images``, ``ask``, ``stream`` (its text as it is
-    written, ``delta``), ``model`` and ``effort`` (one the agent listed,
-    ``catalog.probe``'s ``models``; "" for its default) and ``gamma``
+    written, ``delta``), ``model``, ``effort`` and ``speed`` (one the agent
+    listed, ``catalog.probe``'s ``models``; "" for its default) and ``gamma``
     (``Gamma``: the agent reads Gamma through its MCP endpoint); ``title``
     the name of a new Codex thread, which ``codex resume`` lists it by
     (Claude Code's sessions need none: C3 of

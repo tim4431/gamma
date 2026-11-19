@@ -990,7 +990,7 @@ def test_a_follow_up_resumes_the_session_here_and_a_lost_one_takes_the_earlier_m
     assert (reply["state"], reply["fresh"]) == ("done", True)
 
 
-def test_the_model_and_effort_are_checked_there_and_again_here(lab, nas):
+def test_the_model_effort_and_speed_are_checked_there_and_again_here(lab, nas):
     f = _made(lab, nas, "RC model")
     catalog.probe("codex")
     f.turn.once()                                                          # announced with its models
@@ -1003,6 +1003,14 @@ def test_the_model_and_effort_are_checked_there_and_again_here(lab, nas):
     assert (reply["state"], reply["model"], reply["effort"]) == ("done", "gpt-fake-mini", "medium"), reply
     assert _sent(nas.log, "thread/start")[-1]["model"] == "gpt-fake-mini"
     assert _sent(nas.log, "turn/start")[-1]["effort"] == "medium"
+    # the speed too: one the model announced, carried by the claim
+    _say(lab.owner, f.page, model="gpt-fake-mini", speed="fast", status=400)   # that model has no fast tier
+    _say(lab.owner, f.page, "Quickly.", speed="fast")
+    f.turn.once()
+    assert runner.wait_idle(60)
+    reply = _reply(lab, f.page)
+    assert (reply["state"], reply["speed"]) == ("done", "fast"), reply
+    assert _sent(nas.log, "turn/start")[-1]["serviceTierForTurn"] == "priority"
 
     # taken there, but no longer offered here when it runs: it fails here with why
     _say(lab.owner, f.page, "Again.", model="gpt-fake-mini")

@@ -283,7 +283,7 @@ def assistants(link: dict) -> list[dict]:
     """The agents on this computer as the catalog last found them
     (``catalog.known``: one probe when none was ever made, never one to
     refresh it, so a channel keeps no agent probed), each with the models
-    it offers (``[{id, label, efforts, effort, default}]``, at most
+    it offers (``[{id, label, efforts, effort, default, speeds, speed}]``, at most
     ``MAX_MODELS``: what a chat turn there may ask for), whether it is on
     for the channel ``link``'s account (``enabled``: on, and that account
     turned it on; another account's agent is not that server's to use),

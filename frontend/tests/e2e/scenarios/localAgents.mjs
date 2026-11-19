@@ -799,7 +799,7 @@ export async function localAgentScenarios(env) {
     });
 
     // Step 3c: the rest of the computer side.
-    await step("local-agents: the passage chip names its source line, the strip's menu asks the shell, and a model and effort chosen reach Codex as its reply is typed", async () => {
+    await step("local-agents: the passage chip names its source line, the strip's menu asks the shell, and a model, effort and speed chosen reach Codex as its reply is typed", async () => {
       const before = heard().length;
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
@@ -830,8 +830,18 @@ export async function localAgentScenarios(env) {
           !(await items.allInnerTexts()).some((s) => s.includes("Hidden")), "the models Codex lists, not its hidden ones");
         await items.filter({ hasText: "GPT Fake Mini" }).click();
         await modelChip.click();
-        await page.locator(".uiSelectMenu .ctxMenuItem").filter({ hasText: /^\s*medium\s*$/i }).click();
-        await until(async () => /GPT Fake Mini · medium/i.test(await modelChip.innerText()), { what: "the chip shows the choice" });
+        const sections = page.locator(".uiSelectMenu .ctxMenuLabel");
+        await until(async () => (await sections.allInnerTexts()).some((s) => /effort/i.test(s)), { what: "the menu's sections" });
+        assert(!(await sections.allInnerTexts()).some((s) => /speed/i.test(s)), "a model with no other tier offers no speed");
+        await items.filter({ hasText: /^\s*GPT Fake\s*$/ }).click();
+        await modelChip.click();
+        assert((await sections.allInnerTexts()).some((s) => /speed/i.test(s)) &&
+          (await items.allInnerTexts()).some((s) => /Default \(standard\)/.test(s)), "its speeds, the default named");
+        await items.filter({ hasText: /^\s*medium\s*$/i }).click();
+        await modelChip.click();
+        await items.filter({ hasText: /^\s*fast\s*$/i }).click();
+        await until(async () => /GPT Fake · medium/i.test(await modelChip.innerText())
+          && await dock.locator(".chatModelChip .chatSpeedGlyph").count() === 1, { what: "the chip shows the choice, the speed its glyph" });
 
         const replies = dock.locator(".chatBubble.ai");
         const earlier = await replies.count();
@@ -849,12 +859,14 @@ export async function localAgentScenarios(env) {
         const first = CHAT_REPLY.split(" ")[0];
         assert([...seen].some((s) => s.includes(first) && !s.includes(CHAT_REPLY)),
           `a part of the reply was seen before the whole: ${JSON.stringify([...seen])}`);
+        assertEq(await dock.locator(".chatMsgModel .chatSpeedGlyph").count(), 1, "the reply's model row: the speed it ran at");
         assertNoProblems(page);
       } finally { await ctx.close(); }
       const since = heard().slice(before);
       const thread = since.find((e) => ["thread/start", "thread/resume"].includes(e.in?.method))?.in.params;
       const turn = since.find((e) => e.in?.method === "turn/start")?.in.params;
-      assertEq(JSON.stringify([thread?.model, turn?.effort]), JSON.stringify(["gpt-fake-mini", "medium"]), "the model and the effort chosen");
+      assertEq(JSON.stringify([thread?.model, turn?.effort, turn?.serviceTierForTurn]), JSON.stringify(["gpt-fake", "medium", "priority"]),
+        "the model, the effort and the speed chosen");
     });
 
     // Step 2.8 of docs/research/agents-as-participants-plan.md: a chat with no AI service.

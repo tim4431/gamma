@@ -156,7 +156,7 @@ def list_agents(request: Request, fresh: int = 0):
     everywhere but the desktop app's own server, which then lists none),
     ``computer`` this computer's name as its channels announce it
     (``cloud_auth.device``); ``models`` what each agent offers, ``[{id,
-    label, efforts, effort, default}]``; ``enabled`` whether it is on,
+    label, efforts, effort, default, speeds, speed}]``; ``enabled`` whether it is on,
     ``runs`` what it may run, ``never`` or ``ask``, ``mine`` whether the
     session's account turned it on, ``people`` the people it serves for its
     owner (``[{agent, server, workspace_id, account, username, at}]``),
@@ -468,6 +468,7 @@ class TurnBody(BaseModel):
     agent: str = Field(default="", max_length=160)
     model: str = ""
     effort: str = ""
+    speed: str = ""
     # where a conversation that starts works: an offered directory's id, "" for one of its own; none (null)
     # for the active conversation's own (the work folder a bucket is in decides for itself)
     dir: str | None = Field(default=None, max_length=64)
@@ -656,7 +657,7 @@ def _computer(ws: str, user_id: str, place: dict, conversation: dict | None, age
     one (a co-author's: no terminal, no grants, each ask allowed once at
     most), else null,
     ``ready``, ``problem`` and ``models`` (what it offers, ``[{id, label,
-    efforts, effort, default}]``) as last asked (``catalog.cached``: nothing
+    efforts, effort, default, speeds, speed}]``) as last asked (``catalog.cached``: nothing
     runs; ``ready`` null while it is asked), ``folder`` the work folder's
     name ("" outside one kept here), ``paused`` whether its vault is paused
     or choosing its files, ``turn`` where the conversation's turn stands in
@@ -781,14 +782,14 @@ def start_turn(body: TurnBody, request: Request):
     elsewhere than the turn: ``chats.begin``), the turn queued where the
     agent works (``chats.place_of``: the work folder's vault, else the
     offered directory ``dir`` names, else one of its own; ``dir`` left out,
-    the active conversation's) with the ``model`` and ``effort`` asked for
-    ("" or none: the agent's default) → 202 ``{conversation, turn: {id,
+    the active conversation's) with the ``model``, ``effort`` and ``speed``
+    asked for ("" or none: the agent's default) → 202 ``{conversation, turn: {id,
     state}}``, the turn's agent the one picked (``agent``, an agent the
     account turned on here), else the account's first (``_agent_of``); an
     active conversation of another agent is archived and a new one begun. A
     repeated ``id`` (the person's message's) answers the turn it made. 400
     for no text or too long a one, a ``dir`` no directory offered here has,
-    and a model or an effort the agent did not list
+    and a model, an effort or a speed the agent did not list
     (``catalog.refused_choice``); 409 while a turn of the conversation is
     queued or running, while the account has no agent on here, or not the
     one picked (one another account lends it counts: ``_agent_of``), one
@@ -828,8 +829,8 @@ def start_turn(body: TurnBody, request: Request):
     found = catalog.cached(name)
     if found["ready"] is False:
         raise HTTPException(status_code=409, detail=found["problem"] or f"{label} is not ready on this computer.")
-    model, effort = body.model.strip(), body.effort.strip()
-    refusal = catalog.refused_choice(name, found.get("models") or [], model, effort)
+    model, effort, speed = body.model.strip(), body.effort.strip(), body.speed.strip()
+    refusal = catalog.refused_choice(name, found.get("models") or [], model, effort, speed)
     if refusal:
         raise HTTPException(status_code=400, detail=refusal)
     _may_write(ws, user_id, label)
@@ -837,12 +838,13 @@ def start_turn(body: TurnBody, request: Request):
         conversation, reply, new = chats.begin(ws, bucket=body.bucket, dir=place["dir"], user_id=user_id,
                                                link_id=link["id"] if link is not None else "", agent=name,
                                                label=label, text=text, selections=chats.selections_of(body.selections),
-                                               message_id=body.id, model=model, effort=effort, owner=row["set_by"])
+                                               message_id=body.id, model=model, effort=effort, speed=speed,
+                                               owner=row["set_by"])
     except chats.ChatError as e:
         raise _refused(e) from None
     if new:
         runner.queue_chat(ws, place, reply["turn_id"], conversation_id=conversation["id"], bucket=body.bucket,
-                          agent=name, user_id=user_id, owner=row["set_by"], model=model, effort=effort)
+                          agent=name, user_id=user_id, owner=row["set_by"], model=model, effort=effort, speed=speed)
     return {"conversation": chats.shown(conversation), "turn": {"id": reply["turn_id"], "state": reply["state"]}}
 
 
@@ -867,8 +869,8 @@ def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: st
     """``start_turn`` for an agent on another computer (``far``): refused
     while that computer is offline (no turn is queued for one away), and
     the same checks against what it last announced (the work folder paused
-    there; its agent known not ready; the model and the effort among the
-    ones it offers; the directory among those it offers, ``far_dir``), the
+    there; its agent known not ready; the model, the effort and the speed
+    among the ones it offers; the directory among those it offers, ``far_dir``), the
     turn written here to wait for it (``chats.begin`` ``remote``, the
     conversation with that computer's agent) and the computer woken
     (``chat``): it takes the turn over its channel."""
@@ -885,8 +887,8 @@ def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: st
         raise HTTPException(status_code=409, detail=chats.far_problem(far))
     assistants, _seen = registry.said_of(far["token_id"])
     said = next((a for a in assistants if isinstance(a, dict) and a.get("name") == name), {})
-    model, effort = body.model.strip(), body.effort.strip()
-    refusal = catalog.refused_choice(name, said.get("models") or [], model, effort)
+    model, effort, speed = body.model.strip(), body.effort.strip(), body.speed.strip()
+    refusal = catalog.refused_choice(name, said.get("models") or [], model, effort, speed)
     if refusal:
         raise HTTPException(status_code=400, detail=refusal.replace("on this computer", f"on {computer}"))
     _may_write(ws, user_id, label)
@@ -895,7 +897,7 @@ def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: st
         conversation, reply, new = chats.begin(ws, bucket=body.bucket, dir=dir, user_id=user_id, link_id="",
                                                agent=name, label=label, text=text,
                                                selections=chats.selections_of(body.selections), message_id=body.id,
-                                               model=model, effort=effort, remote=True, computer=computer,
+                                               model=model, effort=effort, speed=speed, remote=True, computer=computer,
                                                computer_id=far["computer_id"], owner=far["user_id"])
     except chats.ChatError as e:
         raise _refused(e) from None

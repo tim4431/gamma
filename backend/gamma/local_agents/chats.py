@@ -23,13 +23,13 @@ on another computer starts a new conversation (``begin``), as another agent
 does. Its messages are the
 person's (``{id, role: "user", text, selections: [{text, page, box}],
 at}``) and the agent's (``{id, role: "agent", agent, label, turn_id, state,
-text, steps, asks, changes, changed, built, error, fresh, model, effort, at,
-ended_at, waiting?}``, ``asks`` what its agent asks the person and waits
+text, steps, asks, changes, changed, built, error, fresh, model, effort, speed,
+at, ended_at, waiting?}``, ``asks`` what its agent asks the person and waits
 for (a turn run on another computer's where that computer relays its asks,
 answered here through its run, ``answer_run``), ``waiting`` such a turn's
 ask that waits for an answer on that computer alone (false at its end),
-``model`` and
-``effort`` what the turn asked for, null for the agent's default; its
+``model``,
+``effort`` and ``speed`` what the turn asked for, null for the agent's default; its
 ``text`` grows as the agent writes it), the agent's written by the runner as
 its turn goes (gamma/local_agents/runner.py ``_ChatTurn``), relative paths
 only. Every write takes the workspace's write lock and sets ``version``
@@ -434,12 +434,12 @@ def _turn_of(conversation: dict, message_id: str) -> dict | None:
 
 
 def begin(ws: str, *, bucket: str, dir: str, user_id: str, link_id: str, agent: str, label: str, text: str,
-          selections: list[dict], message_id: str = "", model: str = "", effort: str = "",
+          selections: list[dict], message_id: str = "", model: str = "", effort: str = "", speed: str = "",
           remote: bool = False, computer: str = "", computer_id: str = "", thread_id: str = "",
           comment_id: str = "", agent_id: str = "", owner: str = "", resume: str = "") -> tuple[dict, dict, bool]:
     """A turn begins: the person's message and the agent's ``queued`` one
-    (with the ``model`` and ``effort`` the turn asks for, None for the
-    agent's default) written in the bucket's active conversation, or with
+    (with the ``model``, ``effort`` and ``speed`` the turn asks for, None
+    for the agent's default) written in the bucket's active conversation, or with
     ``thread_id`` in the account's conversation of that comment thread
     (``of_thread``; the person's message then names the ``comment_id`` it
     is, the agent's the ``agent_id`` that answers in the thread), and the
@@ -494,7 +494,8 @@ def begin(ws: str, *, bucket: str, dir: str, user_id: str, link_id: str, agent: 
                   "at": now, **({"comment_id": comment_id} if thread_id else {})}
         reply = {"id": new_block_id(), "role": "agent", "agent": agent, "label": label, "turn_id": turn_id,
                  "state": "queued", "text": "", "steps": [], "asks": [], "changes": [], "changed": 0, "built": False,
-                 "error": "", "fresh": False, "model": model or None, "effort": effort or None, "at": now,
+                 "error": "", "fresh": False, "model": model or None, "effort": effort or None,
+                 "speed": speed or None, "at": now,
                  "ended_at": None, **({"agent_id": agent_id} if thread_id else {})}
         conversation = _save(conn, conversation, [*conversation["messages"], person, reply])
         if remote:
@@ -1040,7 +1041,7 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, computer_id: str,
     queued turn of its agent ``agent`` in a conversation of ``user_id``'s
     agent with that computer: the row and its message ``running``, in one
     step under the write lock → ``{turn: {id, conversation_id, bucket,
-    title, text, selections, model, effort, for: {id, username},
+    title, text, selections, model, effort, speed, for: {id, username},
     thread_id?, comment_id?}, history, about, dir, seen, thread?}``:
     ``for`` the account the turn is for (``user_id`` itself, or a
     co-author: the route checks it is one the agent serves), the
@@ -1118,7 +1119,7 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, computer_id: str,
         username = account_names(users, {row["user_id"]}).get(row["user_id"], "")
     turn = {"id": turn_id, "conversation_id": row["conversation_id"], "bucket": row["bucket"],
             "title": conversation["title"], "text": person.get("text") or "", "selections": person.get("selections") or [],
-            "model": reply.get("model") or "", "effort": reply.get("effort") or "",
+            "model": reply.get("model") or "", "effort": reply.get("effort") or "", "speed": reply.get("speed") or "",
             "for": {"id": row["user_id"], "username": username}}
     out = {"turn": turn, "history": earlier, "about": found, "dir": where, "seen": page_now()}
     if conversation["thread_id"]:

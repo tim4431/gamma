@@ -18,8 +18,8 @@ afresh: ``sessions.held``, Codex's own refusal), and writes the agent's
 message as the turn goes: its text, its steps (relative paths, a command's
 program), what changed, its end. Its agent streams (``delta``): the
 message's last paragraph grows as the agent writes it, and the whole
-message, when it comes, takes its place. It runs the model and effort its
-turn asked for (``queue_chat``). A turn runs through ``_Turning``, which
+message, when it comes, takes its place. It runs the model, effort and
+speed its turn asked for (``queue_chat``). A turn runs through ``_Turning``, which
 gives a turn of this server Gamma's tools (``_tools``: a token of the
 person's for the workspace, gamma/local_agents/tools.py), deleted as the
 turn ends, however it ends; a watchdog thread stops it on the person's
@@ -182,7 +182,8 @@ _workers: dict[str, threading.Thread] = {}     # directory -> the thread taking 
 _queued: dict[tuple[str, str], str] = {}       # (ws, turn id) in some queue -> its vault's id ("" for none)
 # (ws, turn id) -> {link_id, dir, stop, reason, claimed, agent, slot, detail, chat, since}
 _active: dict[tuple[str, str], dict] = {}
-# a turn's id -> {ws, conversation_id, thread_id, bucket, dir, agent, user_id, owner, model, effort, at}, until it ends
+# a turn's id -> {ws, conversation_id, thread_id, bucket, dir, agent, user_id, owner, model, effort, speed, at},
+# until it ends
 _chats: dict[str, dict] = {}
 _slots = threading.BoundedSemaphore(MAX_RUNS)
 _registered = False
@@ -231,18 +232,19 @@ def _enqueue(place: str, key: tuple, link_id: str) -> None:
 
 
 def queue_chat(ws: str, place: dict, turn_id: str, *, conversation_id: str, bucket: str, agent: str,
-               user_id: str = "", owner: str = "", thread_id: str = "", model: str = "", effort: str = "") -> None:
+               user_id: str = "", owner: str = "", thread_id: str = "", model: str = "", effort: str = "",
+               speed: str = "") -> None:
     """A turn of ``user_id`` (``chats.begin`` wrote it ``queued``) with the
     agent of ``owner`` (the account itself but for a co-author's), in the
     conversation of the comment thread ``thread_id`` ("" for a chat's),
-    asking for ``model`` and ``effort`` ("" for the agent's default), waits
+    asking for ``model``, ``effort`` and ``speed`` ("" for the agent's default), waits
     in the queue of the directory of its ``place`` (``chats.place_of``),
     behind what is there."""
     path = place["path"] if place["kind"] != "own" else str(chats.own_dir(ws, conversation_id))
     with _lock:
         _chats[turn_id] = {"ws": ws, "conversation_id": conversation_id, "thread_id": thread_id, "bucket": bucket,
                            "dir": place["dir"], "agent": agent, "user_id": user_id, "owner": owner or user_id,
-                           "model": model, "effort": effort, "at": page_now()}
+                           "model": model, "effort": effort, "speed": speed, "at": page_now()}
         _enqueue(_place(path), (ws, turn_id), (place["link"] or {}).get("id", ""))
 
 
@@ -275,7 +277,7 @@ def queue_remote_chat(link_id: str, turn_id: str, *, conversation_id: str, bucke
             return True
         _chats[turn_id] = {"ws": link_id, "channel": link_id, "conversation_id": conversation_id, "thread_id": "",
                            "bucket": bucket, "dir": dir, "agent": agent, "user_id": "", "owner": "", "model": "",
-                           "effort": "", "at": page_now()}
+                           "effort": "", "speed": "", "at": page_now()}
         _enqueue(_place(place["path"]) if place else f"{link_id}:{turn_id}", key,
                  (place["link"] or {}).get("id", "") if place else "")
     return True
@@ -1167,10 +1169,10 @@ class _Turning:
         self._token, self.gamma = "", None
 
     def _turn(self, argv: list[str], root: Path, text: str, session: str, *, images=(), ask: bool = False,
-              stream: bool = False, model: str = "", effort: str = "", title: str = "") -> dict:
+              stream: bool = False, model: str = "", effort: str = "", speed: str = "", title: str = "") -> dict:
         """One turn of the agent on ``text`` (``session`` one to resume;
         ``ask``, it may ask; ``stream``, its text as it is written; its
-        ``model`` and ``effort``; ``title`` a new session's name) with
+        ``model``, ``effort`` and ``speed``; ``title`` a new session's name) with
         Gamma's tools (``_tools``), watched, its events followed → its done.
         A turn before it is closed first. The tools live as long as this
         turn's deadline, counted from now (``_keep_tools``: what came
@@ -1182,7 +1184,7 @@ class _Turning:
         self._keep_tools(time.monotonic() + _run_timeout())
         self.turn = events.start(self.agent, argv=argv, cwd=str(root), prompt=text, images=list(images),
                                  session=session, ask=ask, stream=stream, model=model, effort=effort,
-                                 gamma=self.gamma, title=title)
+                                 speed=speed, gamma=self.gamma, title=title)
         if self.turn.pid:
             self._started(self.turn.pid)
         ended = threading.Event()
@@ -1329,6 +1331,7 @@ class _ChatTurn(_Turning):
         self.conversation_id, self.bucket, self.dir = chat["conversation_id"], chat["bucket"], chat["dir"]
         self.agent, self.label = chat["agent"], catalog.label(chat["agent"])
         self.model, self.effort = chat.get("model") or "", chat.get("effort") or ""
+        self.speed = chat.get("speed") or ""
         self.root: Path | None = None
         self.asked = ""                 # the session the turn asked to resume
         self.fresh = False              # a follow-up whose agent remembers none of the earlier turns
@@ -1490,7 +1493,8 @@ class _ChatTurn(_Turning):
         if not found["ready"]:
             self._fail(found["problem"] or f"{self.label} is not ready on this computer.")
         if self.home.remote:   # that server checked them against what this computer announced: again here
-            refusal = catalog.refused_choice(self.agent, found.get("models") or [], self.model, self.effort)
+            refusal = catalog.refused_choice(self.agent, found.get("models") or [], self.model, self.effort,
+                                             self.speed)
             if refusal:
                 self._fail(refusal)
         refused = self.home.cannot_write()
@@ -1552,7 +1556,7 @@ class _ChatTurn(_Turning):
         # 4. the turn
         before = _snapshot(self.root)
         self._check_stop()
-        chosen = {"ask": self.ask, "stream": True, "model": self.model, "effort": self.effort,
+        chosen = {"ask": self.ask, "stream": True, "model": self.model, "effort": self.effort, "speed": self.speed,
                   "title": context.get("title") or "", "images": images}
         done = self._turn(argv, self.root, told(not session), session, **chosen)
         if self._resume_refused(done, session):

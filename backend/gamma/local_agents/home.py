@@ -16,7 +16,7 @@ server, workspace and account):
   takes the queued turn for this computer's run of it (``chat_run_id``: one
   id a turn, so a claim retried after a lost answer, or after this server
   restarted, holds it) → the message, its selections, the conversation's
-  last messages, the model and effort it asks for, what the bucket is
+  last messages, the model, effort and speed it asks for, what the bucket is
   (``about``), where its agent works by an id (``dir``, resolved here by
   ``far_place``: the vault of that server's work folder this channel's
   account keeps here, a directory this computer offers, or one of its own,
@@ -84,7 +84,7 @@ _TOKEN = re.compile(r"^gamma_[A-Za-z0-9_-]{20,128}$")   # a turn's token (``inte
 # (the channel relays them), ``waiting`` that one waits for an answer on this computer alone, ``steers`` the
 # messages steered in that the agent took (runner.py ``_progress``).
 CHAT_FIELDS = ("text", "steps", "asks", "changes", "changed", "built", "error", "fresh", "state", "ended_at", "model",
-               "effort", "waiting", "steers")
+               "effort", "speed", "waiting", "steers")
 NO_SUCH_DIR = "That server named no directory this computer offers it: Gamma ran nothing."
 NOT_KEPT = "The synced folder is no longer kept on this computer."
 NOT_OFFERED = "The directory this conversation works in is no longer offered on this computer."
@@ -452,8 +452,8 @@ class HttpChatHome:
         for this computer's run → its context (``{text, selections,
         earlier, title, thread_id, thread, for}``, a thread's turn's thread
         as the claim gave it, ``for`` the account there the turn is for,
-        ``{id, username}``; the turn's conversation, bucket, model and effort
-        set on ``turning``, what the bucket is, where it works and Gamma's
+        ``{id, username}``; the turn's conversation, bucket, model, effort and
+        speed set on ``turning``, what the bucket is, where it works and Gamma's
         tools kept here: ``about``, ``dir``, ``tools``), recorded here
         (``store.claimed_turn``); None when it is not this run's: stopped
         while it waited, the channel gone, its agent off for the channel's
@@ -484,6 +484,7 @@ class HttpChatHome:
         turning.conversation_id = str(turn.get("conversation_id") or turning.conversation_id)
         turning.bucket = str(turn.get("bucket") or turning.bucket)
         turning.model, turning.effort = str(turn.get("model") or ""), str(turn.get("effort") or "")
+        turning.speed = str(turn.get("speed") or "")   # an older server's claim names none: the default
         store.claimed_turn(self.turn_id, link_id=self.link_id, conversation_id=turning.conversation_id,
                            page_id=turning.bucket, agent=turning.agent)
         self.about = answer["about"] if isinstance(answer.get("about"), dict) else {}

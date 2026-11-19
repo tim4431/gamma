@@ -21,7 +21,8 @@ answered with the prompt (``Done: <message>; <steered>``); one written
 after the result starts another turn, a second result. ``late_steers``
 takes none while it works: it waits ``delay`` seconds before its result
 reading nothing, so a message written then starts the second turn. Its
-``initialize`` answers ``models`` (``MODELS``, or the scripted ``models``).
+``initialize`` answers ``models`` (``MODELS``, or the scripted ``models``;
+the default one has fast mode) and ``fast_mode_state`` ``off``.
 With ``--include-partial-messages`` its final text comes first as
 ``stream_event`` deltas (``deltas``, else its words, ``typing`` seconds
 apart; a subagent's and a thinking delta beside them). The final message names
@@ -137,13 +138,14 @@ def chat_message(prompt: str) -> str:
     return json.loads(found.group(1)) if found else ""
 
 
-def _model(value: str, name: str, efforts: list[str] | None) -> dict:
+def _model(value: str, name: str, efforts: list[str] | None, fast: bool = False) -> dict:
     return {"value": value, "resolvedModel": f"claude-{value}-fake", "displayName": name,
             "description": f"{name}, a stand-in", "supportsEffort": efforts is not None,
-            "supportedEffortLevels": efforts or [], "supportsAutoMode": True}
+            "supportedEffortLevels": efforts or [], "supportsAutoMode": True,
+            **({"supportsFastMode": True} if fast else {})}
 
 
-MODELS = [_model("default", "Default (recommended)", ["low", "medium", "high"]),
+MODELS = [_model("default", "Default (recommended)", ["low", "medium", "high"], fast=True),
           _model("sonnet", "Sonnet", ["low", "medium", "high", "max"]), _model("haiku", "Haiku", None)]
 
 
@@ -206,6 +208,7 @@ def wait_for(predicate, timeout: float | None):
             out({"type": "control_response", "response": {"subtype": "success", "request_id": message["request_id"],
                                                           "response": {"commands": [],
                                                                        "models": FAKE.get("models", MODELS),
+                                                                       "fast_mode_state": "off",
                                                                        "pending_permission_requests": []}}})
         elif subtype == "interrupt":
             out({"type": "control_response", "response": {"subtype": "success", "request_id": message["request_id"],

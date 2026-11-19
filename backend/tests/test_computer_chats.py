@@ -38,8 +38,10 @@ from gamma.ops import STALE, OpError
 from gamma.work_folders import takeover
 
 MAKER, EDITOR, STRANGER = "ccx_maker", "ccx_editor", "ccx_stranger"
-MODELS = [{"id": "gpt-5", "label": "GPT-5", "efforts": ["low", "medium", "high"], "effort": "medium", "default": True},
-          {"id": "gpt-5-mini", "label": "GPT-5 mini", "efforts": [], "effort": None, "default": False}]
+MODELS = [{"id": "gpt-5", "label": "GPT-5", "efforts": ["low", "medium", "high"], "effort": "medium", "default": True,
+           "speeds": ["standard", "fast"], "speed": "fast"},
+          {"id": "gpt-5-mini", "label": "GPT-5 mini", "efforts": [], "effort": None, "default": False, "speeds": [],
+           "speed": None}]
 CODEX = [{"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "0.167.0", "code": "",
           "models": MODELS, "enabled": True, "runs": "never"}]
 OFF = [{**CODEX[0], "enabled": False}]   # Codex there, turned off
@@ -172,6 +174,7 @@ def test_the_announce_keeps_each_assistants_models(lab):
     assert assistants[0]["models"][:2] == MODELS                      # one without an id, and a repeat, left out
     assert [m["id"] for m in assistants[0]["models"]] == ["gpt-5", "gpt-5-mini", "m0", "m1", "m2"]
     assert assistants[0]["models"][2]["efforts"] == [f"e{j}" for j in range(registry.MAX_EFFORTS)]
+    assert (assistants[0]["models"][2]["speeds"], assistants[0]["models"][2]["speed"]) == ([], None)  # none announced
     assert assistants[1]["models"] == []                              # none announced: none
     for bad in ({**CODEX[0], "models": "all"}, {**CODEX[0], "models": ["gpt-5"]},
                 {**CODEX[0], "models": [{"id": f"m{i}"} for i in range(registry.MAX_MODELS + 1)]}):
@@ -263,7 +266,7 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
     claimed = _claim(pc, turn)
     assert claimed["turn"] == {"id": turn, "conversation_id": made["conversation"]["id"], "bucket": lab.main,
                                "title": "Tighten this paragraph.", "text": "Tighten this paragraph.",
-                               "selections": [selection], "model": "gpt-5", "effort": "high",
+                               "selections": [selection], "model": "gpt-5", "effort": "high", "speed": "",
                                "for": {"id": account_of(MAKER), "username": MAKER}}
     assert claimed["history"] == [] and claimed["seen"]
     assert (claimed["about"]["kind"], claimed["about"]["title"], claimed["about"]["path"]) == ("page", "main",

@@ -1022,7 +1022,8 @@ muted "offline" for another computer that is away, an amber "not ready"
 (`.agentProblem`) for one with a problem, the whole sentence its title; it
 stays pickable, and the chat then says why. The chip then reads the agent
 first, "Codex on TIM-PC · GPT-5.5 · high" or "Gamma AI · GPT-5 · high"
-(`agentChoice`, then the model and effort, the model ellipsized first),
+(`agentChoice`, then the model and effort, the model ellipsized first, the
+speed chosen its glyph after them, a computer agent's as Gamma AI's),
 named "Agent, model and reasoning effort"; with Gamma AI alone it is the
 model chip it always was ("GPT-5 · high", "Model, reasoning effort and
 speed"). It is shown in every bucket (a page, a folder, the library) and even when
@@ -1030,7 +1031,7 @@ Gamma AI is off or unset, as long as there is an agent to pick. A viewer
 of the workspace has Gamma AI alone.
 
 The bucket's pick lasts the tab's life (`chat/computer/chatSide.js`
-`useChatAgent`), as a computer agent's model and effort do; a bucket never
+`useChatAgent`), as a computer agent's model, effort and speed do; a bucket never
 picked shows Gamma AI, unless no AI service is connected and a computer's
 agent can answer (`pickAgent`; a pick is the agent's id, another
 computer's `computer:<computer>:<name>`, which History, a thread's *Open

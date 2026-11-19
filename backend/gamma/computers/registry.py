@@ -128,9 +128,11 @@ def _flag(value, field: str) -> bool | None:
 
 def _models(value) -> list[dict]:
     """An assistant's ``models`` as kept (step 4d, the chat's model chip):
-    ``[{id, label, efforts, effort, default}]`` (``events.model``), at most
-    ``MAX_MODELS`` with ``MAX_EFFORTS`` efforts each, one without an id
-    left out. ValueError for another shape."""
+    ``[{id, label, efforts, effort, default, speeds, speed}]``
+    (``events.model``: the speeds those it knows), at most ``MAX_MODELS``
+    with ``MAX_EFFORTS`` efforts each, one without an id left out (an older
+    computer announces no speeds: its models offer none). ValueError for
+    another shape."""
     from ..local_agents import events  # local: the agents' package is loaded where an agent is named
 
     if value is None:
@@ -143,7 +145,7 @@ def _models(value) -> list[dict]:
             raise ValueError("A model is an object.")
         efforts = item.get("efforts")
         found = events.model(item.get("id"), item.get("label"), efforts[:MAX_EFFORTS] if isinstance(efforts, list)
-                             else [], item.get("effort"), item.get("default"))
+                             else [], item.get("effort"), item.get("default"), item.get("speeds"), item.get("speed"))
         if found is not None and all(m["id"] != found["id"] for m in kept):
             kept.append(found)
     return kept

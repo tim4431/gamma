@@ -21,8 +21,16 @@ request waits for.
 A turn with ``stream`` (a chat turn) keeps ``item/agentMessage/delta``,
 each a ``delta`` event before its message's whole ``text``; a turn with a
 ``model`` starts (or resumes) its thread with it, one with an ``effort``
-asks it of ``turn/start``. What Codex offers is ``inspect``'s: the models
-of ``model/list`` on a short-lived app-server, which uses no model.
+asks it of ``turn/start``, one with a ``speed`` asks ``turn/start`` for its
+service tier as ``serviceTierForTurn`` (``TIERS``: ``priority`` the fast
+one, ``default`` standard speed), which leaves the thread's own tier as it
+was, so the next turn, or the person's ``codex resume``, runs at the
+thread's tier again. What Codex offers is ``inspect``'s: the models of
+``model/list`` on a short-lived app-server, which uses no model, each
+model's speeds its ``serviceTiers`` with standard beside them, its default
+speed its ``defaultServiceTier`` or else the ``service_tier`` of the
+user's config (``config/read``: a config.toml may set every turn to
+``priority``).
 
 A turn with ``ask`` (a chat turn of a folder whose agent may ask) starts its
 thread with ``approvalPolicy`` ``on-request`` and ``approvalsReviewer``
@@ -161,6 +169,13 @@ def _held(e: RequestError) -> bool:
 
 
 DELTA = "item/agentMessage/delta"   # what a turn with ``stream`` does not opt out of
+# Codex's service tiers by the speeds Gamma names them (events.SPEEDS), and
+# back: ``model/list`` names the fast one ``priority`` (codex-cli 0.167.0;
+# an older config's ``fast`` is the same tier, and ``thread/start`` takes
+# either), ``default`` is standard speed. A tier Codex names otherwise
+# (``ultrafast``) is not offered.
+TIERS = {"flex": "flex", "standard": "default", "fast": "priority"}
+_SPEEDS = {"flex": "flex", "default": "standard", "standard": "standard", "priority": "fast", "fast": "fast"}
 MAX_MODEL_PAGES = 5
 MODELS_S = 15                       # how long model/list may take, its pages together
 READ_S = 30                         # how long reading a directory's threads, or one's turns, may take
@@ -219,8 +234,9 @@ def inspect(argv: list[str], *, models: bool = True) -> tuple[bool, str, list[di
     """One short-lived app-server, which uses no model: whether Codex's
     Windows sandbox is set up (``sandbox_ready``; elsewhere it is) and, with
     ``models``, the models it offers (``model/list``, its pages followed,
-    the hidden ones left out, ``_models``) → ``(ready, problem, models)``.
-    Models it could not list are none. Never raises."""
+    the hidden ones left out, ``_models``, the user's config read for its
+    default service tier) → ``(ready, problem, models)``. Models it could
+    not list are none. Never raises."""
     try:
         child = procs.spawn(argv + ["app-server"], cwd=tempfile.gettempdir())
     except (OSError, ValueError) as e:
@@ -237,7 +253,10 @@ def inspect(argv: list[str], *, models: bool = True) -> tuple[bool, str, list[di
                 return silent
             if "error" not in answer and (answer.get("result") or {}).get("status") != "ready":
                 return False, SANDBOX_PROBLEM, []
-        return True, "", _list_models(child, min(deadline, time.monotonic() + MODELS_S)) if models else []
+        if not models:
+            return True, "", []
+        deadline = min(deadline, time.monotonic() + MODELS_S)
+        return True, "", _list_models(child, deadline, _config_tier(child, deadline))
     except Exception as e:  # noqa: BLE001 — never raises
         log.warning(f"[agents] asking Codex on this computer: {e}")
         return silent
@@ -247,9 +266,20 @@ def inspect(argv: list[str], *, models: bool = True) -> tuple[bool, str, list[di
         procs.kill_tree(child, grace=1.0)
 
 
-def _list_models(child: procs.Child, deadline: float) -> list[dict]:
+def _config_tier(child: procs.Child, deadline: float) -> str:
+    """The ``service_tier`` of the user's config (``config/read`` outside
+    any project, as a turn's thread would start with it there), "" for none
+    or no answer."""
+    answer = _ask(child, 3, "config/read", {"cwd": tempfile.gettempdir()}, deadline)
+    config = ((answer or {}).get("result") or {}).get("config")
+    tier = config.get("service_tier") if isinstance(config, dict) else None
+    return tier if isinstance(tier, str) else ""
+
+
+def _list_models(child: procs.Child, deadline: float, tier: str = "") -> list[dict]:
     """``model/list``'s every page (at most ``MAX_MODEL_PAGES``) as
-    ``_models`` keeps them; [] when Codex refuses it or does not answer."""
+    ``_models`` keeps them, ``tier`` the config's service tier; [] when
+    Codex refuses it or does not answer."""
     found, cursor = [], None
     for page in range(MAX_MODEL_PAGES):
         answer = _ask(child, 10 + page, "model/list", {"cursor": cursor} if cursor else {}, deadline)
@@ -262,21 +292,39 @@ def _list_models(child: procs.Child, deadline: float) -> list[dict]:
         cursor = result.get("nextCursor")
         if not isinstance(cursor, str) or not cursor:
             break
-    return _models(found)
+    return _models(found, tier)
 
 
-def _models(data: list[dict]) -> list[dict]:
+def _speeds(item: dict) -> list[str]:
+    """A model's speeds: its ``serviceTiers`` (``[{id, name}]``; an older
+    Codex's ``additionalSpeedTiers``, ``[id]``) as ``_SPEEDS`` names them,
+    standard beside them; none for a model with no other tier."""
+    tiers = item.get("serviceTiers")
+    if isinstance(tiers, list):
+        ids = [t.get("id") for t in tiers if isinstance(t, dict)]
+    else:
+        ids = item.get("additionalSpeedTiers") if isinstance(item.get("additionalSpeedTiers"), list) else []
+    found = {_SPEEDS.get(i) for i in ids if isinstance(i, str)} - {None, "standard"}
+    return ["standard", *found] if found else []
+
+
+def _models(data: list[dict], tier: str = "") -> list[dict]:
     """Codex's models (``{model, displayName, hidden, isDefault,
-    supportedReasoningEfforts, defaultReasoningEffort}``) as Gamma keeps
-    them (``events.model``), the hidden ones left out, each once."""
+    supportedReasoningEfforts, defaultReasoningEffort, serviceTiers,
+    defaultServiceTier}``) as Gamma keeps them (``events.model``), the
+    hidden ones left out, each once; ``tier`` the config's service tier, a
+    model's default speed where it names none of its own (standard where
+    neither says)."""
     out, seen = [], set()
     for item in data:
         if item.get("hidden") is True:
             continue
         efforts = [e.get("reasoningEffort") for e in item.get("supportedReasoningEfforts") or []
                    if isinstance(e, dict)]
+        default_tier = item.get("defaultServiceTier") or tier or "default"
         kept = events.model(item.get("model") or item.get("id"), item.get("displayName"), efforts,
-                            item.get("defaultReasoningEffort"), item.get("isDefault"))
+                            item.get("defaultReasoningEffort"), item.get("isDefault"), _speeds(item),
+                            _SPEEDS.get(default_tier) if isinstance(default_tier, str) else None)
         if kept and kept["id"] not in seen:
             seen.add(kept["id"])
             out.append(kept)
@@ -373,14 +421,14 @@ class CodexTurn(events.Turn):
     label = LABEL
 
     def __init__(self, argv: list[str], *, cwd: str, prompt: str, session: str, images: list[str],
-                 ask: bool = False, stream: bool = False, model: str = "", effort: str = "",
+                 ask: bool = False, stream: bool = False, model: str = "", effort: str = "", speed: str = "",
                  gamma: events.Gamma | None = None, title: str = ""):
         super().__init__(argv + ["app-server"], cwd=cwd, ask=ask, gamma=gamma)
         self._prompt = prompt
         self._resume = session
         self._title = title
         self.stream = stream
-        self._model, self._effort = model, effort
+        self._model, self._effort, self._tier = model, effort, TIERS.get(speed, "")
         self._images = list(images or ())[:MAX_IMAGES]
         self._next_id = 0
         self._ids = threading.Lock()     # a steer is sent from the thread that answers
@@ -672,6 +720,8 @@ class CodexTurn(events.Turn):
                                          "networkAccess": False}}
         if self._effort:
             turn_params["effort"] = self._effort
+        if self._tier:
+            turn_params["serviceTierForTurn"] = self._tier
         turn = self._request("turn/start", turn_params, START_S).get("turn") or {}
         self._turn_id = self._turn_id or str(turn.get("id") or "")
         while True:
@@ -695,15 +745,15 @@ class CodexTurn(events.Turn):
 
 
 def start(*, argv: list[str], cwd: str, prompt: str, session: str = "", images: list[str] = (), ask: bool = False,
-          stream: bool = False, model: str = "", effort: str = "", gamma: events.Gamma | None = None,
-          title: str = "") -> CodexTurn:
+          stream: bool = False, model: str = "", effort: str = "", speed: str = "",
+          gamma: events.Gamma | None = None, title: str = "") -> CodexTurn:
     """Start Codex's app-server in ``cwd`` for one turn of ``prompt``
     (``session`` a thread to resume; ``ask``, it may ask to step outside its
     sandbox; ``stream``, its text as it is written; ``model`` its thread's,
-    ``effort`` its turn's; ``gamma``, Gamma's tools; ``title``, a new
-    thread's name); read the turn with ``events()``."""
+    ``effort`` and ``speed`` its turn's; ``gamma``, Gamma's tools;
+    ``title``, a new thread's name); read the turn with ``events()``."""
     return CodexTurn(list(argv), cwd=cwd, prompt=prompt, session=session, images=list(images), ask=ask,
-                     stream=stream, model=model, effort=effort, gamma=gamma, title=title)
+                     stream=stream, model=model, effort=effort, speed=speed, gamma=gamma, title=title)
 
 
 # --- the threads of a directory (gamma/local_agents/sessions.py) -------------------------------

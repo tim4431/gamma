@@ -106,16 +106,17 @@ const passages = (selections) =>
 // What a message posts (POST /api/local-agents/chat/turns): the id the
 // client minted (the same on a retry, so the turn is made once), the
 // bucket, the text trimmed, the PDF passages selected, and what was chosen
-// for the conversation (`choice`: {agent, model, effort, dir}): the agent
-// picked, the model and effort, neither sent when it is the agent's
-// default, and where a conversation that begins works (`dir`: an offered
-// directory's id, "" for one of its own; null, not sent, for the
+// for the conversation (`choice`: {agent, model, effort, speed, dir}): the
+// agent picked, the model, effort and speed, none sent when it is the
+// agent's default, and where a conversation that begins works (`dir`: an
+// offered directory's id, "" for one of its own; null, not sent, for the
 // conversation's own).
 export function turnBody(id, bucket, text, selections = [], choice = null) {
   return {
     id, bucket, text: String(text || "").trim(), selections: passages(selections),
     ...(choice?.agent ? { agent: choice.agent } : {}),
     ...(choice?.model ? { model: choice.model } : {}), ...(choice?.effort ? { effort: choice.effort } : {}),
+    ...(choice?.speed ? { speed: choice.speed } : {}),
     ...(choice?.dir != null ? { dir: choice.dir } : {}),
   };
 }
@@ -149,20 +150,23 @@ export function lastEnded(conversation) {
   return (conversation?.messages || []).findLast((m) => m.role === "agent" && m.ended_at)?.ended_at || null;
 }
 
-// The model and effort a conversation goes on with: the person's choice
-// for it in this tab (`picked`), else what its newest turn ran with (the
-// agent's message keeps `model` and `effort`, null for the default; one
-// from before it kept them says nothing), each kept only while the agent
-// still lists it; "" is the agent's default. `shown` is the model the chip
-// names: the one chosen, else the agent's default, else its first.
+// The model, effort and speed a conversation goes on with: the person's
+// choice for it in this tab (`picked`), else what its newest turn ran with
+// (the agent's message keeps `model`, `effort` and `speed`, null for the
+// default; one from before it kept them says nothing), each kept only
+// while the agent still lists it; "" is the agent's default. `shown` is
+// the model the chip names: the one chosen, else the agent's default, else
+// its first.
 export function modelChoice(models, conversation = null, picked = null) {
   const listed = models || [];
-  const ran = (conversation?.messages || []).findLast((m) => m.role === "agent" && ("model" in m || "effort" in m));
-  const said = picked || (ran ? { model: ran.model || "", effort: ran.effort || "" } : null);
+  const ran = (conversation?.messages || []).findLast((m) => m.role === "agent"
+    && ("model" in m || "effort" in m || "speed" in m));
+  const said = picked || (ran ? { model: ran.model || "", effort: ran.effort || "", speed: ran.speed || "" } : null);
   const model = listed.some((m) => m.id === said?.model) ? said.model : "";
   const shown = listed.find((m) => m.id === model) || listed.find((m) => m.default) || listed[0] || null;
   const effort = said?.effort && (shown?.efforts || []).includes(said.effort) ? said.effort : "";
-  return { model, effort, shown };
+  const speed = said?.speed && (shown?.speeds || []).includes(said.speed) ? said.speed : "";
+  return { model, effort, speed, shown };
 }
 
 // What the model chip reads: the model's name and the effort chosen
@@ -678,6 +682,7 @@ export function shownMessages(conversation, info) {
         id: `${m.id}:${k}`, role: "ai", turnId: m.turn_id, label: by, text: part.text, partial: false,
         pill: { label: turnLabel({ ...m, state: "done", steps: part.steps }, label), waiting: false, queued: false },
         actions: part.steps.map(stepChip), asks: [], files: null, notice: "", threads: [], model, effort: m.effort || "",
+        speed: m.speed || "",
       }] : []),
       { id: `${m.id}:steer:${part.steer.id}`, role: "user", text: part.steer.text, steered: true,
         passages: passagesOf(part.steer.selections) },
@@ -695,7 +700,7 @@ export function shownMessages(conversation, info) {
       asks: live ? m.asks || [] : [],
       files: files ? { ...files, vault } : null,
       notice: m.fresh ? freshLine(by) : "", threads: m.threads || [],
-      model, effort: m.effort || "",
+      model, effort: m.effort || "", speed: m.speed || "",
       ...(m.state === "failed" ? { ...(text ? {} : { error: true }), errorKind: "agent", errorProvider: by, errorSaid: endText(m) } : {}),
     }];
   });
