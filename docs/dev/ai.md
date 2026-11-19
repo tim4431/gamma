@@ -1323,9 +1323,11 @@ optional notes/highlights. The multi-paper text budget is shared by valid pages;
 selection still centers the open paper's excerpt. Tool-enabled chats also
 receive document maps labelled with page IDs.
 
-Explicit references expand `read_page`, `read_block`, and `search_library`
-access within the current workspace, even outside the original page/folder.
-They never expand the editing scope. PDF and file search hits identify their
+Explicit references put the pages in the chat's tool scope within the current
+workspace, even outside the original page/folder, for reading and for changes
+alike: the read and search tools reach them, and so do the note editors, the
+comment, highlight and drawing tools, and in a folder chat the page organizers,
+each under its own permission. PDF and file search hits identify their
 Gamma page IDs so the assistant can read further or cite the matching paper
 or line, including when titles are identical. References are resolved server-side;
 missing pages and non-page blocks are ignored.
@@ -1582,8 +1584,9 @@ What it can reach depends on where the chat is opened — every chat declares an
 - `"page"` — the page chat (`page_id` = the focused page, with or without a
   document, a PDF or a text file): tools reach only that page — the reading tools plus the note-block
   editors; the page-level organizers (list/rename/move, folders and labels)
-  don't exist there. The reading tools reach the pages inside it too, as
-  attachments widen reading and never editing ([ai_tools.md](ai_tools.md)).
+  don't exist there. The reading tools reach the pages inside it too, for
+  reading only, and every tool reaches the pages attached with @
+  ([ai_tools.md](ai_tools.md)).
 
 The request also carries `permissions`, the tool map of the chat's KIND with
 one state per permission (see below), and `granted`, the permissions this
