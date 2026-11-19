@@ -63,7 +63,7 @@ export const SECTION_PREFS = Object.freeze({
   }),
   assistant: sections({
     // A comment's Send to {agent} tick has no row: the tick itself sets it.
-    Chat: ["chatEffort", "chatSpeed", "chatImgAutoClear", "commentSendTo"],
+    Chat: ["chatEffort", "chatSpeed", "chatFollowUp", "chatImgAutoClear", "commentSendTo"],
     Prompts: ["chatSystem", "metaPrompt", "citePrompt", "agentSystem"],
     "Context size": ["chatContextChars", "metaContextChars", "multiContextChars", "chatPictures"],
   }),

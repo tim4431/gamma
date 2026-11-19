@@ -30,6 +30,8 @@ export function WordDiff({ diff }) {
   </div>;
 }
 
+const DRAWING_TOOLS = new Set(["draw", "add_text_box", "place_picture", "add_sheet"]);
+
 function ApprovalPreview({ tool, preview = {}, args = {} }) {
   // The pictures a change embeds (a clip's region, a note's new pictures),
   // drawn by the server from the same URLs the notes and the chat use.
@@ -39,10 +41,13 @@ function ApprovalPreview({ tool, preview = {}, args = {} }) {
       {pictures.map((url) => <img key={url} src={pictureSrc(url)} alt="" loading="lazy" />)}
     </div>
   ) : null;
-  // Where a comment, a resolve or a highlight writes.
+  // Where a comment, a resolve or a highlight writes, and what a drawing
+  // tool makes (gamma/ai_draw.py: "2 shapes: a rectangle around …").
   const place = preview.place ? <div className="chatApprovalNote">{placeText(preview.place)}</div> : null;
+  const what = DRAWING_TOOLS.has(tool) && preview.what ? <div className="chatApprovalNote">{preview.what}</div> : null;
   if (preview.diff?.length) {
     return <>
+      {what}
       {place}
       {preview.children ? <div className="chatApprovalNote">
         {tn("{n} nested block goes with it.", "{n} nested blocks go with it.", preview.children)}
@@ -52,8 +57,8 @@ function ApprovalPreview({ tool, preview = {}, args = {} }) {
       {gallery}
     </>;
   }
-  if (gallery) return gallery;
-  if (place) return place;
+  if (gallery) return <>{what}{place}{gallery}</>;
+  if (place || what) return <>{what}{place}</>;
   if ("to" in preview) {
     return <div className="chatApprovalDiff">
       {preview.from ? <del>{preview.from}</del> : null}

@@ -64,9 +64,19 @@ test("Steer carries the text, the quoted passages and the pictures; files and at
   });
   assert.equal(q.canSteer({ parts: { files: [{ name: "a.pdf" }] } }), false);
   assert.equal(q.canSteer({ parts: { notes: [{ kind: "block", text: "a block" }] } }), false);
-  // The transcript shows it as a sent message reads.
+  // The transcript shows it as a sent message reads: the passages' start
+  // quoted, every line of it.
   const shown = q.steeredMessage([item, { text: "and be brief", parts: {} }], "u1");
-  assert.equal(shown.text, "focus on this\n\n> Line one\nline two\n\n---\n\nmy note\n\nand be brief");
+  assert.equal(shown.text, "focus on this\n\n> Line one\n> line two\n>\n> ---\n>\n> my note\n\nand be brief");
   assert.deepEqual(shown.images, [picture]);
   assert.equal(shown.steered, true);
+});
+
+test("a quote of the transcript goes ahead of the message, as it is sent, steered and shown", () => {
+  const item = { id: "m2", text: "why? ", parts: { quotes: ["It is $x^2$.\n\n- a point"] } };
+  assert.equal(q.messageText(item.text, item.parts), "> It is $x^2$.\n>\n> - a point\n\nwhy?");
+  assert.equal(q.steerBody(item).text, "> It is $x^2$.\n>\n> - a point\n\nwhy?");
+  assert.equal(q.steeredMessage([item], "u2").text, "> It is $x^2$.\n>\n> - a point\n\nwhy?");
+  assert.equal(q.canSteer(item), true);
+  assert.equal(q.messageText("plain", {}), "plain");
 });

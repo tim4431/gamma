@@ -15,10 +15,19 @@ export function sendsOnEnter(e, onScreen = touchTyping()) {
   return !onScreen || e.ctrlKey || e.metaKey;
 }
 
-// Whether an Enter hands the message to the chat's reply under way (Steer,
-// chat/chatQueue.js): Ctrl/⌘+Shift+Enter, on any keyboard, as Codex's.
+// Whether an Enter is the other way of sending a follow-up (below):
+// Ctrl/⌘+Shift+Enter, on any keyboard, as Codex's.
 export function steersOnEnter(e) {
   return e.key === "Enter" && e.shiftKey && (e.ctrlKey || e.metaKey) && !composing(e);
+}
+
+// Whether a message sent while a reply runs is handed to it at once (Steer,
+// chat/chatQueue.js) rather than queued for when it ends. `followUp` the
+// preference (Settings → AI → Chat, "queue" or "steer"): Enter, the send
+// button and a dictation's send do what it says, and Ctrl/⌘+Shift+Enter
+// (`other`) the other one.
+export function followUpSteers(followUp, other = false) {
+  return (followUp === "steer") !== other;
 }
 
 // Whether an Enter sends a comment (comments/CommentComposer.jsx). The field

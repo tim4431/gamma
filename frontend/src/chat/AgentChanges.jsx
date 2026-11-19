@@ -19,9 +19,10 @@ import React, { useContext, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { GammaNavContext } from "../shared/ui/Widgets";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { ActivityIcon, BookIcon, BotIcon, CheckIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FileTextIcon, FolderIcon,
-  GlobeIcon, HighlightIcon, HistoryIcon, ImageIcon, LabelIcon, ListIcon, MessageSquareIcon, PenIcon, PencilIcon, PlusIcon,
-  QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, TerminalIcon, TrashIcon, UndoIcon, XIcon } from "../shared/ui/Icons";
+import { ActivityIcon, BookIcon, BotIcon, CheckIcon, CloudDownloadIcon, ExportIcon, EyeIcon, FilePlusIcon, FileTextIcon,
+  FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, ImageIcon, LabelIcon, ListIcon, LocateIcon, MessageSquareIcon, PenIcon,
+  PencilIcon, PlusIcon, QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, TerminalIcon, TrashIcon, UndoIcon,
+  XIcon } from "../shared/ui/Icons";
 import { PathLink } from "../editor/PathLink.jsx";
 import { changeCount, changePlace, isChange, noteChangeText } from "./agentSteps";
 import { canRedo, canRevert, revertKind, revertRefusal } from "./aiRevert.js";
@@ -32,7 +33,7 @@ import { WordDiff } from "./ApprovalCard";
 // server ran; a computer agent's steps are chips of kinds of their own
 // (`file`, `fileEdit`, `run`, `work`: chat/computer/computerChat.js
 // stepChip).
-export const ACTION_ICONS = { file: FileTextIcon, fileEdit: PencilIcon, run: TerminalIcon, work: ActivityIcon, rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, comment: MessageSquareIcon, resolve: CheckIcon, highlight: HighlightIcon, write: MessageSquareIcon, error: XIcon };
+export const ACTION_ICONS = { file: FileTextIcon, fileEdit: PencilIcon, run: TerminalIcon, work: ActivityIcon, rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, comment: MessageSquareIcon, resolve: CheckIcon, highlight: HighlightIcon, write: MessageSquareIcon, show: LocateIcon, export: ExportIcon, error: XIcon };
 
 // Take one change back, or with `redo` put a reverted one back, as its row
 // and the dialog do: POST /api/ai/revert → `{page_id, noop, kept?}`. A
@@ -53,9 +54,15 @@ export function refusalCopy({ conflict, preview, detail, status }, redo) {
       : { text: t("The note was changed since. Reverting anyway makes this change:"), force: t("Revert anyway") };
   }
   if (conflict === "filled") {
+    if (preview?.page) {
+      return { text: t("Notes, pages or comments were added to the page since. Reverting moves it to Recently deleted with them."),
+        force: t("Move to Recently deleted anyway") };
+    }
     return {
       text: preview?.children ? t("Notes were added under it since. Reverting deletes it with them.")
-        : t("It was typed in since. Reverting deletes what it says now:"),
+        : preview?.drawn ? t("Strokes were added to it since. Reverting deletes them with it.")
+          : preview?.threads ? t("It was commented on since. Reverting deletes it, and its comments with it.")
+            : t("It was typed in since. Reverting deletes what it says now:"),
       force: t("Delete anyway"),
     };
   }
@@ -82,6 +89,9 @@ function libraryText(a, page) {
     case "rename_folder": return t("Folder {from} renamed to {to}", { from: old(a.from), to: bold(a.to) });
     case "rename_label": return t("Label {from} renamed to {to}", { from: old(a.from), to: bold(a.to) });
     case "create_label": return t("Made the label {label}", { label: bold(a.to) });
+    case "create_page": return a.inside
+      ? t("Made the page {page} inside {parent}", { page: page(a.page_id, a.title), parent: bold(a.inside) })
+      : t("Made the page {page} in {folder}", { page: page(a.page_id, a.title), folder: bold(a.to || t("the library root")) });
     case "label_page": return t("Labels of {page}: {change}", { page: page(a.page_id, a.title), change: labelChange(a) });
     case "delete_folder": return a.count
       ? tn("Deleted the folder {folder}; its {n} page stays in your library",

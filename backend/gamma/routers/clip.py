@@ -109,7 +109,22 @@ def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict
     and the source URL; URL matches from the proxy-cache hash
     (``url_hash``), the document's address (where it is shown from, else
     its stored file's), or the web page the extension saved it from
-    (web_url)."""
+    (web_url).
+
+    An arXiv id that finds nothing, with no DOI beside it, is looked for
+    again by the DOI its arXiv record gives the published version
+    (``registry_record``, cached): a journal paper filed by its DOI alone is
+    the paper its preprint's PDF tab shows. The abstract page carries that
+    DOI in its tags (``citation_doi``); the PDF and HTML tabs only the id."""
+    page = _find_attached(conn, doi, arxiv_id, urls)
+    if page or doi or not arxiv_id:
+        return page
+    published = norm_doi(str((registry_record("", arxiv_id) or {}).get("doi") or ""))
+    return _find_attached(conn, published) if published else None
+
+
+def _find_attached(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict | None:
+    """find_page's scan of the library's PDF pages, without the registry."""
     doi = (doi or "").lower()
     urls = tuple(u for u in urls if u)
     url_ids = {url_hash(u) for u in urls}

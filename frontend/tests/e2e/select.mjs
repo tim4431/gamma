@@ -512,6 +512,7 @@ export const RULES = [
   ["backend/gamma/ink_view.py", [...CHAT, "settings", "ink-zoom"]],
   // Redraw as shapes and Convert to text (docs/dev/handwriting_ai.md): their routes and their pure module
   ["backend/gamma/ink_ai.py", ["ink-ai"]],
+  ["backend/gamma/ai_draw.py", ["ink-ai"]],
   ["backend/gamma/routers/ink_ai.py", ["ink-ai"]],
   // HTTPS with a NAS (docs/dev/https.md): the pins, the plain-http scope, the address move and its routes
   // (computers, remote-work, mirror: a new channel, vault or copy over http:// to the internet refused)

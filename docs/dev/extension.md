@@ -159,7 +159,11 @@ the popup shows "Warmup Page" with "No paper or PDF detected".
 
 Every detection triggers `GET /api/library/lookup` (skipped when signed out)
 and sets the badge: `PDF`/`arX`/`DOI` blue, `?` grey, `✓` green (in the
-library), `!` red (not signed in). A detection with a DOI or arXiv id then
+library), `!` red (not signed in). The lookup matches as the save's dedup
+does (below, "The server's clip"), an arXiv PDF tab by its published DOI
+too, so on such a tab whose paper is not in the library it waits for
+arXiv's record. A popup opened meanwhile waits for that lookup rather than
+starting another (`detecting` in the worker). A detection with a DOI or arXiv id then
 fetches `GET /api/library/preview` off the badge's critical path (doi.org
 can take a second or two) and stores the record as `preview`. A popup that
 is already open re-renders its head from `storage.onChanged`. State is
@@ -476,7 +480,15 @@ Server side (`clip.py`, sync `def` — it downloads):
    above the new one is refined away), and the clip's `web_meta` when the
    page has none; a page with no record yet gets its lookup started again.
    A "maybe" DOI (`doi_from_text`) dedups too: it names the paper the save
-   is of.
+   is of. An arXiv id that finds nothing, sent without a DOI, is looked for
+   again by the published version's DOI its arXiv record gives
+   (`metadata.registry_record`, the preview's cached record). The abstract
+   page carries that DOI in `citation_doi`, but an arXiv PDF or HTML tab has
+   only the id, so without this a journal paper filed by its DOI alone (an
+   upload, a Zotero import, a save from the publisher) reads as in the
+   library on its abstract page and as new on its PDF, whose save would
+   file a duplicate. The `/library/lookup` behind the badge and the chat's
+   `save_paper` share this rule.
 2. **Resolve** — `pdf.resolve_source()` (extracted from `/api/resolve-pdf`) on
    the best identifier: `pdf_url` > `arxiv_id` > `doi` > `source_url`. arXiv
    rewrite, `citation_pdf_url` sniff, Unpaywall when `allow_oa`.
@@ -789,7 +801,9 @@ signed in to the same server works the same way.
 - `backend/tests/test_clip.py` — the endpoints with faked upstream fetches
   (dedup + folder refinement, no PDF / dead link → web-page path with
   selection + re-clip dedup, `doc_id` path, `save_copy`, lookup by arXiv
-  version / DOI / web_url, the preview with faked registries + its cache,
+  version / DOI / web_url, an arXiv PDF tab finding (and its save filing)
+  the journal paper filed by its DOI alone, through the arXiv record's
+  published DOI, the preview with faked registries + its cache,
   `norm_doi` on publisher paths, `norm_arxiv` on HTML URLs and old-style ids,
   an arXiv HTML page saving its PDF, `web_meta` kept cleaned and never
   overwritten, a text DOI that finds the paper but is kept as `text_doi`,
@@ -857,7 +871,10 @@ signed in to the same server works the same way.
   PDF or DOI shows the folder and labels under its notice, files by them and
   sends its record through the web clip's save, and *Undo this save*
   deletes the page it made and brings that form back; a publisher
-  page's record rides along with its own DOI, not one it cites.
+  page's record rides along with its own DOI, not one it cites; an arXiv
+  PDF tab (`context.route`, Chrome's viewer) whose look-up the server holds
+  gets no second look-up from a popup opened meanwhile, which shows the
+  paper in the library once the held one answers.
 - `node extension/tests/webclip.e2e.mjs` — full Chromium against a fake
   blog and a fake server: on an article the popup offers *Save as* with
   Article picked and Selection disabled, and *Save article* sends the

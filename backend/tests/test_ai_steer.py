@@ -6,6 +6,8 @@ becomes the next turn's; the stream says where. A reply that ended takes
 none."""
 
 import json
+import threading
+import time
 
 import pytest
 
@@ -203,3 +205,170 @@ def test_a_reply_that_ended_or_is_another_accounts_takes_nothing(org, monkeypatc
     lines = _lines(c.post("/api/ai/chat", json={"prompt": "hi", "stream": True}))
     assert tried[0].status_code == 404
     assert _said(lines) == "mine"
+
+
+class Silent(FakeResp):
+    """A provider turn that streams its first event, then goes silent (a
+    model thinking) until it is interrupted, when the user steers ``text``
+    in from another thread: its socket shut down under the read, which then
+    fails, as a real one does. ``woken`` says the read was ended so, not by
+    waiting out its silence."""
+
+    def __init__(self, events, item_id, text):
+        super().__init__(events)
+        self.item_id, self.text = item_id, text
+        self.woke = threading.Event()
+        self.woken = False
+
+    def interrupt(self):
+        self.woke.set()
+
+    def __iter__(self):
+        yield self._lines[0]
+        from gamma import ai_steer
+        [steering] = list(ai_steer._open.values())
+
+        def steer():
+            # After the reply showed the first event: one still in hand
+            # when a message arrives is cut, as a turn's later text is.
+            time.sleep(0.3)
+            ai_steer.push(steering.id, steering.user, {"id": self.item_id, "text": self.text})
+
+        threading.Thread(target=steer, daemon=True).start()
+        self.woken = self.woke.wait(10)
+        if self.woken:
+            raise ConnectionResetError("the socket was shut down")
+        yield from self._lines[1:]
+
+
+@pytest.mark.parametrize("agent", [True, False], ids=["agent", "plain chat"])
+def test_a_model_silent_while_it_thinks_is_cut_at_once_when_the_user_steers(org, monkeypatch, agent):
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    opened, silent = [], []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        opened.append([dict(m) for m in messages])
+        if len(opened) == 1:
+            silent.append(Silent([_text("Thinking about it"), _text(" at length")], "q5", "shorter"))
+            return silent[0]
+        return text_stream(["Short."])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    body = {"prompt": "explain", "stream": True}
+    if agent:
+        body.update(agent_scope="folder", folder=ids["readout"], permissions=ALLOW_ALL)
+    began = time.monotonic()
+    lines = _lines(c.post("/api/ai/chat", json=body))
+    assert silent[0].woken, "the steer ended the silent read"
+    assert time.monotonic() - began < 8
+    assert _said(lines) == "Thinking about it|Short."
+    assert opened[1][-2:] == [{"role": "assistant", "content": "Thinking about it"},
+                              {"role": "user", "content": "shorter", "steered": True}]
+
+
+class Wakeable:
+    """A response a TurnRead may give up and close."""
+
+    def __init__(self):
+        self.interrupted = self.closed = 0
+
+    def interrupt(self):
+        self.interrupted += 1
+
+    def close(self):
+        self.closed += 1
+
+
+def _stalls(first, release):
+    """Events: ``first``, then nothing until ``release`` is set."""
+    yield first
+    release.wait(10)
+    yield "late"
+
+
+def test_the_client_leaving_ends_the_read_at_once_but_never_the_end_of_a_turn():
+    from gamma import ai_steer
+    from gamma.ai_client import Alarm
+
+    stopped, resp, release = Alarm(), Wakeable(), threading.Event()
+    got, began = [], time.monotonic()
+    with ai_steer.TurnRead(resp, None, stopped) as read:
+        for item in read.events(_stalls("first", release)):
+            got.append(item)
+            threading.Timer(0.05, stopped.set).start()
+    assert got == ["first"] and read.woken and time.monotonic() - began < 5
+    assert resp.interrupted == 1 and resp.closed == 0   # still read: its thread closes it
+    release.set()
+    deadline = time.monotonic() + 5
+    while not resp.closed and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert resp.closed == 1
+    # Past the provider's stop reason, its token report is read to the end.
+    stopped, resp = Alarm(), Wakeable()
+    with ai_steer.TurnRead(resp, None, stopped) as read:
+        for item in read.events(iter(["stop", "usage"])):
+            if item == "stop":
+                read.ended()
+                stopped.set()
+            got.append(item)
+    assert got[-2:] == ["stop", "usage"] and not read.woken
+    # A failure of a read nothing ended stays a failure.
+    def fails():
+        yield "first"
+        raise ConnectionResetError("dropped")
+    with pytest.raises(ConnectionResetError), ai_steer.TurnRead(Wakeable(), None, Alarm()) as read:
+        for _ in read.events(fails()):
+            pass
+
+
+def test_a_given_up_call_frees_its_slot_at_once_and_its_read_closes_it():
+    """A real provider socket: the reply leaves the read at once, the call's
+    slot is free for the next one, and the read it gave up is closed once
+    it ends (on Windows only when the provider sends again)."""
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from gamma import ai_client, ai_steer
+
+    release = threading.Event()
+
+    class Stalls(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(b"data: first\n\n")
+            self.wfile.flush()
+            release.wait(15)
+            self.wfile.write(b"data: late\n\n")
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Stalls)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        ai_client._take_call_slot("slot-test")
+        call = ai_client._OpenCall(urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/", timeout=30),
+                                   "slot-test")
+        stopped, got = ai_client.Alarm(), []
+        began = time.monotonic()
+        with ai_steer.TurnRead(call, None, stopped) as read:
+            for line in read.events(iter(call)):
+                got.append(line)
+                threading.Timer(0.1, stopped.set).start()
+        assert got[0] == b"data: first\n" and read.woken
+        assert time.monotonic() - began < 5, "the reply waited for the silent provider"
+        assert ai_client._open_calls.get("slot-test", 0) == 0, "the call's slot is free"
+        call.close()                         # the owner's close leaves the given-up read alone
+        release.set()
+        deadline = time.monotonic() + 10
+        while call._response.fp is not None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert call._response.fp is None, "the read closed the response when it ended"
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()

@@ -21,6 +21,7 @@ open, or one that needs a password, reads as a page whose usual text block
 is busy, so the boxes go in its margins.
 """
 
+import io
 import math
 
 from . import pdf_text
@@ -282,3 +283,24 @@ def occupancy(pdf_bytes: bytes, pages) -> dict:
             if doc is not None:
                 doc.close()
     return {index: page_space(logs[index], *frame) for index, frame in pages.items()}
+
+
+def spot(pdf_bytes: bytes, page_no: int, anchor, box_w: float, box_h: float, taken=()) -> tuple[float, float] | None:
+    """The top-left corner of a free ``box_w`` × ``box_h`` spot on PDF page
+    ``page_no`` (1-based) nearest ``anchor`` (x0, y0, x1, y1), in the
+    display frame, clear of ``taken`` (the boxes already placed on the page:
+    its handwriting, text boxes and pictures); None when the page has no
+    free spot that size, since ``place``'s least-covered fallback would lay
+    the box over the page's text. What the chat's agent places a text box
+    or a picture beside a passage by (gamma/ai_draw.py)."""
+    from pypdf import PdfReader
+
+    from .pdf_export import display_size, page_frame, to_display
+
+    view, rotation = page_frame(PdfReader(io.BytesIO(pdf_bytes)).pages[page_no - 1])
+    width, height = display_size(view, rotation)
+    space = occupancy(pdf_bytes, {page_no - 1: (view, to_display(view, rotation), width, height)})[page_no - 1]
+    for box in taken:
+        space.take(*box)
+    best = place(space, anchor, box_w, box_h)
+    return (best[1], best[2]) if best and best[3] else None

@@ -14,7 +14,7 @@ import re
 import shutil
 from pathlib import Path
 
-from package_plugins import MANIFEST_PATHS, build, validate_repo, write_archive, write_dsh_bundle
+from package_plugins import MANIFEST_PATHS, SKILL, build, stamp_skill, validate_repo, write_archive, write_dsh_bundle
 
 REPO = "tim4431/Gamma"
 
@@ -30,6 +30,8 @@ def release_codex(output: Path, version: str, repo: str = REPO) -> list[Path]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["version"] = version
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    skill = package / "plugins/gamma" / SKILL
+    skill.write_bytes(stamp_skill(skill.read_bytes().decode("utf-8"), version).encode("utf-8"))
     archive = output / f"gamma-codex-plugin-{version}.zip"
     write_archive(package, archive)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()

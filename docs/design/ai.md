@@ -7,20 +7,31 @@ and assistants connected from outside. The user guide's
 [The library agent](../user_guide/user_guide.md#the-library-agent) and
 [Assistants](../user_guide/user_guide.md#assistants) show how to use them.
 
+> [!NOTE]
+> - **It reaches only what you could**, through Gamma's own tools, within
+>   your role in the workspace.
+> - **Reading is allowed; every change asks first**, until you allow it.
+> - **Nothing it does deletes a page for good**, and its changes to notes
+>   and pages can be reverted.
+
 ## Three ways in
 
-```text
- Gamma AI (the chat)          an agent on your computer        an assistant over MCP
- your provider, your key      Codex CLI or Claude Code,        Codex, Claude Code, any
- Gamma runs the tool loop     signed in on that computer       MCP client, with a token
-          │                              │                                │
-          └──────────────── Gamma's tools, within your role ──────────────┘
-                                         │
-                                   your workspace
+```mermaid
+flowchart TB
+  accTitle: Three ways for an AI to reach your library
+  chat["Gamma AI, the chat<br/>your provider, your key"]
+  local["An agent on your computer<br/>Codex CLI or Claude Code"]
+  mcp["An assistant over MCP<br/>with a token"]
+  tools["Gamma's tools, within your role"]
+  ws[("Your workspace")]
+  chat --> tools
+  local --> tools
+  mcp --> tools
+  tools --> ws
 ```
 
-All three act on your library through Gamma's own tools, within your
-role in the workspace. An agent on your computer also edits the files of a
+All three act on your library through Gamma's own tools, within your role
+in the workspace. An agent on your computer also edits the files of a
 synced folder on disk, which the folder then brings into Gamma as your
 edits.
 
@@ -33,15 +44,15 @@ pick for it from the provider's live list. An administrator can also add
 connections that the server's accounts share, with an optional daily
 allowance per account.
 
-- Claude is reached with an API key. Signing in with a Claude subscription
-  is left out on purpose, as Anthropic's terms do not let other apps route
-  requests through a Free, Pro or Max plan.
-- Usage is shown in tokens, never in money, since prices differ per
+- **Claude is reached with an API key.** Signing in with a Claude
+  subscription is left out on purpose: Anthropic's terms do not let other
+  apps route requests through a Free, Pro or Max plan.
+- **Usage is shown in tokens**, never in money, since prices differ per
   provider and change.
 - **Effort and speed are yours to choose.** A model without the effort you
-  prefer gets its nearest level, and your preference stays. A faster or
-  cheaper speed tier is sent only when the model offers it, never swapped
-  for another. Each reply names the model, effort and speed that served it.
+  prefer gets its nearest level, and a faster tier is sent only when the
+  model offers it. Each reply names the model, effort and speed that served
+  it.
 
 ## What the chat sees
 
@@ -50,31 +61,34 @@ comment threads and a PDF's text.
 
 - **Nothing is summarised behind your back.** A long PDF goes as a
   labelled excerpt of its start, or as the file itself when the PDF switch
-  is on. To fit a model's window, the oldest turns go first, and only then
-  does the room for selected passages and attachments shrink. Pills under
+  is on. To fit a model's window the oldest turns go first, and pills under
   a reply say what the model missed: "Model saw pages 1–9 of 22",
   "Earlier messages left out".
 - **Answers about your pages come from text the model read.** The model is
   told to name the page a claim comes from, or to say it is not in the
-  pages. General knowledge is still allowed. A larger excerpt did not stop
-  made-up details in testing; giving the agent tools to read the paper
-  did: an 8k excerpt answered under half of the detail questions, the
-  agent with tools nearly all.
+  pages. In testing, a larger excerpt did not stop made-up details; giving
+  the agent tools to read the paper did.
 - **Gamma keeps the conversation, not the provider.** Every request sends
-  the whole conversation, and nothing is stored at the provider. That lets
-  you switch models mid-chat, edit an earlier message or drop old turns,
-  and storing your conversation at a provider is a privacy trade you have
-  not made.
-- Secret files such as `.env` and keys are never shown to a model.
-- Comments reach the model as your requests; quoted passages and fetched
-  web pages as data, labelled "not instructions".
+  the whole conversation and nothing is stored at the provider. So you can
+  switch models mid-chat, edit an earlier message or drop old turns, and no
+  provider holds your conversation.
+- **Secret files** such as `.env` and keys are never shown to a model.
+- **Comments reach the model as your requests**; quoted passages and
+  fetched web pages as data, labelled "not instructions".
 
 ## What the library agent may reach
 
-```text
-library chat ──► every page
-  folder chat ──► the pages filed in the folder and below
-    page chat ──► that page (and, for reading, the pages inside it)
+Each chat belongs to a page, a folder or the library, and reaches only
+what it belongs to:
+
+```mermaid
+flowchart TB
+  accTitle: What each chat reaches
+  subgraph L["Library chat: every page"]
+    subgraph F["Folder chat: the folder and below"]
+      P["Page chat: that page, and for reading<br/>the pages inside it"]
+    end
+  end
 ```
 
 - Pages you attach with `@` widen what the chat can read, never what it
@@ -89,12 +103,25 @@ Each kind of action has one of three settings, separately for the folder,
 PDF and notes chats. Reading is allowed by default and every change asks
 first. A new kind of change, added later, asks until you allow it.
 
-When a change asks, a card shows it as a word-by-word diff, built by the
-same code that will make the change, so the card and the change cannot
-differ. You answer *Allow once*, *Allow in this chat*, *Always allow*, or
-*Don't allow* with an optional note on what to do instead; the agent is
+```mermaid
+sequenceDiagram
+  accTitle: A change that asks first
+  participant AI as The agent
+  participant You
+  participant W as Your workspace
+  AI->>You: a card: the change, word by word
+  alt Allow once, in this chat, or always
+    You->>AI: allowed
+    AI->>W: the change, checked against your role
+  else Don't allow
+    You->>AI: no, with a note on what to do instead
+  end
+```
+
+The card's diff is built by the same code that will make the change, so
+the card and the change cannot differ. After *Don't allow* the agent is
 told not to retry or work around it. No answer in ten minutes counts as
-no. A call that would change nothing asks nobody.
+no, and a call that would change nothing asks nobody.
 
 Why this shape: the boundary already exists (the chat's scope and your
 role), so no sandbox is needed. The tools are few and named, so pattern
@@ -115,12 +142,11 @@ No setting allows:
 - reading outside its scope and what you attached;
 - touching settings, share links or other people's data.
 
-Every call shows in the reply, reads included, with lists of what changed
-in your library and notes. A change to a note, and a page renamed, moved,
-labelled, deleted or restored, has *Revert* and *Redo*, in any order, and
-keeps later edits by others; if someone changed the agent's text since,
-the revert stops and shows what would be lost. A saved paper or a renamed
-folder is undone by hand.
+Every call shows in the reply, reads included, with lists of what changed.
+A change to a note, and a page renamed, moved, labelled, deleted or
+restored, has *Revert* and *Redo*, in any order, and keeps later edits by
+others. If someone changed the agent's text since, the revert stops and
+shows what would be lost.
 
 ## Papers from the web
 
@@ -136,43 +162,41 @@ sends "continue" for you: a message in your name is yours to send.
 
 Codex CLI or Claude Code, installed and signed in on a computer, can be
 turned on for it in the desktop app (Settings → AI → Agents). You talk to
-it in the chat, where it is listed as "Codex on TIM-PC", or by sending it a
-comment ([Comments](comments.md#comments-as-work-for-an-agent)). It works in
-a synced folder's directory, a directory the computer offers, or an empty
-one of its own.
+it in the chat, where it is listed as "Codex on TIM-PC", or by sending it
+a comment ([Comments](comments.md#comments-as-work-for-an-agent)). It
+works in a synced folder's directory, a directory the computer offers, or
+an empty one of its own.
 
 - **Only the desktop app on that computer can turn an agent on.** If a
   page could, a stolen cookie, an injected script or someone else's server
   could turn a Gamma session into a program running on your PC.
-- **The agent is confined.** Codex runs in its sandbox with writes kept to
-  the directory and the network off; it can still read what your account
-  on the computer can read. Claude Code gets file tools inside the
-  directory, and a shell only when you let it ask, with every command
-  asked. Neither gets web tools or your other MCP servers,
-  and neither is started with a flag that skips its own checks.
+- **The agent is confined.** Codex runs in its sandbox, with writes kept
+  to the directory and the network off; it can still read what your
+  account on the computer can read. Claude Code gets file tools inside the
+  directory, and a shell only when you let it ask. Neither gets web tools
+  or your other MCP servers, or a flag that skips its own checks.
 - **What it may run is asked, one exact command at a time**, if you let it
   ask at all. *Allow in this chat* matches that exact command in that
-  folder, never a prefix or a rule. A turn has a limit on asks, and three
-  refusals in a row end the asking.
+  folder, never a prefix or a rule.
 - **Its access to Gamma lasts one turn**: reading, commenting, resolving
   and highlighting in that workspace, nothing else.
-- These conversations are not part of the workspace: they are not in
-  backups or workspace exports, and Gamma's AI cannot read them.
+- **These conversations are not part of the workspace**: they are not in
+  backups or exports, and Gamma's AI cannot read them.
 - The owner can name co-authors who may use the agent on a synced folder's
-  files. The owner can read their conversations. Their turns run on the
-  owner's subscription, so turning this on asks the owner to accept what
-  the vendor's terms say about sharing an account.
+  files, and can read their conversations. Their turns run on the owner's
+  subscription, so turning this on asks the owner to accept what the
+  vendor's terms say about sharing an account.
 
 ## Assistants over MCP
 
-Gamma is an MCP server. An assistant signs in through the browser, and you
-give it each workspace at one of three levels:
+Gamma is an MCP server. An assistant signs in through the browser, and
+you give it each workspace at one of three levels:
 
 | Level | It can |
 |---|---|
 | View | read and search |
 | Comment | also comment, resolve and highlight; never asks first, since a comment changes no note, is signed and can be deleted |
-| Edit | also edit, create and move notes; by default asks you before each change, through the assistant, with a diff (you can turn asking off for a connection) |
+| Edit | also edit, create and move notes; asks you before each change, through the assistant, with a diff (you can turn asking off for a connection) |
 
 Edit is offered only where your account edits. An assistant never deletes
 a block, and never touches pages, folders, labels or settings. Gamma's own
@@ -184,9 +208,9 @@ nothing: its access is its token's.
 Each page, each folder and the library have a conversation of their own.
 Renaming or moving a folder keeps its conversation; deleting the folder
 files its chats into the library's history. *New chat* archives the
-conversation. Gamma AI chats belong to the workspace: its members can read
-them and they are in its backups. A viewer's chat stays in their tab,
-marked *Not saved*.
+conversation. Gamma AI chats belong to the workspace: its members can read them,
+and they are in its backups. A viewer's chat stays in their tab, marked
+*Not saved*.
 
 ## Behind this page
 

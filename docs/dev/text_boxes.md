@@ -303,7 +303,8 @@ A Zotero box's screen face is Zotero's, not the PDF's
     Zotero box's text) each blank source line between two others is an
     empty line, so `a\n\nb` and `a\n\n\nb` read back as written; blank
     lines at either end go. `measure` is the size a box's text needs, for
-    a box made on the server. `pdf_ops` draws a box from its top-left in a
+    a box made on the server (the imports, the Sketchbook, the chat's
+    `add_text_box`, [ai_tools.md](ai_tools.md) "Drawing on pages"). `pdf_ops` draws a box from its top-left in a
     y-down frame and returns the drawn size.
   - `zotero_frame(box, width, height)` is a box as a Zotero box with its
     text where it was: a Zotero box as it is; a Gamma box's text area,

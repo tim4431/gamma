@@ -1939,9 +1939,457 @@ def _run_highlight(conn, ws: str, scope: dict, args: dict):
     where = f"{place.words} of “{plan['title']}”"
     if not out["created"]:
         return f"error: you highlighted {where} already (highlight {out['block_id']}; {link})", None
+    area = place.kind == "area"
     return (f"ok — highlighted {where}: highlight {out['block_id']}. Link: {link}",
             {"kind": "highlight", "page_id": plan["page_id"], "block_id": out["block_id"], "title": plan["title"],
-             "link": link, "summary": f"Highlighted a passage in “{plan['title'][:60]}”"})
+             "link": link, **({"area": True} if area else {}),
+             "summary": f"Highlighted {'an area' if area else 'a passage'} in “{plan['title'][:60]}”"})
+
+
+# --- drawing on pages (gamma/ai_draw.py) ---------------------------------------------
+# draw, add_text_box and place_picture make one block on a PDF page or a
+# page of paper, add_sheet a page of paper: each the block a person's client
+# makes, stamped as the agent's, inserted through the op path, and recorded
+# for the user's revert as a new block with its properties (ai_revert
+# _plan_create).
+
+_PLANNERS = {"draw": "plan_draw", "add_text_box": "plan_text_box", "place_picture": "plan_picture"}
+
+
+def _draw_page(conn, scope: dict, args: dict) -> dict:
+    """The page a drawing call names: ``page_id``, else the page of its
+    ``sheet_id``, else a page chat's own."""
+    if isinstance(args.get("page_id"), str) and args["page_id"].strip():
+        return {"page_id": args["page_id"].strip()}
+    if isinstance(args.get("sheet_id"), str) and args["sheet_id"].strip():
+        root = page_root_id(conn, args["sheet_id"].strip())
+        return {"page_id": root} if root else {}
+    return {"page_id": scope.get("page_id")} if scope.get("type") == "page" else {}
+
+
+def _plan_placed(conn, scope: dict, args: dict, tool: str):
+    """``(made, None)``: what ``tool`` would place (``ai_draw.Made``) on the
+    surface the call names; ``(None, answer)`` for a call that cannot."""
+    from . import ai_draw
+
+    target = _draw_page(conn, scope, args)
+    if not target:
+        return None, "error: name the page (page_id), or the page of paper (sheet_id)"
+    loaded, error = _load_scoped_page(conn, scope, target)
+    if error:
+        return None, error
+    page_id, title, props, _ = loaded
+    try:
+        surface = ai_draw.surface(conn, scope["ws"], page_id, title, props, args)
+        return getattr(ai_draw, _PLANNERS[tool])(conn, scope["ws"], surface, args), None
+    except ValueError as e:
+        return None, f"error: {e}"
+
+
+def _surface_picture(surface) -> str:
+    """The URL of the surface as the user sees it: a PDF page with what is
+    placed on it and the handwriting, or the page of paper."""
+    if surface.kind == "pdf-page":
+        return picture_url_of_page(surface.page_id, surface.page, None, ink=True)
+    return ink_picture_url(surface.sheet_id, True)
+
+
+def _preview_placed(tool: str):
+    def preview(conn, scope: dict, args: dict):
+        made, answer = _plan_placed(conn, scope, args, tool)
+        if not made:
+            return None, answer
+        s = made.surface
+        out = {"page_id": s.page_id, "title": s.title, "what": made.what, "picture": _surface_picture(s),
+               **({"pdf_page": s.page} if s.page else {"sheet": True})}
+        if made.anchors:
+            quote, page = made.anchors[0]
+            out["place"] = _card_place("passage", page, quote=quote)
+        if made.content:
+            out["diff"] = text_diff("", made.content)
+        if tool == "place_picture":
+            out["pictures"] = [made.props["picture"]["url"]]
+        return out, None
+    return preview
+
+
+def _drawing_hand(scope: dict, ws: str):
+    """``(writer, None)``: who draws, the account's role asked as it is now
+    (a viewer draws nothing, as it highlights nothing: ``hand.may_mark``);
+    ``(None, answer)`` otherwise."""
+    from .annotations import hand
+
+    writer = _writer(scope)
+    if writer is None:
+        return None, "error: this chat makes no changes under its own name"
+    try:
+        hand.may_write(writer, ws)
+        hand.may_mark(writer, ws)
+    except ValueError as e:
+        return None, f"error: {e}"
+    return writer, None
+
+
+def _insert_made(conn, ws: str, scope: dict, writer, page_id: str, parent: str, made, props: dict,
+                 after_id=None) -> tuple:
+    """The block ``made`` describes, inserted under ``parent`` (after
+    ``after_id``, else last) as the writer's account, stamped as its agent:
+    ``(block_id, position, props, None)``, or ``(…, answer)`` for a refused
+    op."""
+    from .ops import OpError
+
+    write_lock(conn)
+    position, error = _sibling_position(conn, parent, after_id)
+    if error:
+        conn.rollback()
+        return "", "", props, error
+    props = {**props, "agent": writer.stamp}
+    block_id = secrets.token_urlsafe(9)
+    try:
+        after_commit(ws, conn, apply_ops(
+            conn, page_id, [{"op": "insert", "id": block_id, "parent": parent, "position": position,
+                             "content": made.content, "props": props}], actor=writer.user_id, client="ai"))
+    except OpError as e:
+        conn.rollback()
+        return "", "", props, f"error: {e.detail}"
+    if made.content:
+        notes_seen(scope)[block_id] = made.content  # the model wrote it
+    return block_id, position, props, None
+
+
+def _placed_picture(ws: str, conn, scope: dict, tool: str, surface, block_id: str, props: dict):
+    """``(url, images)``: the chip's picture of what was placed and, for a
+    model that reads pictures, the picture itself, so it can check its
+    work. Optional: a render that fails leaves the change as it is."""
+    from .ink_view import picture
+
+    try:
+        if tool == "draw":
+            url, shown = ink_picture_url(block_id), picture(ws, conn, block_id, surface.page_id).get("image")
+        elif surface.kind == "canvas":
+            url, shown = ink_picture_url(surface.sheet_id, True), picture(ws, conn, surface.sheet_id,
+                                                                          surface.page_id).get("image")
+        else:
+            frame = props.get("text_box") or props.get("picture")
+            pad = 36
+            box = (max(0.0, (frame["x"] - pad) / surface.width), max(0.0, (frame["y"] - pad) / surface.height),
+                   min(1.0, (frame["x"] + frame["w"] + pad) / surface.width),
+                   min(1.0, (frame["y"] + frame["h"] + pad) / surface.height))
+            box = tuple(round(v, 4) for v in box)
+            url = picture_url_of_page(surface.page_id, surface.page, box, ink=True)
+            shown = render_region(ws, conn, surface.page_id, surface.page, box, ink=True)[0]
+    except Exception as e:  # the change stands; its picture is extra
+        log.warning(f"[ai_tools] {tool}'s picture failed: {e}")
+        return "", []
+    return url, ([image_part(shown)] if shown and scope.get("pictures") is not False else [])
+
+
+def _placed_after(scope: dict, images) -> str:
+    """What a placing call's answer says after it: to check the picture
+    (when one is attached), and how the change is taken back — from the
+    reply in Gamma's chat; by the user in Gamma over MCP (``link_base``),
+    which has no reply to revert from and no delete_block."""
+    mcp = bool(scope.get("link_base"))
+    check = (" A picture of the page as it is now is attached: check that it is where you meant"
+             + ("; if not, tell the user, who removes it in Gamma." if mcp
+                else ", and delete_block it to try again if not.")) if images else ""
+    return check + ("" if mcp else " The user can revert it from the reply.")
+
+
+_PLACED_WORDS = {"draw": ("drew {what}", "Drew {what} on “{title}”"),
+                 "add_text_box": ("added a text box", "Added a text box to “{title}”"),
+                 "place_picture": ("placed a picture", "Placed a picture on “{title}”")}
+
+
+def _run_placed(tool: str):
+    def run(conn, ws: str, scope: dict, args: dict):
+        from fastapi import HTTPException
+
+        from . import ink as inkmod
+        from .storage import store_file
+
+        writer, answer = _drawing_hand(scope, ws)
+        if writer is None:
+            return answer, None
+        made, answer = _plan_placed(conn, scope, args, tool)
+        if not made:
+            return answer, None
+        s, props = made.surface, dict(made.props)
+        if made.ink_file is not None:
+            try:
+                name, _ = store_file(ws, inkmod.dumps(made.ink_file), ".ink")
+            except HTTPException as e:
+                return f"error: {e.detail}", None
+            props = {"ink_url": f"/api/uploads/{name}", **props}
+        block_id, position, props, answer = _insert_made(conn, ws, scope, writer, s.page_id, s.parent, made, props)
+        if answer:
+            return answer, None
+        url, images = _placed_picture(ws, conn, scope, tool, s, block_id, props)
+        done, summary = _PLACED_WORDS[tool]
+        text = (f"ok — {done.format(what=made.what)} on {s.words} of “{s.title}”: block [{block_id}]."
+                + _placed_after(scope, images))
+        action = {"kind": "create", "page_id": s.page_id, "block_id": block_id, "title": s.title,
+                  "summary": summary.format(what=made.what[:40], title=s.title[:50]),
+                  **({"pdf_page": s.page} if s.page else {}), **({"picture": url} if url else {}),
+                  "revert": {"after": made.content, "parent": s.parent, "position": position, "props": props}}
+        if images:
+            action["images"] = images
+        return text, action
+    return run
+
+
+def _plan_add_sheet(conn, scope: dict, args: dict):
+    """``(plan, None)``: the page of paper ``ai_draw.plan_sheet`` makes, on
+    ``page_id`` (a page chat's own by default), after the sheet
+    ``after_id`` names, else last on the page; ``(None, answer)``."""
+    from . import ai_draw
+
+    target = _draw_page(conn, scope, {"page_id": args.get("page_id")})
+    if not target:
+        return None, "error: name the page (page_id)"
+    loaded, error = _load_scoped_page(conn, scope, target)
+    if error:
+        return None, error
+    page_id, title = loaded[0], loaded[1]
+    parent, after = page_id, str(args.get("after_id") or "").strip() or None
+    if after:
+        row = conn.execute("SELECT parent_id, properties FROM unified_blocks WHERE id = ? AND page_id = ?",
+                           (after, page_id)).fetchone()
+        if not row or not is_sheet(load_props(row[1])):
+            return None, "error: after_id names no page of paper of this page: read_block labels them"
+        parent = row[0]
+    try:
+        made = ai_draw.plan_sheet(args)
+    except ValueError as e:
+        return None, f"error: {e}"
+    return {"made": made, "page_id": page_id, "title": title, "parent": parent, "after": after}, None
+
+
+def _preview_add_sheet(conn, scope: dict, args: dict):
+    plan, answer = _plan_add_sheet(conn, scope, args)
+    if not plan:
+        return None, answer
+    return {"page_id": plan["page_id"], "title": plan["title"], "what": plan["made"].what,
+            **({"diff": text_diff("", plan["made"].content)} if plan["made"].content else {})}, None
+
+
+def _run_add_sheet(conn, ws: str, scope: dict, args: dict):
+    writer, answer = _drawing_hand(scope, ws)
+    if writer is None:
+        return answer, None
+    plan, answer = _plan_add_sheet(conn, scope, args)
+    if not plan:
+        return answer, None
+    made, page_id, title = plan["made"], plan["page_id"], plan["title"]
+    block_id, position, props, answer = _insert_made(conn, ws, scope, writer, page_id, plan["parent"], made,
+                                                     made.props, plan["after"])
+    if answer:
+        return answer, None
+    return (f"ok — added {made.what} to “{title}”: sheet [{block_id}]. Draw or write on it with sheet_id "
+            f"\"{block_id}\"." + _placed_after(scope, []),
+            {"kind": "create", "page_id": page_id, "block_id": block_id, "title": title,
+             "summary": f"Added a page of paper to “{title[:60]}”", "picture": ink_picture_url(block_id, True),
+             "revert": {"after": made.content, "parent": plan["parent"], "position": position, "props": props}})
+
+
+# --- showing a page in the app ------------------------------------------------------
+
+def _run_show_page(conn, ws: str, scope: dict, args: dict):
+    """Ask the app to show the user a page (``needs: "app"``: only a live
+    chat in the app has one): at a PDF page and passage, a note, or a text
+    file's line. The app jumps at once when the page is open in the chat's
+    view, and opens it when the reply ends otherwise (App.jsx
+    ``handleAgentEvent``); nothing is stored."""
+    loaded, error = _load_scoped_page(conn, scope, args)
+    if error:
+        return error, None
+    page_id, title, props, _ = loaded
+    view = page_document(props)
+    show, where = {"page_id": page_id}, ""
+    block_id = str(args.get("block_id") or "").strip()
+    page_no = _int_arg(args, "pdf_page", 0, 0, 100_000)
+    line = _int_arg(args, "line", 0, 0, 10_000_000)
+    quote = " ".join(str(args.get("quote") or "").split())[:500]
+    if block_id and block_id != page_id:
+        if page_root_id(conn, block_id) != page_id:
+            return "error: that block is not a note of this page: read_block lists its notes", None
+        show["block_id"], where = block_id, f" at note [{block_id}]"
+    elif line:
+        if not is_text_document(view):
+            return f'error: "{title}" is no text file: line names a text file\'s line', None
+        show["line"], where = line, f" at line {line}"
+    elif page_no or quote:
+        if not is_pdf(view):
+            return f'error: "{title}" has no PDF: pdf_page and quote name a place in one', None
+        if not page_no:
+            return "error: a passage needs its pdf_page (1-based)", None
+        show.update(pdf_page=page_no, **({"quote": quote} if quote else {}))
+        where = f" at PDF page {page_no}" + (f", “{quote[:60]}”" if quote else "")
+    return (f"ok — the app shows the user “{title}”{where}: at once when the chat is beside that page, else "
+            "when your reply ends. Don't describe the navigation; say what to look at there.",
+            {"kind": "show", "page_id": page_id, "title": title, "show": show,
+             "summary": f"Showed “{title[:60]}”{where[:60]}"})
+
+
+# --- making a page ------------------------------------------------------------------
+
+def _plan_create_page(conn, scope: dict, args: dict):
+    """``(plan, None)``: the new page's ``title`` and where it goes — inside
+    the page ``parent_id`` names (filed where that page is), else in a
+    folder (``_save_folder``: the chat's folder by default, a folder below
+    it, made when missing); ``(None, answer)``."""
+    title = re.sub(r"\s+", " ", str(args.get("title") or "")).strip()[:_TITLE_MAX]
+    if not title:
+        return None, "error: title is the new page's title"
+    parent_id = str(args.get("parent_id") or "").strip()
+    if parent_id:
+        if str(args.get("folder") or "").strip():
+            return None, "error: a page inside a page is filed where that page is: give parent_id or folder"
+        loaded, error = _load_scoped_page(conn, scope, {"page_id": parent_id})
+        if error:
+            return None, error
+        return {"title": title, "parent": loaded[0], "target": None, "where": f"inside “{loaded[1]}”",
+                "inside": loaded[1]}, None
+    target, error = _save_folder(conn, scope, args.get("folder"))
+    if error:
+        return None, error
+    return {"title": title, "parent": "", "target": target,
+            "where": f'in "{target["path"]}"' if target["path"] else "at the library root"}, None
+
+
+def _preview_create_page(conn, scope: dict, args: dict):
+    plan, answer = _plan_create_page(conn, scope, args)
+    if not plan:
+        return None, answer
+    return {"title": plan["title"], "diff": [["ins", plan["title"]]],
+            **({"to": plan["target"]["path"]} if plan["target"] else {}),
+            **({"inside": plan["inside"]} if plan["parent"] else {}),
+            **({"new_folder": True} if plan["target"] and plan["target"].get("names") else {})}, None
+
+
+def _run_create_page(conn, ws: str, scope: dict, args: dict):
+    """A new page of notes, as POST /api/pages makes one: the parent page
+    checked live and not too deep, the share host's page cap, under the
+    write lock it is made in (``blocks_store.create_page``, held to the
+    work-folder rule as a person's). Its revert moves it to Recently
+    deleted while it is empty (ai_revert ``_plan_made``)."""
+    from . import publish
+    from .blocks_store import MAX_PAGE_DEPTH, PARENT_PAGE, create_page
+    from .ops import OpError
+
+    writer, answer = _drawing_hand(scope, ws)
+    if writer is None:
+        return answer, None
+    plan, answer = _plan_create_page(conn, scope, args)
+    if not plan:
+        return answer, None
+    folder = _made(ws, conn, scope, plan["target"]) if plan["target"] else ""
+    props = ({PARENT_PAGE: plan["parent"]} if plan["parent"] else {FOLDERS: [folder]} if folder else {})
+    write_lock(conn)
+    if plan["parent"]:
+        if page_root_id(conn, plan["parent"]) != plan["parent"]:
+            conn.rollback()
+            return "error: the page it was to go inside was deleted", None
+        if len(page_ancestors(conn, plan["parent"])) + 1 >= MAX_PAGE_DEPTH:  # ops._parent_patch's rule
+            conn.rollback()
+            return f"error: pages nest at most {MAX_PAGE_DEPTH} deep: that page holds no more inside it", None
+    refusal = publish.cap_refusal(ws)
+    if refusal:
+        conn.rollback()
+        return f"error: {refusal['detail']}", None
+    try:
+        page = create_page(conn, plan["title"], {**props, "agent": writer.stamp}, actor=writer.user_id, client="ai")
+    except OpError as e:
+        conn.rollback()
+        return f"error: {e.detail}", None
+    page_id = page["id"]
+    path = plan["target"]["path"] if plan["target"] else ""
+    return (f"ok — made the page [{plan['title']}](/?page={page_id}) (page_id {page_id}) {plan['where']}. "
+            f"Write its notes with create_block(parent_id=\"{page_id}\").",
+            {"kind": "create", "page_id": page_id, "block_id": page_id, "title": plan["title"], "to": path,
+             **({"inside": plan["inside"]} if plan["parent"] else {}),
+             "summary": f"Made the page “{plan['title'][:60]}”", "revert": {"made": page_id}})
+
+
+# --- exporting ----------------------------------------------------------------------
+
+# The formats export offers, by the name the model uses, and the export mode
+# each is (routers/export.py _BUILDERS).
+EXPORT_FORMATS = {"markdown": "readable", "pdf": "annotated-pdf", "notes-pdf": "notes-pdf", "bibtex": "bibtex",
+                  "obsidian": "obsidian", "zotero": "zotero-rdf", "notion": "notion", "logseq": "logseq-graph"}
+_FORMAT_WORDS = {"markdown": "Markdown", "pdf": "the annotated PDF", "notes-pdf": "a PDF of the notes",
+                 "bibtex": "BibTeX", "obsidian": "an Obsidian vault", "zotero": "Zotero RDF",
+                 "notion": "a Notion import", "logseq": "a Logseq graph"}
+
+
+def _run_export(conn, ws: str, scope: dict, args: dict):
+    """Start the export job the Export dialog starts (routers/export.py
+    ``start_export``, as the person) for a page or a folder in reach; the
+    file is in Background tasks, which the live chat's app adopts and
+    downloads (``needs: "app"``)."""
+    from fastapi import HTTPException
+
+    from .routers.export import ExportJob, start_export
+
+    fmt = str(args.get("format") or "markdown").strip().lower()
+    if fmt not in EXPORT_FORMATS:
+        return f"error: format is one of {', '.join(EXPORT_FORMATS)}", None
+    if args.get("page_id") and str(args.get("folder") or "").strip():
+        return "error: export a page (page_id) or a folder, not both", None
+    if args.get("page_id") or scope.get("type") == "page":
+        loaded, error = _load_scoped_page(conn, scope, {"page_id": args.get("page_id") or scope.get("page_id")})
+        if error:
+            return error, None
+        page_id, title, folder = loaded[0], loaded[1], ""
+    else:
+        target, error = _resolve_folder(conn, scope, args.get("folder"))
+        if error:
+            return error, None
+        if not target["id"]:
+            return "error: name a page (page_id) or a folder to export: the library root is no folder", None
+        page_id, title, folder = "", target["path"], target["id"]
+    try:
+        job = start_export(ws, owner=scope.get("actor", ""), user=(scope.get("agent") or {}).get("for", ""),
+                           payload=ExportJob(page_id=page_id, folder=folder, mode=EXPORT_FORMATS[fmt],
+                                             sub_pages=bool(args.get("sub_pages")) and not folder))
+    except HTTPException as e:
+        return f"error: {e.detail}", None
+    words = _FORMAT_WORDS[fmt]
+    return (f"ok — exporting “{title}” as {words}: the file downloads in the user's browser when it is ready, and "
+            "stays in Background tasks. Say so; the file's text is not yours to read.",
+            {"kind": "export", "page_id": page_id, "title": title, "format": fmt, "job": job,
+             "summary": f"Exported “{title[:60]}” as {words}"})
+
+
+# --- backlinks ----------------------------------------------------------------------
+
+_BACKLINKS_MAX = 50
+
+
+def _run_backlinks(conn, ws: str, scope: dict, args: dict):
+    """The notes that link to a page or a block (``[[id]]``), among the
+    pages the chat reaches (``blocks_store.backlinks``: filtered before the
+    limit), newest first."""
+    from .blocks_store import backlinks
+
+    loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
+    if error:
+        return error, None
+    block, page_id, title = loaded
+    pages = _scope_pages(conn, scope)
+    rows = backlinks(conn, block["id"], pages=list(pages), limit=_BACKLINKS_MAX + 1)
+    named = "page" if block["id"] == page_id else f"note [{block['id']}] of"
+    if not rows:
+        return f"No note this chat reaches links to the {named} “{title}”.", {
+            "kind": "search", "page_id": page_id, "summary": f"No notes link to “{title[:60]}”"}
+    lines = [f"- note [{bid}] in “{pages[pid]['title']}” ({_where(scope, pid, block_id=bid)}): "
+             f"{_one_line(content)[:_NOTE_SNIPPET]}" for bid, content, pid in rows[:_BACKLINKS_MAX]]
+    more = "\n[… more notes link to it than are shown — the newest are listed]" if len(rows) > _BACKLINKS_MAX else ""
+    n = min(len(rows), _BACKLINKS_MAX)
+    said = "1 note links" if n == 1 else f"{n} notes link"
+    return (f"{said} to the {named} “{title}”, newest first:\n" + "\n".join(lines) + more,
+            {"kind": "search", "page_id": page_id, "summary": f"Found {n} note{'s' if n != 1 else ''} linking to "
+                                                              f"“{title[:60]}”"})
 
 
 _CITE_MAX = 50  # pages one cite call formats
@@ -4533,6 +4981,10 @@ TREE_DELETES = frozenset({"delete_folder", "delete_label"})
 # its executor and, for a tool that changes something, the preview its
 # approval card shows (approval_preview).
 
+# A region of a PDF page, as clip_region's box: an area to highlight or
+# comment on.
+_BOX_ARG = {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4,
+            "description": "an area of the PDF page: [x0, y0, x1, y1] as fractions of the page, top-left origin"}
 _PAGE_ID_ARG = {"page_id": {"type": "string"}}
 
 TOOLS = [
@@ -5447,11 +5899,12 @@ TOOLS = [
             "description": (
                 "Write a comment under your own name, for the user: a reply in a comment thread (`thread_id`, "
                 "from list_annotations or read_annotation), or a new thread on a place of a page: a PDF passage "
-                "(`quote`, verbatim as read_page gives the text, with its `pdf_page`, 1-based), lines of a text "
+                "(`quote`, verbatim as read_page gives the text, with its `pdf_page`, 1-based), an area of a PDF "
+                "page (`box` with its `pdf_page`: a figure, a table), lines of a text "
                 "file (`line` and `end_line` as read_page numbers them, with their `quote` when you have it), a "
                 "note (`block_id`), or none of these for the page's own thread. Name the page by `page_id`, or a "
-                "work folder's file by `path` (a `block_id` finds its page). A new thread on a passage or lines "
-                "highlights them. A quote that is not there is refused with the closest passage the page has: "
+                "work folder's file by `path` (a `block_id` finds its page). A new thread on a passage, an area or "
+                "lines highlights them. A quote that is not there is refused with the closest passage the page has: "
                 "nothing is placed by guess. Use it to answer the user's comments, to say what you changed and "
                 "where, or to ask about a passage on that passage. Returns the thread's id and its link."),
             "parameters": {
@@ -5464,6 +5917,7 @@ TOOLS = [
                     "quote": {"type": "string",
                               "description": "the passage, verbatim: a PDF's with pdf_page, a text file's lines"},
                     "pdf_page": {"type": "integer", "minimum": 1},
+                    "box": _BOX_ARG,
                     "line": {"type": "integer", "minimum": 1, "description": "a text file's first line, 1-based"},
                     "end_line": {"type": "integer", "minimum": 1, "description": "its last line, inclusive"},
                     "block_id": {"type": "string", "description": "a note of the page (read_block)"},
@@ -5494,8 +5948,9 @@ TOOLS = [
             "name": "highlight",
             "description": (
                 "Highlight a passage under your own name, for the user: a PDF passage (`quote`, verbatim, with "
-                "its `pdf_page`) or lines of a text file (`line`, `end_line`, with their `quote` when you have it) "
-                "of the page `page_id` (or a work folder's file by `path`). `note` writes a note on it; `color` and "
+                "its `pdf_page`), an area of a PDF page (`box` with its `pdf_page`: a figure, a table, an "
+                "equation; drawn as a wash, no style) or lines of a text file (`line`, `end_line`, with their "
+                "`quote` when you have it) of the page `page_id` (or a work folder's file by `path`). `note` writes a note on it; `color` and "
                 "`style` say how it is drawn (a yellow wash by default). A quote that is not there is refused with "
                 "the closest passage: nothing is placed by guess. Highlight only what the user asked you to mark. "
                 "Returns the highlight's id and its link."),
@@ -5506,6 +5961,7 @@ TOOLS = [
                     "path": {"type": "string", "description": "a work folder's file by its path, in place of page_id"},
                     "quote": {"type": "string", "description": "the passage, verbatim"},
                     "pdf_page": {"type": "integer", "minimum": 1},
+                    "box": _BOX_ARG,
                     "line": {"type": "integer", "minimum": 1, "description": "a text file's first line, 1-based"},
                     "end_line": {"type": "integer", "minimum": 1, "description": "its last line, inclusive"},
                     "note": {"type": "string", "description": "a note on the highlight"},
@@ -5515,6 +5971,232 @@ TOOLS = [
                                              "strikeout"},
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "perm": "draw", "kind": "create", "scopes": ("folder", "page"), "mutating": True,
+        "run": _run_placed("draw"), "preview": _preview_placed("draw"),
+        "spec": {
+            "name": "draw",
+            "description": (
+                "Draw shapes on a page for the user, as one new handwriting group they can revert: on a PDF page "
+                "(`page_id` + `pdf_page`) or a page of paper (`sheet_id`; read_block labels them). Places are "
+                "fractions of the page from its top-left corner (0 to 1), as clip_region's box. On a PDF page "
+                "anchor to the text where you can: `around` a quote (verbatim, on that page) puts a rect or an "
+                "ellipse around the passage, and `from_quote` / `to_quote` end a line or an arrow at one. Kinds: "
+                "line and arrow (`from`, `to`), rect and ellipse (`box` or `around`), triangle, polygon and curve "
+                "(`points`; a curve's `closed` and `smooth`). Look at the page first (view_pdf_page) to see where "
+                "things are; the result shows the drawing. Draw only what the user asked for; words go in "
+                "add_text_box."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page_id": {"type": "string"},
+                    "pdf_page": {"type": "integer", "minimum": 1},
+                    "sheet_id": {"type": "string", "description": "a page of paper, in place of pdf_page"},
+                    "shapes": {
+                        "type": "array", "maxItems": 20,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": {"type": "string", "enum": ["line", "arrow", "rect", "ellipse", "triangle",
+                                                                    "polygon", "curve"]},
+                                "box": {"type": "array", "items": {"type": "number"},
+                                        "description": "rect, ellipse: [x0, y0, x1, y1] page fractions"},
+                                "around": {"type": "string",
+                                           "description": "rect, ellipse: a passage's quote to draw around"},
+                                "from": {"type": "array", "items": {"type": "number"},
+                                         "description": "line, arrow: [x, y] page fractions"},
+                                "to": {"type": "array", "items": {"type": "number"},
+                                       "description": "line, arrow: [x, y]; an arrow's tip"},
+                                "from_quote": {"type": "string", "description": "a passage the line starts at"},
+                                "to_quote": {"type": "string", "description": "a passage it ends at (the tip)"},
+                                "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}},
+                                           "description": "triangle, polygon, curve: [x, y] page fractions in "
+                                                          "order, a curve up to 31"},
+                                "closed": {"type": "boolean"},
+                                "smooth": {"type": "boolean"},
+                                "fill": {"type": "boolean", "description": "fill a closed shape lightly"},
+                                "color": {"type": "string"},
+                                "width": {"type": "number"},
+                                "dash": {"type": "string", "enum": ["solid", "dashed", "dotted"]},
+                            },
+                            "required": ["kind"],
+                        },
+                    },
+                    "color": {"type": "string", "description": "red (the default), black, blue, green, orange, "
+                                                               "purple, yellow, gray, pink, teal, or #rrggbb"},
+                    "width": {"type": "number", "description": "line width in points, 2 by default"},
+                    "dash": {"type": "string", "enum": ["solid", "dashed", "dotted"]},
+                },
+                "required": ["shapes"],
+            },
+        },
+    },
+    {
+        "perm": "draw", "kind": "create", "scopes": ("folder", "page"), "mutating": True,
+        "run": _run_placed("add_text_box"), "preview": _preview_placed("add_text_box"),
+        "spec": {
+            "name": "add_text_box",
+            "description": (
+                "Put typed text on a page for the user, as a text box they can move and revert: on a PDF page "
+                "(`page_id` + `pdf_page`) or a page of paper (`sheet_id`). `near` a quote of the PDF page puts "
+                "it in the nearest empty space beside that passage (a margin note), else `at` places its "
+                "top-left corner ([x, y] page fractions). `text` is Markdown, math as $…$. Without `width` (a "
+                "fraction of the page) the box is as wide as its text. Keep it short: a longer answer goes in "
+                "the notes."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page_id": {"type": "string"},
+                    "pdf_page": {"type": "integer", "minimum": 1},
+                    "sheet_id": {"type": "string", "description": "a page of paper, in place of pdf_page"},
+                    "text": {"type": "string"},
+                    "near": {"type": "string", "description": "a passage's quote, verbatim, to put the box beside"},
+                    "at": {"type": "array", "items": {"type": "number"},
+                           "description": "[x, y] of its top-left corner, page fractions"},
+                    "width": {"type": "number", "description": "the box's width, a fraction of the page"},
+                    "size": {"type": "integer", "enum": [9, 12, 16, 24, 36], "description": "font size, 12 by default"},
+                    "color": {"type": "string", "description": "the text's colour: black (the default), red, "
+                                                               "blue, … or #rrggbb"},
+                    "background": {"type": "string", "enum": ["none", "white", "yellow", "blue"]},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "perm": "draw", "kind": "create", "scopes": ("folder", "page"), "mutating": True,
+        "run": _run_placed("place_picture"), "preview": _preview_placed("place_picture"),
+        "spec": {
+            "name": "place_picture",
+            "description": (
+                "Place a stored picture on a page for the user: one clip_region stored, or one a note embeds "
+                "(`url`, /api/uploads/…), on a PDF page (`page_id` + `pdf_page`) or a page of paper (`sheet_id`). "
+                "`box` ([x0, y0, x1, y1] page fractions) fits it inside, its shape kept; else `width` (a fraction "
+                "of the page, 0.3 by default) with `near` a quote, beside that passage in empty space, or `at` "
+                "its top-left corner. `caption` is its text."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "page_id": {"type": "string"},
+                    "pdf_page": {"type": "integer", "minimum": 1},
+                    "sheet_id": {"type": "string", "description": "a page of paper, in place of pdf_page"},
+                    "box": {"type": "array", "items": {"type": "number"}},
+                    "near": {"type": "string", "description": "a passage's quote, verbatim, to put it beside"},
+                    "at": {"type": "array", "items": {"type": "number"}},
+                    "width": {"type": "number"},
+                    "caption": {"type": "string"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "perm": "draw", "kind": "create", "scopes": ("folder", "page"), "mutating": True,
+        "run": _run_add_sheet, "preview": _preview_add_sheet,
+        "spec": {
+            "name": "add_sheet",
+            "description": (
+                "Add a page of paper to a page for the user to write on, or for draw and add_text_box to use "
+                "(`sheet_id`, the result's id): after the page of paper `after_id` names, else at the end. "
+                "`size` a4 (the default), letter or a5, `landscape` turns it; `pattern` blank, ruled, grid or "
+                "dots; `color` white, cream, grey or dark; `title` its name in the notes."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page_id": {"type": "string"},
+                    "after_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "size": {"type": "string", "enum": ["a4", "letter", "a5"]},
+                    "landscape": {"type": "boolean"},
+                    "pattern": {"type": "string", "enum": ["blank", "ruled", "grid", "dots"]},
+                    "color": {"type": "string", "enum": ["white", "cream", "grey", "dark"]},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "perm": "show", "kind": "show", "scopes": ("folder", "page"), "mutating": False, "needs": "app",
+        "run": _run_show_page,
+        "spec": {
+            "name": "show_page",
+            "description": (
+                "Show the user a page in the app: at a PDF page and passage (`pdf_page`, with a `quote` of "
+                "it), at a note (`block_id`), or at a text file's `line`. When the chat is beside that page it "
+                "jumps there at once; another page opens when your reply ends. Use it when the user asks you to "
+                "show, open or take them to something; once a reply."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page_id": {"type": "string"},
+                    "pdf_page": {"type": "integer", "minimum": 1},
+                    "quote": {"type": "string", "description": "the passage, verbatim, to light up"},
+                    "block_id": {"type": "string", "description": "a note of the page"},
+                    "line": {"type": "integer", "minimum": 1},
+                },
+                "required": ["page_id"],
+            },
+        },
+    },
+    {
+        "perm": "create", "kind": "create", "scopes": ("folder",), "mutating": True,
+        "run": _run_create_page, "preview": _preview_create_page,
+        "spec": {
+            "name": "create_page",
+            "description": (
+                "Make a new page of notes for the user: in the current folder, a folder below it (`folder`, "
+                "read as move_page's; made when it does not exist), or inside a page (`parent_id`). Returns its "
+                "page_id; write its notes with create_block(parent_id=<page_id>). Only when the user asks for a "
+                "page; the user can revert it from the reply."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "folder": {"type": "string"},
+                    "parent_id": {"type": "string", "description": "a page to put it inside"},
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "perm": "read", "kind": "export", "scopes": ("folder", "page"), "mutating": False, "needs": "app",
+        "run": _run_export,
+        "spec": {
+            "name": "export",
+            "description": (
+                "Export a page (`page_id`; `sub_pages` with the pages inside it) or a folder (`folder`) to a "
+                "file the user downloads, as the Export dialog does: markdown (the default), pdf (the PDF with "
+                "the highlights and notes), notes-pdf (the notes typeset), bibtex, obsidian, zotero, notion or "
+                "logseq. The file goes to the user; only when they ask for one."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page_id": {"type": "string"},
+                    "folder": {"type": "string"},
+                    "format": {"type": "string", "enum": list(EXPORT_FORMATS)},
+                    "sub_pages": {"type": "boolean"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "perm": "read", "kind": "search", "scopes": ("folder", "page"), "mutating": False, "run": _run_backlinks,
+        "spec": {
+            "name": "backlinks",
+            "description": (
+                "The notes that link to a page or a note (`block_id`: a page id or a note's), among the pages "
+                "you can read, newest first, each with its block id and page: what else the user wrote about "
+                "it."),
+            "parameters": {
+                "type": "object",
+                "properties": {"block_id": {"type": "string"}},
+                "required": ["block_id"],
             },
         },
     },
@@ -5546,19 +6228,23 @@ def mcp_tools() -> frozenset:
     (gamma/mcp_server.py): every reading tool that stays inside the library,
     so a new one is offered by rule — not the web tools (the assistant has
     its own web access), not the trash (``list_deleted``: its pages are out
-    of the reading tools' reach and restoring one is a change), and no
-    change tool. ``backend/tests/test_mcp.py`` pins the resulting names."""
+    of the reading tools' reach and restoring one is a change), no tool
+    that ``needs`` what only Gamma's own chat has (a web engine, a helper,
+    the app it shows pages and files in), and no change tool.
+    ``backend/tests/test_mcp.py`` pins the resulting names."""
     return frozenset(t["spec"]["name"] for t in TOOLS
-                     if not t["mutating"] and t["perm"] not in ("web_search", "web_read")
+                     if not t["mutating"] and t["perm"] not in ("web_search", "web_read") and not t.get("needs")
                      and t["spec"]["name"] != "list_deleted")
 
 
 def available(scope: dict) -> frozenset:
     """What this chat can offer beyond its permissions: the ``needs`` of a
     TOOLS entry it meets — a web engine for search_web, a second agent for
-    read_paper (only a live chat on a provider connection has one)."""
+    read_paper (only a live chat on a provider connection has one), the app
+    for show_page and export (a streamed chat whose client shows pages and
+    downloads files: ``app``, routers/ai.py ``_chat_scope``)."""
     return frozenset({"web_engine"} if scope.get("web_engine") else ()) | frozenset(
-        {"helper"} if scope.get("delegates") else ())
+        {"helper"} if scope.get("delegates") else ()) | frozenset({"app"} if scope.get("app") else ())
 
 
 def tool_permission(name: str) -> str:
@@ -5808,6 +6494,13 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
                  "is done, and ask about a passage with a comment on it. Quote a passage verbatim, with its PDF page "
                  "or its file's lines, as the reading tools give them. Comment or highlight only when the user asks "
                  "for it or their comment does; your answer to a message stays in your reply.")
+    drawing = [n for n in ("draw", "add_text_box", "place_picture", "add_sheet") if n in names]
+    if drawing:
+        text += (f"\n{', '.join(drawing)} put things on the user's pages under your name, one block a call that "
+                 "the user can revert: anchor to a PDF page's text with a quote where you can, verbatim as the "
+                 "reading tools give it; place by page fractions only where no text marks the spot, after looking "
+                 "at the page. Check the picture a result shows, and replace a misplaced one (delete_block, then "
+                 "again). Draw or place only what the user asks for.")
     if "save_paper" in names:
         text += (
             "\nsave_paper adds a paper to the user's library like their Save to library button — "
