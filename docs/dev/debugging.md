@@ -716,7 +716,10 @@ within the test that started it: the autouse `_jobs_end_with_their_test`
 waits for every job still running after a test, before its patches are
 undone, and fails the test whose job is still running 30 s on, since a
 job that ended during the next test recorded itself in that test's
-users.db), `at_once` / `together`
+users.db; an agent's probe a read path started in the background ends
+within its test too, `_agent_probes_end_with_their_test`, which then
+drops the kept probes, since one still running into the next test kept
+this computer's own Codex as the answer to that test's stand-in), `at_once` / `together`
 (callables in threads started on one barrier), `slowed` (widens a writer's
 window between its check and its write, so a race test fails without the
 lock) and `recv` (the next message of a kind on a page socket).
