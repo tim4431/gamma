@@ -1785,6 +1785,15 @@ and what it holds travels with it.
   `leave` it is gone at once. Its holder should position it
   (`position: relative`), so the copy is clipped and scrolled with the
   list.
+- **The scroller around it holds still.** While items are drawn past the
+  place the list rests in (gliding from where they stood, leaving from
+  there, rising in), a scroller whose box follows its list would hold more
+  than it shows: the Background tasks panel, shrunk at once as a finished
+  task's bar goes, showed a scroll bar for the length of the glide. So the
+  nearest scroller around the list stops scrolling along each axis the
+  list fits at rest (`holdScroll`, motion.css `[data-scroll-held]`) until
+  every list moving in it has landed. One that scrolls at rest keeps its
+  scroll bar, and a motion cut short by the next keeps its hold.
 - **Nothing moves** on a first render, in a new `scope` (another page,
   another filter), for a change marked `still` (a load, another client's
   or the agent's edit, a text box's measured size), while it is `off`,
