@@ -5651,7 +5651,7 @@
   "Welcome to Gamma": "欢迎使用 Gamma",
   "Welcome to the Gamma demo": "欢迎试用 Gamma 演示版",
   "Went with": "随之删除",
-  "What Enter and Send do with a message you send while a reply is still running: Queue keeps it until the reply ends and sends it then; Steer hands it to the reply at once, which takes it in at its next step.": "回复仍在进行时，Enter 和发送按钮如何处理你发出的消息：加入队列会保留消息，待回复结束后再发送；引导会立即把消息交给当前回复，它会在下一步纳入。",
+  "What Enter and Send do with a message you send while a reply is still running: Steer hands it to the reply at once, which takes it in at its next step; Queue keeps it until the reply ends and sends it then.": "回复仍在进行时，Enter 和发送按钮如何处理你发出的消息：引导会立即把消息交给当前回复，它会在下一步纳入；加入队列会保留消息，待回复结束后再发送。",
   "What Gamma stores, what it sends and to whom, on gammapdf.com": "Gamma 存储什么、发送什么、发给谁，见 gammapdf.com",
   "What a click of the pen's button does": "按一下笔侧键时执行的操作",
   "What a click of the pen's second button does": "按一下笔的第二个按键时执行的操作",

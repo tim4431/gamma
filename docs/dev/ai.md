@@ -1152,12 +1152,15 @@ row: Enter keeps, Escape leaves it) and Move up / down.
   A reload loses it, as Codex's.
 - **Steer** hands a queued message to the reply under way. What a message
   sent while a reply runs does is the account's **follow-up** preference
-  (`chatFollowUp`, Settings → AI → Chat, Codex's "Follow-up behavior"):
-  Queue, the default, or Steer, which queues and steers at once. Enter, the
-  send button and a dictation's ↑ do what it says, Ctrl/⌘+Shift+Enter
-  (`enterKey.js` `steersOnEnter`) the other (`followUpSteers`); the box's
-  placeholder ("Queue a follow-up…", "Steer the reply…") and the button's
-  title say which. A message that cannot steer stays queued.
+  (`chatFollowUpMode`, Settings → AI → Chat, Codex's "Follow-up behavior"):
+  Steer, the default, which queues and steers at once, or Queue. Enter, the
+  send button and a dictation's ↑ do what it says, Ctrl/⌘+Enter
+  (`enterKey.js` `othersOnEnter`) the other (`followUpSteers`), as in
+  Codex; the box's placeholder ("Steer the reply…", "Queue a follow-up…")
+  and the button's title say which. A message that cannot steer stays
+  queued. The preference replaced `chatFollowUp` (Queue by default) under a
+  name and key of its own, since a first load stores a preference's default
+  too: every account moved to Steer once, and a choice made since stays.
   The stream's head ends with `{"steer": id}` (`gamma/ai_steer.py`: an
   inbox per streamed reply, in memory, bound to its account, closed when
   the stream ends). `POST /api/ai/chat/steer/{id}` carries the text, the

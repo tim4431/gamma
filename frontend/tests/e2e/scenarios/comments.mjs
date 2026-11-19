@@ -10,7 +10,7 @@
 // link opening it through a folder share; Report on another's comment, which
 // the server's admin finds in Settings → Server and resolves; a reply left unsent kept in its
 // field; the field as a note's editor ([[ links, @ people, $…$ with its
-// preview, Enter and Shift+Enter, the "/" menu); on a phone, a note's thread link
+// preview, Enter sending and Shift+Enter breaking the line, the "/" menu); on a phone, a note's thread link
 // bringing the notes over the PDF; the selection popup opening at the
 // pointer, its Comment making a highlight drawn as a commented passage, and
 // an abandoned one leaving none; the PDF margin's cards where the page has
@@ -110,7 +110,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     assertEq(await A.locator(".mentionMenu .refPopupHead").allInnerTexts().then((h) => h.join("|")), "People", "no date or page answers the name");
     await A.keyboard.press("Enter");
     await A.keyboard.type("please check");
-    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Enter");
     await until(async () => (await threads()).some((th) => th.block_id === "cmnote1"
       && th.comments[0].body === "Is this sourced? @cm-ben please check" && th.comments[0].author === "cm-ann"), { what: "the thread is stored" });
     await until(async () => (await control(A, "The first claim").innerText()) === "1", { what: "the row counts its open thread" });
@@ -128,7 +128,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await sleep(700);
     for (let i = 0; i < 5; i++) await B.keyboard.press("Shift+ArrowLeft");
     await B.keyboard.type("appendix");
-    await B.keyboard.press("Shift+Enter");
+    await B.keyboard.press("Enter");
     await until(async () => (await popover(A).innerText()).includes("Yes, see the appendix"), { what: "the reply shows live in the open popover", timeout: 10000 });
     await replyStepsIn(popover(A).locator(".commentThread").first(), "the reply steps in under the first comment");
     // The emptied field's history starts afresh: an undo brings back none of the sent text.
@@ -180,7 +180,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     assertEq(await popover(A).locator(".commentPopTitle").innerText(), "Comments on this page");
     await focused(field(popover(A).locator(".commentNew")), "ready to write");
     await A.keyboard.type("Overall: good");
-    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Enter");
     await until(async () => (await threads()).some((th) => th.block_id === pg.id && th.comments[0].body === "Overall: good"), { what: "stored on the page's root" });
     await until(async () => (await A.locator(".pageCommentBtn").innerText()) === "1", { what: "the title control counts it" });
     await closePopover(A);
@@ -310,7 +310,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       await popover(V).locator(".commentNewBtn").click();
       await focused(field(popover(V).locator(".commentNew")), "the viewer's field takes the focus");
       await V.keyboard.type("A viewer's question");
-      await V.keyboard.press("Shift+Enter");
+      await V.keyboard.press("Enter");
       await until(async () => (await threads()).some((th) => th.comments[0].author === "cm-vic" && th.comments[0].body === "A viewer's question"), { what: "the viewer's thread is stored" });
       assertNoProblems(V);
     } finally {
@@ -411,7 +411,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     }
   });
 
-  await step("comments: the field is a note's editor: [[ links a page, Escape closes only the picker, @ names a person, $…$ previews, Enter breaks the line and Shift+Enter sends", async () => {
+  await step("comments: the field is a note's editor: [[ links a page, Escape closes only the picker, @ names a person, $…$ previews, Enter sends and Shift+Enter breaks the line", async () => {
     await openControl(A, "The second claim");
     await popover(A).locator(".commentNewBtn").click();
     const box = field(popover(A).locator(".commentNew"));
@@ -444,15 +444,15 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await A.keyboard.press("Enter");
     await menu.waitFor({ state: "detached" });
     await box.locator(".cmMentionChip", { hasText: "@cm-ben" }).waitFor();
-    // Enter breaks the line; inside $…$ the live preview shows
-    await A.keyboard.press("Enter");
+    // Shift+Enter breaks the line; inside $…$ the live preview shows
+    await A.keyboard.press("Shift+Enter");
     await popover(A).waitFor(); // not sent
     await A.keyboard.type("Bound: $\\sqrt{x");
     await A.locator(".mathPreviewTip .katex").waitFor();
     await shot(A, "w6-latex-preview");
     await A.keyboard.type("}$"); // over the closers the field put in
     await A.locator(".mathPreviewTip").waitFor({ state: "detached" });
-    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Enter");
     let body = "";
     await until(async () => {
       const th = (await threads()).find((x) => x.block_id === "cmnote2" && x.comments[0].body.startsWith("See "));
@@ -473,13 +473,13 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     assertNoProblems(A);
   });
 
-  await step("comments: the field's \"/\" menu writes text only: /h2 makes a heading, a list continues, the Equation block previews; the small send button's title names Shift+Enter", async () => {
+  await step("comments: the field's \"/\" menu writes text only: /h2 makes a heading, a list continues, the Equation block previews; the small send button's title names Enter", async () => {
     await openControl(A, "The first claim");
     await popover(A).locator(".commentNewBtn").click();
     const box = field(popover(A).locator(".commentNew"));
     await focused(box, "the new field takes the focus");
     const send = popover(A).locator(".commentNew .commentSend");
-    assertEq(await send.getAttribute("title"), `Comment (${keyLabel("Shift-Enter")})`, "the title names the key");
+    assertEq(await send.getAttribute("title"), `Comment (${keyLabel("Enter")})`, "the title names the key");
     assertEq(await send.getAttribute("aria-label"), "Comment", "the name is the plain action");
     await arrived(send);
     const size = await send.evaluate((el) => [el.getBoundingClientRect().width, el.getBoundingClientRect().height, el.querySelector("svg").getBoundingClientRect().width]);
@@ -525,18 +525,18 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       await box.click();
       await A.keyboard.press("ControlOrMeta+End");
     }
-    // Enter breaks the line; a list continues, an empty item ends it
-    await A.keyboard.press("Enter");
+    // Shift+Enter breaks the line; a list continues, an empty item ends it
+    await A.keyboard.press("Shift+Enter");
     await A.keyboard.type("/bullet");
     await until(async () => (await menu.locator(".slashMenuItem.selected .slashMenuLabel").innerText().catch(() => "")) === "Bulleted list", { what: "/bullet" });
     await A.keyboard.press("Enter");
     await A.keyboard.type("first point");
-    await A.keyboard.press("Enter");
+    await A.keyboard.press("Shift+Enter");
     await A.keyboard.type("second point");
-    await A.keyboard.press("Enter");
-    await A.keyboard.press("Enter");
-    await A.keyboard.press("Enter");
-    assert(await box.isVisible(), "Enter sent nothing");
+    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Shift+Enter");
+    assert(await box.isVisible(), "Shift+Enter sent nothing");
     // the Equation block: $$x$$ with the x chosen, typed over with the live preview
     await A.keyboard.type("/equation");
     await until(async () => (await menu.locator(".slashMenuItem.selected .slashMenuLabel").innerText().catch(() => "")) === "Equation block", { what: "/equation" });
@@ -544,7 +544,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await A.keyboard.type("E = mc^2");
     await A.locator(".mathPreviewTip .katex").waitFor();
     await shot(A, "w9-equation-preview");
-    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Enter");
     let body = "";
     await until(async () => {
       const th = (await threads()).find((x) => x.block_id === "cmnote1" && x.comments[0].body.startsWith("## "));
@@ -561,7 +561,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     // a reply's button names its key too, once its thread is pressed
     const replyBox = (await openReply(popover(A))).first();
     const reply = popover(A).locator(".commentThread .commentSend").first();
-    assertEq(await reply.getAttribute("title"), `Send reply (${keyLabel("Shift-Enter")})`);
+    assertEq(await reply.getAttribute("title"), `Send reply (${keyLabel("Enter")})`);
     // a pasted \( \) formula comes in as the field's $ math, as in a note
     await replyBox.evaluate((el) => {
       const dt = new DataTransfer();
@@ -595,7 +595,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await focused(field(popover(A).locator(".commentNew")), "ready to write");
     // (the highlight was made a moment ago: the comment waits for its block to be saved)
     await A.keyboard.type("Which paper is this?");
-    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Enter");
     const badge = A.locator('[data-page="1"] .pdfNoteBadge.hasThread');
     await badge.waitFor({ timeout: 10000 });
     await closePopover(A);
@@ -811,7 +811,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const hl = made[0];
     await A.keyboard.type("Cite the original MPS paper");
     await shot(A, "w7-composer-on-fresh-highlight");
-    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Enter");
     await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads
       .some((x) => x.block_id === hl && x.comments[0].body === "Cite the original MPS paper"), { what: "the comment is stored on the new highlight" });
     await closePopover(A);
@@ -902,7 +902,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await focused(field(active), "the reply field takes the focus");
     assert((await hlFirst.evaluate((el) => getComputedStyle(el).backgroundColor)) !== restWash, "the active card's highlight is drawn stronger");
     await A.keyboard.type("Found it: the 2004 review");
-    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Enter");
     await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads
       .find((x) => x.id === first.id)?.comments.some((x) => x.body === "Found it: the 2004 review"), { what: "the reply is stored" });
     await active.locator(".commentBody", { hasText: "Found it: the 2004 review" }).waitFor();
@@ -943,7 +943,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     assertEq(await popover(A).count(), 0, "no popover: the card is the thread");
     await A.keyboard.type("Say which review");
     await shot(A, "w8-new-comment-card");
-    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Enter");
     await card("Say which review").waitFor();
     await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads
       .some((x) => x.comments[0].body === "Say which review"), { what: "the new comment is stored" });
@@ -1011,7 +1011,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await fresh.waitFor();
     await focused(field(fresh), "the new comment's field takes the focus");
     await A.keyboard.type("Is this arrow right?");
-    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Enter");
     const thread = await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads.find((x) => x.block_id === group.id),
       { what: "the ink thread is stored" });
     const card = margin.locator(`.commentCard[data-card-for="${group.id}"]`);

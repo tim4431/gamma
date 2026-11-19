@@ -3403,7 +3403,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications, commentSendTo, setCommentSendTo,
     topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, highlightPresets, setHighlightPresets,
-    chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatFollowUp, setChatFollowUp, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
+    chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatFollowUpMode, setChatFollowUpMode, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
     metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
@@ -12819,7 +12819,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onAttachView={!homeMode && isPdf(doc) && pdfUrl && !pdfHidden ? attachViewToChat : undefined}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
-          chatSpeed={chatSpeed} setChatSpeed={setChatSpeed} chatFollowUp={chatFollowUp}
+          chatSpeed={chatSpeed} setChatSpeed={setChatSpeed} chatFollowUpMode={chatFollowUpMode}
           dictationModel={dictationModel} dictationLang={dictationLang}
           chatSystem={chatSystem} aiInfo={aiInfo} aiInfoFailed={aiInfoFailed} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
@@ -14983,8 +14983,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setChatEffort,
           chatSpeed,
           setChatSpeed,
-          chatFollowUp,
-          setChatFollowUp,
+          chatFollowUpMode,
+          setChatFollowUpMode,
           aiProvider,
           setAiProvider,
           deleteAiProvider,

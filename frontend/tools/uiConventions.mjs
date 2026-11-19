@@ -254,10 +254,10 @@ function handler(p, expr) {
   return null;
 }
 // An Enter handler that waits for the input method: composing(e), or the
-// chat's sendsOnEnter / sendsOnShiftEnter, which ask it. isComposing alone
+// chat's sendsOnEnter / othersOnEnter, which ask it. isComposing alone
 // is not enough: Safari's keydown for the Enter that confirms a word has it
 // false and says keyCode 229.
-const waitsForIme = (n) => some(n, (x) => x.type === "Identifier" && /^(composing|sendsOnEnter|sendsOnShiftEnter)$/.test(x.name))
+const waitsForIme = (n) => some(n, (x) => x.type === "Identifier" && /^(composing|sendsOnEnter|othersOnEnter)$/.test(x.name))
   || (some(n, (x) => x.type === "Identifier" && x.name === "isComposing") && some(n, (x) => x.type === "NumericLiteral" && x.value === 229));
 const testsEnter = (n) => some(n, (x) => x.type === "StringLiteral" && x.value === "Enter");
 
