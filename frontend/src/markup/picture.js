@@ -664,7 +664,7 @@ function captionPlain(md) {
       .replace(/^(?:>\s?)+/, "").replace(/^#{1,6}(?:\s+|$)/, "")
       .replace(/^[-*+]\s+(?:\[([ xX])\]\s+)?/, (m, box) => (box === undefined ? "• " : box === " " ? "[ ] " : "[x] "))
       .replace(HELD, (m, escaped, ticks, code, kept) => hold(escaped ?? (ticks ? code.trim() : kept)))
-      .replace(/!?\[\[([^\]|]*)(?:\|[^\]]*)?\]\]/g, "$1")
+      .replace(/(!?)\[\[([^\]|]*?)(?:\\?\|([^\]]*))?\]\]/g, (m, bang, target, words) => (!bang && words?.trim()) || target)
       .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
       .replace(/<\/?span\b[^>]*>/gi, "");
     for (let was = null; was !== line;) {

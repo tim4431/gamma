@@ -127,7 +127,8 @@ GitHub and in any export:
 - A quote is `>` on every line; a callout is `> [!note] Title`.
 - Math is `$…$` and `$$…$$`; a diagram is a fenced `mermaid` or `svg` block.
 - Dates, people and page links are readable text (`@2026-10-09`, `@alice`,
-  `[[page]]`), which the app draws as chips.
+  `[[page]]`, and `[[page|words]]` for a link that shows words of its
+  own), which the app draws as chips.
 
 ## Who made a block
 

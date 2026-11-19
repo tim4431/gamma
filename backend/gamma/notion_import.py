@@ -638,6 +638,11 @@ class NotionDialect(Plain):
     def wikilinks(self, plan):
         return not plan.notion_id
 
+    def label_words(self, plan):
+        # Notion labels a link to a page with the page's title, marks and
+        # all, which a file's name cut at 50 characters need not match.
+        return not plan.notion_id
+
     def fold(self, run):
         # A database's page can come as a note of the database's own id beside
         # its CSV (``People <id>.md``: a line linking to the CSV, the view's

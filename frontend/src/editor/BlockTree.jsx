@@ -21,7 +21,10 @@ import { DEFAULT_HIGHLIGHT, darkPageLine } from "../shared/model/palette.js";
 import { blockStyle, isLineStyle } from "../shared/model/markStyle.js";
 import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
 import { citesSeveralSources, gammaLinkId, isSourceLink, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
-import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
+import { EMBED_RE, NO_LABELS, REF_RE, refIdsOf, refWords, unlinkedText } from "./refLabels.js";
+import { applyLinkChange, linkKey, linkSpans, nthLinkSpan, spanWords } from "./linkEdit.js";
+import { LinkHover, describeLink, useSiteTitle } from "../shared/ui/LinkCard.jsx";
+import { plainSnippet } from "../search/snippets.js";
 import { InkCard } from "../ink/InkLayer";
 import { RecordingCard } from "../recording/RecordingCard";
 import { isRecordingBlock } from "../recording/recording.js";
@@ -154,12 +157,16 @@ function mdPreprocessProse(content, nested) {
   }
   // Outside math, ``` fences and inline code (where two overlap, the earlier
   // wins in applyOutsideSpans) — a [[ref]] or == inside code stays literal.
+  // A [[ref]]'s link text is its words, or its id, which the chip reads as
+  // "show the target's label" (the a component below).
   return applyOutsideSpans(content, protectedSpans(content), (seg) => mentionMarkdown(sizedImagesHtml(seg)
-    .replace(/!\[\[([a-zA-Z0-9_-]+)\]\]/g, nested ? "[$1](blockref:$1)" : "[$1](blockembed:$1)")
-    .replace(REF_RE, "[$1](blockref:$1)")
+    .replace(EMBED_RE, nested ? "[$1](blockref:$1)" : "[$1](blockembed:$1)")
+    // (A backslash ending the words would escape the link text's "]".)
+    .replace(REF_RE, (_, id, words) => `[${refWords(words).replace(/(?<!\\)(\\\\)*\\$/, "$&\\") || id}](blockref:${id})`)
     // A hand-typed [[title]] no page answered (the editor links one that
-    // names exactly one page): a dashed "unlinked" chip.
-    .replace(/!?\[\[([^[\]\n]+)\]\]/g, "[$1](unlinked:)")
+    // names exactly one page): a dashed "unlinked" chip, showing its words
+    // when it has them ([[title|words]]).
+    .replace(/!?\[\[([^[\]\n]+)\]\]/g, (_, inner) => `[${unlinkedText(inner)}](unlinked:)`)
     .replace(/==([^=\n]+?)==/g, "<mark>$1</mark>")));
 }
 
@@ -184,36 +191,24 @@ function githubLabel(href) {
 // Notion-style link chip: favicon + label. Bare URLs (autolinked, or link
 // text that is itself a URL) get a fetched page title via /api/link-preview
 // (host shown until it arrives, or forever when the fetch fails/401s in the
-// shared view); user-written link text is kept as the label.
-const _linkPreviewCache = new Map();
-function LinkChip({ href, text }) {
+// shared view); user-written link text is kept as the label. Its link card
+// (shared/ui/LinkCard.jsx) says where it goes; `edit` is the card's.
+function LinkChip({ href, text, edit }) {
   const bare = /^(https?:\/\/|www\.)/i.test((text || "").trim());
   const gh = githubLabel(href);
   let host = "";
   try { host = new URL(href).hostname.replace(/^www\./, ""); } catch (_) {}
-  const wantFetch = bare && !gh;
-  const [fetched, setFetched] = useState(() => _linkPreviewCache.get(href) || null);
+  const fetched = useSiteTitle(href, bare && !gh);
   const [iconBroken, setIconBroken] = useState(false);
-  useEffect(() => {
-    if (!wantFetch || _linkPreviewCache.has(href)) return;
-    let dead = false;
-    fetch(`/api/link-preview?url=${encodeURIComponent(href)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        _linkPreviewCache.set(href, d?.title || "");
-        if (!dead && d?.title) setFetched(d.title);
-      })
-      .catch(() => {});
-    return () => { dead = true; };
-  }, [href, wantFetch]);
   const label = bare ? (gh || fetched || host || text) : (text || host);
   return (
+    <LinkHover siteHref={href} edit={edit}
+      describe={(siteTitle, ctx) => describeLink({ kind: "url", href, label: bare ? gh || "" : text }, { ctx, siteTitle })}>
     <a
       className="linkChip"
       href={href}
       target="_blank"
       rel="noreferrer"
-      title={href}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
@@ -230,6 +225,7 @@ function LinkChip({ href, text }) {
       )}
       <span className="linkChipText">{label}</span>
     </a>
+    </LinkHover>
   );
 }
 
@@ -483,7 +479,16 @@ function HighlightedCodePre({ children }) {
 // as tracked changes.
 const NOTE_REHYPE = [rehypeRaw, rehypeNoteSanitize, rehypeKatex];
 const DIFF_REHYPE = [rehypeRaw, rehypeNoteSanitize, rehypeDiffMarks, rehypeKatex];
-export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onDiagramEdit, onObjectAction, nested, diff = false }) {
+// A note's link target as its <a> gets it. Upload URLs get the workspace /
+// share token here (assetUrl): the browser fetches <img> src and link
+// hrefs without the API header. The link card's edits find a rendered
+// link's source by it (linkEdit.js linkKey).
+export const noteUrl = (url) => (/^(blockref|blockembed|unlinked|mention):/.test(url) ? url : assetUrl(defaultUrlTransform(url)));
+
+// `onLinkEdit(key, n, change)`: the nth link of `key` (linkEdit.js linkKey)
+// changed through its link card (linkEdit.js applyLinkChange's `change`);
+// absent where the note may not be edited.
+export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onDiagramEdit, onObjectAction, onLinkEdit, nested, diff = false }) {
   // GFM task-list checkboxes render in document order; this counter maps the
   // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
   // clicking one toggles the right marker. Reset per render — the whole
@@ -497,6 +502,30 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
   const tableInfo = useMemo(() => scanTables(content || ""), [content]);
   const diagramInfo = useMemo(() => scanDiagramFences(content || ""), [content]);
   const citesSeveral = useMemo(() => citesSeveralSources(content), [content]);
+  // The source's links by what they point to, so the nth rendered link of a
+  // target is the nth of its list (both in document order).
+  const linksByKey = useMemo(() => {
+    const byKey = new Map();
+    for (const span of linkSpans(content || "")) {
+      const key = linkKey(span, noteUrl);
+      byKey.set(key, [...(byKey.get(key) || []), span]);
+    }
+    return byKey;
+  }, [content]);
+  const linkSeen = new Map();
+  // A rendered link's card's `edit` (shared/ui/LinkCard.jsx), or null: its
+  // words from the source, a page link's shown text kept when it is unlinked.
+  const linkEdit = (key, shown = "") => {
+    const n = linkSeen.get(key) || 0;
+    linkSeen.set(key, n + 1);
+    const span = linksByKey.get(key)?.[n];
+    if (!onLinkEdit || nested || !span) return null;
+    return {
+      words: spanWords(span), canRemove: span.kind !== "bare", excludeId: blockId,
+      onSave: (change) => onLinkEdit(key, n, change),
+      onRemove: () => onLinkEdit(key, n, { remove: true, shown }),
+    };
+  };
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
@@ -506,7 +535,7 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
       rehypePlugins={diff ? DIFF_REHYPE : NOTE_REHYPE}
       // Upload URLs get the workspace / share token here (assetUrl): the
       // browser fetches <img> src and link hrefs without the API header.
-      urlTransform={(url) => /^(blockref|blockembed|unlinked|mention):/.test(url) ? url : assetUrl(defaultUrlTransform(url))}
+      urlTransform={noteUrl}
       components={{
         a: ({ href, children }) => {
           // An @ mention (mdPreprocess): its chip, which reads the people
@@ -515,18 +544,25 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
           if (href?.startsWith("blockref:")) {
             const refId = href.slice(9);
             const ref = refLabels?.[refId];
+            // Link text other than the id is a [[id|words]]'s words
+            // (mdPreprocess): the chip shows them, its card what it names.
+            const words = textOf(children) !== refId ? children : null;
+            const shown = ref?.trashed ? ref.trashed.title : ref?.content || String(children);
+            const edit = linkEdit(`ref:${refId}`, plainSnippet(String(shown).split("\n")[0]));
             // An id nothing answers to reads as a hand-typed title no page
             // has: the unlinked chip below.
             if (!ref?.missing) return (
-              <InternalLinkChip
-                href={`?block=${refId}`}
-                className={ref?.trashed ? "trashedRef" : ""}
-                title={ref?.trashed ? t("“{title}” is in Recently deleted.", { title: ref.trashed.title })
-                  : ref?.page_title ? t("From: {page_title}", { page_title: ref.page_title }) : undefined}
-                onOpen={() => onBlockRefClick?.(refId)}
-              >
-                {ref?.trashed ? ref.trashed.title : ref?.content || String(children)}
-              </InternalLinkChip>
+              <LinkHover edit={edit}
+                describe={(_, ctx) => describeLink({ kind: "ref", id: refId, words: words ? textOf(words) : "" },
+                  { labels: refLabels, ctx, onOpenRef: onBlockRefClick })}>
+                <InternalLinkChip
+                  href={`?block=${refId}`}
+                  className={ref?.trashed ? "trashedRef" : ""}
+                  onOpen={() => onBlockRefClick?.(refId)}
+                >
+                  {words || shown}
+                </InternalLinkChip>
+              </LinkHover>
             );
           }
           if (href?.startsWith("unlinked:") || href?.startsWith("blockref:")) {
@@ -558,15 +594,16 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
           const gl = parseGammaLink(href, window.location.origin);
           const glRef = gl ? refLabels?.[gammaLinkId(gl)] : null;
           if (gl && (!gl.foreign || glRef)) {
-            if (isSourceLink(gl)) return <CitationPill link={{ ...gl, href }} multi={citesSeveral}>{children}</CitationPill>;
+            const edit = linkEdit(`url:${href}`);
+            if (isSourceLink(gl)) return <CitationPill link={{ ...gl, href }} multi={citesSeveral} edit={edit}>{children}</CitationPill>;
             return (
-              <GammaLinkCard link={{ ...gl, href }} label={glRef?.page_title || glRef?.content}>
+              <GammaLinkCard link={{ ...gl, href }} label={glRef?.page_title || glRef?.content} edit={edit}>
                 {children}
               </GammaLinkCard>
             );
           }
           if (/^https?:\/\//i.test(href || "")) {
-            return <LinkChip href={href} text={textOf(children)} />;
+            return <LinkChip href={href} text={textOf(children)} edit={linkEdit(`url:${href}`)} />;
           }
           if (parseUploadUrl(href) && !/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(href)) {
             return <FileChip href={href} text={textOf(children)} />;
@@ -937,6 +974,17 @@ const BlockRow = React.memo(function BlockRow({
     }
   };
   const stableTableEdit = useRef((i, o) => tableEditRef.current?.(i, o)).current;
+  // A link changed through its card in the rendered view (BlockMarkdown's
+  // onLinkEdit): the nth link of `key` in this block's source, rewritten
+  // (linkEdit.js). One the scan can't find is left alone.
+  const linkEditRef = useRef(null);
+  linkEditRef.current = (key, n, change) => {
+    const content = block.content || "";
+    const span = nthLinkSpan(content, key, n, noteUrl);
+    const newVal = span ? applyLinkChange(content, span, change) : null;
+    if (newVal != null && newVal !== content) onChangeText(block.id, newVal);
+  };
+  const stableLinkEdit = useRef((k, n, c) => linkEditRef.current?.(k, n, c)).current;
   // The object frame's menu and drag (MdObject.jsx): the nth image / table /
   // diagram of this block as a source range. "Edit source" opens the raw
   // editor with the caret on it (the click-to-source path with a known
@@ -1973,7 +2021,8 @@ const BlockRow = React.memo(function BlockRow({
                   onImageEdit={readOnly || preview ? undefined : stableImageEdit}
                   onTableEdit={readOnly || preview ? undefined : stableTableEdit}
                   onDiagramEdit={readOnly || preview ? undefined : stableDiagramEdit}
-                  onObjectAction={readOnly || preview ? undefined : stableObjectAction} />
+                  onObjectAction={readOnly || preview ? undefined : stableObjectAction}
+                  onLinkEdit={readOnly || preview ? undefined : stableLinkEdit} />
               ) : sheetNumber ? (
                 // an untitled notebook sheet reads as the page it stands for
                 <div className="blockPlaceholder blockSheetLabel">{t("Page {n}", { n: sheetNumber })}</div>

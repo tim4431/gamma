@@ -119,7 +119,8 @@ def _stored(client, report) -> dict:
 
     def named(text):
         text = _UPLOAD_RE.sub(lambda m: f"<upload .{m.group(1)}>", text)
-        return re.sub(r"\[\[([\w-]+)\]\]", lambda m: f"[[{names.get(m.group(1), m.group(1))}]]", text)
+        return re.sub(r"\[\[([\w-]+)((?:\\?\|[^\[\]\n]*)?)\]\]",
+                      lambda m: f"[[{names.get(m.group(1), m.group(1))}{m.group(2)}]]", text)
 
     out = {}
     for pid, block in blocks.items():
@@ -741,7 +742,7 @@ GOLDEN = {
                           'tree': ['Intro  text.',
                                    '```\n%%kept in code%%\n```',
                                    '## Own heading',
-                                   '    See [[Note]], [[Note (2)#2]], [[Note#2]] and [[Home#3]].',
+                                   '    See [[Note]], [[Note (2)#2|the plan]], [[Note#2]] and [[Home#3]].',
                                    '    ![[Note#2]]',
                                    '    [[Note]]',
                                    '    ![|300](<upload .png>)',
@@ -838,5 +839,5 @@ GOLDEN = {
                                 'tree': ['Body.', '## Section', '    Under it.']},
                  'Deep title': {'properties': {'original_filename': 'Deep.md',
                                                'folders': [['Inbox', 'sub', 'deep']]},
-                                'tree': ['[[Intro]], [[Next title#2]]']}}},
+                                'tree': ['[[Intro]], [[Next title#2|in]]']}}},
 }

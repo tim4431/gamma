@@ -449,9 +449,9 @@ once write one item. Each recipient's open page sockets then get a nudge
 characters of the text at the time: the note, the comment, the root
 comment for `resolved`, the page title or folder name for `shared`, the
 workspace's name for `invited`. A `[[link]]` in it is written as the words
-it shows (`inbox._named_refs`: a page's title, a note's first line, read from
-the workspace's pages.db), so the Inbox never shows a bare id; a link to
-nothing found stays as written.
+it shows (`inbox._named_refs`: a `[[id|words]]`'s words, else a page's
+title, a note's first line, read from the workspace's pages.db), so the
+Inbox never shows a bare id; a link to nothing found stays as written.
 
 **Reach.** `inbox.reach(ws, page_id, user_ids, via="")` answers
 `{user_id: share_token | ""}`. It gives `""` to an account with a role in

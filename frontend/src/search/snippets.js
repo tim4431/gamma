@@ -29,7 +29,9 @@ export function plainSnippet(src, { mathApart = false } = {}) {
   s = s.replace(/^[ \t]*(?:>[ \t]*)+/gm, "");
   s = s.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "");
   s = s.replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/gm, "");
-  s = s.replace(/!?\[\[([^\]|]*)(?:\|([^\]]*))?\]\]/g, (_, target, alias) => alias || target);
+  // A [[link|words]] as its words (`\|` a table's cell's pipe), an
+  // Obsidian ![[embed|caption]] its caption.
+  s = s.replace(/!?\[\[([^\]|]*?)(?:\\?\|([^\]]*))?\]\]/g, (_, target, alias) => alias?.trim() || target);
   s = withoutImages(s);
   s = s.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
   s = s.replace(/<br\s*\/?>/gi, " ");

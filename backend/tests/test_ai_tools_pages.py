@@ -1017,6 +1017,11 @@ def test_backlinks_list_the_notes_the_chat_reaches(org):
     assert r.status_code == 200, r.text
     c.post("/api/blocks", json={"parent_id": near, "content": "[[pgXandXmore1]]"})
     assert c.get("/api/blocks/pg_and_more1/backlinks").json() == {"backlinks": []}
+    # a link showing words of its own ([[id|words]], \| in a table) links all the same
+    c.post("/api/blocks", json={"parent_id": near, "content": "the [[pg_and_more1|underscored one]]"})
+    c.post("/api/blocks", json={"parent_id": near, "content": "| [[pg_and_more1\\|cell]] |\n| --- |"})
+    found = c.get("/api/blocks/pg_and_more1/backlinks").json()["backlinks"]
+    assert sorted(b["content"].split("[[")[0] for b in found) == ["the ", "| "]
 
 
 def test_show_page_and_export_need_the_app(org):

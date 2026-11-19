@@ -775,7 +775,8 @@ case, so a change under `docs/` runs it too.
 
 `vault.links` turns one block's text between the file's space, where the
 lens works, and Gamma's. Gamma holds a link to a page or a block as
-`[[id]]` (`![[id]]` embeds a block) and a picture as its upload's address;
+`[[id]]` (`![[id]]` embeds a block, `[[id|words]]` shows its own words:
+[mentions.md](mentions.md)) and a picture as its upload's address;
 the file says `[[Title]]`, `[[dir/Title|alias]]`, `[text](<a b.md>)`,
 `![[fig.png|300]]`. `to_gamma(file_text, memo, ctx, base)` reads a block's
 file text with a memo of how each link was written, keyed by what it
@@ -784,11 +785,24 @@ its hash, which changes when the picture does); `written` writes Gamma's
 text back, each link as the memo remembers it where it can and in the
 vault's habit otherwise.
 
+**A mention's words.** A wikilink's alias is the mention's words
+(`[[Title|alias]]` ↔ `[[id|alias]]`), and so is a Markdown link's label
+when it says more than the page's name: the note's file name, a file
+page's file name, a page's title, in any case and spacing
+(`[the plan](Plan.md)` ↔ `[[id|the plan]]`, `[Plan](Plan.md)` ↔ `[[id]]`;
+`label_alias`). An embed's alias is none, as in Obsidian. In a table's row
+the pipe is `\|` on both sides (`note_markup.table_pipe`). Words edited in
+Gamma change the remembered link's alias or label and keep its target as
+written; words removed take a wikilink's alias off and give a Markdown link
+the page's name back. A memo from before words were read (`[[id]]` for
+`[[Title|alias]]`) takes them from the file's link the next time its block
+is read.
+
 **Identity first.** The engine calls them only for a block whose text
 changed on that side: a block whose Gamma text is its base's keeps its file
 text, and a block whose file text is its base's keeps its Gamma text. So a
-link no reading gives back as written (`%20`, a title in a link, an alias,
-`![a|300]`) never makes an untouched block read as changed.
+link no reading gives back as written (`%20`, a title in a link, `![a|300]`)
+never makes an untouched block read as changed.
 
 **Resolution** is a Markdown zip's (`markdown_zip_links.resolve_path`):
 relative to the note, then by vault path, then by name anywhere, ignoring
@@ -829,9 +843,9 @@ is, under its content digest's name (`LocalRemote.link_file`: a
 **A work folder's files.** In a work folder's round every file is a page
 (`kinds.FILE`, a PDF's page too), so a note's link to a tracked file that
 has one is a mention of that page, `[[page_id]]`, as a link to a note is
-(`LinkContext.add_page_file`): `[the method](sections/method.tex)`,
-`[[main.pdf]]`, `[fig](fig.png)` and a listed file's `[[big.h5]]`, found by
-its name from another directory too. Gamma draws it as the page's chip,
+(`LinkContext.add_page_file`): `[the method](sections/method.tex)`
+(`[[page_id|the method]]`), `[[main.pdf]]`, `[fig](fig.png)` and a listed
+file's `[[big.h5]]`, found by its name from another directory too. Gamma draws it as the page's chip,
 opens the file's page from it, counts it in backlinks, and keeps it through
 a move on disk (an id, not a path). Three cases keep the upload's address:
 a picture's embed (`![[fig.png]]`, `![](fig.png)`: a `!` and an image's

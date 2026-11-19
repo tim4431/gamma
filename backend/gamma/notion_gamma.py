@@ -23,7 +23,7 @@ from datetime import datetime
 
 from .documents.formats import IMAGE_MEDIA_TYPES
 from .markdown_import import _LIST_RE
-from .note_markup import ALT_SIZE_RE, BARE_URL, LINK_TARGET, LITERAL_SPANS, alt_and_width
+from .note_markup import ALT_SIZE_RE, BARE_URL, BLOCK_REF_RE, LINK_TARGET, LITERAL_SPANS, alt_and_width, ref_alias
 from .notion_blocks import (_LIST_ITEMS, Block, _on_a_line, callout_color, callout_type, color_name, gamma_leaves,
                             merge_colors, style_color)
 from .picture import is_picture, markdown_of
@@ -314,8 +314,6 @@ _DEEPEST = 32
 _TASK_RE = re.compile(r"\[([ xX])\](?:[ \t]+|$)")
 # The marker line of a callout (callouts.js CALLOUT_MARKER_RE).
 _CALLOUT_RE = re.compile(r"\[!(\w+)\][-+]?[ \t]*")
-# markdown_export's, whose ids are the editor's.
-_BLOCK_REF_RE = re.compile(r"(!?)\[\[([A-Za-z0-9_-]+)\]\]")
 _BLANK = " \t"
 # A list marker with nothing after it, not even the space ``_LIST_RE`` wants.
 _BARE_ITEM_RE = re.compile(r"[ \t]*(?:[-*+]|\d{1,4}[.)])")
@@ -528,9 +526,11 @@ def _flow(lines: list, depth: int) -> list:
 def _lone(block: Block) -> Block:
     """A paragraph that is nothing but a [[ref]] or a link to an upload is
     the page or the file it stands for. In a list or a quote the same text
-    stays text."""
+    stays text, and so does a ``[[id|words]]``, whose words a page block
+    would not show."""
     leaf = block.rich[0] if block.type == "paragraph" and len(block.rich) == 1 else ("br",)
-    if leaf[0] == "raw" and not leaf[2] and (ref := _BLOCK_REF_RE.fullmatch(leaf[1])) and not ref[1]:
+    if (leaf[0] == "raw" and not leaf[2] and (ref := BLOCK_REF_RE.fullmatch(leaf[1])) and not ref[1]
+            and not ref_alias(ref)):
         return Block("page", attrs={"ref": ref[2]})
     if leaf[0] == "text" and list(leaf[2]) == ["link"] and _UPLOAD_SRC_RE.search(leaf[2]["link"]):
         return Block("file", [("text", leaf[1], {})], attrs={"url": leaf[2]["link"]})
@@ -568,7 +568,7 @@ def _mention_label(ref: dict, block_id: str) -> str:
     markers and all."""
     line = (ref.get("content") or "").strip().split("\n")[0]
     if ref.get("page_id") != block_id:
-        line = _BLOCK_REF_RE.sub("", _LINE_LEAD_RE.sub("", line))
+        line = BLOCK_REF_RE.sub("", _LINE_LEAD_RE.sub("", line))
     label = _label(line, "")
     return label if _WORD_RE.search(label) else _label(ref.get("page_title"), "Untitled")
 
@@ -601,7 +601,7 @@ class _Mentions:
         return content, []
 
     def leaf(self, leaf: tuple, nested: bool) -> list:
-        ref_at = _BLOCK_REF_RE.fullmatch(leaf[1])
+        ref_at = BLOCK_REF_RE.fullmatch(leaf[1])
         ref = self.links.ref(ref_at[2]) if ref_at else None
         if not ref:
             return [("text", leaf[1], leaf[2])]
@@ -610,7 +610,8 @@ class _Mentions:
             shown = self.leaves(leaves_of(content), True) + [("text", " ", {})] * bool(source) + source
             return _marked(shown, leaf[2])
         path = self.path(ref.get("page_id"))
-        return [("text", _mention_label(ref, ref_at[2]), {**leaf[2], "link": path} if path else leaf[2])]
+        label = ref_alias(ref_at) or _mention_label(ref, ref_at[2])
+        return [("text", label, {**leaf[2], "link": path} if path else leaf[2])]
 
     def lost_image(self, leaf: tuple) -> tuple:
         if leaf[0] == "br" or "image_lost" not in leaf[2]:
@@ -654,7 +655,7 @@ class _Mentions:
         """A paragraph that is nothing but an embed: the blocks it shows, for
         a list or a formula reads as itself only as blocks."""
         leaf = block.rich[0] if len(block.rich) == 1 else ("br",)
-        ref_at = _BLOCK_REF_RE.fullmatch(leaf[1]) if leaf[0] == "raw" and not leaf[2] else None
+        ref_at = BLOCK_REF_RE.fullmatch(leaf[1]) if leaf[0] == "raw" and not leaf[2] else None
         ref = self.links.ref(ref_at[2]) if ref_at and ref_at[1] else None
         if not ref or not (ref.get("content") or "").strip():
             return None

@@ -592,8 +592,10 @@ differ: Gamma stores `[[page id]]` and an upload's address, the file says
 `[[Title]]`, `[[dir/Title|alias]]`, `[text](path.md)` or
 `![[fig.png|300]]`. The base remembers, per block, how each link was
 written, and an edit that leaves a link alone writes it back that way.
-Gamma's mentions have no display text, so an alias shows as the page's
-title in Gamma and stays in the file. A new link takes the vault's habit
+A mention carries display text (`[[id|words]]`, added after this survey), so
+an alias, or a Markdown link's label that says more than the note's name,
+shows in Gamma as it does in Obsidian and goes back to the file as written.
+A new link takes the vault's habit
 (Obsidian's settings when the vault has them: wikilinks or Markdown
 links, shortest or relative paths, the attachment folder; the key names
 are to be checked against a real vault). A renamed note breaks nothing in
@@ -843,7 +845,6 @@ library* with *keep following* gives a manuscript.
   as the kept folder writes it.
 - Files that are neither notes nor PDFs nor pictures a note shows: not
   listed at first.
-- Whether mentions get display text, so an alias shows in Gamma too.
 - Whether a vault in a clone stores its PDFs instead of reading them in
   place, so that the clone carries it to the NAS.
 
