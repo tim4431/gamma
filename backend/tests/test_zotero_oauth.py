@@ -1,7 +1,7 @@
 """OAuth 1.0a with zotero.org (gamma/zotero_oauth.py): the signature
 against the published RFC 5849 / OAuth Core vectors, the Authorization
-header, and the three steps through the fake Zotero, ending with an API
-key the fake accepts."""
+header, the three steps through the fake Zotero, ending with an API key
+the fake accepts, and this server's own Zotero app as an admin saves it."""
 
 import urllib.parse
 
@@ -9,6 +9,7 @@ import pytest
 from zotero_fake import GOOD_VERIFIER, REQUEST_SECRET, REQUEST_TOKEN, FakeZotero
 
 from gamma import config, zotero_oauth
+from gamma.server_settings import _peek_raw
 from gamma.zotero_web import ZoteroAuthError, ZoteroClient
 
 CALLBACK = "https://gamma.example/api/zotero/oauth/callback?state=s1"
@@ -111,20 +112,32 @@ def test_a_wrong_verifier_is_refused(fake):
     assert str(refused.value).startswith("Zotero refused the connection") and "start again" in str(refused.value)
 
 
-def test_zoteros_addresses_and_this_servers_oauth_app_come_from_the_environment(monkeypatch):
-    for name in ("GAMMA_ZOTERO_API_BASE", "GAMMA_ZOTERO_WEB_BASE", "GAMMA_ZOTERO_STREAM_URL",
-                 "GAMMA_ZOTERO_CLIENT_KEY", "GAMMA_ZOTERO_CLIENT_SECRET"):
+def test_zoteros_addresses_come_from_the_environment(monkeypatch):
+    for name in ("GAMMA_ZOTERO_API_BASE", "GAMMA_ZOTERO_WEB_BASE", "GAMMA_ZOTERO_STREAM_URL"):
         monkeypatch.delenv(name, raising=False)
     assert config.zotero_api_base() == "https://api.zotero.org"
     assert config.zotero_web_base() == "https://www.zotero.org"
     assert config.zotero_stream_url() == "wss://stream.zotero.org"
-    assert config.zotero_client() == ("", "")
     monkeypatch.setenv("GAMMA_ZOTERO_API_BASE", " http://127.0.0.1:9999/ ")
     monkeypatch.setenv("GAMMA_ZOTERO_WEB_BASE", "http://127.0.0.1:9999/")
     monkeypatch.setenv("GAMMA_ZOTERO_STREAM_URL", " ws://127.0.0.1:9998/ ")
     assert config.zotero_api_base() == config.zotero_web_base() == "http://127.0.0.1:9999"
     assert config.zotero_stream_url() == "ws://127.0.0.1:9998"
-    monkeypatch.setenv("GAMMA_ZOTERO_CLIENT_KEY", "ck")
-    assert config.zotero_client() == ("", "")  # half an app is none
-    monkeypatch.setenv("GAMMA_ZOTERO_CLIENT_SECRET", "cs")
-    assert config.zotero_client() == ("ck", "cs")
+
+
+def test_this_servers_zotero_app_is_saved_with_its_secret_sealed():
+    secret = "zotero-app-secret"
+    try:
+        assert zotero_oauth.app() == ("", "")
+        for key, value in (("", secret), ("c k", secret), ("ck", ""), ("ck", "c s")):
+            with pytest.raises(ValueError):
+                zotero_oauth.save_app(key, value)
+        zotero_oauth.save_app(" ck ", secret)
+        assert zotero_oauth.app() == ("ck", secret) and secret not in _peek_raw(zotero_oauth.APP_KEY)
+        zotero_oauth.save_app("ck")  # the same key: its secret kept
+        assert zotero_oauth.app() == ("ck", secret)
+        with pytest.raises(ValueError, match="secret"):
+            zotero_oauth.save_app("another")  # another key needs its own
+    finally:
+        zotero_oauth.forget_app()
+    assert zotero_oauth.app() == ("", "")

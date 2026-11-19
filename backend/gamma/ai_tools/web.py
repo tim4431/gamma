@@ -177,20 +177,23 @@ def _run_search_web(conn, ws: str, scope: dict, args: dict):
             + "\n".join(lines)), action
 
 
-def _open_handoff(user_id, source: str, wall: str, url: str, pdf_url: str, detail: str) -> dict | None:
+def _open_handoff(user_id, source: str, wall: str, url: str, pdf_url: str, detail: str,
+                  title: str = "") -> dict | None:
     """Hand a blocked fetch to the user's browser (gamma/fetch_handoff.py):
     the ``handoff`` the chat renders as a card, or None where there is no
-    personal account to hand it to (a guest, a share link)."""
+    personal account to hand it to (a guest, a share link). ``title`` is
+    the paper's as the model passed it, which names the request."""
     from .. import fetch_handoff
 
     if not user_id or not url:
         return None
     try:
         req = fetch_handoff.open_request(user_id, source, wall=wall, url=url, pdf_url=pdf_url,
-                                         detail=detail[:300])
+                                         detail=detail[:300], title=title)
     except ValueError:
         return None
-    return {"id": req["id"], "host": req["host"], "wall": wall, "source": source}
+    return {"id": req["id"], "host": req["host"], "wall": wall, "source": source,
+            **({"title": req["title"]} if req["title"] else {})}
 
 
 def skipped_fetch(handoff: dict, note: str) -> str:
@@ -230,13 +233,13 @@ _WAIT_OR_SEARCH = ("Unless the user asked for this exact copy, you may first run
                    "blocked and end your reply — do not retry this source or answer from memory.")
 
 
-def _fetch_failure(e, source: str, user_id, can_search: bool = False) -> tuple[str, dict | None]:
+def _fetch_failure(e, source: str, user_id, can_search: bool = False, title: str = "") -> tuple[str, dict | None]:
     from ..web_fetch import WALLS
 
     if not e.wall:
         return (f"error: {e}. If the user can open it in their browser, ask them to drop "
                 "the PDF onto Gamma and read it with read_page.", None)
-    handoff = _open_handoff(user_id, source, e.wall, e.open_url, e.pdf_url, str(e))
+    handoff = _open_handoff(user_id, source, e.wall, e.open_url, e.pdf_url, str(e), title)
     if handoff:
         return (f"error: {e}. No document text was retrieved: {WALLS[e.wall]} at {handoff['host']} "
                 "stopped this server. Gamma now shows the user a card under your reply to open "
@@ -301,17 +304,21 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
         try:
             doc = fetch_document(source, published_only)
         except FetchError as e:
-            return _fetch_failure(e, source, account, can_search=bool(scope.get("web_engine")))
+            return _fetch_failure(e, source, account, can_search=bool(scope.get("web_engine")), title=title)
         finally:
             publisher_sessions.current_user.reset(token)
     text, next_offset, total = window(doc, budget, offset, page)
     # Which pages this window read (the chip says them beside its summary):
     # several reads of one document are otherwise the same chip over and over.
     pages = None if probe else window_pages(doc, budget, offset, page)
-    label = doc.get("title") or doc["url"]
+    # A PDF has no title of its own here: the one the model expected names it
+    # once its first pages show it.
+    match = identity(doc, title)
+    named = doc.get("title") or (title if match is True else "")
+    label = named or doc["url"]
     # `title`, `pdf` and `request` (the handoff whose PDF the user's browser
     # sent) let the chat offer the paper for the library (chat/chatPapers.js).
-    action = {"kind": "fetch", "url": doc["url"], "title": (doc.get("title") or "")[:300],
+    action = {"kind": "fetch", "url": doc["url"], "title": named[:300],
               "pdf": doc["kind"] == "pdf",
               # Which copy this is, so the chip can say "publisher PDF" or
               # "open-access preprint" instead of only naming the host.
@@ -344,7 +351,8 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
             if len(links) > _LINKS_SHOWN and not title:
                 head += "\n(Pass title= to rank the page's links against the paper you want.)"
         handoff = doc.get("wall") and _open_handoff(account, source, doc["wall"], doc["open_url"],
-                                                    doc.get("pdf_url", ""), doc.get("note", ""))
+                                                    doc.get("pdf_url", ""), doc.get("note", ""),
+                                                    title or doc.get("title") or "")
         if handoff:
             head += ("\n[Only the article page was readable"
                      + (f" — the PDF met {WALLS[doc['wall']]}" if doc["wall"] != "abstract" else "")
@@ -353,7 +361,6 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
                      "say so briefly and end your reply; the chat continues when the PDF arrives, and "
                      f'fetch_paper(source="{source}") then returns it.]')
             action.update(handoff=handoff, summary=f"Fetched “{label[:60]}” (article page only)")
-    match = identity(doc, title)
     if match is True:
         head += "\nIdentity: the expected title appears in the document."
     elif match is False:

@@ -262,16 +262,23 @@ revokes the token at Google and forgets it. The copies stay in Drive.
 **The OAuth client.** The scope is `drive.file` alone: Gamma sees and
 changes only the files it made, never the rest of the Drive. The client is
 of Google's "TVs and Limited Input devices" type, the one the device flow
-takes, whose secret Google does not treat as secret. It is Gamma's own
-(`config.GOOGLE_DRIVE_CLIENT`, empty until one is registered) unless
-`GAMMA_GOOGLE_DRIVE_CLIENT_ID` and `GAMMA_GOOGLE_DRIVE_CLIENT_SECRET` name
-another. Until there is one, the section reads *Not available* and names
-the two variables. A refresh token works only with the client that made
-it, so a connection made through another client reads "connected through
-another Google OAuth client" and must be made again. The client's Google
+takes, whose secret Google does not treat as secret. Each server's admin
+registers their own in their Google Cloud project and saves it under Set
+up… (`gdrive_account.oauth_client`, handed to every `gdrive` call that
+needs it; users.db `settings` key `gdrive_client`, the secret encrypted as
+the token is and never returned). Gamma ships no client and reads none
+from the environment. With none, the section reads *Not set up* with Set
+up…, whose dialog links the three
+pages of the Google Cloud console to visit: enable the Drive API, publish
+the app, create the client. A refresh token works only with the client
+that made it, so a connection made through another client reads
+"connected through another Google OAuth client" and must be made again;
+saving another client or removing it disconnects at once (revoking the token) and ends a code waiting. The client's Google
 Cloud project must be *In production*: one still in *Testing* gets
-refresh tokens that expire after 7 days. `GAMMA_GOOGLE_OAUTH_BASE` and
-`GAMMA_GOOGLE_API_BASE` point at stand-ins for a test.
+refresh tokens that expire after 7 days. A project without the Drive API
+enabled is refused with Google's own message, which links the page that
+enables it. `GAMMA_GOOGLE_OAUTH_BASE` and `GAMMA_GOOGLE_API_BASE` point at
+stand-ins for a test.
 
 **The folder.** A key's path is a folder path under the folder in My
 Drive's root: `snapshots/<ws>/<name>.zip` is `Gamma backups/snapshots/<ws>/

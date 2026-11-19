@@ -64,25 +64,38 @@ function linkedPapers(text) {
   return out;
 }
 
+// What `paper` adds to `have`, the same work: what `have` lacks, a title
+// worth showing over one that is not; read wins over blocked, the PDF came
+// after all.
+function fold(have, paper) {
+  for (const [k, v] of Object.entries(paper)) {
+    if (k === "key") continue;
+    if (k === "title") { if (!goodTitle(have.title) && goodTitle(v)) have.title = v; }
+    else if (v && !have[k]) have[k] = v;
+  }
+  if (paper.read) have.blocked = false;
+}
+
+// A title as the comparison sees it: its lowercase letters and digits
+// (gamma/paper_links.py title_key).
+const titleKey = (title) => String(title || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+
 // The reply's papers, once each, in the order the reply met them: what its
 // tool calls read (`read`, with the PDF address the server read it from
 // when it was a PDF — `pdf`), what a publisher stopped (`blocked`, with the
 // handoff request whose PDF the user's browser may have sent), then what its
 // text links to. `request` names the handoff whose delivered PDF the save
-// stores first (POST /api/ai/handoffs/<id>/store).
+// stores first (POST /api/ai/handoffs/<id>/store). A PDF read from an
+// address that names no identifier and a link to the same title are one
+// paper: saved with that PDF and the link's DOI.
 export function replyPapers(actions, text) {
   const byKey = new Map();
   const add = (paper) => {
     const key = keyOf(paper);
     if (!key) return;
     const have = byKey.get(key);
-    if (!have) { byKey.set(key, { key, ...paper }); return; }
-    for (const [k, v] of Object.entries(paper)) {
-      if (k === "title") { if (!goodTitle(have.title) && goodTitle(v)) have.title = v; }
-      else if (v && !have[k]) have[k] = v;
-    }
-    // Read wins over blocked: the PDF came after all.
-    if (paper.read) have.blocked = false;
+    if (have) fold(have, paper);
+    else byKey.set(key, { key, ...paper });
   };
   for (const a of actions || []) {
     if (a?.kind !== "fetch" || a.tool !== "fetch_paper") continue;
@@ -100,7 +113,43 @@ export function replyPapers(actions, text) {
           request: a.request || "" });
   }
   for (const link of linkedPapers(text)) add({ ...link, source: link.arxiv ? `arXiv:${link.arxiv}` : `doi:${link.doi}` });
-  return [...byKey.values()].map((p) => ({ ...p, title: goodTitle(p.title) ? p.title : "" }));
+  const out = [];
+  const byTitle = new Map();
+  for (const paper of byKey.values()) {
+    const title = goodTitle(paper.title) ? titleKey(paper.title) : "";
+    const twin = title.length >= 12 ? byTitle.get(title) : null;
+    // two identifiers that differ are two works, whatever their titles
+    const differ = (k) => twin?.[k] && paper[k] && twin[k] !== paper[k];
+    if (twin && !differ("doi") && !differ("arxiv")) { fold(twin, paper); continue; }
+    if (title.length >= 12) byTitle.set(title, paper);
+    out.push(paper);
+  }
+  return out.map((p) => ({ ...p, title: goodTitle(p.title) ? p.title : "" }));
+}
+
+const siteOf = (url) => {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; }
+};
+
+// A PDF's file name as words ("Li_2022_New_J._Phys._24_043028.pdf" → "Li
+// 2022 New J. Phys. 24 043028"); "" for an address that names no PDF file.
+function fileWords(url) {
+  let name = "";
+  try { name = new URL(url).pathname.split("/").filter(Boolean).pop() || ""; } catch { return ""; }
+  try { name = decodeURIComponent(name); } catch {}
+  return /\.pdf$/i.test(name) ? name.slice(0, -4).replace(/[_+\s]+/g, " ").trim() : "";
+}
+
+// How the list shows a paper (ReplyPapers.jsx): `name`, its title, else its
+// DOI or arXiv id, else its PDF's file name, else the site; `where`, beside
+// it, the identifier when the name is not it, else the site; `href`, what a
+// click on `where` opens: the PDF read, else the paper's page.
+export function paperLabel(paper) {
+  const ident = paper.arxiv ? `arXiv:${paper.arxiv}` : paper.doi ? `doi:${paper.doi}` : "";
+  const address = paper.pdfUrl || paper.url || (isUrl(paper.source) ? paper.source : "");
+  const site = siteOf(address);
+  const name = paper.title || ident || fileWords(address) || site || paper.source || "";
+  return { name, where: ident && name !== ident ? ident : site, href: paper.pdfUrl || paperPage(paper) };
 }
 
 // The web page a saved paper keeps as its source (properties.web_url): its

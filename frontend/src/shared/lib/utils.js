@@ -354,13 +354,15 @@ async function apiJson(url, options = {}, { keepalive } = {}) {
   return r.json();
 }
 
-async function resolvePdfUrl(rawUrl, allowOa = true) {
+async function resolvePdfUrl(rawUrl, allowOa = true, { signal } = {}) {
   // {source_url, note} — note explains e.g. that an open-access preprint was
-  // substituted because the published PDF is paywalled.
+  // substituted because the published PDF is paywalled. `signal` stops it
+  // (the task row's Stop).
   return apiJson(`${API}/resolve-pdf`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_url: rawUrl, allow_oa: allowOa })
+    body: JSON.stringify({ source_url: rawUrl, allow_oa: allowOa }),
+    signal,
   });
 }
 
@@ -371,8 +373,8 @@ async function resolvePdfUrl(rawUrl, allowOa = true) {
 // just needs its headers — the body is cancelled the moment they land, which
 // costs one upstream connection and no download (and never `save`: a
 // cancelled stream is not cached anyway).
-async function probePdfUrl(sourceUrl) {
-  const r = await fetch(pdfProxyUrl(sourceUrl), { credentials: "include" });
+async function probePdfUrl(sourceUrl, { signal } = {}) {
+  const r = await fetch(pdfProxyUrl(sourceUrl), { credentials: "include", signal });
   if (!r.ok) throw await apiError(r); // reads the error body — cancel only the good stream
   try { await r.body?.cancel(); } catch {}
 }

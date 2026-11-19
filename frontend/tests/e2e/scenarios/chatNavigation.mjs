@@ -1611,8 +1611,24 @@ export async function chatNavigationScenarios(env) {
       });
     });
     await ctx.route(`**/api/ai/handoffs/${HID}**`, (route) => {
-      if (new URL(route.request().url()).pathname.endsWith("/store")) return route.fulfill({ status: 404, json: { detail: "not held" } });
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/store")) return route.fulfill({ status: 404, json: { detail: "not held" } });
+      if (path.endsWith("/stop")) request = { ...request, status: "dismissed" };
       return route.fulfill({ json: request });
+    });
+    // Background tasks lists the request while it waits, as GET /api/jobs
+    // does (routers/jobs.py _waiting_papers), named by the title the model gave.
+    await ctx.route((url) => url.pathname === "/api/jobs", async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const res = await route.fetch();
+      const { jobs = [], ...rest } = await res.json();
+      const at = new Date().toISOString();
+      const row = { id: `paper-${HID}`, kind: "paper-handoff", owner: "", workspace: "", title: "A junction behind a check",
+        params: { request: HID, host: handoff.host, wall: "captcha", source: handoff.source, title: "A junction behind a check" },
+        state: "running", progress: { phase: request.watched ? "connector" : "browser", item: handoff.host }, error: "",
+        created_at: at, started_at: at, finished_at: "", artifact: null, downloaded: false, stoppable: true, stopping: false,
+        readonly: true };
+      return route.fulfill({ response: res, json: { ...rest, jobs: request.status === "waiting" ? [row, ...jobs] : jobs } });
     });
     // The server's side of saving is POST /api/clip (tests/test_clip.py): here it only records.
     await ctx.route("**/api/clip", (route) => {
@@ -1638,11 +1654,27 @@ export async function chatNavigationScenarios(env) {
       await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "show"),
         { what: "the card asks to show the tab" });
 
+      // Background tasks: the request's row, named by the paper, says the
+      // Connector is on it and where; its Stop lets the request go and has
+      // the Connector close its tab.
+      await page.click("button[aria-label='Background tasks']");
+      const row = page.locator(live(".tasksPopover .taskRow"), { hasText: "Get “A junction behind a check” in your browser" });
+      await row.getByText("Gamma Connector is on it · www.worldscientific.com").waitFor({ timeout: 8000 });
+      await row.locator('button[aria-label^="Stop Get"]').click();
+      await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "close"),
+        { what: "the Connector lets its tab go" });
+      await row.waitFor({ state: "detached", timeout: 8000 });
+      await page.click("button[aria-label='Background tasks']");
+      // the card hears it on its next look: settled, nothing more to do there
+      await card.getByText("Dismissed.").waitFor({ timeout: 8000 });
+
       // The reply's papers: the one it read, the blocked one, the one it links.
       const pill = page.getByRole("button", { name: /3 papers in this reply · Save to library/ });
       await pill.click();
       const list = page.getByRole("group", { name: "Papers in this reply" });
       await list.getByText("Proximity effect in superconductors").waitFor();
+      // Nothing checked: the button names where, not "0 papers".
+      assert(await list.getByRole("button", { name: "Save to library", exact: true }).isDisabled(), "nothing to save yet");
       await list.getByRole("checkbox", { name: "Proximity effect in superconductors" }).check();
       await list.getByRole("checkbox", { name: "A junction review" }).check();
       await list.getByRole("button", { name: "Save 2 papers to library" }).click();

@@ -308,6 +308,27 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     await ctx.close();
   });
 
+  // A paper's link is resolved on the server before its download starts,
+  // which can take a while: its row has Stop then too.
+  await step("tasks: a paper link still resolving stops from the popover", async () => {
+    const ctx = await alice.context(browser);
+    await ctx.route("**/api/resolve-pdf", () => {}); // never answers: the link stays resolving
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
+    const link = "https://journals.example.org/slow-paper.pdf";
+    await page.click("button[aria-label='Add']");
+    await page.locator(".addPopover .searchInput").fill(link);
+    await page.keyboard.press("Enter");
+    await page.click("button[aria-label='Background tasks']");
+    const row = page.locator(".taskRow", { hasText: "slow-paper.pdf" });
+    await row.getByText("resolving…").waitFor({ timeout: 10000 });
+    await row.getByRole("button", { name: `Stop ${link}`, exact: true }).click();
+    await until(async () => (await row.innerText()).includes("stopped"), { what: "the row reads stopped" });
+    assertEq(await row.getByRole("button", { name: `Stop ${link}`, exact: true }).count(), 0, "nothing left to stop");
+    assertNoProblems(page);
+    await ctx.close();
+  });
+
   // A PDF past one part's size (shared/lib/uploadParts.js PART_BYTES, 32 MiB)
   // goes up in parts — a proxy in front of the server caps a request's body —
   // and opens like any other upload; the task row reports the whole's bytes.

@@ -90,13 +90,16 @@ function TaskBar({ task, label }) {
   );
 }
 
+// A row's buttons; `on` holds the panel's onStop (what stopping a kind
+// also undoes beyond its job, else the store's cancel) and onRetry.
 const ACTION = {
-  stop: { icon: StopIcon, label: (title) => t("Stop {name}", { name: title }), run: (tasks, task) => tasks.cancel(task) },
+  stop: { icon: StopIcon, label: (title) => t("Stop {name}", { name: title }),
+    run: (tasks, task, on) => (on.onStop ? on.onStop(task) : tasks.cancel(task)) },
   download: { icon: DownloadIcon, label: (title) => t("Download {name}", { name: title }), run: (tasks, task) => tasks.download(task) },
-  retry: { icon: RefreshIcon, label: (title) => t("Start {name} again", { name: title }), run: (tasks, task, onRetry) => onRetry(task) },
+  retry: { icon: RefreshIcon, label: (title) => t("Start {name} again", { name: title }), run: (tasks, task, on) => on.onRetry(task) },
 };
 
-function TaskRow({ task, tasks, now, onOpen, onRetry }) {
+function TaskRow({ task, tasks, now, onOpen, onRetry, onStop }) {
   const title = taskTitle(task);
   const info = taskInfo(task);
   const when = taskTime(task, now);
@@ -134,7 +137,7 @@ function TaskRow({ task, tasks, now, onOpen, onRetry }) {
           const ActionIcon = action.icon;
           return (
             <button key={id} type="button" className="ctlBtn" title={action.label(title)} aria-label={action.label(title)}
-              onClick={() => Promise.resolve(action.run(tasks, task, onRetry)).catch(() => {})}>
+              onClick={() => Promise.resolve(action.run(tasks, task, { onRetry, onStop })).catch(() => {})}>
               <ActionIcon size={16} />
             </button>
           );
@@ -145,12 +148,13 @@ function TaskRow({ task, tasks, now, onOpen, onRetry }) {
 }
 
 // The panel under the button. `onOpen(task)`: bring back the window of a
-// task that has one; `onRetry(task)`: start the same work again. Its list
+// task that has one; `onRetry(task)`: start the same work again;
+// `onStop(task)`: stop it, with what its kind undoes beside. Its list
 // moves as it changes (ListMotion): a task that finishes glides past the
 // header to the top of Finished, one that comes fades in, one removed
 // leaves from where it stood while the rest close up, and a header goes
 // with its last row.
-export function TasksPanel({ tasks, onOpen, onRetry }) {
+export function TasksPanel({ tasks, onOpen, onRetry, onStop }) {
   const { watch } = tasks;
   React.useEffect(() => watch(), [watch]); // fresh progress while it is open
   const rows = tasks.tasks;
@@ -161,7 +165,7 @@ export function TasksPanel({ tasks, onOpen, onRetry }) {
   // together, they would say nothing.
   const cleared = React.useRef(false);
   React.useEffect(() => { cleared.current = false; });
-  const row = (task) => <TaskRow key={task.id} task={task} tasks={tasks} now={now} onOpen={onOpen} onRetry={onRetry} />;
+  const row = (task) => <TaskRow key={task.id} task={task} tasks={tasks} now={now} onOpen={onOpen} onRetry={onRetry} onStop={onStop} />;
   // the list's items in order: each header, then its rows
   const keys = [
     ...(rows.length ? [] : ["empty"]),

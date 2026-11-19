@@ -39,7 +39,7 @@ export const PANE_READS = {
     { path: "/server-config", later: true }],
   backups: ({ admin }) => [{ path: "/workspaces/mine", then: (d) => (d?.workspaces || []).map((w) => backupsOf(w.id)) },
     "/backup-tasks", admin && "/admin/offsite", admin && "/admin/gdrive"],
-  server: () => ["/admin/server-info", "/admin/settings", "/admin/ai-providers",
+  server: () => ["/admin/server-info", "/admin/settings", "/admin/zotero-app", "/admin/ai-providers",
     "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
   proxy: () => ["/admin/proxy"],
   integrations: () => ["/integrations/tokens"],

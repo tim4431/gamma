@@ -3512,8 +3512,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [exportJobId, setExportJobId] = useState(null);
   // Starting, reopening and retrying jobs, and what to say when one ends
   // (tasks/useAppJobs.js); `tasks` above calls its onJobFinished.
-  const { startWorkspaceExport, runBackupImport, copyPages, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask,
-    onJobFinished } = useAppJobs({
+  const { startWorkspaceExport, runBackupImport, copyPages, runExport, exportStarting, closeExport, leaveExportJob, openTask, stopTask,
+    retryTask, onJobFinished } = useAppJobs({
     tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
     pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations,
@@ -6027,14 +6027,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const doc_id = own?.ext === ".pdf" ? own.stem : await getDocIdForUrl(url);
       return { doc_id, source_url: url, original_filename: "", viewerUrl: uploadUrl(storedName(doc_id, ".pdf")), note: "" };
     }
-    const resolved = await resolvePdfUrl(url, oaFallback);
+    // The row's Stop while the link resolves (an AbortError to the caller);
+    // the viewer's download gives it one of its own once it starts.
+    const ctl = new AbortController();
+    const { signal } = ctl;
+    track.abortable(() => ctl.abort());
+    const resolved = await resolvePdfUrl(url, oaFallback, { signal });
     const source_url = resolved.source_url;
     const doc_id = await getDocIdForUrl(source_url);
-    const known = await apiJson(`${API}/blocks/by-doc/${doc_id}`).catch(() => null);
+    const known = await apiJson(`${API}/blocks/by-doc/${doc_id}`, { signal }).catch(() => null);
     if (!known) {
       updateTask(taskId, { info: t("checking link…") });
-      await probePdfUrl(source_url);
+      await probePdfUrl(source_url, { signal });
     }
+    signal.throwIfAborted();
+    track.abortable(null);
     const viewerUrl = pdfProxyUrl(source_url, { save: pdfSaveLocal });
     transferByUrlRef.current[viewerUrl] = taskId; // the viewer's byte-level reporting takes over this row
     return { doc_id, source_url, original_filename: "", viewerUrl, note: resolved.note || "" };
@@ -6443,7 +6450,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       guideEvents.emit("paper.fetched");
     } catch (err) {
       updateTask(taskId, { state: "failed", info: (err.message || "failed") });
-      setStatus(t("Open failed: {message}", { message: err.message }));
+      setStatus(err.name === "AbortError" ? t("Stopped") : t("Open failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -6704,7 +6711,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         return;
       }
       updateTask(taskId, { state: "failed", info: (err.message || "failed") });
-      setStatus(replace
+      setStatus(err.name === "AbortError" ? t("Stopped") : replace
         ? t("Replace failed: {message}", { message: err.message })
         : t("Attach failed: {message}", { message: err.message }));
     } finally {
@@ -13247,7 +13254,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <TasksButton tasks={tasks} open={openPopover === "downloads"}
             onToggle={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))} />
         ) : null}
-        {openPopover === "downloads" ? <TasksPanel tasks={tasks} onOpen={openTask} onRetry={retryTask} /> : null}
+        {openPopover === "downloads" ? <TasksPanel tasks={tasks} onOpen={openTask} onRetry={retryTask} onStop={stopTask} /> : null}
       </span>
     ),
     search: () => (

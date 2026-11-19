@@ -7,9 +7,10 @@ alike. gamma/gdrive_account.py keeps the connection.
 
 The scope is ``drive.file`` alone: Gamma sees only the files it made, and
 the device flow (a code the person enters at google.com/device) is the one
-Google offers a server at any address for it. The client is
-``config.google_drive_client``; its secret is a device client's, which
-Google does not treat as secret.
+Google offers a server at any address for it. The OAuth client
+(``OAuthClient``) is gdrive_account's to choose and is handed to every
+call that needs it; its secret is a device client's, which Google does not
+treat as secret.
 
 ``Client`` keeps whole files under its folder in My Drive (``Gamma
 backups`` by default). Keys are paths: ``snapshots/<ws>/<name>.zip`` is
@@ -48,7 +49,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from http.client import HTTPException
 from pathlib import Path
@@ -205,29 +206,18 @@ def _form(url: str, fields: dict, attempts: int = ATTEMPTS) -> Response:
 
 # --- the OAuth client and its tokens --------------------------------------------------
 
-def client_id() -> str:
-    """The OAuth client's ID; DriveConfigError when there is none."""
-    return _client()[0]
+@dataclass(frozen=True)
+class OAuthClient:
+    """A Google OAuth client of the "TVs and Limited Input devices" type,
+    which a connection is made through and its tokens renewed by."""
+    id: str
+    secret: str = field(repr=False)
 
 
-def _client() -> tuple[str, str]:
-    cid, secret = config.google_drive_client()
-    if not cid:
-        raise DriveConfigError("Google Drive needs a Google OAuth client: set GAMMA_GOOGLE_DRIVE_CLIENT_ID and "
-                               "GAMMA_GOOGLE_DRIVE_CLIENT_SECRET in the server's environment")
-    return cid, secret
-
-
-def available() -> bool:
-    """Whether there is a client to connect through."""
-    return bool(config.google_drive_client()[0])
-
-
-def start_device_flow() -> dict:
+def start_device_flow(oauth: OAuthClient) -> dict:
     """Ask Google for a device code (``drive.file``): ``{device_code,
     user_code, verification_url, expires_in, interval}``."""
-    cid, _ = _client()
-    resp = _form(f"{config.google_oauth_base()}/device/code", {"client_id": cid, "scope": SCOPE},
+    resp = _form(f"{config.google_oauth_base()}/device/code", {"client_id": oauth.id, "scope": SCOPE},
                  attempts=INTERACTIVE_ATTEMPTS)
     data = resp.json()
     if resp.status != 200 or not data.get("device_code") or not data.get("user_code"):
@@ -242,7 +232,7 @@ def start_device_flow() -> dict:
             "expires_in": int(data.get("expires_in") or 1800), "interval": max(int(data.get("interval") or 5), 1)}
 
 
-def poll_device_flow(device_code: str) -> dict:
+def poll_device_flow(oauth: OAuthClient, device_code: str) -> dict:
     """Ask once whether the person entered the code: ``{state: "pending"}``,
     ``{state: "slow_down"}``, ``{state: "denied"}``, ``{state: "expired"}``,
     or ``{state: "done", refresh_token, access_token, expires_in, scope}``.
@@ -250,9 +240,8 @@ def poll_device_flow(device_code: str) -> dict:
     interval; DriveUnreachable when no answer came. A grant without
     ``drive.file`` (the person unticked it) is ``{state: "denied"}``;
     DriveError for anything else."""
-    cid, secret = _client()
     resp = _form(f"{config.google_oauth_base()}/token", {
-        "client_id": cid, "client_secret": secret, "device_code": device_code, "grant_type": DEVICE_GRANT},
+        "client_id": oauth.id, "client_secret": oauth.secret, "device_code": device_code, "grant_type": DEVICE_GRANT},
         attempts=1)  # the pane asks again at the next interval
     data = resp.json()
     if resp.status == 200 and data.get("access_token"):
@@ -277,12 +266,13 @@ def poll_device_flow(device_code: str) -> dict:
     raise DriveError(f"Google's answer to the sign-in: {message or reason or resp.status}")
 
 
-def refresh(refresh_token: str) -> tuple[str, int]:
-    """A new access token for ``refresh_token`` and its lifetime in
-    seconds. DriveConfigError when Google no longer honours it."""
-    cid, secret = _client()
+def refresh(oauth: OAuthClient, refresh_token: str) -> tuple[str, int]:
+    """A new access token for ``refresh_token``, made through ``oauth``,
+    and its lifetime in seconds. DriveConfigError when Google no longer
+    honours it."""
     resp = _form(f"{config.google_oauth_base()}/token", {
-        "client_id": cid, "client_secret": secret, "refresh_token": refresh_token, "grant_type": "refresh_token"})
+        "client_id": oauth.id, "client_secret": oauth.secret, "refresh_token": refresh_token,
+        "grant_type": "refresh_token"})
     data = resp.json()
     if resp.status == 200 and data.get("access_token"):
         return str(data["access_token"]), int(data.get("expires_in") or 3600)
@@ -322,15 +312,15 @@ def forget(refresh_token: str) -> None:
         _tokens.pop(_digest(refresh_token), None)
 
 
-def access_token(refresh_token: str, *, renew: bool = False) -> str:
-    """The access token for ``refresh_token``, renewed when it has less
-    than a minute left or ``renew``."""
+def access_token(oauth: OAuthClient, refresh_token: str, *, renew: bool = False) -> str:
+    """The access token for ``refresh_token``, renewed through ``oauth``
+    when it has less than a minute left or ``renew``."""
     key = _digest(refresh_token)
     with _tokens_lock:
         held = _tokens.get(key)
         if held and not renew and held[1] > time.monotonic() + 60:
             return held[0]
-        token, lifetime = refresh(refresh_token)
+        token, lifetime = refresh(oauth, refresh_token)
         _tokens[key] = (token, time.monotonic() + lifetime)
         return token
 
@@ -363,13 +353,14 @@ def _mtime(stamp: str) -> float:
 
 
 class Client:
-    """One folder of one Google account's My Drive. ``attempts``: how often
-    a call is tried; the pane's Test tries once."""
+    """One folder of one Google account's My Drive, reached with
+    ``refresh_token`` through ``oauth``, the client it was made through.
+    ``attempts``: how often a call is tried; the pane's Test tries once."""
 
-    def __init__(self, refresh_token: str, folder: str, *, attempts: int = ATTEMPTS):
+    def __init__(self, oauth: OAuthClient, refresh_token: str, folder: str, *, attempts: int = ATTEMPTS):
         if not refresh_token:
             raise DriveConfigError("Google Drive is not connected: an admin connects it in Settings → Backups")
-        _client()
+        self.oauth = oauth
         self.refresh_token = refresh_token
         self.folder = folder
         self.attempts = max(1, attempts)
@@ -389,7 +380,7 @@ class Client:
         renewed = False
         attempt = 0
         while True:
-            sent = {"Authorization": f"Bearer {access_token(self.refresh_token)}", **(headers or {})}
+            sent = {"Authorization": f"Bearer {access_token(self.oauth, self.refresh_token)}", **(headers or {})}
             if sink is not None:
                 sink.seek(0)
                 sink.truncate()
@@ -402,7 +393,7 @@ class Client:
             else:
                 if resp.status == 401 and not renewed:
                     renewed = True
-                    access_token(self.refresh_token, renew=True)
+                    access_token(self.oauth, self.refresh_token, renew=True)
                     continue
                 attempt += 1
                 if not _retried(resp) or attempt >= self.attempts:

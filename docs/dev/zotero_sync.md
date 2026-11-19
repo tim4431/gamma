@@ -2339,8 +2339,11 @@ A key is connected in one of two ways (`routers/zotero.py`):
   Library and read/write to groups. Always available.
 - **Signing in at zotero.org** (OAuth 1.0a, whose access token *is* the
   key), in one of two modes (`oauth_mode`): `server`, this server's own
-  Zotero app (`GAMMA_ZOTERO_CLIENT_KEY` / `_SECRET`, `config.zotero_client`)
-  running zotero.org's steps itself (`zotero_oauth.py`: request token,
+  Zotero app (`zotero_oauth.app`), which an admin registers at
+  zotero.org/oauth/apps (type *Browser*, the callback URL Settings shows)
+  and saves in Settings → Server → Zotero sign-in (users.db `settings` key
+  `zotero_app`, the secret encrypted, never returned; removing it leaves
+  the keys it made connected), running zotero.org's steps itself (`zotero_oauth.py`: request token,
   authorize, access token); or `cloud`, Gamma Cloud's broker, which holds a
   registered app for every Gamma server without one and relays the
   approval back under a one-time code the server trades with its PKCE
@@ -2378,12 +2381,11 @@ system browser holds no cookie of the app's web view. On any other server
 a loopback peer proves nothing: behind an SSH tunnel or a port forward,
 every person's requests come from loopback.
 
-The addresses and the server's own Zotero app are configuration
-(`config.zotero_*`): `GAMMA_ZOTERO_API_BASE` (the Web API,
-`https://api.zotero.org`), `GAMMA_ZOTERO_WEB_BASE` (zotero.org, for the
-OAuth steps and a link's `remote_url`), `GAMMA_ZOTERO_STREAM_URL` (the
-streaming API) and `GAMMA_ZOTERO_CLIENT_KEY` / `GAMMA_ZOTERO_CLIENT_SECRET`.
-The fake sets the first two for its tests.
+Zotero's addresses are configuration (`config.zotero_*`), there for the
+tests: `GAMMA_ZOTERO_API_BASE` (the Web API, `https://api.zotero.org`),
+`GAMMA_ZOTERO_WEB_BASE` (zotero.org, for the OAuth steps and a link's
+`remote_url`) and `GAMMA_ZOTERO_STREAM_URL` (the streaming API). The fake
+sets the first two for its tests.
 
 ### What the key may do
 

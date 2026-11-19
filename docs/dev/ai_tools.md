@@ -1455,19 +1455,35 @@ stays). `fetch_paper` reads it
 before any fetch, for the same work in any spelling or the request's URLs,
 with a source note saying the user fetched it in their browser.
 
-A request still waiting also shows in **Background tasks** as a read-only
+A request still waiting also shows in **Background tasks** as a
 `paper-handoff` row (`GET /api/jobs` adds them from
 `fetch_handoff.waiting`, the way it adds a running scheduled backup), so a
-card whose reply has scrolled away is still somewhere to find; a click on
-the row opens the publisher's page through `/go`
-([tasks.md](tasks.md)).
+card whose reply has scrolled away is still somewhere to find. The row is
+named by the paper's title when the model passed `fetch_paper` one (kept
+with the request, `open_request(title=)`), else by the DOI or arXiv id it
+asked for, else by the site; its line says whose turn it is and the site.
+Until the Connector takes the request, it waits for the user: a still
+shield, no bar, the tray button's accent dot. A click on the row opens the
+publisher's page through `/go`; its **Stop** settles the request as Dismiss
+does (`POST /api/ai/handoffs/<id>/stop`), so a reply waiting on its card
+goes on without the paper, and asks the Connector to close the background
+tab it kept for it ([tasks.md](tasks.md)). The card shows the title too,
+over the source.
 
 Every reply that read or named papers ends with a **Save to library** pill
 (`chat/ReplyPapers.jsx`, rules tested in `chat/chatPapers.js`): what its
 `fetch_paper` calls read (the action carries the document's `title`, `pdf`,
 and `request` when the user's browser delivered it), what a wall stopped
 (the handoff's request), and the DOI / arXiv links in its text, once each
-by identifier. Opening it asks the library which it holds already (`GET
+by identifier. A PDF carries no title of its own, so the action takes the
+one the model passed once the document's first pages show it (`identity`);
+a PDF read from an address and a link with the same title (letters and
+digits, 12 or more) are one paper, saved with that PDF and the link's DOI,
+unless their identifiers differ. A paper without a title is named by its
+DOI or arXiv id, else its PDF's file name, else the site, never a raw
+address (`paperLabel`); beside its kind the identifier or the site opens
+what was read. With nothing checked the button reads **Save to {folder}**,
+disabled. Opening it asks the library which it holds already (`GET
 /api/library/lookup`) and the registry for titles the reply left out (`GET
 /api/library/preview`). The checked papers are saved one by one through
 `POST /api/clip`, the Connector's ingest (dedup, resolve and store the PDF,
