@@ -121,8 +121,6 @@ export const RULES = [
   ["frontend/tests/e2e/run.mjs", ALL],
   ["frontend/tests/e2e/**", []],
   ["frontend/tests/**", []],
-  // the build's plugin that ships the file icons, which the trees, the tabs and the viewers draw
-  ["frontend/tools/fileIcons.mjs", ["work-folders", "explorer", "viewers", "remote-work"]],
   ["frontend/tools/**", []],
 
   ["frontend/src/shared/i18n/locales/**", ["i18n", "settings"]],
