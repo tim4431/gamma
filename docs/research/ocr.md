@@ -5,8 +5,10 @@ file is a picture of each page with an invisible OCR text layer drawn over
 it, or with no text at all. The question was why selection, highlights,
 search and the translated view were so poor on scans, and what to build. The
 note records what was measured, the three repairs tried and why one was
-picked. It also records what is left for a second stage, real OCR, and a
-third, a vision model. The mechanics as built are in
+picked. A second stage, real OCR, was then measured against a transcribed
+truth: which engine, what it costs on each platform, when it beats a scan's
+own layer, and a design that follows. A third, a vision model for scanned
+equations, is left open. The mechanics as built are in
 [dev/pdf_loading.md](../dev/pdf_loading.md) (the text layer),
 [dev/documents.md](../dev/documents.md#text-extraction) (the server's text)
 and [dev/translation.md](../dev/translation.md) (the OCR flag). The code is
@@ -403,38 +405,240 @@ read from scanned pages.
   half the skew.
 - **Wrong characters**, which only real OCR can replace.
 
+## Stage 2: what real OCR adds
+
+Measured in November 2026, still before anything was built: which engine
+reads these scans best, what it costs, where it can run, and when it beats
+the layer a scan already has.
+
+### Pages and ground truth
+
+Fifteen pages: a text page from every scan in the corpus (two from Lounis),
+two display-equation pages (Lounis p8, Holstein and Primakoff p8) and page 2
+of Shannon (1948), which has no layer. Each page was rendered at 300 dpi in
+grey, the picture every engine got.
+
+The truth was transcribed twice under one set of rules. The rules were:
+- write what is printed, printing errors such as "Febry-Perot" kept;
+- one printed line per line, in reading order;
+- tag display equations to be scored apart, and leave out text inside figures.
+
+Both passes were done by a model reading full-resolution tiles of the scan:
+- the first proofread a Tesseract draft, with two other engines' readings
+  shown beside each line;
+- the second read the tiles alone and never saw any OCR output.
+
+A third pass settled every line on which the two differed, from a crop of
+the line.
+- Over the 13 text pages (796 lines) the passes differed on two text lines
+  (a space and a built-up fraction) and on eight equation or figure lines.
+- On the two equation pages they differed on 14 lines, nearly all in how a
+  built-up fraction or the space around an operator is written.
+- Five pages came out identical byte for byte.
+
+### Measures
+
+- **Errors**: character error rate. Each printed line is matched to the
+  cheapest stretch of the engine's page text, so reading order and line
+  merges cost nothing. Both sides are normalized first (NFKC; quotes and
+  dashes unified; whitespace collapsed).
+- **Recall, precision**: the printed words found in the engine's text, and
+  the engine's words found in the print, counted as multisets.
+- **Continuity**: of consecutive printed lines, the share whose text follows
+  directly in the engine's text. Selection, translation blocks and a phrase
+  searched across a line break all need it.
+- **Missed**: printed lines matched at less than half their characters.
+
+Times are recognition alone on a Ryzen 9 9900X. One thread stands in for a
+NAS core; no NAS was measured.
+
+### Results
+
+The 12 text pages that have a layer:
+
+| Engine | Errors | Recall | Precision | Continuity | Missed | s/page, one thread |
+|---|---|---|---|---|---|---|
+| The existing layers | 1.80% | 95.7% | 78.5% | 91.7% | 0.3% | – |
+| Tesseract 5.5.4, fast models, eng+fra+deu | 1.29% | 96.3% | 93.4% | 95.0% | 0.1% | 2.5 (CLI), 3.7 (tesserocr) |
+| the same, best models | 1.29% | 96.3% | 93.2% | 95.0% | 0.1% | 4.9 (one language a page) |
+| the same, English only | 1.53% | 95.3% | 92.5% | 94.9% | 0.1% | 1.8 |
+| tesseract.js 7.0.0, automatic page segmentation | 1.34% | 96.2% | 93.2% | 95.0% | 0.1% | 4.3 (WASM in Node) |
+| tesseract.js 7.0.0 as it comes (one block) | 1.62% | 95.3% | 91.4% | 41.0% | 0.0% | 4.4 |
+| MuPDF's Tesseract (PyMuPDF 1.28.2), fast | 2.11% | 95.3% | 92.0% | 41.7% | 0.3% | 1.8 |
+| OnnxTR 0.9, db_resnet50 + parseq | 1.77% | 95.8% | 93.1% | 66.7% | 0.1% | 18.4 on 24 threads |
+| OnnxTR 0.9, fast_base + crnn_vgg16_bn | 2.30% | 96.0% | 92.3% | 75.1% | 2.0% | 13.7 |
+| RapidOCR 3.10, PP-OCRv6 small | 2.98% | 94.7% | 93.6% | 45.5% | 2.8% | 14.1 |
+| RapidOCR 3.10, PP-OCRv6 medium | 3.21% | 94.3% | 94.8% | 44.4% | 3.4% | 21.0 on 24 threads |
+
+The layers' precision is low because Kollin's page carries every word twice.
+Shannon's page, which has no layer, reads at 0.41% errors with Tesseract.
+
+The layer against Tesseract (fast, eng+fra+deu), page by page:
+
+| Page | Layer errors | Layer recall | OCR errors | OCR recall | Words the two share |
+|---|---|---|---|---|---|
+| Lounis p2 | 3.69% | 87.2% | 0.81% | 96.2% | 88.9% |
+| Lounis p4 | 3.84% | 91.1% | 2.12% | 93.8% | 90.4% |
+| NACA p15 | 4.26% | 93.3% | 2.65% | 96.0% | 82.5% |
+| J. Phys. Radium p12 | 3.63% | 93.0% | 2.48% | 92.7% | 88.6% |
+| Holstein p2 | 2.20% | 94.3% | 1.63% | 94.7% | 94.4% |
+| Kitagawa p4 | 2.92% | 94.5% | 2.56% | 94.5% | 92.6% |
+| Hänsch p2 | 0.95% | 97.2% | 1.26% | 98.2% | 95.2% |
+| Feshbach p3 | 0.71% | 96.9% | 0.78% | 97.7% | 97.7% |
+| Annalen p10 | 1.14% | 95.6% | 0.71% | 95.9% | 98.9% |
+| Phys. Rev. p8 | 0.89% | 98.3% | 0.57% | 98.3% | 98.5% |
+| Siegman p99 | 0.41% | 98.8% | 0.51% | 98.4% | 98.4% |
+| Kollin p2 | 0.05% | 99.8% | 0.39% | 98.6% | 98.9% |
+
+Display-equation lines (2,341 characters) came out 47–57% wrong with every
+engine, and 56.6% wrong in the existing layers.
+
+### What the numbers say
+
+- **Tesseract 5.5 is the engine.** It makes the fewest errors. Among the
+  engines it is the only one that keeps reading order on two-column pages
+  through its own layout analysis.
+  - The fast models do as well as the best ones, at half the time and a
+    quarter of the size.
+  - Loading English, French and German together costs nothing on English
+    pages and about 10% in time. English alone loses the accents: the
+    French page goes from 2.5% to 3.3% errors, the German one from 0.7% to
+    2.8%.
+  - OpenMP threads slow it down. With one thread per page, MuPDF's copy
+    took 1.8 s against 2.8 s, and tesserocr 3.7 s against 4.9 s.
+- **RapidOCR and OnnxTR are no better here, and slower.** RapidOCR reads
+  the most lines exactly (79–81%). It also misses whole lines (2.8–3.4%)
+  and interleaves the columns.
+  - OnnxTR's README gives 0.57 s a page. That figure is for form images,
+    not for 600-word pages at 300 dpi.
+  - PP-OCRv6's medium model is no better than the small one.
+- **MuPDF's built-in Tesseract reads the characters about as well, but
+  loses the layout.** MuPDF regroups the recognized words by position:
+  - its blocks span both columns, so continuity is 42%;
+  - it starts a new line at the wider space after a full stop, which
+    accounts for most of its extra errors;
+  - it dropped two printed lines of the French page.
+
+  A reading-order step was tried on every engine's lines and words: lines
+  split at gaps no word space makes, or rebuilt from the geometry, then the
+  columns split at the gutter the fewest lines cross.
+  - It reached 56–93% continuity depending on the engine: 83% on MuPDF's
+    lines, 93% on RapidOCR's.
+  - It added errors every time (MuPDF's 2.11% became 2.32%).
+
+  Tesseract's own layout analysis is worth keeping rather than rebuilt.
+- **tesseract.js matches the server's Tesseract once its page segmentation
+  is set to automatic.** As it comes, it reads the page as one block and
+  runs the two columns together.
+- **OCR is worth it on the poor layers.** On Lounis p2 errors fall from 3.7%
+  to 0.8% and word recall rises from 87% to 96%. NACA, J. Phys. Radium and
+  Holstein gain too. On the good layers OCR is equal or slightly worse
+  (Kollin's CVISION layer, Siegman's LuraDocument). Those layers were made
+  from better pictures than a 300-dpi render of the PDF.
+  - The share of words a page's layer has in common with a fresh OCR of it
+    separates the two groups: 98–99% on the good layers, 82–90% where OCR
+    helps. Hänsch, Holstein and Kitagawa share 92–95% and gain little. The
+    threshold rests on 12 pages.
+- **No engine reads display equations.** They stay with Stage 3.
+
+### Where each engine can run
+
+| Platform | Tesseract with its layout | Other options |
+|---|---|---|
+| Docker, amd64 and arm64 | The tesserocr 2.13.0 wheel (MIT; 5.6 and 5.3 MB, Tesseract 5.5.4 and Leptonica inside) plus the models: fast eng 4.1 MB, fra 1.1, deu 1.5. No apt package is needed. Debian's `tesseract-ocr` would add 69 packages, about 100 MiB. | MuPDF's Tesseract, already in PyMuPDF 1.28.2: only the models are needed, but the layout is lost. |
+| Desktop, Windows and macOS | tesserocr wheels: 23 MB on Windows, 3.6–4.1 MB on macOS. A PyInstaller freeze was not tried. | Windows.Media.Ocr reads only the languages Windows has installed. With no French pack, "garçon déjà prêt" came back as "garcon déjå prét". |
+| Android, iPad | None. The PyMuPDF the apps ship (Flet's 1.27.2.3) is built without OCR ("No OCR support in this build"), and tesserocr has no mobile wheels on PyPI or Flet's index. | tesseract.js in the app's web view. Apple Vision from Swift on the iPad (0 MB). ML Kit on Android: about 4 MB bundled, or 260 KB through Play services; it needs a Kotlin bridge and sends usage metrics to Google. RapidOCR's dependencies exist on Flet's index (about 60 MB with models), but it read worst here. |
+| Any browser | tesseract.js: about 4.5 MB on first use (the 1.46 MB LSTM core and 2.95 MB of English best_int), both servable from Gamma's own files. | – |
+
+The survey's published comparisons agree with these results:
+- On historical newspapers Tesseract beat the older PaddleOCR models and
+  EasyOCR ([Carlson et al.](https://arxiv.org/html/2304.02737)).
+- No published comparison of PP-OCRv5 or v6 with Tesseract on old scans was
+  found.
+
+Vision-language models that write LaTeX are the field's answer for
+equations, and they are a Stage 3 question:
+- Chandra, LightOnOCR-2 and olmOCR score 82–89 on
+  [olmOCR-Bench](https://github.com/allenai/olmocr)'s old-scan math, as
+  reported by the models' own authors.
+- The models small enough for a CPU have 0.9–1.2 billion parameters, and no
+  CPU time per page has been published for them.
+
+### A design that follows
+
+- **Engine.** Tesseract 5.5 everywhere, with the fast models and English,
+  French and German loaded by default:
+  - tesserocr on the server (Docker and desktop);
+  - tesseract.js where the server has none (the mobile apps, or any
+    browser), with automatic page segmentation set.
+
+  Both give the same text and the same kind of word boxes.
+- **When to run it.**
+  - A scanned page with no text: always worth it.
+  - A scan with a layer: OCR a page or two first, and replace the layer when
+    under about 93% of words are shared. Otherwise keep the layer and Stage
+    1's repair.
+  - In both cases the Document menu could also offer it.
+
+  It runs as a background job. At 2.5–4 s a page on one core here, and
+  perhaps two to three times that on a NAS core (not measured), a 15-page
+  paper takes one to three minutes. Siegman's 1,310 pages would take hours.
+- **Storage.** Kept per stored file, by hash, as derived data beside the
+  text index: words with their boxes, about 7 KB a page gzipped (17 KB as
+  compact JSON). A 300-page book is about 2 MB.
+- **Reading.** Through the seams Stage 1 built, so search, the chat, MCP,
+  quotes and translation need no OCR case of their own:
+  - `pageText` gives the viewer upright items from the OCR words, with no
+    repair needed, since a word box is the ink;
+  - `pdf_text`'s text and glyph readers read the same words;
+  - the document's search index is rebuilt once.
+- **Highlights.** The page picture does not change, so a highlight's
+  rectangles still hold; only the text under them changes. Moving them by
+  their passage, as for a replaced PDF, would lose those made on garbled
+  text ("Rksum4"). They keep their place and take the new text as their
+  quote.
+- **Not the default: a new version of the PDF.** Writing the OCR text into
+  a new version of the file, as OCRmyPDF does, would carry the better text
+  into downloads and Zotero, but it changes the person's file: a synced
+  vault's, a Zotero attachment's. MuPDF's `Pixmap.pdfocr_tobytes`, the way
+  to do it without Tesseract's command line, wrote no text in a test here.
+
+### Not measured
+
+- A NAS, a phone, or tesseract.js in a browser rather than Node.
+- tesserocr frozen by PyInstaller, and MuPDF's Tesseract on Linux and
+  macOS (seen only as strings in the wheels).
+- Apple Vision and ML Kit accuracy.
+- Fraktur: the Annalen page is set in Antiqua.
+- A render above 300 dpi, or at the scan's own resolution.
+
 ## Still open
 
-### Stage 2: real OCR
+### Stage 2: building it
 
-For scans with no layer (Shannon 1948 here, and five Siegman pages) and for
-layers whose characters are wrong. The candidates, none measured in this
-study:
-
-- **Tesseract through PyMuPDF on the server** (`get_textpage_ocr`). It needs
-  the Tesseract binary and its language data on the host, which the Docker
-  image, the desktop app and the phone servers would each have to carry.
-- **RapidOCR** (PaddleOCR's models on ONNX Runtime), a Python package with
-  no system binary; its recognition of Latin math and old type is unknown.
-- **tesseract.js in the browser**, which costs the reader's device and
-  works where no server OCR is installed, at the price of a large download.
-
-Whichever runs, its output should be stored per document as a text-layer
-override and read through the same seams Stage 1 built: the client's
-`pageText` and the server's text and glyph readers. The viewer, search,
-segmentation, relocation and the chat then need no OCR case of their own.
-What the decision needs first: word accuracy and timings per page on this
-corpus against the existing layers (the harness above scores geometry, a
-word error rate against a hand-checked page or two would be new), the
-install size on each platform, and where the override lives (`data.db`
-beside the text index is the natural place, as derived data).
+The design above, from the engine to the highlights. Its threshold for
+replacing a layer rests on 12 pages and should be checked on more.
 
 ### Stage 3: a vision model for scanned math
 
-OCR writes few math characters, and the formula rules
-([dev/translation.md](../dev/translation.md)) read fonts a scan does not
-have. Translating a scanned equation-heavy paper well probably means sending
-the page picture to a vision model with the text. Not designed or measured.
+Every OCR engine measured above got 47–57% of the characters of display
+equations wrong, and the formula rules ([dev/translation.md](../dev/translation.md))
+read fonts a scan does not have. Translating a scanned equation-heavy paper
+well probably means sending the page picture to a vision model with the
+text, through the AI provider the person has set up.
+
+The open questions:
+- how a model's LaTeX is placed on the page;
+- what it costs per page;
+- how to catch what such models are known to get wrong on old print:
+  - characters repeated until the output runs out, on 19th-century
+    newspapers ([Bourne 2025](https://arxiv.org/html/2502.14901));
+  - letters and diacritics added that the page does not have, on
+    18th-century print ([Levchenko 2025](https://arxiv.org/html/2510.06743));
+  - Nougat looping on scanned pages
+    ([Blecher et al.](https://arxiv.org/html/2308.13418v1)).
+
+Not designed or measured.
 
 ### Smaller items
 
@@ -454,8 +658,9 @@ the page picture to a vision model with the text. Not designed or measured.
 
 ## Rebuilding the study
 
-The harness lived in a session scratchpad, outside the repository, and the
-corpus cannot be committed. To rebuild it:
+The harness for both stages lived in a session scratchpad, outside the
+repository. The corpus and the transcribed truth cannot be committed: most
+of the pages are under copyright. To rebuild it:
 
 1. **Corpus.** The public scans: HAL jpa-00247657; the Internet Archive
    items `bstj27-3-379`, `journal-de-physique-1963_1961-03_22_3`,
@@ -479,5 +684,27 @@ corpus cannot be committed. To rebuild it:
 6. **Detector**: the prescreen and the confirm on every page, the confirm
    also on a random sample of negatives, the Python twin on every page, and
    the two verdicts compared page by page.
+7. **Stage 2 pages**: render each at 300 dpi in grey with PyMuPDF, and keep
+   the layer's words (`get_text("words")`, stream order) as one more engine.
+8. **Engines**: each writes, per page, lines of words with boxes in points
+   and its recognition time.
+   - Tesseract's TSV output, or tesserocr's result iterator, with a line
+     started at `RIL.TEXTLINE`;
+   - PyMuPDF's `get_textpage_ocr(full=True)`;
+   - RapidOCR with `return_word_box`;
+   - OnnxTR's export;
+   - tesseract.js with `blocks: true`.
 
-The 46-page evaluation takes about 1.2 s, the truth 13 s.
+   Run them one at a time, then again with one thread
+   (`OMP_THREAD_LIMIT=1`, or ONNX Runtime's `intra_op_num_threads`).
+9. **Truth**: cut each page into full-resolution tiles by column, and
+   transcribe it twice under written rules: once proofreading a draft that
+   shows other engines' readings, once from the tiles alone. Settle each
+   disagreement from a crop of its line.
+10. **Score** with the measures of Stage 2. The best-substring edit distance
+    is a row-vectorized dynamic program; a pure-Python one is too slow for
+    page-length texts.
+
+The 46-page evaluation takes about 1.2 s, the truth 13 s. Stage 2's engines
+take about 40 minutes over the 15 pages, its scoring about two minutes per
+engine.
