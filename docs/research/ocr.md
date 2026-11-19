@@ -658,9 +658,9 @@ Not designed or measured.
 
 ## Rebuilding the study
 
-The harness for both stages lived in a session scratchpad, outside the
-repository. The corpus and the transcribed truth cannot be committed: most
-of the pages are under copyright. To rebuild it:
+The harness for both stages is [tools/ocr-study](../../tools/ocr-study/README.md).
+The corpus and the transcribed truth cannot be committed, because most of
+the pages are under copyright. To rebuild them:
 
 1. **Corpus.** The public scans: HAL jpa-00247657; the Internet Archive
    items `bstj27-3-379`, `journal-de-physique-1963_1961-03_22_3`,
