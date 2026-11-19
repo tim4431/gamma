@@ -2583,6 +2583,52 @@ export async function chatNavigationScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // The label's hidden text, absolute while it morphs, was laid out where
+  // the label stands in the transcript's content, beyond every scroller:
+  // under a long conversation, far below the window, so the page took a
+  // scrollbar for the morph and every column narrowed and widened again
+  // (motion.css .morph.moving). The suite's browser draws no scrollbars,
+  // so the step reads the page's own overflow, frame by frame.
+  await step("chat navigation: the pill's label morphs at the foot of a long conversation without stretching the page past the window", async () => {
+    const earlier = Array.from({ length: 6 }, (_, i) => [
+      { role: "user", text: `Question ${i + 1}` },
+      { role: "ai", text: "An earlier answer, long enough to wrap over several lines. ".repeat(12) },
+    ]).flat();
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: earlier } });
+    const ctx = await streamingContext();
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      await page.locator(".chatBubbleRow.user", { hasText: "Question 6" }).waitFor();
+      await page.waitForLoadState("networkidle");
+      assert(await page.locator(".chatMessages").evaluate((el) => el.scrollHeight > 2 * el.clientHeight), "the conversation runs past its window");
+      await ask(page, "Tidy up the library");
+      await page.locator(".chatBubbleRow.ai").last().locator(".chatSteps", { hasText: "Thinking" }).waitFor();
+      await page.evaluate(() => {
+        const frames = [];
+        window.pageFrames = frames;
+        const tick = () => {
+          if (window.pageFrames !== frames) return;
+          const ro = new ResizeObserver(() => {
+            ro.disconnect();
+            const root = document.documentElement;
+            frames.push({ over: root.scrollHeight - root.clientHeight, moving: !!document.querySelector(".chatSteps .morph.moving") });
+          });
+          ro.observe(document.documentElement);
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+      await push(page, { step: { id: "c1", tool: "search_library", args: { query: "cavity" } } });
+      await page.waitForSelector(".chatSteps .morph.moving", { state: "attached" });
+      await page.waitForSelector(".chatSteps .morph.moving", { state: "detached" });
+      const frames = await page.evaluate(() => { const seen = window.pageFrames; window.pageFrames = null; return seen; });
+      assert(frames.some((f) => f.moving), "a frame drew the label morphing");
+      assertEq(Math.max(...frames.map((f) => f.over)), 0, "no frame lets the page scroll");
+      await page.evaluate(() => window.chatStream.finish());
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("chat navigation: back on a page, its conversation shows at once while it is read again; the history popover keeps its list, and a quick list never shows Loading…", async () => {
     const back = await alice.api("/api/pages", { method: "POST", body: { title: "Cached chat page" } });
     // Archiving clears the bucket's active conversation: it goes first.

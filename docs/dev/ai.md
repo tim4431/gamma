@@ -631,7 +631,9 @@ and a `$$…$$` alone on its line as display math (`remarkLoneDisplayMath`,
 [diagrams.md](diagrams.md)), so a wide formula scrolls in its own box
 instead of widening the transcript. The transcript keeps its scrollbar's
 room (`scrollbar-gutter: stable`), so a reply growing past the window does
-not rewrap it.
+not rewrap it. Its pill's label changing under a long conversation does
+not give the page a scrollbar either (`MorphText`,
+[ui-design.md](ui-design.md#things-that-change-in-place)).
 
 `gather_inputs` returns the context in two parts, and `build_messages`
 places them apart on purpose. The **document part** (the pages' sections:

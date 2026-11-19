@@ -1667,7 +1667,12 @@ is plain markup, and a first render never moves.
   ellipsis cuts the old or the new one, and while `still` holds (a label
   a load changed, as a chat reply's read again). Not inside a surface
   placed from its size (the selection popup): its width would move it
-  every frame.
+  every frame. Mid-swap the label is positioned (`.morph.moving`), so the
+  hidden text inside it stays in whatever scroller holds the label.
+  Otherwise, low in a long list (the reply pill under a long
+  conversation), that text stretched the page past the window: a page
+  scrollbar for the length of the swap, and every column narrowed and
+  widened again.
   The chat's reply pill is one label from the start of a turn:
   "Thinking", each step running, "Responding", then its summary, every
   change a morph. The one transcript draws it with `StepsPill`
