@@ -966,6 +966,12 @@ instead of fixing; the fix removes its entry.
   ran beside it; the file alone passed 41/41. Likely the debounce: with
   `PUSH_DELAY` at 0.2 s, three quick PATCHes that take longer than that
   under load settle apart and send two PUTs where the test counts one.
+- **test_notion_nfm: test_long_input_reads_fast**
+  (`backend/tests/test_notion_nfm.py:879`, this machine, 2026-11-18): the
+  ten long inputs took 5.23 s against the test's 5 s bound in the full
+  parallel suite while two browser groups (notes-pdf-share, translation)
+  ran beside it; the file alone passed. A wall-clock bound on pure Python
+  that the machine's load decides.
 - **notes: images and tables are objects — a press selects…**
   (`frontend/tests/e2e/scenarios/notes.mjs:2082`, this machine,
   2026-11-18): the press on the table's bottom margin opened no editor.
