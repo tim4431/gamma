@@ -843,7 +843,9 @@ export async function localAgentScenarios(env) {
         const first = CHAT_REPLY.split(" ")[0];
         assert([...seen].some((s) => s.includes(first) && !s.includes(CHAT_REPLY)),
           `a part of the reply was seen before the whole: ${JSON.stringify([...seen])}`);
-        assertEq(await dock.locator(".chatMsgModel .chatSpeedGlyph").count(), 1, "the reply's model row: the speed it ran at");
+        // (the row is drawn once the chat hears the turn ended, after the server says so)
+        await until(async () => (await dock.locator(".chatMsgModel .chatSpeedGlyph").count()) === 1,
+          { what: "the reply's model row: the speed it ran at" });
         assertNoProblems(page);
       } finally { await ctx.close(); }
       const since = heard().slice(before);
