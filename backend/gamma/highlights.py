@@ -124,7 +124,7 @@ and the readers take for a note. A range may have a line ``style``, never
 an ``area``; a restore passes the position through untouched
 (``normalize.highlight_shape`` reshapes ``pdf_position`` alone), and a
 vault's Markdown file writes a range moved into a notes page as any
-highlight, a ``[!quote]`` callout, without a page (vault/sync.py ``_g``,
+highlight, a ``[!quote]`` callout, without a page (vault/round.py ``_g``,
 vault/links.py ``_highlight_to_file`` and ``_head``).
 ``is_text_range`` is its test, the twin of ``is_highlight`` and
 ``is_region``; tests/shared/textposition.json holds the client

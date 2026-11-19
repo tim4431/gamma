@@ -26,7 +26,7 @@ import pytest
 
 from conftest import account_of, doc_props, login, make_folder, make_page, make_user, workspace_of
 from gamma import folder_links, gamma_sync, md_lens
-from gamma.vault import disk as vault_disk, kinds, store as vault_store, sync as vault_sync
+from gamma.vault import disk as vault_disk, kinds, pages as vault_pages, pull as vault_pull, store as vault_store
 from gamma.vault.local_remote import LocalRemote
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.integrations import create_token
@@ -184,7 +184,7 @@ def test_a_folder_kept_before_is_taken_onto_the_engine_at_its_first_round(owner,
     os.utime(paper_md, (then, then))
     status = _sync(owner, link["id"])
     assert status["counts"]["sent"] == 2 and "a line from disk" in _texts(ws, lab["paper"])
-    assert status["kept"] == [{"path": "UP plain.md", "why": vault_sync.UNKNOWN, "force": True}]
+    assert status["kept"] == [{"path": "UP plain.md", "why": vault_pages.UNKNOWN, "force": True}]
     assert "my own line" not in " ".join(_texts(ws, lab["plain"]))
     picture = vault_store.files(link["id"])[f"attachments/{lab['png']}"]     # a work folder's picture is a file: a page
     assert picture["kind"] == "file" and picture["page_id"] and picture["page_id"] in _pages_of(lab["folder"])
@@ -196,7 +196,7 @@ def test_a_folder_kept_before_is_taken_onto_the_engine_at_its_first_round(owner,
     rows = vault_store.files(link["id"])
     assert "UP plain.md" not in rows and rows["Renamed plain.md"]["page_id"] == lab["plain"]
     assert len(LocalRemote(ws, lab["folder"], account_of(OWNER)).layout().pages) == pages
-    assert status["kept"] == [{"path": "Renamed plain.md", "why": vault_sync.UNKNOWN, "force": True}]
+    assert status["kept"] == [{"path": "Renamed plain.md", "why": vault_pages.UNKNOWN, "force": True}]
 
     # a force pull makes it Gamma's page, with no gamma_id, its bytes in the history
     status = _sync(owner, link["id"], force="pull")
@@ -334,7 +334,7 @@ def test_a_note_left_beside_its_papers_pdf_is_that_pages_kept_never_merged_from_
         for _ in range(2):
             status = _sync(owner, link["id"])
         assert sorted(_texts(ws, lab["paper"])) == before
-        assert {"path": "UP paper.md", "why": vault_sync.UNKNOWN, "force": True} in status["kept"]
+        assert {"path": "UP paper.md", "why": vault_pages.UNKNOWN, "force": True} in status["kept"]
         assert "UP paper 2.md" not in _files_of(dest)
     finally:
         owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
@@ -378,7 +378,7 @@ def test_a_force_push_of_a_kept_older_note_keeps_its_highlight(owner, disk, over
     try:
         _sync(owner, link["id"])
         assert owner.patch(f"/api/folder-links/{link['id']}", json={"push": "everything"}).status_code == 200
-        assert _sync(owner, link["id"])["kept"][0]["why"] == vault_sync.UNKNOWN
+        assert _sync(owner, link["id"])["kept"][0]["why"] == vault_pages.UNKNOWN
         _sync(owner, link["id"], force="push", confirm=1)
         status = _sync(owner, link["id"])
         after = _props_of(ws, lab["paper"])
@@ -523,9 +523,9 @@ def test_a_pdf_changed_on_disk_and_in_gamma_is_kept_until_a_force_decides(owner,
     try:
         status = _sync(owner, link["id"])
         assert status["counts"]["sent"] == 0
-        assert {"path": "UP paper.pdf", "why": vault_sync.BOTH_PDF, "force": True} in status["kept"]
+        assert {"path": "UP paper.pdf", "why": vault_pull.BOTH_PDF, "force": True} in status["kept"]
         assert _sync(owner, link["id"])["counts"]["sent"] == 0       # the page's chip says why from then on
-        assert vault_store.files(link["id"])["UP paper.pdf"]["problem"] == vault_sync.BOTH_PDF
+        assert vault_store.files(link["id"])["UP paper.pdf"]["problem"] == vault_pull.BOTH_PDF
         assert owner.get(f"/api/blocks/{lab['paper']}").json()["properties"]["doc"]["hash"] == up["doc_id"]
         assert (dest / "UP paper.pdf").read_bytes() == disk_pdf
         _sync(owner, link["id"], force="pull", confirm=1)
@@ -747,7 +747,7 @@ def test_a_pdf_annotated_in_a_pulled_folder_stays_where_it_is_when_its_page_leav
             owner.put(f"/api/blocks/{lab['paper']}", json={"properties": {"folders": [make_folder(owner, f"UP away {how}")]}}
                       ).raise_for_status()
         status = _sync(owner, link["id"])
-        assert {"path": "UP paper.pdf", "why": vault_sync.LEFT, "force": False} in status["kept"], status
+        assert {"path": "UP paper.pdf", "why": vault_pull.LEFT, "force": False} in status["kept"], status
         assert (dest / "UP paper.pdf").read_bytes() == annotated and "UP paper.pdf" not in vault_store.files(link["id"])
         assert not list((dest / ".gamma").rglob("*.pdf")) and not (dest / "UP paper.md").exists()
         _sync(owner, link["id"])
@@ -781,7 +781,7 @@ def test_a_cloud_placeholder_the_client_wrote_holds_back_no_upgrade_and_is_read_
         status = _sync(owner, link["id"])
         assert status["last_error"] == "" and status["upgraded_at"], status
         assert not folder_links.older(folder_links.get_link(link["id"])) and "UP plain.md" not in reads
-        assert vault_store.files(link["id"])["UP plain.md"]["hash"] == vault_sync.UNREAD
+        assert vault_store.files(link["id"])["UP plain.md"]["hash"] == vault_pull.UNREAD
         assert "gamma_id" not in (dest / "UP paper.md").read_text(encoding="utf-8")     # the rest pulled
         subprocess.run(["attrib", "-O", str(plain)], check=True, capture_output=True)
         status = _sync(owner, link["id"])
@@ -849,7 +849,7 @@ def test_an_anchor_asked_of_a_kept_older_note_leaves_its_base_naming_no_block(ow
             status = _sync(owner, link["id"])
         assert sorted(_texts(ws, lab["plain"])) == ["plain words"]
         assert plain.read_text(encoding="utf-8").count("plain words") == 1
-        assert {"path": "UP plain.md", "why": vault_sync.UNKNOWN, "force": True} in status["kept"]
+        assert {"path": "UP plain.md", "why": vault_pages.UNKNOWN, "force": True} in status["kept"]
     finally:
         owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 

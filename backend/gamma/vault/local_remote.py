@@ -178,7 +178,7 @@ class LocalRemote:
         a page in Recently deleted's too; None where the log cannot say: no
         row of it is older than ``since``, a time before the plan was made
         (pruning drops the oldest rows, ``ops._prune``, the batch perhaps among
-        them), and the round asks the page itself (``Round._plan_landed``).
+        them), and the round asks the page itself (``journal._plan_landed``).
         ``at``, the seq the plan was made at, is for a log read over HTTP
         (``HttpRemote.landed``): here a page's seq is the workspace's change
         log's (``page_changes``), not its op log's."""

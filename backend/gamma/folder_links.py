@@ -2436,7 +2436,7 @@ def write_note(ws: str, page_id: str, text: str, hash: str) -> dict | None:
     history. Only a vault that pushes everything takes it: the file is then
     what the page becomes. → ``{hash, path}``; None for a page with no notes
     file."""
-    from .vault.sync import fits  # local: it imports this module
+    from .vault.pages import fits  # local: it imports this module
 
     found = _note_of(ws, page_id)
     if found is None:
@@ -2617,7 +2617,7 @@ def run_link(link_id: str, *, force: str = "", direction: str = "both", confirm:
 
 
 def _progress_writer(link: dict):
-    """What a vault's round reports of itself (``vault.sync.Round``'s
+    """What a vault's round reports of itself (``vault.round.Round``'s
     ``progress``) written into the status as ``progress`` while it runs,
     beside the ``running`` and ``started_at`` the round began with: once the
     round has run ``PROGRESS_S``, then at most every ``PROGRESS_S``, and

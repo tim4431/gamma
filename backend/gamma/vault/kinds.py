@@ -9,10 +9,11 @@ docs/dev/work_folders.md "The round in a work folder"). Each says what its
 rows are to a round (``compared``, ``in_place``, ``in_library``,
 ``makes_pages``) and does the round's steps for its files (``read``,
 ``known``, ``new``, ``change``, ``moved``, ``left``, ``swept``, ``pull``,
-``place``): the code of gamma/vault/sync.py's ``Round``, dispatched by
-class, a step that is one class's alone staying a ``Round`` method the class
-calls (``_write_notes``, ``_copy_pdf``, ``_merge_into``, ``_kept_note``,
-``_push_doc``). Pairing a PDF with its notes stays the round's: it is
+``place``): the code of a round's parts (gamma/vault/push.py, pages.py,
+pull.py), dispatched by class, a step that is one class's alone staying a
+function of its part that the class calls (``pull._write_notes``,
+``pull._copy_pdf``, ``pages._merge_into``, ``push._kept_note``,
+``pages._push_doc``). Pairing a PDF with its notes stays the round's: it is
 between two classes.
 
 The class is decided **by name, never by bytes** (``class_of``:
@@ -48,7 +49,7 @@ def file_format(leaf: str, head: bytes | None) -> str:
 
 class Kind:
     """One class of a vault's files; ``name`` is the row's ``kind``.
-    ``compared``: its rows meet the scan in ``Round._classify``;
+    ``compared``: its rows meet the scan in ``push._classify``;
     ``in_place``: its bytes are a ``linked_files`` row named
     ``stored_name(hash, ext)``, read where they are; ``in_library``: a work
     folder's library switch stamps ``library`` on its new pages;
@@ -80,25 +81,25 @@ class Kind:
         return None
 
     def new(self, rnd, path: str, read, partner=None) -> None:
-        """A file that is no page yet made one (``Round._push_new``);
+        """A file that is no page yet made one (``pages._push_new``);
         ``partner`` the note a PDF pairs with."""
         raise NotImplementedError(f"a {self.name} makes no page")
 
     def change(self, rnd, path: str, read, row: dict) -> None:
-        """A file of the rows with new bytes, into its page (``Round._push_file``)."""
+        """A file of the rows with new bytes, into its page (``pages._push_file``)."""
         raise NotImplementedError(f"a {self.name} is never compared")
 
     def moved(self, rnd, new: str, old: str, row: dict) -> None:
-        """The class's part of a move on disk (``Round._moved``, ``_unbury``):
+        """The class's part of a move on disk (``push._moved``, ``pages._unbury``):
         a file read in place is relinked."""
 
     def left(self, rnd, page_id: str, path: str, row: dict) -> bool:
-        """The class's part of ``Round._left``, before the page's files go to
+        """The class's part of ``pull._left``, before the page's files go to
         the trash: whether they go on (False: they stay this round)."""
         return True
 
     def swept(self, rnd, tomb: dict, at: str) -> None:
-        """``Round._sweep``'s spare, before a tombstone's file at ``at`` goes or
+        """``pull._sweep``'s spare, before a tombstone's file at ``at`` goes or
         stays."""
 
     def link_name(self, path: str, row: dict):
@@ -107,10 +108,10 @@ class Kind:
         return None
 
     def pull(self, rnd, info, rows: dict, folder: str) -> None:
-        """``Round._pull_page`` for a page whose main class this is."""
+        """``pull._pull_page`` for a page whose main class this is."""
 
     def place(self, rnd, info, rows: dict, folder: str) -> None:
-        """``Round._place`` for a page whose main class this is."""
+        """``pull._place`` for a page whose main class this is."""
 
 
 class _Notes(Kind):
@@ -120,8 +121,9 @@ class _Notes(Kind):
     in_library = True
 
     def read(self, rnd, path, found):
-        from . import disk, sync
+        from . import disk
         from .remote import Waiting
+        from .round import Read
 
         if 0 <= time.time() - found.mtime_ns / 1e9 < SETTLE_NOTE_S:
             raise Waiting("still being written")
@@ -135,8 +137,8 @@ class _Notes(Kind):
             text, problem = data.decode("utf-8"), ""
         except UnicodeDecodeError:
             text, problem = None, "not UTF-8, so it cannot be edited here"
-        return sync.Read(path, self.name, st.st_size, st.st_mtime_ns, str(st.st_ino), read_at, disk.sha(data), text,
-                         problem=problem)
+        return Read(path, self.name, st.st_size, st.st_mtime_ns, str(st.st_ino), read_at, disk.sha(data), text,
+                    problem=problem)
 
     def known(self, path, row):
         from . import disk
@@ -147,21 +149,25 @@ class _Notes(Kind):
         return read.text
 
     def new(self, rnd, path, read, partner=None):
-        rnd._new_note(path, read)
+        from . import pages
+
+        pages._new_note(rnd, path, read)
 
     def change(self, rnd, path, read, row):
+        from . import pages, push
+
         if rnd.push_all:
-            rnd._push_note(path, read, row)
+            pages._push_note(rnd, path, read, row)
         else:
-            rnd._kept_note(path, row, read=read)
+            push._kept_note(rnd, path, row, read=read)
 
     def left(self, rnd, page_id, path, row):
         """A note changed on disk since its base is the disk's word, which
         push has not read yet: the page's files stay and the note is kept
         (False); a force pull keeps its bytes in the history first."""
-        from . import disk, store
+        from . import disk, pull, store
 
-        current = rnd._current(path)
+        current = pull._current(rnd, path)
         if current is None or current == row["hash"]:
             return True
         if rnd.force != "pull":
@@ -173,10 +179,14 @@ class _Notes(Kind):
         return True
 
     def pull(self, rnd, info, rows, folder):
-        rnd._write_notes(info, rows.get(NOTES.name), rows.get(PDF.name), folder)
+        from . import pull
+
+        pull._write_notes(rnd, info, rows.get(NOTES.name), rows.get(PDF.name), folder)
 
     def place(self, rnd, info, rows, folder):
-        rnd._place_notes(info, rows, folder)
+        from . import pull
+
+        pull._place_notes(rnd, info, rows, folder)
 
 
 class _Pdf(Kind):
@@ -188,8 +198,9 @@ class _Pdf(Kind):
 
     def read(self, rnd, path, found):
         from .. import gamma_sync, linked_files
-        from . import disk, sync
+        from . import disk
         from .remote import Waiting
+        from .round import Read
 
         target = disk.path(rnd.root, path)
         why = gamma_sync.settled(target)
@@ -200,8 +211,8 @@ class _Pdf(Kind):
             seen = linked_files.hash_file(target)
         except ValueError as e:
             raise Waiting(str(e)) from e
-        return sync.Read(path, self.name, seen[1], seen[2], seen[3], read_at, seen[0], seen=seen,
-                         pdf_id=disk.pdf_id(target), format="pdf", ext=".pdf")
+        return Read(path, self.name, seen[1], seen[2], seen[3], read_at, seen[0], seen=seen,
+                    pdf_id=disk.pdf_id(target), format="pdf", ext=".pdf")
 
     def known(self, path, row):
         from . import disk
@@ -216,11 +227,15 @@ class _Pdf(Kind):
         return read.pdf_id
 
     def new(self, rnd, path, read, partner=None):
-        rnd._new_pdf(path, read, partner)
+        from . import pages
+
+        pages._new_pdf(rnd, path, read, partner)
 
     def change(self, rnd, path, read, row):
+        from . import pages
+
         if rnd.push_pdfs:
-            rnd._push_doc(path, read, row)
+            pages._push_doc(rnd, path, read, row)
 
     def moved(self, rnd, new, old, row):
         rnd.remote.relink(str(rnd.root / old), str(rnd.root / new))
@@ -228,14 +243,14 @@ class _Pdf(Kind):
     def left(self, rnd, page_id, path, row):
         """A PDF changed on disk since its base (a person's annotated copy in a
         vault that does not push it) is the person's: it stays where it is,
-        no longer synced, and is reported (``sync.LEFT``); one read in place
+        no longer synced, and is reported (``pull.LEFT``); one read in place
         by a page that lives on is stored first."""
-        from . import store, sync
+        from . import pull, store
 
-        if rnd._pdf_changed(path, row):
+        if pull._pdf_changed(rnd, path, row):
             store.forget(rnd.id, path)
             rnd.rows.pop(path, None)
-            rnd._keep(path, sync.LEFT)
+            rnd._keep(path, pull.LEFT)
         elif (rnd.remote.state(page_id) == "live" and os.path.isfile(rnd.root / path)
               and rnd.remote.doc_of(page_id) == row["hash"]):
             rnd.remote.store_doc(rnd.root / path, page_id)
@@ -251,10 +266,14 @@ class _Pdf(Kind):
         return stored_name(row["hash"], ".pdf") if row["hash"] else None
 
     def pull(self, rnd, info, rows, folder):
-        rnd._write_notes(info, rows.get(NOTES.name), rows.get(PDF.name), folder)
+        from . import pull
+
+        pull._write_notes(rnd, info, rows.get(NOTES.name), rows.get(PDF.name), folder)
 
     def place(self, rnd, info, rows, folder):
-        rnd._place_notes(info, rows, folder)
+        from . import pull
+
+        pull._place_notes(rnd, info, rows, folder)
 
 
 class _Picture(Kind):
@@ -283,8 +302,9 @@ class _File(Kind):
 
     def read(self, rnd, path, found):
         from .. import config, gamma_sync, linked_files
-        from . import disk, sync
+        from . import disk
         from .remote import Waiting
+        from .round import Read
 
         target = disk.path(rnd.root, path)
         why = gamma_sync.settled(target, tail=None)
@@ -299,14 +319,14 @@ class _File(Kind):
             st = os.stat(target)
             if (before.st_size, before.st_mtime_ns) != (st.st_size, st.st_mtime_ns):
                 raise Waiting("changed while it was read")
-            return sync.Read(path, self.name, st.st_size, st.st_mtime_ns, str(st.st_ino), read_at, "",
-                             format=file_format(leaf, head), ext=ext, listed=True)
+            return Read(path, self.name, st.st_size, st.st_mtime_ns, str(st.st_ino), read_at, "",
+                        format=file_format(leaf, head), ext=ext, listed=True)
         try:
             *seen, head = linked_files.hash_any(target)
         except ValueError as e:
             raise Waiting(str(e)) from e
-        return sync.Read(path, self.name, seen[1], seen[2], seen[3], read_at, seen[0], seen=tuple(seen),
-                         format=file_format(leaf, head), ext=ext)
+        return Read(path, self.name, seen[1], seen[2], seen[3], read_at, seen[0], seen=tuple(seen),
+                    format=file_format(leaf, head), ext=ext)
 
     def weight(self, found):
         from .. import config
@@ -314,10 +334,14 @@ class _File(Kind):
         return found.size if found.size <= config.vault_keep_bytes() else 0
 
     def new(self, rnd, path, read, partner=None):
-        rnd._new_file(path, read)
+        from . import pages
+
+        pages._new_file(rnd, path, read)
 
     def change(self, rnd, path, read, row):
-        rnd._push_doc(path, read, row)
+        from . import pages
+
+        pages._push_doc(rnd, path, read, row)
 
     def moved(self, rnd, new, old, row):
         rnd.remote.relink(str(rnd.root / old), str(rnd.root / new))
@@ -368,6 +392,6 @@ def by_kind(kind: str) -> Kind | None:
 
 
 def main(rows: dict) -> Kind | None:
-    """A page's class, from its rows by kind (``Round._Rows.of``): ``PDF``
+    """A page's class, from its rows by kind (``round._Rows.of``): ``PDF``
     when it has a PDF row, else ``NOTES``, else ``FILE``, else None."""
     return next((cls for cls in (PDF, NOTES, FILE) if cls.name in rows), None)
