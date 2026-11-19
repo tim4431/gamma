@@ -340,7 +340,7 @@ export async function viewerScenarios(env) {
         await fresh.waitFor({ timeout: 10000 });
         await focused(field(fresh), "the new comment's field takes the focus");
         await page.keyboard.type("make the legend larger");
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         region = await until(async () => (await childrenOf(ids["fig.png"])).find((b) => b.properties?.image_position) || null, { what: "the region block" });
         regionThread = await until(async () => (await threadsOf(ids["fig.png"])).find((th) => th.block_id === region.id), { what: "the region's thread" });
         await page.keyboard.press("Escape");
@@ -367,7 +367,7 @@ export async function viewerScenarios(env) {
         await pop.waitFor();
         await focused(field(pop.locator(".commentNew")), "the page thread's field takes the focus");
         await page.keyboard.type("the colours are too light");
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         pageThread = await until(async () => (await threadsOf(ids["fig.png"])).find((th) => th.block_id === ids["fig.png"]), { what: "the page's thread" });
         await page.keyboard.press("Escape");
         // the files: written by the hot pass, no sync asked for

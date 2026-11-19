@@ -1694,6 +1694,51 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await account.api(`/api/blocks/${linking.id}`, { method: "DELETE" });
   });
 
+  // A Gamma link kept as a link region's address (a highlight's copied
+  // block link pasted into the link dialog before it knew one, here
+  // written against another host) opens in place, not the external-link
+  // prompt; Change link… offers the highlight it names, on this same paper,
+  // which turns the region into a link to it, and pressing it lands there.
+  await step("pdf: a Gamma link to a highlight on the same paper opens in place, and Change link… makes it a highlight link", async () => {
+    const up = await account.upload("/api/uploads", makePdf([["See Extended Data Fig. 5 here", "Extended Data Fig. 5 caption", "Also see the caption"]]), "crossref.pdf", "application/pdf");
+    const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Cross-ref paper" } });
+    const at = (y1, y2) => { const r = { x1: 60, y1, x2: 480, y2 }; return { pageNumber: 1, width: 612, height: 792, boundingRect: r, rects: [r] }; };
+    const target = await account.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "",
+      properties: { quote: "Extended Data Fig. 5 caption", color: "#ffe28fa6", pdf_position: at(80, 102) } } });
+    const blockUrl = `https://elsewhere.example/?block=${target.id}&ws=${account.ws}`;
+    const region = await account.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "",
+      properties: { quote: "Also see the caption", color: "rgba(140, 180, 255, 0.35)", pdf_position: at(106, 128), link_url: blockUrl } } });
+    const stored = async () => (await account.api(`/api/blocks/${region.id}`)).properties;
+    const flash = `[data-page="1"] [data-hl-id="${target.id}"].pdfHlFlash`;
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${paper.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      await p.click(`[data-page="1"] div[data-hl-id="${region.id}"]`);
+      await p.waitForSelector(flash, { timeout: 8000 });
+      assertEq(await p.locator(".linkPromptModal").count(), 0, "no external-link prompt");
+      await p.waitForSelector(flash, { state: "detached", timeout: 8000 });
+
+      await p.click(`[data-page="1"] div[data-hl-id="${region.id}"]`, { button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Change link…" }).click();
+      const change = p.getByRole("dialog", { name: "Change reference link" });
+      await change.waitFor();
+      const lead = change.locator('[role="option"][aria-selected="true"]');
+      await until(async () => (await lead.innerText()).includes("Extended Data Fig. 5 caption"), { what: "the highlight leads" });
+      assert((await lead.innerText()).includes("Cross-ref paper"), "named by its paper");
+      await p.keyboard.press("Enter");
+      const props = await until(async () => { const pr = await stored(); return pr.link_block_id === target.id && pr; }, { what: "a link to the highlight" });
+      assertEq(props.link_page_id, paper.id, "on the same paper");
+      assert(!props.link_url, "no longer an address");
+
+      await p.click(`[data-page="1"] div[data-hl-id="${region.id}"]`);
+      await p.waitForSelector(flash, { timeout: 8000 });
+      assertNoProblems(p);
+      await p.close();
+    } finally { await c.close(); }
+    await account.api(`/api/blocks/${paper.id}`, { method: "DELETE" });
+  });
+
   // Settings → Reading › PDFs › Smooth wheel scrolling (shared/lib/smoothWheel.js).
   await step("pdf: smooth wheel scrolling glides one notch over several frames at any zoom; off, it is the browser's jump", async () => {
     const lines = Array.from({ length: 30 }, (_, n) => `Wheel line ${n + 1}`);

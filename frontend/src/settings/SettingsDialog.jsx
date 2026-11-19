@@ -957,10 +957,10 @@ function ChatDefaults({ value, ai }) {
           options={[["", t("Default")], ...SPEED_ORDER.map((v) => [v, t(SPEED_LABELS[v])])]} />
       </Row>
       <Row icon={CornerDownRightIcon} label={t("Follow-up while a reply runs")}
-        hint={t("{key} does the other", { key: chordLabel("Mod-Shift-Enter") })}
-        title={t("What Enter and Send do with a message you send while a reply is still running: Queue keeps it until the reply ends and sends it then; Steer hands it to the reply at once, which takes it in at its next step.")}>
-        <Segmented value={ai.chatFollowUp} onChange={ai.setChatFollowUp}
-          options={[["queue", t("Queue")], ["steer", t("Steer")]]} />
+        hint={t("{key} does the other", { key: chordLabel("Mod-Enter") })}
+        title={t("What Enter and Send do with a message you send while a reply is still running: Steer hands it to the reply at once, which takes it in at its next step; Queue keeps it until the reply ends and sends it then.")}>
+        <Segmented value={ai.chatFollowUpMode} onChange={ai.setChatFollowUpMode}
+          options={[["steer", t("Steer")], ["queue", t("Queue")]]} />
       </Row>
       <Toggle
         icon={RectSelectIcon}

@@ -315,8 +315,10 @@ export async function chatNavigationScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("chat navigation: a message sent while the reply runs waits in the queue; Steer hands it to the reply where it lands, the next goes when the reply ends, Stop pauses the queue until Send, and a dictation queues as a typed message does", async () => {
+  await step("chat navigation: with the follow-up preference on Queue, a message sent while the reply runs waits in the queue; Steer hands it to the reply where it lands, the next goes when the reply ends, Stop pauses the queue until Send, and a dictation queues as a typed message does", async () => {
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    // The account's follow-up preference on Queue, as Settings → AI → Chat saves it.
+    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { chatFollowUpMode: "queue" } } });
     const ctx = await alice.context(browser);
     await fakeAiModels(ctx, { ...FAKE_AI_MODELS, transcribe: true });
     await ctx.addInitScript(() => {
@@ -434,13 +436,14 @@ export async function chatNavigationScenarios(env) {
       });
       assertEq(stored.map((m) => `${m.role}${m.steered ? "*" : ""}`).join(" "), "user ai user* ai user ai user ai user ai");
       assertNoProblems(page);
-    } finally { await ctx.close(); }
+    } finally {
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { chatFollowUpMode: null } } }).catch(() => {});
+    }
   });
 
-  await step("chat navigation: with the follow-up preference on Steer, Enter while the reply runs steers it and Ctrl+Shift+Enter queues", async () => {
+  await step("chat navigation: by default, as Codex's, Enter while the reply runs steers it and Ctrl+Enter queues", async () => {
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
-    // The account's preference, as Settings → AI → Chat saves it.
-    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { chatFollowUp: "steer" } } });
     const ctx = await alice.context(browser);
     await fakeAiModels(ctx);
     await ctx.addInitScript(() => {
@@ -487,9 +490,9 @@ export async function chatNavigationScenarios(env) {
       await page.waitForFunction(() => window.steers.length === 1);
       const steer = await page.evaluate(() => window.steers[0]);
       assertEq(`${steer.reply} ${steer.text}`, "reply-1 Group them by year");
-      // Ctrl/⌘+Shift+Enter queues it for when the reply ends.
+      // Ctrl/⌘+Enter queues it for when the reply ends.
       await input.fill("Flag error correction");
-      await input.press("ControlOrMeta+Shift+Enter");
+      await input.press("ControlOrMeta+Enter");
       await until(async () => (await rows.allInnerTexts()).some((text) => text.includes("Flag error correction")),
         { what: "the message waits in the queue" });
       assertEq(await page.evaluate(() => window.steers.length), 1, "the other way queues, it does not steer");
@@ -502,10 +505,7 @@ export async function chatNavigationScenarios(env) {
       await page.evaluate(() => window.chatStreams[1].finish());
       await until(async () => !(await rows.count()));
       assertNoProblems(page);
-    } finally {
-      await ctx.close();
-      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { chatFollowUp: null } } }).catch(() => {});
-    }
+    } finally { await ctx.close(); }
   });
 
   await step("chat navigation: text selected in a reply is quoted into the next message by Ask about this; the popup's buttons and the right-click menu copy it and make a note of it, as it reads or structured by AI, on the page or as a page of its own", async () => {
