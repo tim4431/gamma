@@ -1406,7 +1406,8 @@ its check.
   library; an Opened files PDF may still be looked up by hand),
   `POST /jobs/metadata` (`skipped`, counted when there are some; a batch
   of no library document is 400). Both leave out Opened files PDFs too.
-- `zotero_preview`, as its commit does.
+- The Zotero import's preview, as the import does
+  (`test_a_work_folders_file_of_the_same_pdf_is_no_page_of_the_item`).
 - `ws_backup`'s live documents and its merge, on both sides.
 - On the client: the record lookup on open (`isLibraryPdf`, so an Opened
   files PDF is looked up by hand only), and the Paper metadata button,
