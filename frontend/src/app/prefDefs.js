@@ -238,8 +238,8 @@ export const PREFS = {
   metaAutoFetch: flag("gamma-meta-auto", ACCOUNT, true),
   pdfSaveLocal: flag("gamma-pdf-save", ACCOUNT, true),
   // The desktop app's Open with: off, a PDF opened from this computer is read
-  // where it lies, inside *Opened files*; on, it is added to the library as
-  // before (the shell reads it from the profile, desktop/main.js readPdf).
+  // where it lies, inside *Opened files*; on, it is added to the library (the
+  // shell reads it from the profile, desktop/lib/systemFiles.js addsToLibrary).
   openAddsToLibrary: flag("gamma-open-adds-to-library", ACCOUNT, false),
 
   // --- Highlights after a replaced PDF (Settings → Reading › Replacing a
@@ -261,7 +261,7 @@ export const PREFS = {
   // removes them from the stored file at import time, so the blocks are the
   // only copy and deleting one deletes it from the exports too; "hide" keeps
   // the file as it came and leaves them out of the canvas. The desktop app
-  // reads it by this name for a PDF opened with it (desktop/main.js importAnnotations).
+  // reads it by this name for a PDF opened with it (desktop/lib/systemFiles.js importAnnotations).
   embAnnots: pref("gamma-embedded-annots", ACCOUNT, "strip", oneOf(["hide", "strip"])),
   // Ease each notch of a mouse wheel over the PDF instead of jumping
   // (shared/lib/smoothWheel.js). Touchpads are smooth either way.

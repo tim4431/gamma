@@ -666,7 +666,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const initialThreadId = params.get("thread") || "";
   const initialLabel = params.get("unlabelled") ? NO_LABEL : (params.get("label") || "");
   const initialFolder = params.get("folder") || "";
-  // The desktop app's hand-over once it made a work folder (desktop/main.js
+  // The desktop app's hand-over once it made a work folder (desktop/lib/vaults.js
   // addDirectoryVault): its vault's tracking dialog opens (vault/useVault.js);
   // `tick`, a file of its directory opened with Gamma that it does not track
   // yet, by its path there, which the dialog ticks (explorer/TrackDialog.jsx).

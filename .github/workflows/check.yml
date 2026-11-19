@@ -116,8 +116,8 @@ jobs:
           npm run build
           # the startup graph's bytes and its lazy boundaries: tools/bundleBudget.mjs
           npm run budget
-      # the desktop shell's unit tests: its pure modules (desktop/lib/) and
-      # main.js under a stand-in for Electron, with Node's built-ins alone,
+      # the desktop shell's unit tests: its modules (desktop/lib/) and main.js
+      # under a stand-in for Electron, with Node's built-ins alone,
       # so no install; the Electron suite itself is run by hand
       - run: node --test desktop/test/*.test.js
 
