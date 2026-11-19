@@ -98,8 +98,8 @@ SVG_DRAW_SECONDS = 10
 SVG_DRAW_MEMORY = 1 << 30
 # The longer side, in pixels, an SVG's PDF (``svg_pdf``) is drawn at once,
 # to prove it draws in time: past the most an AI page picture of a page
-# holding it draws it at (pdf_text.RENDER_MAX_SIDE), and the Notability
-# export's PNG (notability_export.SVG_PNG_SIDE), which shares the drawing.
+# holding it draws it at (pdf_text.RENDER_MAX_SIDE). The Notability and
+# GoodNotes exports draw an SVG's PNG at this side, so they share the drawing.
 SVG_DRAW_SIDE = 2048
 # The SVGs drawn at once, each a process: at most two, so a burst of
 # exports takes two processes' memory and cores, not one each.

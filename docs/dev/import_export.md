@@ -1976,7 +1976,7 @@ computed by the same function on the note's own layout:
 - Its file goes under `Images/` as it is. An animated GIF is its still
   frame under `Images/` and the GIF under `Assets/<id>/media.gif`, as
   Notability keeps one. Notability takes no SVG, so an SVG is a PNG of it,
-  `SVG_PNG_SIDE` (2048) px on its longer side; one that does not draw is
+  `pdf_image.SVG_DRAW_SIDE` (2048) px on its longer side; one that does not draw is
   left out and said ("picture svg"). Two pictures that show one file are
   written as two files.
 - A surface's pictures come before its boxes in `zIndex`, and both before
@@ -2125,7 +2125,7 @@ A highlight's notes stay behind, counted as notes.
   whole goes as it is; any other is its pixels upright (the EXIF
   orientation the browser applies), cut to its crop and flipped, a JPEG
   again for a JPEG and a PNG for anything else, an SVG drawn first
-  (`SVG_PNG_SIDE`). One file per picture file and look.
+  (`pdf_image.SVG_DRAW_SIDE`). One file per picture file and look.
 
 **Left out, and said:** the notes (beside the page, under a highlight or
 a recording), recordings, a sheet on a PDF page, handwriting or a picture

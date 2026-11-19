@@ -435,7 +435,7 @@ def test_the_frozen_desktop_server_draws_an_svg_through_its_own_entry(monkeypatc
 
 def test_an_svg_picture_goes_into_a_note_as_a_png(guest):
     """Notability takes no SVG: the picture goes in as a PNG of it,
-    SVG_PNG_SIDE pixels on its longer side, its crop in that PNG's pixels;
+    SVG_DRAW_SIDE pixels on its longer side, its crop in that PNG's pixels;
     one that does not draw is left out and said."""
     url = _upload_image(guest, QUADS, "plot.svg", "image/svg+xml")
     bad = _upload_image(guest, _uses(40), "bomb.svg", "image/svg+xml")
@@ -448,7 +448,7 @@ def test_an_svg_picture_goes_into_a_note_as_a_png(guest):
     assert warnings == ["1 SVG picture could not be drawn for the note and is left out"]
     [written] = draft.media
     shown = Image.open(io.BytesIO(draft.files[written.image])).convert("RGB")
-    side = notability_export.SVG_PNG_SIDE
+    side = pdf_image.SVG_DRAW_SIDE
     assert written.image.endswith(".png") and written.pixels == shown.size == (side, side // 2)
     assert written.crop == (side / 2, 0, side / 2, side // 2)
     assert _near(shown.getpixel((10, 10)), QUADRANTS["TL"]) and _near(shown.getpixel((side - 10, 10)), QUADRANTS["TR"])
@@ -471,7 +471,7 @@ def test_a_box_holding_an_svg_goes_into_a_note_as_a_png(guest):
                                                    storage.files(workspace_of(guest_name())))
     assert warnings == ["1 SVG picture could not be drawn for the note and is left out"]
     written, text = draft.media
-    side = notability_export.SVG_PNG_SIDE
+    side = pdf_image.SVG_DRAW_SIDE
     assert written.image.endswith(".png") and written.pixels == (side, side // 2) and written.caption == "a plot"
     assert Image.open(io.BytesIO(draft.files[written.image])).size == (side, side // 2)
     assert draft.private["boxes"][text.uuid.hex()]["content"] == f"![a plot]({bad})"

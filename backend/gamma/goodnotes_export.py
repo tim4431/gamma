@@ -53,7 +53,7 @@ from .highlights import is_highlight
 from .notability_export import box_runs
 from .notebook import paper_ops, sheets_of
 from .pdf_export import AREA_FILL_SHARE, MARKUP_SUBTYPES, display_size, page_frame, still_embedded
-from .pdf_image import shown_upright, svg_png
+from .pdf_image import SVG_DRAW_SIDE, shown_upright, svg_png
 from .pdf_typeset import num
 from .picture import is_picture, normalize_picture, picture_page, picture_type, stack_order
 from .text_box import PAD, box_page, normalize_text_box
@@ -61,7 +61,6 @@ from .text_box import PAD, box_page, normalize_text_box
 C = gw.CANVAS
 PAPER_KEY = "/GammaPaper"   # a sheet's paper PDF: the paper, as JSON
 HIGHLIGHTER_ALPHA = 0.5     # every GoodNotes highlighter's alpha (docs/research/goodnotes-onenote-import.md)
-SVG_PNG_SIDE = 2048         # the longer side of the PNG an SVG picture goes into a notebook as
 VARIES = 0.05               # a stroke whose drawn width strays this far from its median is "of varying width"
 MAX_VERTICES = 512          # of a fill's polygon
 INSET = 10.0                # a GoodNotes text box's insets, canvas units
@@ -421,7 +420,7 @@ class _Page:
                 made = (self.draft.attach(path), gw.JPEG if kind == "image/jpeg" else gw.PNG)
             elif kind == "image/svg+xml":
                 try:
-                    png, _w, _h = svg_png(data, SVG_PNG_SIDE)
+                    png, _w, _h = svg_png(data, SVG_DRAW_SIDE)
                 except ValueError:
                     self.left_out["picture svg"] += 1
                     made = False
