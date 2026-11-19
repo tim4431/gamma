@@ -292,7 +292,9 @@ toolbars); `iconSq` is a square at the same heights. `ctlBtn` is the
 frameless `--ctl-icon-btn` (29 px) icon button, `uiClose` the round × (22 /
 26 / 31). Buttons and fields
 take `--radius-md`, icon buttons and chips `--radius-sm`. States: hover
-`--bg-hover`, pressed `--bg-active`, `on` (a chosen option) `--bg-selected`
+`--bg-hover`, pressed `--bg-active`, while the frameless ones, `ghost` and
+`ctlBtn`, hover at `--bg-active`, so they still show on a row the pointer
+lights with `--bg-hover`; `on` (a chosen option) `--bg-selected`
 with an accent border, disabled the faint text colour with no lift (a filled
 button fades as a whole). Native checkboxes, radios and ranges take the
 accent from one `accent-color` on the root.

@@ -4465,6 +4465,9 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 .uiBtn.on:hover:not(:disabled) { background: var(--bg-selected); color: var(--text-primary); }
 .uiBtn.ghost { background: transparent; border-color: transparent; box-shadow: none; }
+/* Frameless, a ghost button hovers as a ctlBtn does, a step past --bg-hover:
+   on a row lit by the pointer (the chat queue's Steer) it still shows. */
+.uiBtn.ghost:where(:not(.on)):hover:not(:disabled) { background: var(--bg-active); }
 .uiBtn.primary { background: var(--accent-fill); border-color: transparent; color: var(--on-accent); }
 .uiBtn.primary:hover:not(:disabled) { background: var(--accent-hover); color: var(--on-accent); }
 .uiBtn.danger { color: var(--danger); border-color: var(--danger-border); }
