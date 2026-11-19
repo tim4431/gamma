@@ -32,11 +32,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, gdrive, gdrive_account, guests,
-                hosted, integrity, jobs, offsite, proxy_settings, snapshot_copies, workspaces)
+                hosted, integrity, jobs, offsite, proxy_settings, snapshot_copies, workspaces, zotero_oauth)
 from ..backup_store import StoreConfigError
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
+from .zotero import CALLBACK_PATH as ZOTERO_CALLBACK_PATH, oauth_base as zotero_oauth_base
 from ..db import account_name, account_names, connect_users_db
 from ..logbuf import tail as _log_tail
 from .. import version
@@ -579,6 +580,50 @@ def test_gdrive(request: Request):
     way."""
     require_admin(request)
     return gdrive_account.test()
+
+
+# --- this server's Zotero app (gamma/zotero_oauth.py) --------------------------
+# Settings → Server → Zotero sign-in: the app an admin registered at
+# zotero.org, through which people connect Zotero by signing in there
+# (routers/zotero.py ``server`` mode). The secret never leaves the server.
+
+class ZoteroAppRequest(BaseModel):
+    client_key: str
+    client_secret: str = ""   # empty keeps the saved secret of the same key
+
+
+def _zotero_app(request: Request) -> dict:
+    """``{client_key, callback_url}``: the saved app's key ("" for none)
+    and the callback URL to register it with, "" while signing in is not
+    offered at this address (no public URL confirmed)."""
+    base = zotero_oauth_base(request)
+    return {"client_key": zotero_oauth.app()[0], "callback_url": f"{base}{ZOTERO_CALLBACK_PATH}" if base else ""}
+
+
+@router.get("/zotero-app")
+def get_zotero_app(request: Request):
+    require_admin(request)
+    return _zotero_app(request)
+
+
+@router.put("/zotero-app")
+def set_zotero_app(payload: ZoteroAppRequest, request: Request):
+    """Save this server's Zotero app: the GET's answer; 400 for a key or
+    secret that cannot be."""
+    require_admin(request)
+    try:
+        zotero_oauth.save_app(payload.client_key, payload.client_secret)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _zotero_app(request)
+
+
+@router.delete("/zotero-app")
+def forget_zotero_app(request: Request):
+    """Forget it; accounts it connected stay connected."""
+    require_admin(request)
+    zotero_oauth.forget_app()
+    return _zotero_app(request)
 
 
 # --- the network proxy (gamma/proxy_settings.py) -----------------------------

@@ -171,6 +171,7 @@ const entries = [
   e("users", t("Account server"), t("Sign-in"), t("The Gamma Cloud address people sign in through; empty turns it off"),
     "administration Gamma Cloud sign-in login single sign-on SSO account server issuer client policy unknown cloud accounts provision claim invited join requests"),
   e("users", t("Reports"), null, t("What people reported here, open and resolved"), "administration moderation abuse flag report comment page AI reply resolve"),
+  e("server", t("Zotero sign-in"), null, t("This server's own Zotero app, so people connect Zotero by signing in at zotero.org"), "administration zotero oauth app client key secret callback sign-in connect register"),
   e("server", t("Server"), null, t("Dashboard, updates, the shared AI provider and workspaces, backups and the log"), "administration dashboard version update log"),
   e("users", t("Default quota"), t("Storage defaults"), t("Personal uploads per account; 0 = unlimited"), "administration storage quota limit space upload size"),
   e("server", t("Shared workspaces"), null, t("Workspaces an admin makes for a team"), "administration new shared workspace members"),

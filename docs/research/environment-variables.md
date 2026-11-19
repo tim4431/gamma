@@ -6,10 +6,17 @@ Settings; an environment variable is for what a server needs before anyone
 can sign in, or for a server-wide service that runs with nobody attending.
 Read from the code (`backend/gamma/`, `backend/app.py`, `manage.py`,
 `gamma_mobile.py`, `docker-entrypoint.sh`, the `Dockerfile`) in November
-2026: 61 `GAMMA_*` variables and a few standard ones. Google Drive's
-client is not among them: each server's admin registers one and saves it
-in Settings → Backups → Google Drive
-([google-drive-backup.md](google-drive-backup.md)).
+2026: 61 `GAMMA_*` variables and a few standard ones. Two app
+registrations have since moved into Settings, each server's admin
+registering their own: Google Drive's client (Settings → Backups → Google
+Drive, [google-drive-backup.md](google-drive-backup.md)) and the Zotero
+app (`GAMMA_ZOTERO_CLIENT_KEY` / `_SECRET` before; Settings → Server →
+Zotero sign-in).
+
+The overrides were not limited to hosted containers, as first proposed:
+the demo server (`GAMMA_DEMO`, `GAMMA_GUEST_SEED`) and the share host
+(`GAMMA_CLOUD_SHARE_HOST`) set theirs in their own environment, outside
+the fleet, and both are unattended services the rule allows.
 
 ## Infrastructure and unattended services (fit the rule)
 
@@ -49,7 +56,6 @@ can set in Settings.
 
 | Variable | What it does | When unset |
 |---|---|---|
-| `GAMMA_ZOTERO_CLIENT_KEY`, `_SECRET` | This server's own Zotero OAuth app, skipping Gamma Cloud's broker (the same shape as Drive's client was) | through the broker |
 | `GAMMA_GUEST_MAX` | Most guest accounts at once; 0 turns guests off | 500 (0 when hosted) |
 | `GAMMA_GUEST_SEED` | A workspace zip every new guest gets | the welcome page only |
 | `GAMMA_METADATA_LOOKUP` | `off` stops paper-registry lookups | on |

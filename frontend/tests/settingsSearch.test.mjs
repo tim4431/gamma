@@ -30,7 +30,8 @@ const PANE_FILES = {
   backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "BackupBucket.jsx", "BackupDrive.jsx"],
   maintenance: ["SettingsDialog.jsx"],
   users: ["SettingsUsers.jsx", "SettingsServer.jsx", "SettingsCloudSignIn.jsx", "SettingsGuests.jsx", "SettingsReports.jsx"],
-  server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsAi.jsx", "SettingsWorkspacesAdmin.jsx", "SettingsBackups.jsx"],
+  server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsZoteroApp.jsx", "SettingsAi.jsx", "SettingsWorkspacesAdmin.jsx",
+    "SettingsBackups.jsx"],
   proxy: ["SettingsProxy.jsx"],
   diagnostics: ["SettingsDialog.jsx"],
 };

@@ -1,6 +1,6 @@
 // Settings → Server (admins only): the server itself rather than its people
 // — the dashboard (build, uptime, warnings, the update check), the public
-// URL assistants reach it at, on a hosted container the plan its limits come
+// URL assistants reach it at, its Zotero app (SettingsZoteroApp.jsx), on a hosted container the plan its limits come
 // from (HostedPlan), the shared AI provider every account may use
 // (SettingsAi.jsx), the shared workspaces (SettingsWorkspacesAdmin.jsx), the
 // database check, whole-data-directory snapshots (SettingsBackups.jsx
@@ -20,6 +20,7 @@ import { PaneHead, Section, Row, Segmented, StatText, UnitInput, LogBox } from "
 import { WorkspacesAdmin } from "./SettingsWorkspacesAdmin";
 import { ServerBackups } from "./SettingsBackups";
 import { PublicUrlSettings } from "./SettingsPublicUrl";
+import { ZoteroAppSettings } from "./SettingsZoteroApp";
 import { CloudSignInSettings } from "./SettingsCloudSignIn";
 import { GuestSettings } from "./SettingsGuests";
 import { SharedAiProviderSettings } from "./SettingsAi";
@@ -43,6 +44,7 @@ export function ServerSettings({ value, onBucket }) {
       <Section title={t("Assistant connections")}>
         <PublicUrlSettings setStatus={value.setStatus} />
       </Section>
+      <ZoteroAppSettings setStatus={value.setStatus} confirm={value.confirm} />
       <HostedPlan setStatus={value.setStatus} onSynced={() => value.refreshQuota?.()} />
       <SharedAiProviderSettings setStatus={value.setStatus} confirm={value.confirm} />
       <WorkspacesAdmin value={value} />

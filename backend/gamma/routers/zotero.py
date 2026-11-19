@@ -15,7 +15,7 @@ around gamma/zotero_account.py:
   that says how it went or asks first (``POST /api/zotero/oauth/confirm``).
 
 Signing in has two modes: ``server``, this server's own Zotero app
-(``config.zotero_client``) running zotero.org's OAuth 1.0a steps
+(``zotero_oauth.app``, saved by an admin in Settings) running zotero.org's OAuth 1.0a steps
 (gamma/zotero_oauth.py); ``cloud``, Gamma Cloud's broker running them with
 its app (``cloud_auth.zotero_broker``) and sending the browser back with a
 one-time code this server trades, with its PKCE verifier and its address,
@@ -144,7 +144,7 @@ def oauth_mode(request: Request) -> str | None:
     base = oauth_base(request)
     if not base:
         return None
-    if config.zotero_client()[0]:
+    if zotero_oauth.app()[0]:
         return "server"
     issuer = cloud_auth.settings()["issuer"]
     if not issuer or not _broker_takes(base) or _probe_failed.get(issuer, 0.0) > time.monotonic():
@@ -233,7 +233,7 @@ def oauth_start(request: Request):
     if not base:
         raise HTTPException(400, NO_SIGN_IN)
     state = secrets.token_urlsafe(24)
-    consumer_key, consumer_secret = config.zotero_client()
+    consumer_key, consumer_secret = zotero_oauth.app()
     if consumer_key:
         callback = f"{base}{CALLBACK_PATH}?{urlencode({'state': state})}"
         try:
@@ -414,7 +414,7 @@ def _finish(pending: dict, base: str, *, oauth_token: str, oauth_verifier: str, 
 
 def _server_key(pending: dict, oauth_token: str, oauth_verifier: str) -> str:
     """``server`` mode: zotero.org's approval traded for the key."""
-    consumer_key, consumer_secret = config.zotero_client()
+    consumer_key, consumer_secret = zotero_oauth.app()
     if not consumer_key:
         raise ZoteroError("This server no longer has a Zotero app: start again")
     if oauth_token != pending["token"]:

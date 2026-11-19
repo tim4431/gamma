@@ -973,7 +973,13 @@ Administration (admins only):
   defaults** (each box saves on Enter or blur), **Sign-in**, **Guests** and
   **Reports**, below.
 - **Server**: the machine itself. The dashboard (build, uptime, warnings,
-  the update check), the public server URL, on a hosted container the
+  the update check), the public server URL, **Zotero sign-in**
+  ([SettingsZoteroApp.jsx](../../frontend/src/settings/SettingsZoteroApp.jsx):
+  this server's own Zotero app, "Not set up" with Set up… or "This
+  server's Zotero app" with its key and Edit…; the dialog links
+  zotero.org/oauth/apps, shows the callback URL to register it with (or
+  asks for the public URL first), and takes the client key and the
+  write-only secret, with Remove…; [zotero_sync.md](zotero_sync.md)), on a hosted container the
   **Plan** (`HostedPlan`, [cloud_accounts.md](cloud_accounts.md) "Hosted
   containers"), the shared AI provider, shared workspaces,
   **Databases** (Check databases: a quick check of every database file as

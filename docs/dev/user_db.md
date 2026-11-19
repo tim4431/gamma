@@ -140,7 +140,9 @@ All state is SQLite + files on disk under a data directory (env
     once disconnected) and the OAuth client an admin saved for it
     (`gdrive_client`: `{client_id, client_secret}`, the secret encrypted
     the same way, "" once removed;
-    [debugging.md](debugging.md#google-drive)) and the
+    [debugging.md](debugging.md#google-drive)), this server's Zotero app
+    (`zotero_app`: `{client_key, client_secret}`, the secret encrypted the
+    same way, "" once removed; [zotero_sync.md](zotero_sync.md)) and the
     network proxy (`proxy`: `{mode, server, username, password, bypass,
     proxy_dns}` as JSON, the password encrypted the same way;
     [network_proxy.md](network_proxy.md));

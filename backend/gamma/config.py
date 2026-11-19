@@ -186,16 +186,6 @@ def zotero_stream_url() -> str:
     return (os.environ.get("GAMMA_ZOTERO_STREAM_URL", "").strip() or "wss://stream.zotero.org").rstrip("/")
 
 
-def zotero_client() -> tuple[str, str]:
-    """``GAMMA_ZOTERO_CLIENT_KEY`` / ``GAMMA_ZOTERO_CLIENT_SECRET``: this
-    server's own Zotero OAuth application (zotero.org/oauth/apps), which
-    lets people connect their account here without Gamma Cloud's broker;
-    ("", "") unless both are set."""
-    key = os.environ.get("GAMMA_ZOTERO_CLIENT_KEY", "").strip()
-    secret = os.environ.get("GAMMA_ZOTERO_CLIENT_SECRET", "").strip()
-    return (key, secret) if key and secret else ("", "")
-
-
 def google_oauth_base() -> str:
     """``GAMMA_GOOGLE_OAUTH_BASE``: Google's OAuth endpoints (device codes,
     tokens, revocation); https://oauth2.googleapis.com unless the browser
