@@ -11,7 +11,7 @@
 // folder, file, host?, paths?, diff?, reason?, server: {origin, account},
 // for?, at, expires_at}`, every
 // string as Gamma marks what would not show. The queue, the card's words and
-// what the shell says around it are made here; main.js follows the host and
+// what the shell says around it are made here; lib/agentAskBar.js follows the host and
 // arms the buttons, and the bar draws what comes back as plain text. Pure:
 // no Electron (test/agentAsks.test.js, `npm test`).
 
@@ -50,7 +50,7 @@ function clock(iso) {
 }
 
 // The queue after a reading `list` of the host: the asks not answered here
-// (`tombstones`, the ids main.js answered, which a list read before the
+// (`tombstones`, the ids lib/agentAskBar.js answered, which a list read before the
 // answer may still hold), those already queued kept in their place, the
 // new ones behind them in the order they were asked (`at`). A tombstone
 // whose ask the list no longer holds is dropped from the set.
@@ -78,7 +78,7 @@ function fromOf(ask, servers) {
 const label = (ask) => shown(oneLine(ask.label, 40) || 'The agent')[0];
 
 // The first of the queue as the bar draws it, or null: `key` (the ask's id),
-// `kind`, `label`, `hostId` (the local server it came from, as main.js put it
+// `kind`, `label`, `hostId` (the local server it came from, as lib/agentAskBar.js put it
 // on the ask), `link` (the work folder's link there), `waiting` (the
 // queue's length) and `from`
 // (`{name, origin, account}`), and the card's words: `caption`, `count` ("1
@@ -94,7 +94,7 @@ const label = (ask) => shown(oneLine(ask.label, 40) || 'The agent')[0];
 // directory's name, for a notification) and `marked` (how many characters
 // Gamma marked: the bar draws ⟨U+…⟩ as a mark only then, since the agent
 // may write the same letters itself).
-// `replaced`: the id of an ask main.js shows in place of one that went
+// `replaced`: the id of an ask lib/agentAskBar.js shows in place of one that went
 // away unanswered here.
 function cardOf(queue, servers, replaced = '') {
   const ask = (queue || [])[0];

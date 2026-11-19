@@ -98,7 +98,7 @@ test('an address that does not speak HTTPS: http:// is offered only to one of th
   assert.equal(diagnoseOpen(SSL).action, 'retry', 'a failure of no known server');
 });
 
-test('an http:// address that sent the window to https:// (main.js sentToHttps) is offered that address, whatever the load failed with', () => {
+test('an http:// address that sent the window to https:// (lib/addresses.js sentToHttps) is offered that address, whatever the load failed with', () => {
   const ABORTED = 'ERR_ABORTED (-3) loading \'http://nas.lan:5000/\'';
   const redirect = diagnoseOpen(ABORTED, { url: 'http://nas.lan:5000', scope: 'lan', sentTo: { to: 'https://nas.lan:5001', hsts: false } });
   assert.deepEqual([redirect.action, redirect.to, redirect.summary], ['https', 'https://nas.lan:5001', 'nas.lan now redirects to https://nas.lan:5001.']);

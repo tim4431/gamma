@@ -3,7 +3,7 @@
 // clones (a local server's mirrors of remote workspaces),
 // the Zotero links (a local server's workspaces kept in step with a Zotero
 // library) and the synced vaults (a local server's folder links: a folder
-// with a directory, or a page with one file). Pure: main.js reads the rows
+// with a directory, or a page with one file). Pure: lib/syncPanel.js reads the rows
 // off each running local server and hands them here, and the bar only
 // renders what comes back. The sentences the shell says about a vault (the
 // dialog's first round, the questions before a force or a removal, a
@@ -60,11 +60,11 @@ function nameOf(url, servers) {
 // or changed (`cert`, what it said of itself), or an https:// address that
 // answered without TLS. The row's text and its title's tail come from the
 // kind; `last_error` stays the title's start, so the server's words are
-// always there in full. `net` is what main.js knows beside the status:
+// always there in full. `net` is what lib/addresses.js knows beside the status (netState):
 // `accepted`, the digest of the certificate the window accepted, by bare
 // host name; `pinned` and `httpsSeen`, origins with a pinned certificate
 // and those that loaded over https; `moveFailed`, the origins whose
-// automatic move to https failed this session (main.js autoUpgrade).
+// automatic move to https failed this session (lib/addresses.js autoUpgrade).
 
 // The https:// origin a redirect of `remoteUrl` to `moveTo` moves to by
 // itself, or '': the same host name (a URL's hostname: lowercase, IDN in
@@ -352,7 +352,7 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // folder of another server, made from an empty folder there, pushes
 // everything and pulls, both locked (REMOTE_WORK_RULE). `letGo`: a work
 // folder of another server that server detached (the list's `let_go`),
-// which the shell forgets as Detach… does (main.js forgetDetached).
+// which the shell forgets as Detach… does (lib/thisComputer.js forgetDetached).
 //
 // `roles` is the workspaces the server's account may open, as its `GET
 // /api/session` lists them (`[{id, role}]`; null: not read). The server
@@ -508,7 +508,7 @@ function computerOtherAccount(remote, name, who) {
 
 // The question before this computer (`name`) answers one of `servers` (the
 // launcher's remote servers, `{ name }`), Settings → AI → Agents' Add a server…
-// (main.js addLinkedServer): what that server then sees and can do, one button a
+// (lib/thisComputer.js addLinkedServer): what that server then sees and can do, one button a
 // server (its index), then Cancel.
 function serverAsk(servers, name) {
   return { message: servers.length > 1 ? `Which server should ${name} answer?` : `Let ${name} answer ${servers[0].name}?`,
@@ -535,7 +535,7 @@ function serverPlaceAsk(remote, places) {
 
 // The question before server `remote` may answer what the agents of this
 // computer ask to run (decision 7 of docs/research/agents-as-participants-plan.md;
-// main.js linkAsks): `{ message, detail, buttons }`, button 0 letting it
+// lib/thisComputer.js setLinkAsks): `{ message, detail, buttons }`, button 0 letting it
 // (Cancel the default).
 function linkAsksAsk(remote) {
   return { message: `Let ${remote} answer what the agents here ask to run?`,
@@ -658,7 +658,7 @@ function fileState(item, s, failure = null) {
 // Everything one local server keeps: its answers to the three reads
 // (`zotero`, its Zotero links: none from a server that has no such list),
 // `roles`, the workspaces its account may open, and `computers`, its
-// computer links with this computer's name (vault). `net`: what main.js
+// computer links with this computer's name (vault). `net`: what lib/addresses.js
 // knows of the remote servers' certificates and moves (failureOf).
 function itemsOf(server, { mirrors = [], links = [], zotero: zoteroLinks = [], roles = null, computers = null } = {}, servers = [],
   net = {}) {
@@ -700,9 +700,9 @@ function summarize(items) {
 
 // What a vault of another server may be: it pulls, and pushes PDFs at most,
 // unless it is a work folder there, which is made from an empty folder of
-// that server (main.js makeRemoteWorkFolder) and only then pushes
+// that server (lib/vaults.js makeRemoteWorkFolder) and only then pushes
 // everything. The dialog, the vault's view and the shell's switches
-// (main.js setPull, changePush) keep to it.
+// (lib/vaults.js setPull, changePush) keep to it.
 const REMOTE_RULE = 'A vault of another server pulls, and pushes PDFs at most: a synced folder there is made from an empty folder.';
 
 // What a work folder of another server is, whatever its switches are asked:
@@ -713,7 +713,7 @@ const REMOTE_WORK_RULE = 'A synced folder of another server pushes everything an
 // Why the empty folder `folder` of server `remote` did not become a work
 // folder there (`reason`: that server older than this app, the account only
 // a viewer there, or that server's or the host's refusal), for the bar while
-// the vault dialog asks how it is synced instead (main.js addFolderVault).
+// the vault dialog asks how it is synced instead (lib/vaults.js addFolderVault).
 function remoteWorkRefused(remote, folder, reason) {
   return `“${folder}” cannot be a synced folder of ${remote}: ${said(String(reason || `${remote} refused it`))} It can be synced as a vault that pulls instead.`;
 }
@@ -732,7 +732,7 @@ const WHOLE_RULE = 'A vault of the whole library cannot push everything: make on
 // would answer are said here first where the preview tells them (its
 // `refusal`; a folder with pages and a directory with files that would push
 // everything into each other). A work folder is not asked about here: its
-// tracking dialog in Gamma says what it tracks (main.js makeWorkFolder), and
+// tracking dialog in Gamma says what it tracks (lib/vaults.js makeWorkFolder), and
 // this dialog is for the other vaults, a folder with pages, a vault of
 // another server and the whole library.
 function firstRound({ path: dir, preview = {}, pull, push, folder, newFolder = false, remote = false, whole = false }) {
@@ -872,7 +872,7 @@ const AGENT_DOES = {
 // --- plain http and an address that moves ------------------------------------
 
 // The question before a token is minted for `host` over plain http://
-// (main.js beforeMint), with the host's `warning` (POST
+// (lib/addresses.js beforeMint), with the host's `warning` (POST
 // /api/remote-servers/check) and, when its name did not resolve in time
 // (`unsure`), a line saying so: `{ message, detail, buttons }`, button 0
 // connecting.
@@ -892,7 +892,7 @@ function movedWords(moved = {}) {
   return listed(parts.filter(Boolean));
 }
 
-// The question before the links of `from` move to `to` (main.js moveServer,
+// The question before the links of `from` move to `to` (lib/addresses.js moveServer,
 // the move's dry run `plan`: `{kind, plain, moved}`): `{ message, detail,
 // buttons }`, button 0 moving. A move to plain http:// says the tokens
 // travel without encryption.
@@ -911,7 +911,7 @@ function moveSaid(from, to, moved = {}) {
 }
 
 // The question before agent `name` is turned on for this computer, the
-// computer's decision (main.js setAgent): what it does in your chats on
+// computer's decision (lib/thisComputer.js setAgent): what it does in your chats on
 // this computer (in a synced folder's directory, a directory offered to it
 // or one of its own), and what a server this computer is shown on can then
 // do with it: `{ message, detail, buttons }`, button 0 turning it
@@ -939,7 +939,7 @@ const AGENT_ASKS = {
 };
 
 // The question before agent `name` may ask to run what its confinement
-// keeps from it, the computer's decision (main.js setAgentRuns): in your
+// keeps from it, the computer's decision (lib/thisComputer.js setAgentRuns): in your
 // chats on this computer, wherever it works, and in Gamma's window for a turn started on
 // another server this computer is shown on, whose people write what it is
 // asked to do. `{ message, detail, buttons }`, button 0 letting it ask
@@ -969,7 +969,7 @@ const AGENT_TERMS = {
 
 // The question before `person` (a username) of the workspace `where` (its
 // name, with its server's address for another server's) may use agent
-// `name` of this computer (main.js agentPerson): what they can then do, and
+// `name` of this computer (lib/thisComputer.js agentPerson): what they can then do, and
 // the one sentence of consent, the owner answering for the account's
 // terms: `{ message, detail, buttons }`, button 0 naming them.
 function personAsk(name, person, where) {
@@ -1001,7 +1001,7 @@ function dirSaid(dir, moved = false) {
 }
 
 // What a round asked for came to, for the bar: its status as the round
-// left it (main.js followRound).
+// left it (lib/vaults.js followRound).
 function roundSaid(item, status) {
   const s = status || {};
   if (s.stopped) return `${item.name}: ${s.stopped}`;

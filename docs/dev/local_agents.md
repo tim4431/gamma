@@ -2172,7 +2172,7 @@ reaches (the page asks of `desktop/preload.js`, [desktop architecture](../../des
 "Pages asking the shell"): `set-agent` (`agent`, `enabled`), `set-agent-runs`
 (`agent`, `ask`) and `agent-dirs` (`dir`: "new", or the id of an offered
 directory to move), each only from a page of a server on this computer.
-The shell's own session acts (main.js `setAgent`, `setAgentRuns`,
+The shell's own session acts (`desktop/lib/thisComputer.js` `setAgent`, `setAgentRuns`,
 `agentDirs`), so its account owns an agent it turns on:
 
 - **Turning one on** asks first (`keeping.agentAsk`: "Turn on Codex on this

@@ -389,7 +389,7 @@ Preferences:
   opens from this computer is read where it lies, under *Opened files*,
   until Add to library… stores it; on, every PDF opened that way is stored
   in the library at once. The shell reads it from the account's profile on
-  the server it opens the file on (`desktop/main.js` `addsToLibrary`;
+  the server it opens the file on (`desktop/lib/systemFiles.js` `addsToLibrary`;
   [synced_vaults.md](synced_vaults.md#the-desktop-app)), so the row shows
   only where `IS_DESKTOP`.
   **Replacing a PDF** (account scope, `SECTION_PREFS.reading["Replacing a
