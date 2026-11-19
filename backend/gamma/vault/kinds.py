@@ -293,7 +293,7 @@ class _File(Kind):
     """Any other file of a work folder, pictures included, read where it is:
     a page whose document is the file (its format read with it, its
     extension ``formats.vault_extension``), titled by its leaf, never in the
-    library by the switch; one past ``config.vault_keep_bytes`` is *listed*,
+    library by the switch; one past ``server_options.vault_keep_bytes`` is *listed*,
     its page a document with no bytes (docs/dev/documents.md "The listed
     state"). Pull writes nothing for it, and nothing ever moves it."""
 
@@ -301,7 +301,7 @@ class _File(Kind):
     in_place = True
 
     def read(self, rnd, path, found):
-        from .. import config, gamma_sync, linked_files
+        from .. import gamma_sync, linked_files, server_options
         from . import disk
         from .remote import Waiting
         from .round import Read
@@ -313,7 +313,7 @@ class _File(Kind):
         read_at, leaf = time.time(), path.rsplit("/", 1)[-1]
         ext = formats.vault_extension(leaf)
         before = os.stat(target)       # the size that decides, the stat the read records: one file's
-        if before.st_size > config.vault_keep_bytes():
+        if before.st_size > server_options.vault_keep_bytes():
             with open(target, "rb") as f:
                 head = f.read(formats.SNIFF_BYTES)
             st = os.stat(target)
@@ -329,9 +329,9 @@ class _File(Kind):
                     format=file_format(leaf, head), ext=ext)
 
     def weight(self, found):
-        from .. import config
+        from .. import server_options
 
-        return found.size if found.size <= config.vault_keep_bytes() else 0
+        return found.size if found.size <= server_options.vault_keep_bytes() else 0
 
     def new(self, rnd, path, read, partner=None):
         from . import pages

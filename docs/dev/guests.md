@@ -29,10 +29,12 @@ Every guest login is a throwaway account of its own. `POST /api/login-guest`
 
 The endpoint is a sync `def` because it writes files. It is refused (403)
 on a share host and while the admin's switch is off, and answers 503 once
-the live guest accounts reach `GAMMA_GUEST_MAX` (default 500, `0` turns
-guest logins off; the count and the insert are one statement). A hosted
-container (`GAMMA_HOSTED=1`) reads as `0` whatever the variable says
-(`config.guest_max`).
+the live guest accounts reach the most at once (`server_options.guest_max`:
+Settings → Users → Guests, default 500; the count and the insert are one
+statement). `GAMMA_GUEST_MAX` overrides it where it is set — the public
+demo's 300, and `0`, which turns guest logins off, on every hosted
+container — and the row is then read-only. A hosted container
+(`GAMMA_HOSTED=1`) reads as `0` whatever either says.
 
 Two predicates, because a server that *cannot* take guests is not the same
 as one whose admin turned them off:

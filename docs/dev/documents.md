@@ -140,8 +140,8 @@ A stored doc holds to these rules, and `document` refuses anything else:
 
 ### The listed state
 
-A work folder's file past the keep limit (`config.vault_keep_bytes`,
-`GAMMA_VAULT_KEEP_MB`, 64 unless set, read when asked) is listed without its
+A work folder's file past the keep limit (`server_options.vault_keep_bytes`,
+Settings → Server → Work folders, 64 MB unless an admin changed it) is listed without its
 bytes: the vault's file class hashes nothing and serves nothing, and the
 page's document is
 

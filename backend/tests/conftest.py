@@ -306,6 +306,24 @@ def fresh_client(**kwargs):
     return c
 
 
+@pytest.fixture
+def server_option():
+    """``server_option(name, value)`` sets a server option (Settings,
+    gamma/server_options.py) for one test; each goes back to its default
+    after it."""
+    from gamma import server_options
+
+    names = []
+
+    def set_option(name, value):
+        names.append(name)
+        server_options.update({name: value})
+
+    yield set_option
+    if names:
+        server_options.update({name: server_options.OPTIONS[name].default for name in names})
+
+
 @pytest.fixture(scope="session")
 def client():
     return session_client()

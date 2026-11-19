@@ -811,9 +811,11 @@ Settings → AI → Tool usage → Online search avoids this.)".
 OpenAlex answers without an account on a small daily budget. A search costs a
 tenth of a cent of it, a lookup by id nothing, and keyless searches are paused
 when its cluster is loaded (503). The account's optional key (Online search,
-below), else the server's `GAMMA_OPENALEX_API_KEY`, gives ten times the budget
-and uninterrupted search. The key travels in the `Authorization` header. The
-registry switch `GAMMA_METADATA_LOOKUP=off` applies to OpenAlex too.
+below), else the one an admin saved for every account (Settings → AI → Tool
+usage → Online search for every account, server option `openalex_key`),
+gives ten times the budget and uninterrupted search. The key travels in the
+`Authorization` header. Paper lookups switched off (server option
+`metadata_lookup`) applies to OpenAlex too.
 
 #### related_papers
 
@@ -887,9 +889,10 @@ date?}]`:
 - **SearXNG** (`searxng`): a SearXNG instance's `/search?format=json`, with
   `time_range` for `recency` and `site:` in the query; the date is
   `publishedDate`. The account's own URL goes through the SSRF guard, so it
-  must be a public host. The server's `GAMMA_SEARXNG_URL` serves accounts
-  without their own and may be on the private network, since the admin
-  chose it.
+  must be a public host. The instance an admin set for every account
+  (Online search for every account, server option `searxng_url`) serves
+  accounts without their own and may be on the private network, since the
+  admin chose it.
 - **Your AI connection** (`ai`): one short call on the chat's own connection
   with its provider's hosted search tool, the way Codex and Claude search.
   `hosted_tool` asks the wire a call with tools goes over

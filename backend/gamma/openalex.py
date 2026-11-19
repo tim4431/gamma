@@ -8,25 +8,24 @@ answers without an account on a small daily budget (a search costs a tenth
 of a cent of it, a lookup by id nothing) and pauses keyless searches when
 its cluster is loaded; a free API key gives ten times the budget and
 uninterrupted search. The key is the account's (Settings → AI → Tool usage →
-Online search, gamma/search_services.py), else the server's
-``GAMMA_OPENALEX_API_KEY``, and travels in the Authorization header, never
+Online search, gamma/search_services.py), else the one an admin saved for
+every account (server_options ``openalex_key``), and travels in the Authorization header, never
 in a URL. Records come back in the shape the other registries use
 (``title, authors, year, venue, doi, arxiv_id``) plus ``abstract``,
 ``cited_by``, ``oa_pdf`` (the best open-access PDF) and ``openalex_id``.
-The registry switch (``GAMMA_METADATA_LOOKUP``) applies.
+The paper lookups' switch (server_options ``metadata_lookup``) applies.
 """
 
 import json
-import os
 import re
 import urllib.parse
 from urllib.error import HTTPError
 
+from . import server_options
 from .paper_links import title_key
 from .textnorm import plain_text
 
 API = "https://api.openalex.org"
-SERVER_KEY = os.environ.get("GAMMA_OPENALEX_API_KEY", "").strip()
 # What a record needs; a lookup also asks for the work's graph edges.
 _SELECT = ("id,doi,display_name,publication_year,cited_by_count,authorships,"
            "primary_location,best_oa_location,locations,abstract_inverted_index")
@@ -54,7 +53,7 @@ def _get(path: str, params: dict, key: str = "") -> dict:
     # registries, and gamma.* module load stays free of the routers package.
     from .routers.metadata import _http_get
 
-    key = key or SERVER_KEY
+    key = key or server_options.get("openalex_key")
     query = urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     try:

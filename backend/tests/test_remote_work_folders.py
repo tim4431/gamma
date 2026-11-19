@@ -34,7 +34,7 @@ import pytest
 
 from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, mark_work_folder,
                       thread_on, work_props, workspace_of)
-from gamma import config, folder_links, gamma_sync, workspaces
+from gamma import folder_links, gamma_sync, server_options, workspaces
 from gamma.auth import DISK_CLIENT
 from gamma.computers import channel, registry
 from gamma.blocks_store import FOLDERS, create_page, new_block_id
@@ -178,7 +178,7 @@ def _saved(c, server, folder, root, files, changes=(), **body):
 
 def test_a_work_folder_of_another_server_is_made_of_an_empty_folder_there_and_chosen_here(owner, disk, over_http,
                                                                                           far, monkeypatch):
-    monkeypatch.setattr(config, "vault_keep_bytes", lambda: 20)
+    monkeypatch.setattr(server_options, "vault_keep_bytes", lambda: 20)
     w = make_folder(owner, "RWF lab")
     root = disk / "RWF lab"
     files = {"notes.md": "a thought\n", "data.csv": "a,b\n" * 20, ".env": "KEY=1\n", "small.txt": "tiny\n"}
@@ -807,7 +807,7 @@ def test_detaching_keeps_a_computers_files_as_pages_there_storing_nothing_new(ow
     large to keep listed still; the computer finds the mark gone at its round
     (``channel._Channel._let_go``: a round of each work folder of that
     server, unless paused)."""
-    monkeypatch.setattr(config, "vault_keep_bytes", lambda: 20)
+    monkeypatch.setattr(server_options, "vault_keep_bytes", lambda: 20)
     w = make_folder(owner, "RWF keep there")
     root = disk / "Keep there"
     link = _saved(owner, over_http, w, root, {"a.md": "a\n", "b.txt": "b\n", "big.csv": "x,y\n" * 20},

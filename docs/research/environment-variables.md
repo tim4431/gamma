@@ -6,17 +6,21 @@ Settings; an environment variable is for what a server needs before anyone
 can sign in, or for a server-wide service that runs with nobody attending.
 Read from the code (`backend/gamma/`, `backend/app.py`, `manage.py`,
 `gamma_mobile.py`, `docker-entrypoint.sh`, the `Dockerfile`) in November
-2026: 61 `GAMMA_*` variables and a few standard ones. Two app
-registrations have since moved into Settings, each server's admin
-registering their own: Google Drive's client (Settings → Backups → Google
-Drive, [google-drive-backup.md](google-drive-backup.md)) and the Zotero
-app (`GAMMA_ZOTERO_CLIENT_KEY` / `_SECRET` before; Settings → Server →
-Zotero sign-in).
+2026: 61 `GAMMA_*` variables and a few standard ones.
 
-The overrides were not limited to hosted containers, as first proposed:
-the demo server (`GAMMA_DEMO`, `GAMMA_GUEST_SEED`) and the share host
-(`GAMMA_CLOUD_SHARE_HOST`) set theirs in their own environment, outside
-the fleet, and both are unattended services the rule allows.
+What was decided: everything a person might want to change moved into
+Settings, except what the public demo, the account server (and its fleet)
+and the share host set for themselves, which are the unattended services
+the rule allows. Moved: Google Drive's OAuth client (Settings → Backups →
+Google Drive, [google-drive-backup.md](google-drive-backup.md)) and the
+Zotero app (Settings → Server → Zotero sign-in), each server's admin
+registering their own; and the feature settings below ("Moved into
+Settings"), now server options (`gamma/server_options.py`, one users.db
+record, `manage.py set-option` for a script or the browser suite). The
+overrides were not limited to hosted containers, as first proposed: the
+demo (`GAMMA_DEMO`, `GAMMA_GUEST_TTL_HOURS`, `GAMMA_GUEST_MAX`,
+`GAMMA_GUEST_SEED`) and the share host (`GAMMA_CLOUD_SHARE_HOST`) set
+theirs in their own environment, outside the fleet.
 
 ## Infrastructure and unattended services (fit the rule)
 
@@ -47,27 +51,33 @@ can set in Settings.
 | `GAMMA_PUBLIC_URL` | Server → Public server URL | the saved one |
 | `GAMMA_CLOUD_ISSUER`, `_POLICY`, `_CLIENT_ID`, `_CLIENT_SECRET` | Users → Sign-in | the saved ones |
 | `GAMMA_CLOUD_SHARE_HOST` | Sign-in → Accept published pages | off |
-| `GAMMA_DEMO` | Users → Guests → Demo mode | the saved one |
-| `GAMMA_GUEST_TTL_HOURS` | Users → Guests → Guest workspaces last | the saved one |
+| `GAMMA_DEMO` | Users → Guests → Demo mode (the public demo) | the saved one |
+| `GAMMA_GUEST_TTL_HOURS` | Users → Guests → Guest workspaces last (the public demo) | the saved one |
+| `GAMMA_GUEST_MAX` | Users → Guests → Most guests at once (the public demo; 0 on every hosted container) | the saved one |
 | `GAMMA_S3_BUCKET`, `_ENDPOINT`, `_REGION`, `_ACCESS_KEY`, `_SECRET_KEY`, `_PREFIX` | Backups → Bucket (set, every field comes from here; also the off-site rounds' bucket) | the saved bucket |
-| `GAMMA_AI_ANTHROPIC_BASE_URL`, `_OPENAI_`, `_CHATGPT_`, `GAMMA_AI_BASE_URL` (old name) | AI → Connections, a connection's blank base URL | the providers' own |
 
-## Feature settings with no Settings control (at odds with the rule)
+## Moved into Settings
 
-| Variable | What it does | When unset |
+| Was | Now | Default |
 |---|---|---|
-| `GAMMA_GUEST_MAX` | Most guest accounts at once; 0 turns guests off | 500 (0 when hosted) |
-| `GAMMA_GUEST_SEED` | A workspace zip every new guest gets | the welcome page only |
-| `GAMMA_METADATA_LOOKUP` | `off` stops paper-registry lookups | on |
-| `GAMMA_MODEL_CATALOG` | `off` stops fetching the models.dev catalog | on |
-| `GAMMA_OPENALEX_API_KEY` | Server-wide OpenAlex key (each account can set its own) | none |
-| `GAMMA_SEARXNG_URL` | Server-wide SearXNG (each account can set its own) | none |
-| `GAMMA_VAULT_KEEP_MB` | Largest work-folder file a vault hashes and serves | 64 |
-| `GAMMA_AGENT_CLAUDE`, `GAMMA_AGENT_CODEX` | The command that starts Claude Code or Codex | found on PATH |
-| `GAMMA_AGENT_RUN_TIMEOUT` | Seconds before a local agent's turn is stopped | 1800 |
-| `GAMMA_COMPUTER_GRACE_S` | Seconds a computer counts as online after its last poll | 45 |
-| `GAMMA_FREE_PAGE_LIMIT` | Published pages on the share host's free plan | 5 |
-| `GAMMA_PAGE_HOST` | The share host's per-account page hostname pattern | token links only |
+| `GAMMA_METADATA_LOOKUP` | Server → Online services → Paper lookups | on |
+| `GAMMA_MODEL_CATALOG` | Server → Online services → AI model catalog | on |
+| `GAMMA_VAULT_KEEP_MB` | Server → Work folders → Largest file a work folder keeps | 64 MB |
+| `GAMMA_SEARXNG_URL` | AI → Tool usage → Online search for every account | none |
+| `GAMMA_OPENALEX_API_KEY` | the same, the key write-only and encrypted | none |
+| `GAMMA_AI_ANTHROPIC_BASE_URL`, `_OPENAI_`, `_CHATGPT_`, `GAMMA_AI_BASE_URL` | gone: a connection's own base URL (AI → Connections) | the providers' own |
+| `GAMMA_ZOTERO_CLIENT_KEY`, `_SECRET` | Server → Zotero sign-in | Gamma Cloud's broker |
+
+## Kept in the environment, and why
+
+| Variable | What it does | Why it stays |
+|---|---|---|
+| `GAMMA_GUEST_SEED` | A workspace zip every new guest gets | the public demo's |
+| `GAMMA_FREE_PAGE_LIMIT` | Published pages on the share host's free plan | the share host's |
+| `GAMMA_PAGE_HOST` | The share host's per-account page hostname pattern | the share host's |
+| `GAMMA_AGENT_CLAUDE`, `GAMMA_AGENT_CODEX` | The command that starts Claude Code or Codex | which program the desktop runs is changed only through the desktop app, which asks the person at the computer; a field a page could save would let a web page choose it. People's agents are found on the PATH and in the installers' places; the variables are the tests' fakes |
+| `GAMMA_AGENT_RUN_TIMEOUT` | Seconds before a local agent's turn is stopped | a test hook (the tests shorten it) |
+| `GAMMA_COMPUTER_GRACE_S` | Seconds a computer counts as online after its last poll | a test hook |
 
 ## Set by Gamma's own packaging, not a person
 

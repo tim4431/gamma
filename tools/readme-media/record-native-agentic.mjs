@@ -143,7 +143,7 @@ const PROBE = () => {
 const take = new Take(DIR, NAME);
 let server, model, browser;
 try {
-  const lib0 = await library({ env: { GAMMA_METADATA_LOOKUP: 'on' } });
+  const lib0 = await library({ options: { metadata_lookup: 'on' } });
   server = lib0.server;
   const account = lib0.account;
   const pageId = ATOMS.id;

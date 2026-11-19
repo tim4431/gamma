@@ -24,7 +24,6 @@ properties.ppt_cite — the slide citation is generated in the same fetch).
 
 import html as html_lib
 import json
-import os
 import re
 import threading
 import time
@@ -38,7 +37,7 @@ from difflib import SequenceMatcher
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import ai_usage, item_types, jobs, storage
+from .. import ai_usage, item_types, jobs, server_options, storage
 from .. import bibtex as bibtex_mod
 from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
@@ -75,11 +74,12 @@ _DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s\"'<>]+)")
 _ATOM = "{http://www.w3.org/2005/Atom}"
 _ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 
-# GAMMA_METADATA_LOOKUP=off keeps the server from asking the registries
-# (arXiv, doi.org, Crossref, Open Library, Google Books — an offline server,
-# the browser suite): every lookup fails at once and finds nothing, instead
-# of waiting out its timeout.
-METADATA_LOOKUP = os.environ.get("GAMMA_METADATA_LOOKUP", "").strip().lower() not in ("0", "off", "false", "no")
+# Paper lookups switched off (Settings → Server → Online services,
+# server_options ``metadata_lookup``: an offline server, the browser suite)
+# keep the server from asking the registries (arXiv, doi.org, Crossref,
+# OpenAlex, Open Library, Google Books): every lookup fails at once and
+# finds nothing, instead of waiting out its timeout.
+LOOKUPS_OFF = "paper lookups are switched off in Settings → Server → Online services"
 
 # Why a work folder's file that is not in the library gets no lookup
 # (docs/dev/work_folders.md "The library rule": no paper until it is added).
@@ -88,8 +88,8 @@ NO_PAPER = "This page's document is no PDF: it has no paper's record to look up.
 
 
 def _http_get(url: str, accept: str = "", timeout: int = 20, headers: dict | None = None) -> bytes:
-    if not METADATA_LOOKUP:
-        raise OSError("registry lookups are switched off (GAMMA_METADATA_LOOKUP)")
+    if not server_options.get("metadata_lookup"):
+        raise OSError(LOOKUPS_OFF)
     headers = {"User-Agent": "gamma-pdf-annotator/1.0 (metadata lookup)", **(headers or {})}
     if accept:
         headers["Accept"] = accept

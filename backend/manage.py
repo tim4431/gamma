@@ -20,6 +20,7 @@ Usage:
   python manage.py set-member <workspace-id> <username> <owner|editor|viewer|none>
   python manage.py set-access <workspace-id> <private|public> [viewer|editor]
   python manage.py sweep-guests [--all]            # delete expired guest accounts now (--all: every guest)
+  python manage.py set-option <name> <value> ...   # server options of Settings (gamma/server_options.py)
   python manage.py setup                           # idempotent: missing personal workspaces + workspace files
   python manage.py migrate [--status] [--dry-run] [--global-only]
                                                    # upgrade the data directory (also runs at server start),
@@ -192,6 +193,24 @@ def sweep_guests(everyone=False):
     sweeper does it every 10 minutes); ``--all`` deletes every guest."""
     gone = guests.delete_expired(everyone=everyone)
     print(f"Deleted {len(gone)} guest account(s)" + (f": {', '.join(gone)}" if gone else "."))
+
+
+def set_options(args):
+    """Server options of Settings (gamma/server_options.py) as name/value
+    pairs, all checked before any is saved: an admin's way without the
+    page, and the browser suite's before a server starts."""
+    from gamma import server_options
+
+    if not args or len(args) % 2:
+        print("Usage: python manage.py set-option <name> <value> [<name> <value> ...]; names: "
+              + ", ".join(server_options.OPTIONS))
+        sys.exit(1)
+    try:
+        server_options.update(dict(zip(args[::2], args[1::2])))
+    except ValueError as e:
+        print(e)
+        sys.exit(1)
+    print("Set " + ", ".join(args[::2]) + ".")
 
 
 def rename_user(old, new):
@@ -578,6 +597,8 @@ def main():
         set_member(args[0], args[1], args[2])
     elif cmd == "sweep-guests":
         sweep_guests(everyone="--all" in args)
+    elif cmd == "set-option":
+        set_options(args)
     elif cmd == "setup":
         setup()
     else:

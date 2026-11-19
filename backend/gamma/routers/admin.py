@@ -32,7 +32,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, gdrive, gdrive_account, guests,
-                hosted, integrity, jobs, offsite, proxy_settings, snapshot_copies, workspaces, zotero_oauth)
+                hosted, integrity, jobs, offsite, proxy_settings, server_options, snapshot_copies, workspaces,
+                zotero_oauth)
 from ..backup_store import StoreConfigError
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
@@ -129,11 +130,12 @@ def get_settings(request: Request):
     the users list), the public URL, the cloud sign-in and the guest settings
     (the sign-in switch, the lifetime and demo mode — each with its source —
     and ``guest_logins_available``) for the admin rows in the Settings
-    dialog; on a hosted container ``hosted`` (``hosted.pane``: the plan's
-    limits, the Plan rows), else null."""
+    dialog, the server options (``options``: ``server_options.view``); on a
+    hosted container ``hosted`` (``hosted.pane``: the plan's limits, the
+    Plan rows), else null."""
     require_admin(request)
     return {**get_defaults(), **public_url_settings(), **_guests(), "cloud": _cloud(),
-            "hosted": hosted.pane(),
+            "hosted": hosted.pane(), "options": server_options.view(),
             "quota_mb_range": [QUOTA_MB_MIN, QUOTA_MB_MAX],
             "guest_ttl_hours_range": [GUEST_TTL_MIN, GUEST_TTL_MAX]}
 
@@ -152,6 +154,9 @@ class SettingsUpdateRequest(BaseModel):
     guest_logins: bool | None = None
     guest_ttl_hours: int | None = None     # 1-720
     demo_mode: bool | None = None
+    # The server options (gamma/server_options.py), {name: value}; a secret
+    # left out is kept, "" removes it.
+    options: dict | None = None
 
 
 @router.put("/settings")
@@ -171,6 +176,8 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
             validate_guest_ttl_hours(payload.guest_ttl_hours)
         if payload.guest_logins is not None and not guests.logins_possible():
             raise ValueError("This server takes no guest logins.")
+        if payload.options:
+            server_options.check_admin_change(payload.options)
         if payload.public_url is not None:
             set_public_url(payload.public_url)
         if payload.quota_mb is not None:
@@ -181,6 +188,8 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
             set_guest_ttl_hours(payload.guest_ttl_hours)
         if payload.demo_mode is not None:
             set_demo_mode(payload.demo_mode)
+        if payload.options:
+            server_options.update(payload.options)
         if any(v is not None for v in (payload.cloud_issuer, payload.cloud_client_id, payload.cloud_client_secret,
                                        payload.cloud_policy, payload.cloud_share_host)):
             cloud_auth.save_settings(issuer=payload.cloud_issuer, client_id=payload.cloud_client_id,
@@ -189,7 +198,7 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {**get_defaults(), **public_url_settings(), **_guests(), "cloud": _cloud(),
-            "hosted": hosted.pane()}
+            "hosted": hosted.pane(), "options": server_options.view()}
 
 
 # Sync def: one call to the account server.
@@ -211,8 +220,7 @@ def _guests() -> dict:
     with its source). ``guest_logins`` is what the server does — the switch
     held to what this server can do — and ``guest_logins_available`` is
     false where it takes no guests whatever the switch says (a hosted
-    container, a share host, GAMMA_GUEST_MAX=0), so the pane leaves the
-    rows out."""
+    container, a share host), so the pane leaves the rows out."""
     return {**guest_settings(), "guest_logins": guests.logins_open(),
             "guest_logins_available": guests.logins_possible()}
 

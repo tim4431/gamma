@@ -60,7 +60,7 @@ function log() {
 export async function viewerScenarios(env) {
   const { browser, step, openPage, assert, assertEq, assertNoProblems, until, sleep } = env;
   if (!wanted("viewers")) return;
-  const server = new Server({ env: { GAMMA_FOLDER_LINKS: "1", GAMMA_SHELL_SECRET: "", GAMMA_VAULT_KEEP_MB: String(KEEP_MB) } });
+  const server = new Server({ env: { GAMMA_FOLDER_LINKS: "1", GAMMA_SHELL_SECRET: "" }, options: { vault_keep_mb: KEEP_MB } });
   const disk = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-viewers-"));
   try {
     await server.start();

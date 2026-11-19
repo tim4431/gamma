@@ -316,7 +316,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
 
   // A DOI typed in place of the stored one is looked up by the save, and the
   // status line says what came of it. The suite's server asks no registry
-  // (GAMMA_METADATA_LOOKUP=off), so here doi.org knows nothing: the fields
+  // (paper lookups off, harness.mjs OFFLINE), so here doi.org knows nothing: the fields
   // stay as typed. The found case is the backend's (test_metadata_update.py).
   await step("pdf: a DOI typed into the popover is looked up when the record is saved", async () => {
     const meta = { title: "Rydberg paper", authors: ["A. Writer"], year: "2026", doi: "10.1103/PhysRevA.99.013437",
