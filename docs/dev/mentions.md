@@ -169,12 +169,67 @@ it counts in backlinks. The rules:
 - A hand-typed `[[title|words]]` that no page answers is a dashed unlinked
   chip showing its words.
 
-To write one, pick the page in the `[[` picker, then type `|words` before
+The words are set in the link's card ("The link card" below): its ✎, then
+Text. By hand: pick the page in the `[[` picker, then type `|words` before
 the `]]`; or type `[[Exact title|words]]`, which links when one page has
 that title. A `|` typed in the picker's query closes it, since what follows
-is the link's words. The chip, in the editor and the rendered view, shows
-the words with what it names as its hover title (`refTargetTitle`); the
-caret touching it shows the source.
+is the link's words. The chip shows the words; the editor's chip has what
+it names as its hover title (`refTargetTitle`), the rendered one its card.
+The caret touching a link in the editor shows its source.
+
+## The link card
+
+Every link in a note's text has one card, the citation pill's preview made
+general (`shared/ui/LinkCard.jsx`): a page or note link, a web link (with a
+label or bare), a link into this library and a citation. An uploaded file
+keeps its chip's own menu (Add to library, Download), and a work folder's
+path link its own.
+
+- **What it says** (`describeLink`): a bold title (the page's title, the
+  page a note is on, the site's title from `/api/link-preview`, the cited
+  paper), a muted line (what and where: "Page · Physics", "Note", the
+  address shortened, "PDF page 3"), the note's text or the citation's quote,
+  and "Open page ↵", "Open note ↵", "Open link ↗" or "Open in PDF ↵".
+- **Where the note may be edited**, three quiet buttons follow it: Edit
+  (✎), Copy link and Remove link. Copy link copies the page's own link for a
+  page or note link, the address otherwise.
+- **Edit** turns the card into its form. Text is the link's words, the
+  target's own as its placeholder: empty words show the title, and a page
+  link then follows a rename. Link is the target's token; typing into it,
+  or clearing it, searches as the `[[` picker does (`useRefRows`: pages,
+  then notes), and an address, a DOI or an arXiv id offers "Link to …"
+  first (`isLinkInput`). Enter picks a row, then saves; Escape steps back.
+  Saving writes the Markdown (`linkEdit.js` `linkMarkdown`): a page or a
+  note as `[[id]]` or `[[id|words]]` (`\|` in a table's row), an address as
+  `[words](url)` or, with no words, the address alone (`<url>` when a bare
+  one would lose a character); a web link given a page becomes a page link
+  and back. Remove link leaves the words as text, a page link of none its
+  title; a bare address has no Remove.
+- **How it opens.** In a rendered note, the chat and comments, a hover
+  after a moment or the focus previews it, and a right-click or a held
+  finger pins it (`LinkHover`, `menuPress`, as Gamma opens a menu); a
+  click still opens the link, and the pointer can cross into the card
+  (`menuAim`). A pinned card closes on a press elsewhere or Escape. In the
+  note editor the card shows, pinned, under the link the caret stands
+  strictly inside (a press, the arrow keys); typing hides it, and Escape
+  closes it before it closes the editor. Ctrl+K and the Link buttons of
+  the selection toolbar and the editing bar open its form on the link the
+  caret is on, or on the selected words for a new link, the cursor in Link
+  (`linkCardHost.js`). The form's fields take the focus without ending the
+  editing session; a press outside both ends both.
+- **Which link a rendered card edits.** The rendered view knows a link by
+  its target only, so BlockMarkdown counts its links per target as it
+  renders them, and the nth link of a target is the nth of the source's
+  (`linkEdit.js` `linkSpans`, `linkKey`, `nthLinkSpan`: the same targets,
+  outside code and math, a bare address ending where GFM ends it). One the
+  scan cannot find offers no edit.
+
+An address pasted over selected words links them (`pastedLink`), in every
+note editor: `[words](url)`, a copied link to a page or a note of this
+library `[[id|words]]`. Not inside code or math, nor for words over more
+than one line or holding a link, nor with files on the clipboard; one
+undo takes the paste back whole. With nothing selected an address pastes
+as before, the note row's "Paste as" menu after it.
 
 `frontend/src/editor/refLabels.js` (`REF_RE`, `EMBED_RE`, `CHIP_RE`,
 `refWords`) and `backend/gamma/note_markup.py` (`BLOCK_REF_RE`,

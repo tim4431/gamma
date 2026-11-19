@@ -1636,9 +1636,14 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     try {
       const chip = row(p2, "now").locator(".blockRefChip");
       await until(async () => (await chip.innerText()) === "the target", { what: "the chip shows its words" });
-      // The words show at once; the title waits for the target's label.
-      await until(async () => (await chip.getAttribute("title")) !== null, { what: "the target's label arrives" });
-      assertEq(await chip.getAttribute("title"), "Aliased Link Target", "its hover title names the page");
+      // Its link card names the page (the words show at once, the card's
+      // title once the target's label arrives).
+      await chip.hover();
+      const cardTitle = p2.locator(".linkCard .citePreviewTitle");
+      await until(async () => (await cardTitle.count()) && (await cardTitle.innerText()) === "Aliased Link Target",
+        { what: "its card names the page" });
+      await p2.mouse.move(0, 0);
+      await p2.locator(".linkCard").waitFor({ state: "detached" });
       await editRow(p2, "now");
       const cmChip = p2.locator(".blockEditorCm .cmRefChip");
       assertEq(await cmChip.innerText(), "the target", "the editor's chip shows the words too");
@@ -1655,6 +1660,66 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       assertEq(JSON.stringify(await row(p2, "now").locator(".blockRefChip").allInnerTexts()), JSON.stringify(["the target", "my words"]));
       await row(p2, "now").locator(".blockRefChip", { hasText: "my words" }).click();
       await until(() => new URL(p2.url()).searchParams.get("block") === target.id, { what: "the chip opens its page" });
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
+  // The link card (shared/ui/LinkCard.jsx): a hover previews where a link
+  // goes, a right-click pins the card, its ✎ edits the words; Ctrl+K on
+  // selected words opens its form, whose Link field searches pages; an
+  // address pasted over words links them.
+  await step("notes: a link's card previews its page, edits its words; Ctrl+K links selected words to a page; an address pasted over words links them", async () => {
+    const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Card Link Target" } });
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Card source" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "lcblock", parent: src.id, position: "a0", content: `see [[${target.id}]] here` }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    const content = async () => (await tree(alice2, src.id))[0]?.content;
+    try {
+      const chip = row(p2, "here").locator(".blockRefChip");
+      await chip.hover();
+      const card = p2.locator(".linkCard");
+      await card.waitFor();
+      assertEq(await card.locator(".citePreviewTitle").innerText(), "Card Link Target", "the card names the page");
+      assert((await card.locator(".citePreviewOpen").innerText()).startsWith("Open page"), "and opens it");
+      await chip.click({ button: "right" });
+      await card.getByRole("button", { name: "Edit link" }).click();
+      const words = card.locator(".linkCardForm .linkCardInput").first();
+      assertEq(await words.getAttribute("placeholder"), "Card Link Target", "empty words show the page's title");
+      await words.fill("my words");
+      await p2.keyboard.press("Enter");
+      await until(async () => (await content()) === `see [[${target.id}|my words]] here`, { what: "the card's words saved" });
+      await card.waitFor({ state: "detached" });
+      assertEq(await row(p2, "here").locator(".blockRefChip").innerText(), "my words");
+
+      await editRow(p2, "here");
+      await p2.keyboard.type(" and the target");
+      for (let i = 0; i < "the target".length; i++) await p2.keyboard.press("Shift+ArrowLeft");
+      await p2.keyboard.press("Control+k");
+      const form = p2.locator(".linkCard .linkCardForm");
+      await form.waitFor();
+      await p2.waitForFunction(() => document.activeElement?.classList.contains("linkCardInput"));
+      assertEq(await p2.evaluate(() => document.activeElement.placeholder), "Search pages or paste a link", "the cursor is in Link");
+      await p2.keyboard.type("Card Link Tar");
+      await form.locator(".refPopupItem.selected", { hasText: "Card Link Target" }).waitFor();
+      await p2.keyboard.press("Enter");
+      await form.locator(".linkCardTarget", { hasText: "Card Link Target" }).waitFor();
+      await p2.waitForFunction(() => document.activeElement?.classList.contains("linkCardInput"));
+      await p2.keyboard.press("Enter");
+      await until(async () => (await content()) === `see [[${target.id}|my words]] here and [[${target.id}|the target]]`,
+        { what: "Ctrl+K linked the selected words to the page" });
+
+      await p2.keyboard.type(" read paper");
+      for (let i = 0; i < "paper".length; i++) await p2.keyboard.press("Shift+ArrowLeft");
+      await p2.evaluate(() => {
+        const data = new DataTransfer();
+        data.setData("text/plain", "https://example.org/paper");
+        document.activeElement.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+      });
+      await until(async () => (await content())?.endsWith(" read [paper](https://example.org/paper)"), { what: "the paste linked the words" });
+      await closeEditor(p2);
       assertNoProblems(p2);
     } finally {
       await p2.close();

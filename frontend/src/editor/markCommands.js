@@ -11,6 +11,7 @@
 import { fenceInnerAt } from "./fences.js";
 import { colorAt, insertLink, isUrl, markedAt, recolor, scanMarks, toggleMark } from "./mdMarks.js";
 import { scanMathSpans } from "./mdScan.js";
+import { linkCardHost } from "./linkCardHost.js";
 
 // Whether [from, to] is in a code fence or reaches inside a math span (a
 // caret: strictly between its delimiters), where marks, "/" and "$" mean
@@ -94,11 +95,16 @@ export const runInsertMath = (view) => runInsert(view, mathInsertAt);
 export const runToggleMark = (view, marker) => runInsert(view, (doc, from, to) => markPlan(doc, from, to, marker));
 export const runRecolor = (view, patch) => runInsert(view, (doc, from, to) => colorPlan(doc, from, to, patch));
 
+// Ctrl+K and the Link buttons: the editor's link card (BlockCmEditor.jsx),
+// its form on the link the caret is on or on the selected words; an editor
+// without one gets "[words](…)" to fill in.
 export function runInsertLink(view) {
   const doc = view.state.doc.toString();
   const { from, to } = view.state.selection.main;
   const r = linkPlan(doc, from, to);
   if (!r) return true;
+  const card = linkCardHost(view);
+  if (card) { card(); return true; }
   view.dispatch({ changes: r.changes, selection: r.selection, userEvent: "input" });
   // A URL on the clipboard fills the empty (…) slot — read asynchronously
   // (and not at all on plain-HTTP origins, where navigator.clipboard is

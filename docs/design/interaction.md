@@ -99,6 +99,10 @@ you sign in on.
   waits on them.
 - **Plain text is a paragraph**: no dot and no label. Only a block that is
   something else (a highlight, a drawing, a list item) shows a marker.
+- **Every link has one card**, the citation's preview: a hover shows where
+  it goes, a right-click or a held finger pins it, and its pencil changes
+  the words it shows and where it points. Ctrl+K opens the same card on the
+  selected words ([mentions.md](../dev/mentions.md#the-link-card)).
 
 ## Where a setting lives
 

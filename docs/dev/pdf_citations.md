@@ -61,10 +61,13 @@ and a note's preview on the PDF. It shows "p. 2" on the text's baseline,
 sized from the surrounding text. When the reply or note cites several
 sources (`citesSeveralSources`: papers and files alike), a pill whose label
 names only the place gets its source in front ("Vaswani · p. 2").
-Hovering, focusing or long-pressing it previews the paper title, the PDF page
-and the quote; App's `citeSource` (on `GammaNavContext`) names the paper.
-The pointer can move from the pill into the preview, across the text between
-them, without the preview closing ([menuAim.js](../../frontend/src/shared/ui/menuAim.js),
+Hovering or focusing it previews the paper title, the PDF page and the
+quote, and a right-click or a held finger pins that card: the link card
+every link has ([mentions.md](mentions.md#the-link-card)), whose Edit, Copy
+link and Remove link a note that may be edited adds. App's `citeSource` (on
+`GammaNavContext`) names the paper. The pointer can move from the pill into
+the preview, across the text between them, without the preview closing
+([menuAim.js](../../frontend/src/shared/ui/menuAim.js),
 [ui-design.md](ui-design.md)). Its **Open in PDF** link opens the passage the
 way the pill does. A
 page or block link is a card (`GammaLinkCard`). Clicking a citation calls

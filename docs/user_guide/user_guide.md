@@ -193,7 +193,7 @@ Read a paper on one side while you write up your notes on the other, each in a p
 
 <img alt="Two brackets are typed in a note, a picker lists pages, one becomes a chip in the line, and a Linked from row under the page lists the note" src="assets/page-links.svg" width="100%">
 
-- **`[[`** links to a page or a note; the link is a clickable chip, and **Linked from** under a page lists everything that links to it. To show your own words on the chip instead of the page's title, add them after a pipe: `[[page|your words]]` (type `|your words` before the `]]` of a picked link, or type `[[Exact page title|your words]]`); hovering the chip shows the page it opens. `![[block]]` embeds a block you can edit in place.
+- **`[[`** links to a page or a note; the link is a clickable chip, and **Linked from** under a page lists everything that links to it. Hover any link to see where it goes; right-click it (or hold a finger on it) to pin its card, whose ✎ changes the words the link shows and where it points, and whose other buttons copy or remove it. Empty words show the page's title. In Markdown that's `[[page|your words]]`. **Ctrl+K** on selected words opens the same card to link them to a page or an address, and pasting an address over selected words links them. `![[block]]` embeds a block you can edit in place.
 - **`@`** mentions a date, a person or a page, as in Notion: **Today**, **Remind me** (tomorrow at 9, or what you type, such as `@fri 3pm` or `@remind me next mon`; `@remind @bob fri` reminds a colleague), the people of the workspace, and pages by title. A reminder shows a card at its time, and a system notification if you allow them, while Gamma is open.
 - **/page** makes a new page inside the open one and links it where you typed ([pages inside pages](#pages-inside-pages)).
 
@@ -745,7 +745,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Del / Backspace · Tab / Shift+Tab · Enter | With notes selected: delete them · indent / outdent them · edit the last one picked |
 | Ctrl+C / Ctrl+X / Ctrl+D · Ctrl+A · Ctrl+/ | With notes selected: copy / cut as Markdown, duplicate · select every note · their menu |
 | Ctrl+B / Ctrl+I / Ctrl+U / Ctrl+E / Ctrl+Shift+X / Ctrl+Shift+H | Bold / italic / underline / code / strike / highlight |
-| Ctrl+K | Link the selection (URL from the clipboard) |
+| Ctrl+K | Link the selection, or edit the link at the cursor |
 | Ctrl+Shift+. | Quote or unquote the selected lines |
 | Ctrl+Shift+M | Comment on the note being edited |
 | Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D / Ctrl+A | With the pen strip open: copy / cut / paste / duplicate the selected handwriting; select all handwriting on the page |

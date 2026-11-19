@@ -16,36 +16,33 @@ import { guideEvents } from "../guide/events.js";
 import { pageKindLabel } from "../library/libraryUtils";
 import { pickerCounts, rankRefPages, refBlockPath, refBlockText, refInsertEdit, refQueryAt, typedTitleLink } from "./refLists.js";
 
-export function useRefPicker({ editorRef, excludeId, pages, rootId, lookupBlock, refCache, onCacheRef, write }) {
-  // { query, anchor } while a "[[" is being typed.
-  const [refPopup, setRefPopup] = useState(null);
-  const [refSelectedIdx, setRefSelectedIdx] = useState(0);
+// The rows a typed query names (`query` null: none, no search): pages by
+// title, chips and path (editor/refLists.js), each under its kind and where
+// it is (a sub-page's path, else its first folder), then blocks other than
+// pages (a page result is a page row) from the server's search, as plain
+// text — the [[ picker's, and the link card's Link field's
+// (shared/ui/LinkCard.jsx). `partial`: the server's block scan ran out of
+// time, so a footer says to type more.
+export function useRefRows(query, { excludeId, pages, rootId, lookupBlock, refCache }) {
   const [searchResults, setSearchResults] = useState([]);
-  // The server's block scan ran out of time: the picker keeps what it found
-  // and its footer says to type more.
   const [searchPartial, setSearchPartial] = useState(false);
 
   useEffect(() => {
-    if (!refPopup) { setSearchResults([]); setSearchPartial(false); return; }
-    const q = refPopup.query;
+    if (query == null) { setSearchResults([]); setSearchPartial(false); return; }
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(withShare(`${API}/block-search?q=${encodeURIComponent(q)}&limit=12`));
+        const res = await fetch(withShare(`${API}/block-search?q=${encodeURIComponent(query)}&limit=12`));
         const data = await res.json();
         setSearchResults((data.blocks || []).filter((b) => b.id !== excludeId));
         setSearchPartial(!!data.partial);
       } catch (_) { setSearchResults([]); setSearchPartial(false); }
     }, 120);
     return () => clearTimeout(timer);
-  }, [refPopup?.query, excludeId]);
-  // The picker's rows (editor/refLists.js): pages by title, chips and path,
-  // each under its kind and where it is (a sub-page's path, else its first
-  // folder), then blocks other than pages (a page result is a page row) as
-  // plain text.
+  }, [query, excludeId]);
   const rows = useMemo(() => {
-    if (!refPopup) return [];
+    if (query == null) return [];
     const labelOf = (id) => pages?.find((p) => p.id === id)?.content ?? lookupBlock?.(id)?.content ?? refCache?.[id]?.content;
-    const pageHits = rankRefPages(pages, refPopup.query, rootId);
+    const pageHits = rankRefPages(pages, query, rootId);
     const blockHits = searchResults.filter((b) => b.page_root_id !== b.id);
     const [np, nb] = pickerCounts(pageHits.length, blockHits.length);
     return [
@@ -58,7 +55,16 @@ export function useRefPicker({ editorRef, excludeId, pages, rootId, lookupBlock,
       })),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refPopup?.query, pages, searchResults, rootId]);
+  }, [query, pages, searchResults, rootId]);
+  return { rows, partial: query != null && searchPartial };
+}
+
+export function useRefPicker({ editorRef, excludeId, pages, rootId, lookupBlock, refCache, onCacheRef, write }) {
+  // { query, anchor } while a "[[" is being typed.
+  const [refPopup, setRefPopup] = useState(null);
+  const [refSelectedIdx, setRefSelectedIdx] = useState(0);
+  const { rows, partial: searchPartial } = useRefRows(refPopup ? refPopup.query : null,
+    { excludeId, pages, rootId, lookupBlock, refCache });
   const shown = !!refPopup && rows.length > 0;
   const selected = Math.min(refSelectedIdx, rows.length - 1);
   useEffect(() => { if (shown) guideEvents.emit("ref.search"); }, [shown]);

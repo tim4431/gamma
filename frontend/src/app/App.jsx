@@ -334,6 +334,7 @@ import { InboxBadge, InboxButton } from "../inbox/InboxButton";
 import { inboxJump, isUnread } from "../inbox/inboxText.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import { IconSwap, MorphText } from "../shared/ui/MotionWidgets";
+import { LinkCardContext, useLinkCardValue } from "../shared/ui/LinkCard.jsx";
 import ListMotion from "../shared/ui/ListMotion";
 
 // Surfaces fetched on first use, each mounted inside a LazyBoundary
@@ -10702,6 +10703,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     [focusedBlockId, blocks, refCache, shareMode, knownBlocks, pageTitle],
   );
 
+  // What every link card reads (shared/ui/LinkCard.jsx): one object for the
+  // app's life, its fields read through getters when a card shows, so no
+  // link renders again when the pages or the [[ref]] labels change.
+  const linkCardCtx = useLinkCardValue({ pages: pageBlocks, refCache, onCacheRef, nav: gammaNav });
+
   // What the views of pages in the tab groups (PagePane) take from App:
   // the [[ref]] labels and their fetches, the library's labels, file chips,
   // the notes' text size and keys, the PDF's looks, and what this account
@@ -13905,6 +13911,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   return (
     <GammaNavContext.Provider value={gammaNav}>
+    <LinkCardContext.Provider value={linkCardCtx}>
     <PageToolsContext.Provider value={pageTools}>
     <ThreadPlaceContext.Provider value={placeOf}>
     <RecordingContext.Provider value={recordingCtx}>
@@ -15676,6 +15683,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     </RecordingContext.Provider>
     </ThreadPlaceContext.Provider>
     </PageToolsContext.Provider>
+    </LinkCardContext.Provider>
     </GammaNavContext.Provider>
   );
 }

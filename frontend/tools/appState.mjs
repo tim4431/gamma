@@ -16,7 +16,8 @@
 //          INFO's hooks are printed but not counted: useMemo, useCallback and
 //          the shared glue like them (useStableActions, useWheelPan's callback
 //          ref, useLatch, a lazy surface's mount latch), useSyncExternalStore
-//          (how App reads a store) and useTextScale (a shared owner). A
+//          (how App reads a store), useTextScale and useLinkCardValue (shared
+//          owners: the notes' text size, the link cards' context). A
 //          feature's owner hooks are neither.
 //   unknown  the hooks a file imports from React or shared/ that are in
 //          neither list. The test fails on one until a list has it.
@@ -39,7 +40,8 @@ export const BASELINE = path.join(FRONTEND, "tests", "app-state-baseline.json");
 export const FILES = ["app/App.jsx"];
 export const STATE = ["useState", "useReducer", "useRef", "usePersistedState", "usePersistedFlag", "useCopied"];
 export const EFFECTS = ["useEffect", "useLayoutEffect"];
-export const INFO = ["useMemo", "useCallback", "useStableActions", "useWheelPan", "useLatch", "useSyncExternalStore", "useTextScale"];
+export const INFO = ["useMemo", "useCallback", "useStableActions", "useWheelPan", "useLatch", "useSyncExternalStore", "useTextScale",
+  "useLinkCardValue"];
 export const HEADROOM = 1000;
 const COUNTED = [...STATE, ...EFFECTS];
 
