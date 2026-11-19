@@ -1231,15 +1231,19 @@ note, for Gamma AI and a computer's agent alike (`chat/ChatSelectionTip.jsx`,
 - **The popup.** A selection gets the selection popup the PDF's and the
   code view's text get (`TipFrame`, `pdf/selectionTip.js`): a mouse's once
   the hand moves on from the release, a finger's once its handles have been
-  still for 350 ms. It holds **Ask about this** and the ⋯ of the
-  selection's menu; its buttons act on the press, so the selection stays.
-  A press elsewhere, a scroll of the transcript or the selection going puts
-  it away. A workspace viewer's chat has none.
-- **The menu.** A right-click on the selected text, or the popup's ⋯,
-  opens a `ContextMenu`: Ask about this, Copy, and **Create note** ▸ *As it
-  is* / *Structured by AI*. A right-click elsewhere keeps the browser's
-  menu. Every row acts on the selection as it was when the popup or the
-  menu opened.
+  still for 350 ms. Every action is a button of its own, no ⋯: **Ask
+  about this**, **Copy** (a check for a moment), and where a note can be
+  made **Create note** (as it reads) and **Structured note** (rewritten by
+  the AI; greyed with its reason where no AI service is connected), each
+  title saying where the note goes. Ask and the notes act on the press, so
+  the selection stays; Copy on the click, as the system's Copy. A press
+  elsewhere, a scroll of the transcript or the selection going puts it
+  away. A workspace viewer's chat has none.
+- **The menu.** A right-click on the selected text opens the same as a
+  `ContextMenu`: Ask about this, Copy, and **Create note** ▸ *As it is* /
+  *Structured by AI*. A right-click elsewhere keeps the browser's menu.
+  Every action takes the selection as it was when the popup or the menu
+  opened.
 - **What is taken.** The selection's Markdown source, what Ctrl+C puts on
   the clipboard (`shared/ui/Widgets.jsx` `selectionMarkdown`: formulas as
   their TeX, lists, links and emphasis as written; Copy puts the HTML

@@ -57,10 +57,9 @@ function useListed({ data, error, reload }, key, running, setRunning) {
 // The account's mirrors (null while loading), the pane's read, kept while
 // the dialog is open (settingsReads.js). Only the panes App.jsx renders
 // for a signed-in account that is no guest call it, so it always reads.
-// The Duplicate… row of a workspace's menu (its Data menu in Settings →
-// Workspaces; a clone's or a Zotero link's More, below): `duplicate(w)`
-// opens the dialog for the workspace row `w` (SettingsWorkspace.jsx
-// DuplicateDialog).
+// The Duplicate… row of a clone's or a Zotero link's More menu (below; any
+// other workspace has it as a row of its Manage page): `duplicate(w)` opens
+// the dialog for the workspace row `w` (SettingsWorkspace.jsx DuplicateDialog).
 export const duplicateItem = (w, duplicate) => ({
   icon: DuplicateIcon, label: T("Duplicate…"),
   title: T("A new personal workspace of yours with a copy of every page; this one stays as it is"),

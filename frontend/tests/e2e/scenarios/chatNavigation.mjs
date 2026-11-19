@@ -508,7 +508,7 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
-  await step("chat navigation: text selected in a reply is quoted into the next message by Ask about this; its right-click menu copies it and makes a note of it, as it reads or structured by AI, on the page or as a page of its own", async () => {
+  await step("chat navigation: text selected in a reply is quoted into the next message by Ask about this; the popup's buttons and the right-click menu copy it and make a note of it, as it reads or structured by AI, on the page or as a page of its own", async () => {
     const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Selection notes" } });
     const reply = "**Dephasing** dominates the noise model here.\n\n- the first point\n- the second point";
     const stored = [{ id: "u1", role: "user", text: "Explain the noise" }, { id: "a1", role: "ai", text: reply }];
@@ -577,19 +577,22 @@ export async function chatNavigationScenarios(env) {
       const sent = page.locator(".chatBubble.user").nth(1);
       await until(async () => (await sent.locator(".chatUserQuote").count()) === 1, { what: "the sent message draws its quote" });
       assert((await sent.locator(".chatUserText").innerText()).includes("Why does it dominate?"), "the question reads apart from its quote");
-      // The menu's Copy puts the Markdown on the clipboard.
+      // Every action is a button of the popup, no ⋯; its Copy puts the
+      // Markdown on the clipboard.
       const item = answer.locator("li").first();
       await select(item);
-      await rightClick(item);
-      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "Copy" }).click();
+      const tip = page.locator(".chatSelTip");
+      await tip.getByRole("button", { name: "Copy", exact: true }).waitFor();
+      assertEq(await tip.getByRole("button", { name: "Structured note", exact: true }).count(), 1, "the popup offers the structured note");
+      assertEq(await tip.getByRole("button", { name: "Selection actions" }).count(), 0, "the popup has no ⋯");
+      await tip.getByRole("button", { name: "Copy", exact: true }).click();
       await until(async () => (await page.evaluate(() => navigator.clipboard.readText())) === "the first point", { what: "the selection copied" });
-      // Create note ▸ As it is: a block at the end of the page's notes.
+      // The popup's Create note: a block at the end of the page's notes, as it reads.
       await select(item);
-      await rightClick(item);
-      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "Create note" }).hover();
-      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "As it is" }).click();
+      await tip.getByRole("button", { name: "Create note", exact: true }).click();
       await until(async () => (await notesText(notesPage.id)).includes("the first point"), { what: "the note saved on the page" });
-      // ... Structured by AI: a plain request of its own, its answer the note.
+      // The right-click menu's Create note ▸ Structured by AI: a plain
+      // request of its own, its answer the note.
       await select(first);
       await rightClick(first);
       await page.locator(".chatSelMenu").getByRole("menuitem", { name: "Create note" }).hover();

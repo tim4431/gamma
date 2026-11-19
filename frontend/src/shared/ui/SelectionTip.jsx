@@ -45,12 +45,14 @@ export function TipMoveHere({ onMove }) {
 }
 
 // Copy `text` (what was selected), where the host's own edit menu, which
-// has one, is off: on the click, as the system's Copy; a check for a moment.
-export function TipCopy({ text }) {
+// has one, is off; or what `copy()` copies (the chat's selection, as rich
+// text), true once it has: on the click, as the system's Copy; a check for
+// a moment.
+export function TipCopy({ text, copy = null }) {
   const [copied, flashCopied] = useCopied(1200);
   return (
     <button type="button" className="colorBtn linkTipBtn" title={t("Copy")} aria-label={t("Copy")} onMouseDown={keepSelection}
-      onClick={async () => { if (await copyText(text)) flashCopied(); }}>
+      onClick={async () => { if (await (copy ? copy() : copyText(text))) flashCopied(); }}>
       <IconSwap swap={copied} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
     </button>
   );

@@ -2455,10 +2455,14 @@ export default function ChatDock({
         {visibleMessages.length ? setupCard : null}
       </div>
       {/* Text selected in the transcript: Ask about this quotes it into the
-          composer, its menu copies it or makes a note of it. */}
+          composer, Copy copies it, Create note makes a note of it. */}
       {!readOnly ? (
         <ChatSelectionTip box={chatBox} onAsk={quoteInComposer}
-          onCopy={async (md, html) => { if (!(await copyRich(html, md))) setStatus(t("Couldn't copy the selection.")); }}
+          onCopy={async (md, html) => {
+            const copied = await copyRich(html, md);
+            if (!copied) setStatus(t("Couldn't copy the selection."));
+            return copied;
+          }}
           note={onChatNote ? { where: noteWhere, make: makeChatNote,
             structured: aiOff || !aiInfo?.enabled ? t("Needs an AI service: connect one in Settings → Connections") : "" } : null} />
       ) : null}
