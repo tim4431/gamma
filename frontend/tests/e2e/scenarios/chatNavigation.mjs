@@ -315,8 +315,10 @@ export async function chatNavigationScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("chat navigation: a message sent while the reply runs waits in the queue; Steer hands it to the reply where it lands, the next goes when the reply ends, Stop pauses the queue until Send, and a dictation queues as a typed message does", async () => {
+  await step("chat navigation: with the follow-up preference on Queue, a message sent while the reply runs waits in the queue; Steer hands it to the reply where it lands, the next goes when the reply ends, Stop pauses the queue until Send, and a dictation queues as a typed message does", async () => {
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    // The account's follow-up preference on Queue, as Settings → AI → Chat saves it.
+    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { chatFollowUpMode: "queue" } } });
     const ctx = await alice.context(browser);
     await fakeAiModels(ctx, { ...FAKE_AI_MODELS, transcribe: true });
     await ctx.addInitScript(() => {
@@ -434,13 +436,14 @@ export async function chatNavigationScenarios(env) {
       });
       assertEq(stored.map((m) => `${m.role}${m.steered ? "*" : ""}`).join(" "), "user ai user* ai user ai user ai user ai");
       assertNoProblems(page);
-    } finally { await ctx.close(); }
+    } finally {
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { chatFollowUpMode: null } } }).catch(() => {});
+    }
   });
 
-  await step("chat navigation: with the follow-up preference on Steer, Enter while the reply runs steers it and Ctrl+Shift+Enter queues", async () => {
+  await step("chat navigation: by default, as Codex's, Enter while the reply runs steers it and Ctrl+Enter queues", async () => {
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
-    // The account's preference, as Settings → AI → Chat saves it.
-    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { chatFollowUp: "steer" } } });
     const ctx = await alice.context(browser);
     await fakeAiModels(ctx);
     await ctx.addInitScript(() => {
@@ -487,9 +490,9 @@ export async function chatNavigationScenarios(env) {
       await page.waitForFunction(() => window.steers.length === 1);
       const steer = await page.evaluate(() => window.steers[0]);
       assertEq(`${steer.reply} ${steer.text}`, "reply-1 Group them by year");
-      // Ctrl/⌘+Shift+Enter queues it for when the reply ends.
+      // Ctrl/⌘+Enter queues it for when the reply ends.
       await input.fill("Flag error correction");
-      await input.press("ControlOrMeta+Shift+Enter");
+      await input.press("ControlOrMeta+Enter");
       await until(async () => (await rows.allInnerTexts()).some((text) => text.includes("Flag error correction")),
         { what: "the message waits in the queue" });
       assertEq(await page.evaluate(() => window.steers.length), 1, "the other way queues, it does not steer");
@@ -502,13 +505,10 @@ export async function chatNavigationScenarios(env) {
       await page.evaluate(() => window.chatStreams[1].finish());
       await until(async () => !(await rows.count()));
       assertNoProblems(page);
-    } finally {
-      await ctx.close();
-      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { chatFollowUp: null } } }).catch(() => {});
-    }
+    } finally { await ctx.close(); }
   });
 
-  await step("chat navigation: text selected in a reply is quoted into the next message by Ask about this; its right-click menu copies it and makes a note of it, as it reads or structured by AI, on the page or as a page of its own", async () => {
+  await step("chat navigation: text selected in a reply is quoted into the next message by Ask about this; the popup's buttons and the right-click menu copy it and make a note of it, as it reads or structured by AI, on the page or as a page of its own", async () => {
     const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Selection notes" } });
     const reply = "**Dephasing** dominates the noise model here.\n\n- the first point\n- the second point";
     const stored = [{ id: "u1", role: "user", text: "Explain the noise" }, { id: "a1", role: "ai", text: reply }];
@@ -577,19 +577,22 @@ export async function chatNavigationScenarios(env) {
       const sent = page.locator(".chatBubble.user").nth(1);
       await until(async () => (await sent.locator(".chatUserQuote").count()) === 1, { what: "the sent message draws its quote" });
       assert((await sent.locator(".chatUserText").innerText()).includes("Why does it dominate?"), "the question reads apart from its quote");
-      // The menu's Copy puts the Markdown on the clipboard.
+      // Every action is a button of the popup, no ⋯; its Copy puts the
+      // Markdown on the clipboard.
       const item = answer.locator("li").first();
       await select(item);
-      await rightClick(item);
-      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "Copy" }).click();
+      const tip = page.locator(".chatSelTip");
+      await tip.getByRole("button", { name: "Copy", exact: true }).waitFor();
+      assertEq(await tip.getByRole("button", { name: "Structured note", exact: true }).count(), 1, "the popup offers the structured note");
+      assertEq(await tip.getByRole("button", { name: "Selection actions" }).count(), 0, "the popup has no ⋯");
+      await tip.getByRole("button", { name: "Copy", exact: true }).click();
       await until(async () => (await page.evaluate(() => navigator.clipboard.readText())) === "the first point", { what: "the selection copied" });
-      // Create note ▸ As it is: a block at the end of the page's notes.
+      // The popup's Create note: a block at the end of the page's notes, as it reads.
       await select(item);
-      await rightClick(item);
-      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "Create note" }).hover();
-      await page.locator(".chatSelMenu").getByRole("menuitem", { name: "As it is" }).click();
+      await tip.getByRole("button", { name: "Create note", exact: true }).click();
       await until(async () => (await notesText(notesPage.id)).includes("the first point"), { what: "the note saved on the page" });
-      // ... Structured by AI: a plain request of its own, its answer the note.
+      // The right-click menu's Create note ▸ Structured by AI: a plain
+      // request of its own, its answer the note.
       await select(first);
       await rightClick(first);
       await page.locator(".chatSelMenu").getByRole("menuitem", { name: "Create note" }).hover();
@@ -1608,8 +1611,24 @@ export async function chatNavigationScenarios(env) {
       });
     });
     await ctx.route(`**/api/ai/handoffs/${HID}**`, (route) => {
-      if (new URL(route.request().url()).pathname.endsWith("/store")) return route.fulfill({ status: 404, json: { detail: "not held" } });
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/store")) return route.fulfill({ status: 404, json: { detail: "not held" } });
+      if (path.endsWith("/stop")) request = { ...request, status: "dismissed" };
       return route.fulfill({ json: request });
+    });
+    // Background tasks lists the request while it waits, as GET /api/jobs
+    // does (routers/jobs.py _waiting_papers), named by the title the model gave.
+    await ctx.route((url) => url.pathname === "/api/jobs", async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const res = await route.fetch();
+      const { jobs = [], ...rest } = await res.json();
+      const at = new Date().toISOString();
+      const row = { id: `paper-${HID}`, kind: "paper-handoff", owner: "", workspace: "", title: "A junction behind a check",
+        params: { request: HID, host: handoff.host, wall: "captcha", source: handoff.source, title: "A junction behind a check" },
+        state: "running", progress: { phase: request.watched ? "connector" : "browser", item: handoff.host }, error: "",
+        created_at: at, started_at: at, finished_at: "", artifact: null, downloaded: false, stoppable: true, stopping: false,
+        readonly: true };
+      return route.fulfill({ response: res, json: { ...rest, jobs: request.status === "waiting" ? [row, ...jobs] : jobs } });
     });
     // The server's side of saving is POST /api/clip (tests/test_clip.py): here it only records.
     await ctx.route("**/api/clip", (route) => {
@@ -1635,11 +1654,27 @@ export async function chatNavigationScenarios(env) {
       await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "show"),
         { what: "the card asks to show the tab" });
 
+      // Background tasks: the request's row, named by the paper, says the
+      // Connector is on it and where; its Stop lets the request go and has
+      // the Connector close its tab.
+      await page.click("button[aria-label='Background tasks']");
+      const row = page.locator(live(".tasksPopover .taskRow"), { hasText: "Get “A junction behind a check” in your browser" });
+      await row.getByText("Gamma Connector is on it · www.worldscientific.com").waitFor({ timeout: 8000 });
+      await row.locator('button[aria-label^="Stop Get"]').click();
+      await until(async () => (await page.evaluate(() => window.connectorAsked)).some((a) => a.do === "close"),
+        { what: "the Connector lets its tab go" });
+      await row.waitFor({ state: "detached", timeout: 8000 });
+      await page.click("button[aria-label='Background tasks']");
+      // the card hears it on its next look: settled, nothing more to do there
+      await card.getByText("Dismissed.").waitFor({ timeout: 8000 });
+
       // The reply's papers: the one it read, the blocked one, the one it links.
       const pill = page.getByRole("button", { name: /3 papers in this reply · Save to library/ });
       await pill.click();
       const list = page.getByRole("group", { name: "Papers in this reply" });
       await list.getByText("Proximity effect in superconductors").waitFor();
+      // Nothing checked: the button names where, not "0 papers".
+      assert(await list.getByRole("button", { name: "Save to library", exact: true }).isDisabled(), "nothing to save yet");
       await list.getByRole("checkbox", { name: "Proximity effect in superconductors" }).check();
       await list.getByRole("checkbox", { name: "A junction review" }).check();
       await list.getByRole("button", { name: "Save 2 papers to library" }).click();
@@ -2576,6 +2611,52 @@ export async function chatNavigationScenarios(env) {
       await until(async () => !(await page.locator(".chatSteps").count()), { what: "the pill goes" });
       assertEq((await chatMotion(page)).filter((m) => m.startsWith("enter")).join(), "", "nothing rises");
       assertEq(await page.locator(".chatBubbleRow").count(), 2);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // The label's hidden text, absolute while it morphs, was laid out where
+  // the label stands in the transcript's content, beyond every scroller:
+  // under a long conversation, far below the window, so the page took a
+  // scrollbar for the morph and every column narrowed and widened again
+  // (motion.css .morph.moving). The suite's browser draws no scrollbars,
+  // so the step reads the page's own overflow, frame by frame.
+  await step("chat navigation: the pill's label morphs at the foot of a long conversation without stretching the page past the window", async () => {
+    const earlier = Array.from({ length: 6 }, (_, i) => [
+      { role: "user", text: `Question ${i + 1}` },
+      { role: "ai", text: "An earlier answer, long enough to wrap over several lines. ".repeat(12) },
+    ]).flat();
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: earlier } });
+    const ctx = await streamingContext();
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      await page.locator(".chatBubbleRow.user", { hasText: "Question 6" }).waitFor();
+      await page.waitForLoadState("networkidle");
+      assert(await page.locator(".chatMessages").evaluate((el) => el.scrollHeight > 2 * el.clientHeight), "the conversation runs past its window");
+      await ask(page, "Tidy up the library");
+      await page.locator(".chatBubbleRow.ai").last().locator(".chatSteps", { hasText: "Thinking" }).waitFor();
+      await page.evaluate(() => {
+        const frames = [];
+        window.pageFrames = frames;
+        const tick = () => {
+          if (window.pageFrames !== frames) return;
+          const ro = new ResizeObserver(() => {
+            ro.disconnect();
+            const root = document.documentElement;
+            frames.push({ over: root.scrollHeight - root.clientHeight, moving: !!document.querySelector(".chatSteps .morph.moving") });
+          });
+          ro.observe(document.documentElement);
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+      await push(page, { step: { id: "c1", tool: "search_library", args: { query: "cavity" } } });
+      await page.waitForSelector(".chatSteps .morph.moving", { state: "attached" });
+      await page.waitForSelector(".chatSteps .morph.moving", { state: "detached" });
+      const frames = await page.evaluate(() => { const seen = window.pageFrames; window.pageFrames = null; return seen; });
+      assert(frames.some((f) => f.moving), "a frame drew the label morphing");
+      assertEq(Math.max(...frames.map((f) => f.over)), 0, "no frame lets the page scroll");
+      await page.evaluate(() => window.chatStream.finish());
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

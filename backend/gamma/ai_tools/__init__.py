@@ -11,7 +11,8 @@ Every chat has a *scope* deciding what its tools can touch:
   that page, and its reading tools the pages inside it too (``inside``,
   which ``registry.run_agent_tool`` sets for a reading tool).
 
-``context_pages`` extends either scope for reads; mutations keep the base scope.
+``context_pages``, the pages the user attached (@), extend either scope for
+every tool, changes included.
 
 Reads: list the pages and the folder tree (folder scope only); read a page,
 its note outline, the AI chat kept with it, its highlights and comment

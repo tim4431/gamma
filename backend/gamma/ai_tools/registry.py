@@ -181,8 +181,8 @@ def approval_preview(ws: str, scope: dict, name: str, args: dict) -> tuple:
     if not tool or not tool.get("preview"):
         return {}, None
     args = args if isinstance(args, dict) else {}
-    # The scope run_agent_tool gives a change: attachments never widen it.
-    scope = {**scope, "context_pages": [], "ws": ws}
+    # The scope run_agent_tool gives a change: the attached pages in it, a page's inside not.
+    scope = {**scope, "ws": ws}
     try:
         with connect_pages_db(ws) as conn:
             return tool["preview"](conn, scope, args)
@@ -239,15 +239,15 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
     if name not in permitted:
         result = "error: tool not enabled — the user's permission settings do not allow it"
         return result, tool_action("error", f"{name} — blocked by permissions", name, args, result, error=True)
-    # Attaching a reference expands read access, never the editing scope, and
-    # so does a page's inside: a page chat reads its sub-pages, edits only it.
+    # A page the user attached (@) is in reach for every tool, changes
+    # included. A page's inside widens reading alone: a page chat reads its
+    # sub-pages and edits only its page and the attached ones.
     # The message's counters (saves, web searches, the works already listed)
     # live in one Tally the copy shares.
     ensure_tally(scope)
     notes_seen(scope)  # made on the caller's scope, so the reads of one turn carry over to its edits
     # The planners check stored files against the workspace (missing_uploads).
-    scope = {**scope, "ws": ws, "approved": approved,
-             **({"context_pages": [], "inside": False} if tool["mutating"] else {"inside": True})}
+    scope = {**scope, "ws": ws, "approved": approved, "inside": not tool["mutating"]}
     started = time.monotonic()
     try:
         with connect_pages_db(ws) as conn:

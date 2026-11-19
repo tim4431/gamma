@@ -1,10 +1,10 @@
 """Google Drive as a backup destination (gamma/gdrive.py,
 gamma/gdrive_account.py, docs/dev/debugging.md "Google Drive") against an
 in-memory Google (tests/gdrive_fake.py): connecting through the device
-flow, the client's files (folders made as needed, a name replaced rather
-than doubled, chunked and resumed uploads, renewed tokens, Google's
-refusals), a backup task copying its snapshots there and pruning them, and
-the admin's routes: the connection, the copies' listing, download, restore
+flow through the OAuth client an admin saved, the client's files (folders made as needed, a name replaced rather than
+doubled, chunked and resumed uploads, renewed tokens, Google's refusals), a
+backup task copying its snapshots there and pruning them, and the admin's
+routes: the client, the connection, the copies' listing, download, restore
 and delete."""
 
 import io
@@ -15,17 +15,19 @@ import pytest
 from conftest import account_of, login, make_page, make_user, workspace_of
 from gamma import backup_schedule as tasks, db, gdrive, gdrive_account, snapshot_copies, workspaces, ws_backup
 from gamma.routers.backup_tasks import TaskInput
-from gdrive_fake import FakeGoogle
+from gdrive_fake import CLIENT_ID, CLIENT_SECRET, FakeGoogle
 
 
 @pytest.fixture
-def google(monkeypatch):
+def google(client, monkeypatch):
+    """The fake Google, and the client an admin registered there saved."""
     fake = FakeGoogle().install(monkeypatch)
     monkeypatch.setattr(gdrive_account, "_pending", None)
     monkeypatch.setattr(gdrive_account, "_last_error", "")
+    gdrive_account.set_client(CLIENT_ID, CLIENT_SECRET)
     yield fake
     with db.connect_users_db() as conn:
-        conn.execute("DELETE FROM settings WHERE key = 'gdrive'")
+        conn.execute("DELETE FROM settings WHERE key IN ('gdrive', 'gdrive_client')")
         conn.commit()
 
 
@@ -113,17 +115,48 @@ def test_reconnecting_and_disconnecting_revoke_the_old_token(client, google):
         gdrive_account.client()
 
 
-def test_a_connection_through_another_client_or_none_cannot_be_used(client, google, monkeypatch):
+def test_a_connection_through_another_client_or_none_cannot_be_used(client, google):
     _connect(google)
-    monkeypatch.setenv("GAMMA_GOOGLE_DRIVE_CLIENT_ID", "another.apps.googleusercontent.com")
+    # a code answered just as the client changed: the connection names the old one
+    gdrive_account._set_raw(gdrive_account.CLIENT_KEY, json.dumps({
+        "client_id": "another.apps.googleusercontent.com", "client_secret": gdrive_account.seal("GOCSPX-o")}))
     assert "another Google OAuth client" in gdrive_account.status()["problem"]
     assert not gdrive_account.ready()
-    monkeypatch.delenv("GAMMA_GOOGLE_DRIVE_CLIENT_ID")
-    monkeypatch.delenv("GAMMA_GOOGLE_DRIVE_CLIENT_SECRET")
+    gdrive_account._set_raw(gdrive_account.CLIENT_KEY, "")
     view = gdrive_account.status()
-    assert view["available"] is False and "GAMMA_GOOGLE_DRIVE_CLIENT_ID" in view["problem"]
-    with pytest.raises(gdrive.DriveConfigError, match="GAMMA_GOOGLE_DRIVE_CLIENT_ID"):
+    assert view["client_id"] == "" and "an admin sets one up" in view["problem"]
+    with pytest.raises(gdrive.DriveConfigError, match="an admin sets one up"):
         gdrive_account.start()
+
+
+def test_an_admin_sets_up_the_client(client, google):
+    """The client an admin registered at Google, saved in Settings:
+    connections are made through it, its secret write-only and sealed;
+    another client disconnects, revoking the token, and removing it ends a
+    code waiting."""
+    make_user("gd_owner", "gd-owner-pw", is_admin=1)
+    boss = login("gd_owner", "gd-owner-pw")
+    route = "/api/admin/gdrive/client"
+    assert boss.get("/api/admin/gdrive").json()["client_id"] == CLIENT_ID  # the fixture's
+    assert boss.delete(route).json()["client_id"] == ""
+    for bad in ({"client_id": "", "client_secret": "s"}, {"client_id": "123-abc", "client_secret": "s"},
+                {"client_id": CLIENT_ID}, {"client_id": CLIENT_ID, "client_secret": "a b"}):
+        assert boss.put(route, json=bad).status_code == 400, bad
+    saved = boss.put(route, json={"client_id": f" {CLIENT_ID} ", "client_secret": CLIENT_SECRET}).json()
+    assert saved["client_id"] == CLIENT_ID and CLIENT_SECRET not in json.dumps(saved)
+    with db.connect_users_db() as conn:
+        assert CLIENT_SECRET not in conn.execute("SELECT value FROM settings WHERE key = 'gdrive_client'").fetchone()[0]
+    _connect(google)  # through the saved client: the fake checks its ID and secret
+    token = next(t for t, ok in google.refresh.items() if ok)
+    assert boss.put(route, json={"client_id": CLIENT_ID}).json()["connected"]  # the same client, its secret kept
+    assert gdrive_account.ready()
+    other = boss.put(route, json={"client_id": "other.apps.googleusercontent.com", "client_secret": "GOCSPX-o"}).json()
+    assert other["connected"] is False and google.refresh[token] is False
+    assert boss.put(route, json={"client_id": CLIENT_ID}).status_code == 400  # another ID needs its secret
+    boss.put(route, json={"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET})
+    assert gdrive_account.start()["pending"]
+    gone = boss.delete(route).json()
+    assert gone["client_id"] == "" and gone["pending"] is None
 
 
 def test_a_folder_must_be_one_name(client, google):
@@ -291,7 +324,7 @@ def test_the_connection_through_the_api(client, google):
     make_user("gd_user", "gd-user-pw")
     boss, user = login("gd_boss", "gd-boss-pw"), login("gd_user", "gd-user-pw")
     assert user.get("/api/admin/gdrive").status_code == 403
-    assert boss.get("/api/admin/gdrive").json()["available"] is True
+    assert boss.get("/api/admin/gdrive").json()["client_id"] == CLIENT_ID
     assert boss.post("/api/admin/gdrive/connect", json={"folder": "a/b"}).status_code == 400
     shown = boss.post("/api/admin/gdrive/connect", json={}).json()
     assert shown["pending"]["user_code"] and boss.get("/api/admin/gdrive").json()["pending"]
@@ -354,6 +387,38 @@ def test_the_copies_in_drive_through_the_api(drive, google):
     assert boss.get("/api/admin/offsite/snapshots?store=drive").status_code == 400
     assert boss.post("/api/jobs/bucket-download", json={"ws": ws, "name": snap["name"],
                                                          "store": "drive"}).status_code == 400
+
+
+def test_several_copies_come_back_as_new_workspaces_in_one_job(drive, google):
+    """Cloud copies' Restore all: the workspaces this server lacks, each
+    from its copy, in one job; a copy that cannot be restored is reported,
+    its workspace goes again, and the rest go on."""
+    make_user("gd_many", "gd-many-pw", is_admin=1)
+    make_user("gd_many_member", "gd-many-member-pw")
+    boss, member = login("gd_many", "gd-many-pw"), login("gd_many_member", "gd-many-member-pw")
+    ws = workspace_of("gd_many")
+    make_page(boss, "Brought back")
+    snap = ws_backup.create(ws, label="manual", uploads=False)
+    zipped = (ws_backup.store_dir(ws) / f"{snap['name']}.zip").read_bytes()
+    lost = [workspaces.new_workspace_id() for _ in range(2)]
+    broken = workspaces.new_workspace_id()
+    for gone in lost:
+        drive.put_bytes(f"snapshots/{gone}/{snap['name']}.zip", zipped)
+    drive.put_bytes(f"snapshots/{broken}/{snap['name']}.zip", b"not a zip")
+    items = [{"ws": w, "name": snap["name"], "store": "drive", "label": f"Lost {i}"}
+             for i, w in enumerate(lost + [broken])]
+    assert member.post("/api/jobs/bucket-restore-many", json={"items": items}).status_code == 403
+    assert boss.post("/api/jobs/bucket-restore-many", json={"items": items + items[:1]}).status_code == 400
+
+    job = _job(boss, "bucket-restore-many", {"items": items})
+    assert job["state"] == "done", job["error"]
+    assert job["kind"] == "copies-restore" and job["params"]["count"] == 3
+    assert [r["workspace"] for r in job["result"]["restored"]] == lost
+    assert [(f["ws"], f["name"]) for f in job["result"]["failed"]] == [(broken, "Lost 2")]
+    assert all(workspaces.role_of(w, account_of("gd_many")) == "owner" for w in lost)
+    assert not workspaces.get(broken)  # its workspace went again
+    job = _job(boss, "bucket-restore-many", {"items": [items[2]]})
+    assert job["state"] == "failed" and "no copy could be restored: Lost 2" in job["error"]
 
 
 # --- the transport ---------------------------------------------------------------------

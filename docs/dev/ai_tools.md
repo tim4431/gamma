@@ -77,8 +77,8 @@ chat's page (`blocks_store.page_ancestors`), `_scope_pages` the page's
 descendants (`page_descendants`), so `read_page`, `read_block`, the view
 tools, `read_chats`, `cite` and `search_library` reach them. A changing
 tool's scope has no `inside` (nor does an approval card's preview): the
-note editors still edit the chat's own page alone, and a page above it is
-out of reach. The prompt says so ("the read and search tools the pages
+note editors edit the chat's own page and the attached ones, never a page
+inside it, and a page above it is out of reach. The prompt says so ("the read and search tools the pages
 inside it too").
 
 Pages in Recently deleted are out of the tools' reach, the MCP adapter's
@@ -89,10 +89,13 @@ tools are the exception: `list_deleted` lists them and `restore_page` brings
 them back. `delete_page` moves library pages there, and deleting a folder
 or a label never deletes one.
 
-Attached library pages (`context_pages` in the tool scope) extend reading access
-beyond the current page or folder. `_scope_pages` combines the base scope and
-these references for reads and search. `run_agent_tool` removes `context_pages`
-before dispatching a mutation, so attachments do not grant editing access.
+Attached library pages (`context_pages` in the tool scope, the pages the user
+@-mentions) extend the chat's reach beyond the current page or folder, for
+every tool: `_page_in_scope` takes them for a read and for a change alike, and
+`_scope_pages` combines the base scope and these references for search. So a
+page chat edits, comments on, highlights and draws on a paper the user attached
+as on its own page, each change under its permission's Allow / Ask / Off, and
+the prompt says so. A page's inside stays reading only.
 
 ## The tools
 
@@ -808,9 +811,11 @@ Settings → AI → Tool usage → Online search avoids this.)".
 OpenAlex answers without an account on a small daily budget. A search costs a
 tenth of a cent of it, a lookup by id nothing, and keyless searches are paused
 when its cluster is loaded (503). The account's optional key (Online search,
-below), else the server's `GAMMA_OPENALEX_API_KEY`, gives ten times the budget
-and uninterrupted search. The key travels in the `Authorization` header. The
-registry switch `GAMMA_METADATA_LOOKUP=off` applies to OpenAlex too.
+below), else the one an admin saved for every account (Settings → AI → Tool
+usage → Online search for every account, server option `openalex_key`),
+gives ten times the budget and uninterrupted search. The key travels in the
+`Authorization` header. Paper lookups switched off (server option
+`metadata_lookup`) applies to OpenAlex too.
 
 #### related_papers
 
@@ -884,9 +889,10 @@ date?}]`:
 - **SearXNG** (`searxng`): a SearXNG instance's `/search?format=json`, with
   `time_range` for `recency` and `site:` in the query; the date is
   `publishedDate`. The account's own URL goes through the SSRF guard, so it
-  must be a public host. The server's `GAMMA_SEARXNG_URL` serves accounts
-  without their own and may be on the private network, since the admin
-  chose it.
+  must be a public host. The instance an admin set for every account
+  (Online search for every account, server option `searxng_url`) serves
+  accounts without their own and may be on the private network, since the
+  admin chose it.
 - **Your AI connection** (`ai`): one short call on the chat's own connection
   with its provider's hosted search tool, the way Codex and Claude search.
   `hosted_tool` asks the wire a call with tools goes over
@@ -1452,19 +1458,35 @@ stays). `fetch_paper` reads it
 before any fetch, for the same work in any spelling or the request's URLs,
 with a source note saying the user fetched it in their browser.
 
-A request still waiting also shows in **Background tasks** as a read-only
+A request still waiting also shows in **Background tasks** as a
 `paper-handoff` row (`GET /api/jobs` adds them from
 `fetch_handoff.waiting`, the way it adds a running scheduled backup), so a
-card whose reply has scrolled away is still somewhere to find; a click on
-the row opens the publisher's page through `/go`
-([tasks.md](tasks.md)).
+card whose reply has scrolled away is still somewhere to find. The row is
+named by the paper's title when the model passed `fetch_paper` one (kept
+with the request, `open_request(title=)`), else by the DOI or arXiv id it
+asked for, else by the site; its line says whose turn it is and the site.
+Until the Connector takes the request, it waits for the user: a still
+shield, no bar, the tray button's accent dot. A click on the row opens the
+publisher's page through `/go`; its **Stop** settles the request as Dismiss
+does (`POST /api/ai/handoffs/<id>/stop`), so a reply waiting on its card
+goes on without the paper, and asks the Connector to close the background
+tab it kept for it ([tasks.md](tasks.md)). The card shows the title too,
+over the source.
 
 Every reply that read or named papers ends with a **Save to library** pill
 (`chat/ReplyPapers.jsx`, rules tested in `chat/chatPapers.js`): what its
 `fetch_paper` calls read (the action carries the document's `title`, `pdf`,
 and `request` when the user's browser delivered it), what a wall stopped
 (the handoff's request), and the DOI / arXiv links in its text, once each
-by identifier. Opening it asks the library which it holds already (`GET
+by identifier. A PDF carries no title of its own, so the action takes the
+one the model passed once the document's first pages show it (`identity`);
+a PDF read from an address and a link with the same title (letters and
+digits, 12 or more) are one paper, saved with that PDF and the link's DOI,
+unless their identifiers differ. A paper without a title is named by its
+DOI or arXiv id, else its PDF's file name, else the site, never a raw
+address (`paperLabel`); beside its kind the identifier or the site opens
+what was read. With nothing checked the button reads **Save to {folder}**,
+disabled. Opening it asks the library which it holds already (`GET
 /api/library/lookup`) and the registry for titles the reply left out (`GET
 /api/library/preview`). The checked papers are saved one by one through
 `POST /api/clip`, the Connector's ingest (dedup, resolve and store the PDF,

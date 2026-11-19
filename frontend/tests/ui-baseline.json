@@ -2,7 +2,6 @@
   "app/App.jsx": {
     "pointer-kind": 2,
     "icon-size": 1,
-    "owned-class": 8,
     "inline-style": 2
   },
   "app/prefDefs.js": {
@@ -71,9 +70,6 @@
   "shared/styles/app.css": {
     "field-focus": 1,
     "accent-color": 1
-  },
-  "shared/ui/Widgets.jsx": {
-    "touch-handler": 3
   },
   "shared/ui/altVariant.js": {
     "pointer-kind": 2

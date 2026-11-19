@@ -316,7 +316,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
 
   // A DOI typed in place of the stored one is looked up by the save, and the
   // status line says what came of it. The suite's server asks no registry
-  // (GAMMA_METADATA_LOOKUP=off), so here doi.org knows nothing: the fields
+  // (paper lookups off, harness.mjs OFFLINE), so here doi.org knows nothing: the fields
   // stay as typed. The found case is the backend's (test_metadata_update.py).
   await step("pdf: a DOI typed into the popover is looked up when the record is saved", async () => {
     const meta = { title: "Rydberg paper", authors: ["A. Writer"], year: "2026", doi: "10.1103/PhysRevA.99.013437",
@@ -513,6 +513,82 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     }, { what: "the note is linked to the clicked highlight" });
     await account.api(`/api/blocks/${loose.id}`, { method: "DELETE" });
     assertNoProblems(page);
+  });
+
+  // A highlight in parts (shared/model/highlightParts.js): its menu's Add a passage… waits for another passage of
+  // its page. A selection is added in the order the page reads, the foot of the left column before the top of the
+  // right one though lower on the page; its note badge stands at the end of the passage, in the right column. A
+  // press on another highlight joins it: its note stays, a plain note under the highlight it joined.
+  await step("pdf: Add a passage… makes one highlight of a sentence a column break cuts, and joins another highlight", async () => {
+    const run = (x, y, text) => ({ x, y, size: 12, font: "F1", text });
+    const tail = "All light pulses come from two", head = "counter-propagating laser beams.", last = "Closing remark of the caption";
+    const pdf = makePdf([{ runs: [run(72, 700, "The sequence starts at the reservoir"), run(72, 680, tail),
+      run(320, 700, head), run(320, 680, "The histogram shows the imaging"), run(320, 660, last)] }]);
+    const up = await account.upload("/api/uploads", pdf, "caption.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Caption paper" } });
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      const mark = (id) => p.locator(`[data-page="1"] div[data-hl-id="${id}"]`);
+      const stored = async (id) => (await account.api(`/api/blocks/${id}`)).properties;
+      // the top of the right column and the caption's last line, each with a note
+      for (const [text, note] of [[head, "Why two beams?"], [last, "Note on the closing remark"]]) {
+        await selectPdfText(p, 1, text);
+        await p.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+        await p.locator(".plainTip .colorBtn").first().click();
+        await p.locator(".blockEditorCm").waitFor({ timeout: 5000 });
+        await p.keyboard.type(note);
+        await closeEditor(p);
+      }
+      const made = await until(async () => {
+        const kids = (await account.api(`/api/blocks/${doc.id}/subtree`)).block.children || [];
+        const hls = kids.filter((b) => b.properties?.pdf_position?.rects && b.content);
+        return hls.length === 2 ? hls : null;
+      }, { what: "two highlights with their notes" });
+      const a = made.find((b) => b.properties.quote === head), b = made.find((b) => b.properties.quote === last);
+      assert(a && b, `the quotes as selected: ${JSON.stringify(made.map((x) => x.properties.quote))}`);
+
+      // the foot of the left column, selected while the highlight waits for it, goes first
+      await mark(a.id).first().click({ button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Add a passage" }).click();
+      await p.waitForSelector(`.attachModeBanner[data-extend-highlight="${a.id}"]`, { timeout: 5000 });
+      await selectPdfText(p, 1, tail);
+      await p.locator(".plainTip .tipAddBtn").click();
+      await p.waitForSelector(".attachModeBanner[data-extend-highlight]", { state: "detached", timeout: 5000 });
+      const two = await until(async () => {
+        const props = await stored(a.id);
+        return props.pdf_position.rects.length === 2 ? props : null;
+      }, { what: "the passage added" });
+      assertEq(two.quote, `${tail} ${head}`, "the quote reads as the page does, the left column's foot first");
+      const [first, second] = two.pdf_position.rects;
+      assert(first.x2 < second.x1 && first.y1 > second.y1, `its rects in reading order: ${JSON.stringify(two.pdf_position.rects)}`);
+      await until(async () => (await mark(a.id).count()) === 2, { what: "both parts drawn" });
+      const badge = await p.locator(`.pdfNoteBadge[data-hl-id="${a.id}"]`).boundingBox();
+      const top = await mark(a.id).nth(1).boundingBox();
+      assert(Math.abs(badge.x - (top.x + top.width)) < 12 && Math.abs(badge.y - top.y) < 16,
+        `the badge ends the passage in the right column: ${JSON.stringify({ badge, top })}`);
+
+      // a press on another highlight of the page joins it, after the rest; its note stays under it
+      await mark(a.id).first().click({ button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Add a passage" }).click();
+      await p.waitForSelector(`.attachModeBanner[data-extend-highlight="${a.id}"]`, { timeout: 5000 });
+      await mark(b.id).click();
+      await p.waitForSelector(".attachModeBanner[data-extend-highlight]", { state: "detached", timeout: 5000 });
+      const joined = await until(async () => {
+        const props = await stored(a.id);
+        return props.pdf_position.rects.length === 3 ? props : null;
+      }, { what: "the highlights joined" });
+      assertEq(joined.quote, `${tail} ${head} ${last}`, "the joined passage reads after the rest");
+      const note = await account.api(`/api/blocks/${b.id}`);
+      assertEq(note.parent_id, a.id, "the joined highlight's note is under the highlight it joined");
+      assertEq(note.content, "Note on the closing remark", "its text kept");
+      assert(!note.properties.pdf_position && !note.properties.quote && !note.properties.color, `a plain note: ${JSON.stringify(note.properties)}`);
+      await until(async () => (await mark(b.id).count()) === 0 && (await mark(a.id).count()) === 3, { what: "one highlight drawn in three parts" });
+      assertNoProblems(p);
+    } finally {
+      await c.close();
+    }
   });
 
   await step("pdf: flipped pages draw every highlight in a dark-tuned colour of its own hue, not screened", async () => {
@@ -1616,6 +1692,51 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await p.close();
     } finally { await c.close(); }
     await account.api(`/api/blocks/${linking.id}`, { method: "DELETE" });
+  });
+
+  // A Gamma link kept as a link region's address (a highlight's copied
+  // block link pasted into the link dialog before it knew one, here
+  // written against another host) opens in place, not the external-link
+  // prompt; Change link… offers the highlight it names, on this same paper,
+  // which turns the region into a link to it, and pressing it lands there.
+  await step("pdf: a Gamma link to a highlight on the same paper opens in place, and Change link… makes it a highlight link", async () => {
+    const up = await account.upload("/api/uploads", makePdf([["See Extended Data Fig. 5 here", "Extended Data Fig. 5 caption", "Also see the caption"]]), "crossref.pdf", "application/pdf");
+    const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Cross-ref paper" } });
+    const at = (y1, y2) => { const r = { x1: 60, y1, x2: 480, y2 }; return { pageNumber: 1, width: 612, height: 792, boundingRect: r, rects: [r] }; };
+    const target = await account.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "",
+      properties: { quote: "Extended Data Fig. 5 caption", color: "#ffe28fa6", pdf_position: at(80, 102) } } });
+    const blockUrl = `https://elsewhere.example/?block=${target.id}&ws=${account.ws}`;
+    const region = await account.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "",
+      properties: { quote: "Also see the caption", color: "rgba(140, 180, 255, 0.35)", pdf_position: at(106, 128), link_url: blockUrl } } });
+    const stored = async () => (await account.api(`/api/blocks/${region.id}`)).properties;
+    const flash = `[data-page="1"] [data-hl-id="${target.id}"].pdfHlFlash`;
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${paper.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      await p.click(`[data-page="1"] div[data-hl-id="${region.id}"]`);
+      await p.waitForSelector(flash, { timeout: 8000 });
+      assertEq(await p.locator(".linkPromptModal").count(), 0, "no external-link prompt");
+      await p.waitForSelector(flash, { state: "detached", timeout: 8000 });
+
+      await p.click(`[data-page="1"] div[data-hl-id="${region.id}"]`, { button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Change link…" }).click();
+      const change = p.getByRole("dialog", { name: "Change reference link" });
+      await change.waitFor();
+      const lead = change.locator('[role="option"][aria-selected="true"]');
+      await until(async () => (await lead.innerText()).includes("Extended Data Fig. 5 caption"), { what: "the highlight leads" });
+      assert((await lead.innerText()).includes("Cross-ref paper"), "named by its paper");
+      await p.keyboard.press("Enter");
+      const props = await until(async () => { const pr = await stored(); return pr.link_block_id === target.id && pr; }, { what: "a link to the highlight" });
+      assertEq(props.link_page_id, paper.id, "on the same paper");
+      assert(!props.link_url, "no longer an address");
+
+      await p.click(`[data-page="1"] div[data-hl-id="${region.id}"]`);
+      await p.waitForSelector(flash, { timeout: 8000 });
+      assertNoProblems(p);
+      await p.close();
+    } finally { await c.close(); }
+    await account.api(`/api/blocks/${paper.id}`, { method: "DELETE" });
   });
 
   // Settings → Reading › PDFs › Smooth wheel scrolling (shared/lib/smoothWheel.js).

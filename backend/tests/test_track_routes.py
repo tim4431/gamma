@@ -20,7 +20,7 @@ import pytest
 
 from conftest import (account_of, doc_props, login, make_folder, make_page, make_user, mark_work_folder, work_props,
                       workspace_of)
-from gamma import folder_links, workspaces
+from gamma import folder_links, server_options, workspaces
 from gamma.vault import disk as vault_disk, store as vault_store, sync as vault_sync
 from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page, new_block_id
@@ -349,7 +349,7 @@ def test_the_preview_counts_what_a_selection_tracks_and_what_leaves(owner, disk,
     seen = _preview(owner, link, changes=[{"path": "figs/", "on": False}, {"format": "latex", "on": True}])
     assert seen["files"] == 6 and seen["large"] == 0 and seen["by_format"]["other"] == 2
     with monkeypatch.context() as m:        # the keep limit: files of other formats than notes and PDFs past it are listed
-        m.setenv("GAMMA_VAULT_KEEP_MB", "0")
+        m.setattr(server_options, "vault_keep_bytes", lambda: 0)
         small = _preview(owner, link, changes=[{"path": "figs/", "on": False}, {"format": "latex", "on": True}])
     assert small["large"] == 3 and small["keep_bytes"] == 0 and small["files"] == 6
     assert [(x["path"], x["page"], x["notes"], x["open_comments"]) for x in seen["leaving"]] == [

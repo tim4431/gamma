@@ -60,23 +60,6 @@ def local_agents_setting() -> bool | None:
     return None
 
 
-DEFAULT_VAULT_KEEP_MB = 64
-
-
-def vault_keep_bytes() -> int:
-    """How large a work folder's file may be for the vault to hash and
-    serve it (gamma/vault/kinds.py, the class ``file``): past it the file
-    is listed, its page a document at ``listed`` with no bytes
-    (docs/dev/documents.md "The listed state"). ``GAMMA_VAULT_KEEP_MB``,
-    64 unless set; read when asked, so a test can lower it. PDFs and notes
-    are never measured against it."""
-    try:
-        mb = int(os.environ.get("GAMMA_VAULT_KEEP_MB", "").strip() or DEFAULT_VAULT_KEEP_MB)
-    except ValueError:
-        mb = DEFAULT_VAULT_KEEP_MB
-    return max(0, mb) * 1024 * 1024
-
-
 SHELL_SECRET_VAR = "GAMMA_SHELL_SECRET"
 _shell_secret: str | None = None   # once read; None until then
 
@@ -186,35 +169,6 @@ def zotero_stream_url() -> str:
     return (os.environ.get("GAMMA_ZOTERO_STREAM_URL", "").strip() or "wss://stream.zotero.org").rstrip("/")
 
 
-def zotero_client() -> tuple[str, str]:
-    """``GAMMA_ZOTERO_CLIENT_KEY`` / ``GAMMA_ZOTERO_CLIENT_SECRET``: this
-    server's own Zotero OAuth application (zotero.org/oauth/apps), which
-    lets people connect their account here without Gamma Cloud's broker;
-    ("", "") unless both are set."""
-    key = os.environ.get("GAMMA_ZOTERO_CLIENT_KEY", "").strip()
-    secret = os.environ.get("GAMMA_ZOTERO_CLIENT_SECRET", "").strip()
-    return (key, secret) if key and secret else ("", "")
-
-
-# Gamma's own Google OAuth client for Drive backups (gamma/gdrive.py): a
-# "TVs and Limited Input devices" client asking for drive.file alone. Google
-# treats such a client's secret as public, as it does an installed app's
-# (docs/research/google-drive-backup.md). Empty until one is registered.
-GOOGLE_DRIVE_CLIENT = ("", "")
-
-
-def google_drive_client() -> tuple[str, str]:
-    """``GAMMA_GOOGLE_DRIVE_CLIENT_ID`` / ``GAMMA_GOOGLE_DRIVE_CLIENT_SECRET``:
-    the Google OAuth client (of the "TVs and Limited Input devices" type)
-    Drive backups connect through, when both are set; else Gamma's own
-    (``GOOGLE_DRIVE_CLIENT``); ("", "") when there is neither."""
-    client_id = os.environ.get("GAMMA_GOOGLE_DRIVE_CLIENT_ID", "").strip()
-    secret = os.environ.get("GAMMA_GOOGLE_DRIVE_CLIENT_SECRET", "").strip()
-    if client_id and secret:
-        return client_id, secret
-    return GOOGLE_DRIVE_CLIENT if all(GOOGLE_DRIVE_CLIENT) else ("", "")
-
-
 def google_oauth_base() -> str:
     """``GAMMA_GOOGLE_OAUTH_BASE``: Google's OAuth endpoints (device codes,
     tokens, revocation); https://oauth2.googleapis.com unless the browser
@@ -268,27 +222,23 @@ def guest_seed_path() -> str:
     return os.environ.get("GAMMA_GUEST_SEED", "").strip()
 
 
-DEFAULT_GUEST_MAX = 500
-
-
-def guest_max() -> int:
-    """``GAMMA_GUEST_MAX``: how many guest accounts may live at once (a
-    guest login past it is refused with 503); 0 turns guest logins off.
-    Unset or unparseable = 500. A hosted container (``hosted``) takes no
-    guests whatever the variable says: a guest would not count against the
-    plan's accounts."""
-    if hosted():
-        return 0
+def guest_max_override() -> int | None:
+    """``GAMMA_GUEST_MAX``: how many guest accounts may live at once, as the
+    public demo's environment sets it (and the account server sets 0, no
+    guests, on a hosted container); None unless it holds a whole number of
+    0 or more. Elsewhere an admin sets it in Settings → Users → Guests
+    (gamma/server_options.py ``guest_max``)."""
     try:
-        value = int(os.environ.get("GAMMA_GUEST_MAX", "").strip() or DEFAULT_GUEST_MAX)
+        value = int(os.environ.get("GAMMA_GUEST_MAX", "").strip())
     except ValueError:
-        return DEFAULT_GUEST_MAX
-    return value if value >= 0 else DEFAULT_GUEST_MAX
+        return None
+    return value if value >= 0 else None
 
 
 def guest_ttl_override() -> str:
     """``GAMMA_GUEST_TTL_HOURS``: the guest lifetime in hours, overriding the
-    saved server setting (gamma/server_settings.py guest_ttl_settings)."""
+    saved server setting (gamma/server_settings.py guest_ttl_settings); the
+    public demo sets it."""
     return os.environ.get("GAMMA_GUEST_TTL_HOURS", "").strip()
 
 
@@ -334,19 +284,13 @@ def offsite_env() -> dict:
 # AI configuration is per-user, not env: each user adds provider entries in the
 # GUI (Settings → AI → Connections), resolved per request by
 # gamma/ai_settings.ai_runtime(); the protocols themselves are the adapters in
-# gamma/ai_protocols/. The env can only override each protocol's default base
-# URL (shown as the placeholder in the GUI and used when an entry leaves it
-# blank). Only GAMMA_ variables count: an ANTHROPIC_BASE_URL a developer's
-# shell exports reaches the desktop app's server and is not read. The
-# anthropic slot also reads GAMMA_AI_BASE_URL, the name older .env files
-# use for it, when GAMMA_AI_ANTHROPIC_BASE_URL is unset.
+# gamma/ai_protocols/. Each protocol's default base URL is shown as the
+# placeholder in the GUI and used when an entry leaves it blank; another
+# endpoint (DeepSeek's Anthropic wire, a local OpenAI-compatible server) is
+# the entry's own base URL.
 
 AI_BASE_URLS = {
-    "anthropic": (os.environ.get("GAMMA_AI_ANTHROPIC_BASE_URL", "")
-                  or os.environ.get("GAMMA_AI_BASE_URL", "")
-                  or "https://api.anthropic.com").rstrip("/"),
-    "openai": (os.environ.get("GAMMA_AI_OPENAI_BASE_URL", "")
-               or "https://api.openai.com").rstrip("/"),
-    "chatgpt": (os.environ.get("GAMMA_AI_CHATGPT_BASE_URL", "")
-                or "https://chatgpt.com/backend-api/codex").rstrip("/"),
+    "anthropic": "https://api.anthropic.com",
+    "openai": "https://api.openai.com",
+    "chatgpt": "https://chatgpt.com/backend-api/codex",
 }

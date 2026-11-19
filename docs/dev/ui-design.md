@@ -292,7 +292,9 @@ toolbars); `iconSq` is a square at the same heights. `ctlBtn` is the
 frameless `--ctl-icon-btn` (29 px) icon button, `uiClose` the round × (22 /
 26 / 31). Buttons and fields
 take `--radius-md`, icon buttons and chips `--radius-sm`. States: hover
-`--bg-hover`, pressed `--bg-active`, `on` (a chosen option) `--bg-selected`
+`--bg-hover`, pressed `--bg-active`, while the frameless ones, `ghost` and
+`ctlBtn`, hover at `--bg-active`, so they still show on a row the pointer
+lights with `--bg-hover`; `on` (a chosen option) `--bg-selected`
 with an accent border, disabled the faint text colour with no lift (a filled
 button fades as a whole). Native checkboxes, radios and ranges take the
 accent from one `accent-color` on the root.
@@ -1388,9 +1390,15 @@ on the right, Files first on the left, which is empty by default).
   A finger's, a pen's or a script's selection (a release far from the
   text) has it at once; an area drag too, its box drawn under it. The text
   highlighter's bar over the highlight it made waits the same way.
-- **Move mode.** While a highlight waits for its new place (App's
-  `moveHighlightId`), `.pdfMoving` lets the pointer through every
-  highlight (app.css), so a drag over highlighted text selects it.
+- **Move mode.** While a highlight waits for its new place (a `move`
+  wait, `pdf/useHighlightWait.js`), `.pdfMoving` lets the pointer through
+  every highlight (app.css), so a drag over highlighted text selects it.
+- **Add a passage.** While a highlight waits for another passage of its
+  page (an `extend` wait), it is drawn as the active one and lets the
+  pointer through, as the page's link regions do, so the text beside and
+  under it selects; the page's other highlights take a press, which joins
+  them to it. The tip over a selection has the one button *Add to the
+  highlight* (`TipAddHere`), and an area drag opens nothing.
 - **Tabs.** A page's notes keep their place for the session: leaving a
   page records the row at the notes' top and how far into it they were
   scrolled (App's `notesPlaceRef`, `captureScrollPos`), and its tab lands
@@ -1665,7 +1673,12 @@ is plain markup, and a first render never moves.
   ellipsis cuts the old or the new one, and while `still` holds (a label
   a load changed, as a chat reply's read again). Not inside a surface
   placed from its size (the selection popup): its width would move it
-  every frame.
+  every frame. Mid-swap the label is positioned (`.morph.moving`), so the
+  hidden text inside it stays in whatever scroller holds the label.
+  Otherwise, low in a long list (the reply pill under a long
+  conversation), that text stretched the page past the window: a page
+  scrollbar for the length of the swap, and every column narrowed and
+  widened again.
   The chat's reply pill is one label from the start of a turn:
   "Thinking", each step running, "Responding", then its summary, every
   change a morph. The one transcript draws it with `StepsPill`
@@ -2211,7 +2224,7 @@ page's notes refuse what the single-block action refuses
 | `chat/AgentChanges.jsx`, `chat/aiRevert.js` | what an agent reply changed, under its steps pill ([ai_tools.md](ai_tools.md#reverting-a-note-change)): `.chatChanges` rows behind an accent rule, a note row, a deleted folder's or label's row, or pages renamed, moved, labelled, deleted or restored (one or many), ending in a frameless `ctlBtn` undo icon, "Revert…" a `uiBtn sm ghost` in the reply's first group's head, a reverted row muted with its "Reverted" tag and a redo icon in the same place; a call that changed several pages is one row whose muted "Show the pages" `<summary>` (a native `<details>`, `.chatChangeItems`) unfolds each page's one-page row in a box that scrolls past 16em; a row that stops shows its reason, the approval card's `WordDiff`, and **Revert anyway** (`uiBtn sm`) beside **Keep it** (ghost) — a stop that can't be forced (`gone`, the pages' `kept`) shows **Dismiss** alone; a revert or redo that left some pages as they are adds a `role="status"` note with **Dismiss** only. `ChangesCard` is the card alone (head, its tail, the rows), which the computer side lists a turn's changed files in: a `PathLink` a row, the first three then "and N more" as a `.chatChangeItems` `<details>` |
 | `chat/noteReview.js`, `editor/mdDiff.js`, `editor/NoteReviewBar.jsx` | an AI's note edit drawn in its note as tracked changes ([ai.md](ai.md#watching-the-agent-work-live-footprint)): the word diff's marks in the note's own rendering (`del.mdDiff` struck in the full `--danger` on `--danger-bg`, its words in `--text-secondary`; `ins.mdDiff` on an `--ok` tint), a formula or picture that went faded, a code block or display formula marked whole by a 3px `--danger` / `--ok` bar at its side (`.mdDiffBlock`), a new note's text on the inserted tint with the bar (`.mdDiffNew`). Under the note, `.noteReviewBar`, by the permission the edit ran under: one waiting on its card has the card's four answers (`ApprovalAnswers`), **Allow once** (`uiBtn sm primary`), **Allow in this chat** and **Always allow** (`uiBtn sm`, the card's titles) and, at the row's end, **Don't allow** (ghost), which opens the card's line for what to do instead, beside a shield and "Waiting for your approval"; one that ran without asking is a record with nothing to approve: an accent sparkle and "Edited by AI" / "Added by AI" in `--fs-xs`, **Revert** (the undo icon), **Hide** (the eye-off icon) and, with more on the page, **Hide all**, all `uiBtn sm ghost`; a revert that stops shows its reason with the row's **Revert anyway** / **Keep it** |
 | `chat/RevertChanges.jsx` | the dialog that reverts several of a conversation's changes at once ([ai_tools.md](ai_tools.md#reverting-a-note-change)): a `.reportModal` with a `.confirmHead` (undo icon), "Select all" and the page picker's checkbox rows (`.docPickerItem` in a `.reportPageList`), one per change under a muted row per message that asked (each a checkbox for its changes, mixed when some are ticked), the change's sentence as its row reads without links; a reverted row muted with its "Reverted" tag; the row that stopped shows the reply row's question (`.chatRevertAsk`) with **Revert anyway** and **Skip it**; the footer counts what went back, then **Cancel** / **Done** and the primary **Revert N changes** |
-| `chat/ChatSelectionTip.jsx`, `chat/chatQuotes.js`, `chat/ChipPreview.jsx` | text selected in the chat's transcript ([ai.md](ai.md#selecting-the-transcript)): the selection popup (`TipFrame` in a portal, `.plainTip.chatSelTip`: Ask about this as a `TipTool`, the ⋯ a `MenuButton` keeping the selection), and a `ContextMenu` (`.chatSelMenu`) on a right-click on the selection or the ⋯ — Ask about this, Copy, Create note ▸ As it is / Structured by AI, the last greyed with its reason where no AI service is connected; the quote's Markdown helpers; the passage preview a chip and a sent message's `.chatUserQuote` share |
+| `chat/ChatSelectionTip.jsx`, `chat/chatQuotes.js`, `chat/ChipPreview.jsx` | text selected in the chat's transcript ([ai.md](ai.md#selecting-the-transcript)): the selection popup (`TipFrame` in a portal, `.plainTip.chatSelTip`: every action a button, no ⋯ — Ask about this, Create note and Structured note as `TipTool`s, Copy the `TipCopy`), and a `ContextMenu` (`.chatSelMenu`) on a right-click on the selection — Ask about this, Copy, Create note ▸ As it is / Structured by AI, the last greyed with its reason where no AI service is connected; the quote's Markdown helpers; the passage preview a chip and a sent message's `.chatUserQuote` share |
 | `chat/chatErrors.js`, `chat/agentSteps.js`, `chat/chipText.js` | pure helpers of the chat panel: the error card's copy per failure kind (also the login check's strip), the agent's steps pill and change list, a context chip's plain-text preview ([ai.md](ai.md); its words through `search/snippets.js` `plainSnippet`, the one markdown-to-words rule) |
 | `editor/BlockTree.jsx`, `editor/refLabels.js`, `shared/model/blockModel.js` | outliner rendering (its rows are memoized), every row's `[[ref]]` and Gamma-link labels resolved once per tree change by the pure `refLabels.js`, and the pure tree ops (`shared/model/palette.js` is the colour palette both share with the viewer: a highlight's stored colour, its default, its line tone). Line breaks in a rendered note: one Enter is a hard line break (`remark-breaks`), one blank line the paragraph break, and every further blank line a visible empty line (`expandBlankLines` in `editor/mdMarks.js`, applied by `mdPreprocess` outside math and code) — what the editor shows is what the note renders |
 | `transfers/FileChip.jsx` | the file chip an upload link renders as — a small card (kind icon in a tinted square, name, download arrow), inline so it sits in a sentence, identical for every type; a PDF or markdown chip whose page exists gets an accent "open page" button before the arrow; a `ContextMenu` on a right-click or a held finger (`menuPress`) with "Open page" / "Add to library" (fed by `FileChipContext` from App and one batched `POST /pages/by-docs` per render) and download; also the shared `postFile` / `uploadFilesAsLines` upload helpers |

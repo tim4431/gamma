@@ -304,7 +304,7 @@ def _load_scoped_page(conn, scope: dict, args: dict, reach=_NO_REACH):
 
 
 def _scope_pages(conn, scope: dict) -> dict:
-    """Titles and documents for the base scope plus read-only context
+    """Titles and documents for the base scope plus the attached context
     pages: a page chat's page, with the pages inside it for a reading tool
     (``inside``), or a folder chat's pages (``root_pages``), in
     ``root_pages``' shape ({page_id: {title, doc_id, format, ext, at, name}}).

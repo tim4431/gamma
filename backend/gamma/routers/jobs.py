@@ -95,17 +95,22 @@ def _waiting_papers(user_id: str) -> list[dict]:
     """The account's blocked paper fetches still waiting for a PDF from
     their browser (gamma/fetch_handoff.py), in the jobs' shape: read-only
     rows, so a card whose reply has scrolled away is still somewhere to
-    find. A click opens the publisher's page; the chat's card settles it."""
+    find. Each is named by the paper's title when the model gave one. A
+    click opens the publisher's page; the chat's card settles it, and so
+    does the row's Stop (``POST /api/ai/handoffs/{id}/stop``, never
+    ``cancel``)."""
     return [{
         "id": f"paper-{req['id']}", "kind": "paper-handoff", "owner": user_id, "workspace": "",
-        "title": req["host"] or req["source"],
+        "title": req["title"] or req["host"] or req["source"],
         "params": {"request": req["id"], "host": req["host"], "wall": req["wall"],
-                   "source": req["source"]},
-        # Whose turn it is, in the phase words the tray already speaks.
-        "state": "running", "progress": {"phase": "connector" if req["watched"] else "browser"},
+                   "source": req["source"], "title": req["title"]},
+        # Whose turn it is, in the phase words the tray already speaks, and
+        # the site it waits on.
+        "state": "running", "progress": {"phase": "connector" if req["watched"] else "browser",
+                                         "item": req["host"]},
         "error": "", "created_at": req["created_at"],
         "started_at": req["created_at"], "finished_at": "", "artifact": None,
-        "downloaded": False, "stoppable": False, "stopping": False, "readonly": True,
+        "downloaded": False, "stoppable": True, "stopping": False, "readonly": True,
     } for req in fetch_handoff.waiting(user_id)]
 
 

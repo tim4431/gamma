@@ -585,7 +585,7 @@ export async function motionScenarios(env) {
         const tick = () => { if (handoff.done) return; look(); requestAnimationFrame(tick); };
         requestAnimationFrame(tick);
       });
-      await page.keyboard.press("Shift+Enter");
+      await page.keyboard.press("Enter");
       await page.locator(".commentCard.active .commentField").waitFor();
       await until(async () => !(await page.locator(".commentCard .commentNew").count()), { what: "the new card handed over" });
       seen = await moves(page);
@@ -602,7 +602,7 @@ export async function motionScenarios(env) {
       // a reply typed in the active card rises into its thread
       await sleep(300);
       await page.keyboard.type("A reply on delta");
-      await page.keyboard.press("Shift+Enter");
+      await page.keyboard.press("Enter");
       await page.locator(".commentCard.active .commentBody", { hasText: "A reply on delta" }).waitFor();
       seen = await moves(page);
       assert(seen.some((m) => m.startsWith("entering rise ")), `the reply rises in: ${seen}`);

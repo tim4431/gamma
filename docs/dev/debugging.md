@@ -208,14 +208,20 @@ snapshot also in the bucket is tagged *in the bucket*, and a copy only the
 bucket holds (its snapshot deleted or pruned here) is a row of its own,
 which is downloaded (the `bucket-download` job), restored into its
 workspace (`bucket-restore`, replace or merge, as a stored snapshot
-restores) or deleted from the bucket. The copies of a workspace this
-server does not have are listed under the name `workspace.json` recorded
-and come back as a new workspace (`bucket-restore` with `into: "new"`):
-the copy's own id when it is free, its name and kind from the copy's
-manifest, the admin its owner. That is the way back after a lost disk: set
-up the bucket on the new server and restore each workspace; its members
-are invited again. Deleting a task, or a workspace, leaves its copies in
-the bucket.
+restores) or deleted from the bucket. Backups › Cloud copies
+(`CloudCopies.jsx`) lists what each store holds and the workspaces this
+server does not have, under the name `workspace.json` recorded; each comes
+back as a new workspace (`bucket-restore` with `into: "new"`): the copy's
+own id when it is free, its name and kind from the copy's manifest, the
+admin its owner. Restore all… brings back the ones picked, each from its
+newest copy, in one job (`bucket-restore-many`, kind `copies-restore`):
+one after another, a copy that fails reported while the rest go on (its
+workspace removed again), a stop taking effect between workspaces, never
+inside one. That is the way back after a lost disk: set up the bucket (or
+connect Google Drive) on the new server and restore all; members are
+invited again. Its Browse… lists every copy by workspace, by store and
+found by name. Deleting a task, or a workspace, leaves its copies in the
+bucket.
 
 #### Google Drive
 
@@ -262,16 +268,23 @@ revokes the token at Google and forgets it. The copies stay in Drive.
 **The OAuth client.** The scope is `drive.file` alone: Gamma sees and
 changes only the files it made, never the rest of the Drive. The client is
 of Google's "TVs and Limited Input devices" type, the one the device flow
-takes, whose secret Google does not treat as secret. It is Gamma's own
-(`config.GOOGLE_DRIVE_CLIENT`, empty until one is registered) unless
-`GAMMA_GOOGLE_DRIVE_CLIENT_ID` and `GAMMA_GOOGLE_DRIVE_CLIENT_SECRET` name
-another. Until there is one, the section reads *Not available* and names
-the two variables. A refresh token works only with the client that made
-it, so a connection made through another client reads "connected through
-another Google OAuth client" and must be made again. The client's Google
+takes, whose secret Google does not treat as secret. Each server's admin
+registers their own in their Google Cloud project and saves it under Set
+up… (`gdrive_account.oauth_client`, handed to every `gdrive` call that
+needs it; users.db `settings` key `gdrive_client`, the secret encrypted as
+the token is and never returned). Gamma ships no client and reads none
+from the environment. With none, the section reads *Not set up* with Set
+up…, whose dialog links the three
+pages of the Google Cloud console to visit: enable the Drive API, publish
+the app, create the client. A refresh token works only with the client
+that made it, so a connection made through another client reads
+"connected through another Google OAuth client" and must be made again;
+saving another client or removing it disconnects at once (revoking the token) and ends a code waiting. The client's Google
 Cloud project must be *In production*: one still in *Testing* gets
-refresh tokens that expire after 7 days. `GAMMA_GOOGLE_OAUTH_BASE` and
-`GAMMA_GOOGLE_API_BASE` point at stand-ins for a test.
+refresh tokens that expire after 7 days. A project without the Drive API
+enabled is refused with Google's own message, which links the page that
+enables it. `GAMMA_GOOGLE_OAUTH_BASE` and `GAMMA_GOOGLE_API_BASE` point at
+stand-ins for a test.
 
 **The folder.** A key's path is a folder path under the folder in My
 Drive's root: `snapshots/<ws>/<name>.zip` is `Gamma backups/snapshots/<ws>/
@@ -907,6 +920,10 @@ What releasing 0.4.0 met, and what each needs:
   one. A test that orders two threads makes the order (wraps the call that
   marks the point, as `test_zotero_sync_pdfs`'s relocation race does), not
   a sleep.
+- **A time bound on the wall clock.** The suite's other workers stretch the
+  wall clock on a loaded runner. A test that bounds how long pure code
+  takes measures the thread's CPU time (`time.thread_time()`), as
+  `test_notion_nfm`'s long inputs do.
 
 `GAMMA_TEST_SHUFFLE=<seed>` puts the files in another order (conftest's
 `pytest_collection_modifyitems`; each file's tests stay in theirs):
@@ -969,12 +986,6 @@ instead of fixing; the fix removes its entry.
   ran beside it; the file alone passed 41/41. Likely the debounce: with
   `PUSH_DELAY` at 0.2 s, three quick PATCHes that take longer than that
   under load settle apart and send two PUTs where the test counts one.
-- **test_notion_nfm: test_long_input_reads_fast**
-  (`backend/tests/test_notion_nfm.py:879`, this machine, 2026-11-18): the
-  ten long inputs took 5.23 s against the test's 5 s bound in the full
-  parallel suite while two browser groups (notes-pdf-share, translation)
-  ran beside it; the file alone passed. A wall-clock bound on pure Python
-  that the machine's load decides.
 - **notes: images and tables are objects — a press selects…**
   (`frontend/tests/e2e/scenarios/notes.mjs:2082`, this machine,
   2026-11-18): the press on the table's bottom margin opened no editor.
@@ -1642,6 +1653,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   the palette, on a phone-sized touch screen, and in Chinese. `--group block-properties`.
 - `pdf.mjs`: upload + page by attachment, the viewer's text layer, a
   highlight from a text selection (overlay, quote row, persisted position),
+  Add a passage… over a column break (the left column's foot added ahead
+  of the right column's top, the note badge in the right column) and a
+  highlight joined with its note kept under it,
   the find bar hitting page 2, an AI citation link
   highlighting its quote on the cited page ([pdf_citations.md](pdf_citations.md)),
   the chat's coverage pills against a mocked `/api/ai/chat` (a selection's

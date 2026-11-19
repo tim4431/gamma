@@ -128,6 +128,12 @@ ended the out-of-band copy-and-paste flow in 2023.
   pane shows the code. While it is open the pane polls the server, which
   asks Google at most once per Google's interval. A code that is never
   entered expires on Google's side. Nothing runs in the background.
+- **Each server registers its own client.** An admin makes a "TVs and
+  Limited Input devices" client in their own Google Cloud project and
+  saves its ID and secret in Settings → Backups → Google Drive (Set up…,
+  which links the console's pages). Gamma ships no client of its own and
+  reads none from the environment: the app named on Google's consent page
+  is the server owner's, and Drive is set up in Settings like the bucket.
 - **Plain urllib** on the server's network route (`net_proxy`), through
   one `_request` the tests replace with a fake Drive, as the Zotero
   client's is. The Google client libraries would add about 15 MB for a
@@ -135,9 +141,6 @@ ended the out-of-band copy-and-paste flow in 2023.
 
 ## Still open
 
-- Registering Gamma's own device client (consent screen in production,
-  `drive.file` only) and shipping its ID and secret. Until then an admin
-  sets `GAMMA_GOOGLE_DRIVE_CLIENT_ID` and `GAMMA_GOOGLE_DRIVE_CLIENT_SECRET`.
 - A connection per account, so that a non-admin's tasks copy their own
   workspaces to their own Drive.
 - The off-site rounds to Drive, for a small library.

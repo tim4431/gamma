@@ -3,9 +3,8 @@ flow, tokens and revocation, and the Drive API v3 as gamma/gdrive.py uses
 it (about, files listed by query, folders made, resumable uploads and
 updates, downloads, deletes), with Google's refusals.
 
-``FakeGoogle.install(monkeypatch)`` points gamma at it in-process: the
-client through the environment, ``gdrive._request`` to ``request``, the
-pauses to ``sleeps`` (instant; the pauses asked are kept). A test drives
+``FakeGoogle.install(monkeypatch)`` points gamma at it in-process:
+``gdrive._request`` to ``request``, the pauses to ``sleeps`` (instant; the pauses asked are kept). A test drives
 the device flow with ``approve``, ``deny`` and ``expire``; ``revoke_all``
 makes every refresh token invalid (the person removed the app);
 ``expire_access`` makes the next call's access token answer 401.
@@ -78,8 +77,6 @@ class FakeGoogle:
     def install(self, monkeypatch):
         from gamma import gdrive
 
-        monkeypatch.setenv("GAMMA_GOOGLE_DRIVE_CLIENT_ID", CLIENT_ID)
-        monkeypatch.setenv("GAMMA_GOOGLE_DRIVE_CLIENT_SECRET", CLIENT_SECRET)
         monkeypatch.setenv("GAMMA_GOOGLE_OAUTH_BASE", self.base)
         monkeypatch.setenv("GAMMA_GOOGLE_API_BASE", self.base)
         monkeypatch.setattr(gdrive, "_request", self.request)

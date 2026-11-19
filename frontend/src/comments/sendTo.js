@@ -75,7 +75,7 @@ export function tickedPlaceholder(agent, placeholder, reply = false) {
 }
 
 // What the field's send button is called, `{label, title}` (`hint` the
-// key that sends, "Shift+Enter"): the field's own action (`submitLabel`,
+// key that sends, "Enter"): the field's own action (`submitLabel`,
 // "Comment", "Send reply"), and ticked for `agent` "Send to Codex on
 // TIM-PC" (agentName), so the button says what it will start.
 export function sendLabel(agent, submitLabel, hint) {

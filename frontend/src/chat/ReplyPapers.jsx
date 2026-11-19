@@ -6,12 +6,14 @@
 // stored from the server's copy first (POST /api/ai/handoffs/<id>/store).
 // Collapsed to one pill until opened; opening it asks the library which
 // papers it holds already and the registry for titles the reply left out.
+// A paper without a title is named by its identifier or its PDF's file
+// name, never by a raw address; the site beside it opens what was read.
 import React, { useEffect, useMemo, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { CheckIcon, FilePlusIcon, PaperIcon } from "../shared/ui/Icons";
 import { Chevron, Collapse, MorphText } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { clipPayload, lookupQuery, replyPapers } from "./chatPapers.js";
+import { clipPayload, lookupQuery, paperLabel, replyPapers } from "./chatPapers.js";
 
 const MAX_LOOKED_UP = 30;
 
@@ -96,17 +98,20 @@ export default function ReplyPapers({ actions, text, folder = "", folderName = "
         <div className="chatPapers" role="group" aria-label={t("Papers in this reply")}>
           {papers.map((p) => {
             const st = status[p.key] || {};
-            const title = p.title || titles[p.key] || p.source;
+            const { name, where, href } = paperLabel({ ...p, title: p.title || titles[p.key] || "" });
             const kind = p.read ? (p.pdf ? t("PDF read") : t("Page read"))
               : p.blocked ? t("Needed your browser") : t("Linked");
             return (
               <div key={p.key} className={`chatPaper${saved(p) ? " saved" : ""}`}>
-                <input type="checkbox" className="chatPaperCheck" aria-label={title}
+                <input type="checkbox" className="chatPaperCheck" aria-label={name}
                   checked={saved(p) || picked.has(p.key)} disabled={saved(p) || busy}
                   onChange={() => toggle(p.key)} />
                 <span className="chatPaperText">
-                  <span className="chatPaperTitle" title={title}>{title}</span>
-                  <span className="chatPaperMeta" title={p.source}>{kind} · {p.source}</span>
+                  <span className="chatPaperTitle" title={p.source}>{name}</span>
+                  <span className="chatPaperMeta">
+                    {kind}
+                    {where ? <> · {href ? <a href={href} target="_blank" rel="noreferrer" title={href}>{where}</a> : where}</> : null}
+                  </span>
                   {st.state === "saved" && st.note ? <span className="chatPaperNote">{st.note}</span> : null}
                   {st.state === "error" ? <span className="chatPaperError" role="alert">{st.error}</span> : null}
                 </span>
@@ -131,9 +136,9 @@ export default function ReplyPapers({ actions, text, folder = "", folderName = "
             <button type="button" className="uiBtn sm primary" disabled={busy || !chosen.length} onClick={save}
               title={folderName ? t("Saved into {folder}", { folder: folderName }) : t("Saved into your library")}>
               <FilePlusIcon size={14} />
-              {folderName
-                ? tn("Save {n} paper to {folder}", "Save {n} papers to {folder}", chosen.length, { folder: folderName })
-                : tn("Save {n} paper to library", "Save {n} papers to library", chosen.length)}
+              {!chosen.length ? (folderName ? t("Save to {folder}", { folder: folderName }) : t("Save to library"))
+                : folderName ? tn("Save {n} paper to {folder}", "Save {n} papers to {folder}", chosen.length, { folder: folderName })
+                  : tn("Save {n} paper to library", "Save {n} papers to library", chosen.length)}
             </button>
           </div>
         </div>

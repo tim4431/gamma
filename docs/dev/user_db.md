@@ -137,7 +137,16 @@ All state is SQLite + files on disk under a data directory (env
     [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)), the
     Google Drive connection (`gdrive`: `{refresh_token, email, name, folder,
     connected_at, client_id}` as JSON, the token encrypted the same way, ""
-    once disconnected; [debugging.md](debugging.md#google-drive)) and the
+    once disconnected) and the OAuth client an admin saved for it
+    (`gdrive_client`: `{client_id, client_secret}`, the secret encrypted
+    the same way, "" once removed;
+    [debugging.md](debugging.md#google-drive)), this server's Zotero app
+    (`zotero_app`: `{client_key, client_secret}`, the secret encrypted the
+    same way, "" once removed; [zotero_sync.md](zotero_sync.md)) and the
+    server options of Settings (`options`: `{guest_max, metadata_lookup,
+    model_catalog, vault_keep_mb, searxng_url, openalex_key}` as JSON, only
+    those saved, the OpenAlex key encrypted the same way;
+    `gamma/server_options.py`), the
     network proxy (`proxy`: `{mode, server, username, password, bypass,
     proxy_dns}` as JSON, the password encrypted the same way;
     [network_proxy.md](network_proxy.md));

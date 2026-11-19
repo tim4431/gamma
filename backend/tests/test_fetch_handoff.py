@@ -59,10 +59,10 @@ def fetch(accounts):
     gets); ``user``: the account named, None for a chat with no handoff."""
     ws = make_user(USER, "handoff-password")
 
-    def run(source, user=USER, **scope):
+    def run(source, user=USER, title="", **scope):
         handoff_user = account_of(user) if user else None
         return run_agent_tool(ws, {**folder(""), "read_chars": 20000, "handoff_user": handoff_user, **scope},
-                              "fetch_paper", {"source": source})
+                              "fetch_paper", {"source": source, **({"title": title} if title else {})})
     return run
 
 
@@ -85,9 +85,11 @@ def test_cloudflare_challenge_opens_a_handoff_card_and_retries_reuse_it(web, fet
     req = fetch_handoff.get(account_of(USER), handoff["id"])
     assert req["url"] == landing and req["status"] == "waiting"
 
-    # The model retrying (in another spelling) gets the same card, not a new one.
-    _, again = fetch("10.5555/cf-test")
-    assert again["handoff"]["id"] == handoff["id"]
+    # The model retrying (in another spelling) gets the same card, not a new one,
+    # named now by the title it passed (Background tasks shows it).
+    _, again = fetch("10.5555/cf-test", title="A paper behind a check")
+    assert again["handoff"]["id"] == handoff["id"] and again["handoff"]["title"] == "A paper behind a check"
+    assert fetch_handoff.get(account_of(USER), handoff["id"])["title"] == "A paper behind a check"
     # Guests and share links have no one to hand it to: the Connector guidance.
     text, action = fetch("doi:10.5555/cf-test", user=None)
     assert "handoff" not in action and "Connect this publisher" in text
@@ -203,7 +205,11 @@ def test_a_delivered_pdf_is_held_for_the_library_and_saved_through_clip(accounts
     # The chat's next read names the request, so the reply can offer the paper.
     _, action = fetch(source)
     assert (action["request"], action["pdf"]) == (rid, True)
-    assert "title" in action and action["url"] == "https://journals.example.org/keep.pdf"
+    assert action["title"] == "" and action["url"] == "https://journals.example.org/keep.pdf"
+    # A PDF has no title of its own: the expected one names it once its pages show it.
+    _, named = fetch(source, title="Delivered from the browser")
+    assert named["title"] == "Delivered from the browser" and "Delivered from the browser" in named["summary"]
+    assert fetch(source, title="Some other paper entirely")[1]["title"] == ""
 
     assert bob.post(f"/api/ai/handoffs/{rid}/store").status_code == 404, "another account's PDF stays theirs"
     stored = alice.post(f"/api/ai/handoffs/{rid}/store").json()
@@ -370,12 +376,16 @@ def test_a_waiting_request_is_listed_in_background_tasks(accounts, blocked_chat,
     blocked_chat()
     rows = [row for row in alice.get("/api/jobs").json()["jobs"] if row["kind"] == "paper-handoff"]
     (row,) = rows
-    assert row["title"] == "www.science.example" and row["readonly"] is True
-    assert row["progress"]["phase"] == "browser"   # nobody has taken the tab yet
-    assert row["params"]["request"] == fetch_handoff.waiting(account_of(USER))[0]["id"]
-    # Another account never sees it, and a settled request drops off.
+    # No title from the model: the host names it.
+    assert row["title"] == "www.science.example" and row["readonly"] is True and row["stoppable"] is True
+    # nobody has taken the tab yet, and the site it waits on
+    assert row["progress"] == {"phase": "browser", "item": "www.science.example"}
+    rid = row["params"]["request"]
+    assert rid == fetch_handoff.waiting(account_of(USER))[0]["id"]
+    # Another account never sees it nor stops it, and a stopped request drops off.
     assert not [r for r in bob.get("/api/jobs").json()["jobs"] if r["kind"] == "paper-handoff"]
-    alice.request("DELETE", f"/api/ai/handoffs/{row['params']['request']}")
+    assert bob.post(f"/api/ai/handoffs/{rid}/stop").status_code == 404
+    assert alice.post(f"/api/ai/handoffs/{rid}/stop").json()["status"] == "dismissed"
     assert not [r for r in alice.get("/api/jobs").json()["jobs"] if r["kind"] == "paper-handoff"]
 
 

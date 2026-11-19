@@ -451,6 +451,14 @@
 .setPickEmpty { padding: 6px 8px; font-size: var(--fs-2xs); color: var(--text-muted); }
 /* A dialog with a members list inside scrolls its body, not the overlay. */
 .subDialog .settingsForm { overflow-y: auto; min-height: 0; }
+/* Backups › Cloud copies' dialogs (CloudCopies.jsx): wider, the list
+   scrolling under its bar of filters. */
+.reportModal.cloudCopies { width: min(640px, calc(100vw - 32px)); }
+.cloudCopiesBar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4); }
+.cloudCopiesBar .aiKeyInput { flex: 1; min-width: 140px; margin: 0; }
+.cloudCopiesList { overflow-y: auto; min-height: 0; flex: 1; display: grid; align-content: start; gap: var(--space-5); }
+.cloudCopiesHead { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-1); }
+.cloudCopyPick { cursor: pointer; }
 .setSlider .unitInput { width: 116px; }
 .setSlider .unitInput .aiKeyInput { text-align: right; padding-right: 36px; }
 .settingsNoMargin { margin: 0; }

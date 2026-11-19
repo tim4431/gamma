@@ -108,10 +108,16 @@ export function sweepRuns() {
 // key}` (PEM files) serves it over https with that certificate, which
 // `fetch` takes as its one authority (a NAS's self-signed certificate,
 // scenarios/https.mjs); a scenario may change it between two starts.
+// The server options a test server starts with (gamma/server_options.py,
+// set by manage.py set-option before it starts): nothing goes out to the
+// paper registries or models.dev. A scenario's `options` add to them.
+const OFFLINE = { metadata_lookup: "off", model_catalog: "off" };
+
 export class Server {
-  constructor({ env = {}, static: serveApp = true, tls = null } = {}) {
+  constructor({ env = {}, options = {}, static: serveApp = true, tls = null } = {}) {
     servers.push(this);
     this.env = env;
+    this.options = { ...OFFLINE, ...options };
     this.serveApp = serveApp;
     this.tls = tls;
     this.agent = null;
@@ -159,12 +165,13 @@ export class Server {
     const dist = path.join(this.dir, "dist");
     if (this.serveApp) fs.cpSync(DIST, dist, { recursive: true });
     await this.manage("setup");
+    await this.manage("set-option", ...Object.entries(this.options).flat().map(String));
     this.port = port || await freePort();
     this.agent = null;
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-c", SERVE, String(this.port), ...(this.tls ? [this.tls.cert, this.tls.key] : [])], {
       cwd: BACKEND, stdio: ["pipe", log, log],
-      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...(this.serveApp ? { GAMMA_STATIC_DIR: dist } : {}), TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
+      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...(this.serveApp ? { GAMMA_STATIC_DIR: dist } : {}), TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {

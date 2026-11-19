@@ -60,7 +60,7 @@ function log() {
 export async function viewerScenarios(env) {
   const { browser, step, openPage, assert, assertEq, assertNoProblems, until, sleep } = env;
   if (!wanted("viewers")) return;
-  const server = new Server({ env: { GAMMA_FOLDER_LINKS: "1", GAMMA_SHELL_SECRET: "", GAMMA_VAULT_KEEP_MB: String(KEEP_MB) } });
+  const server = new Server({ env: { GAMMA_FOLDER_LINKS: "1", GAMMA_SHELL_SECRET: "" }, options: { vault_keep_mb: KEEP_MB } });
   const disk = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-viewers-"));
   try {
     await server.start();
@@ -340,7 +340,7 @@ export async function viewerScenarios(env) {
         await fresh.waitFor({ timeout: 10000 });
         await focused(field(fresh), "the new comment's field takes the focus");
         await page.keyboard.type("make the legend larger");
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         region = await until(async () => (await childrenOf(ids["fig.png"])).find((b) => b.properties?.image_position) || null, { what: "the region block" });
         regionThread = await until(async () => (await threadsOf(ids["fig.png"])).find((th) => th.block_id === region.id), { what: "the region's thread" });
         await page.keyboard.press("Escape");
@@ -367,7 +367,7 @@ export async function viewerScenarios(env) {
         await pop.waitFor();
         await focused(field(pop.locator(".commentNew")), "the page thread's field takes the focus");
         await page.keyboard.type("the colours are too light");
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         pageThread = await until(async () => (await threadsOf(ids["fig.png"])).find((th) => th.block_id === ids["fig.png"]), { what: "the page's thread" });
         await page.keyboard.press("Escape");
         // the files: written by the hot pass, no sync asked for

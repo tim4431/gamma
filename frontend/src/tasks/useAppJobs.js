@@ -13,6 +13,7 @@ import { copyBody, copySummary, zoteroPdfsNote } from "../transfers/workspaceCop
 import { copyPreview } from "../transfers/exportApi";
 import { guideEvents } from "../guide/events.js";
 import { showInChat } from "../chat/computer/chatSide.js";
+import { connectorTab } from "../shared/lib/connector.js";
 import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle, turnShown } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
 
@@ -197,6 +198,14 @@ export function useAppJobs({
       setSettingsOpen(open.slice("settings:".length));
     }
   }
+  // A row's Stop: the store's, and for a paper the chat handed to the
+  // browser, the tab Gamma Connector opened for it closes too (one it opened
+  // out of sight; a tab the person works in stays).
+  async function stopTask(task) {
+    await tasks.cancel(task);
+    if (task.kind === "paper-handoff" && task.params?.request) connectorTab(task.params.request, "close");
+  }
+
   // Start a task's work again (a row's retry button, the export dialog's
   // Start again): the same route and body as the first time. `download`:
   // "auto" when the file should come as soon as it is ready (the dialog
@@ -394,6 +403,6 @@ export function useAppJobs({
     }
   }
 
-  return { startWorkspaceExport, runBackupImport, copyPages, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask,
-    onJobFinished };
+  return { startWorkspaceExport, runBackupImport, copyPages, runExport, exportStarting, closeExport, leaveExportJob, openTask, stopTask,
+    retryTask, onJobFinished };
 }

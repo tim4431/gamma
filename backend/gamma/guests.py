@@ -21,7 +21,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import config, workspaces
+from . import config, server_options, workspaces
 from .db import connect_users_db, format_stamp, new_account_id, page_now, parse_stamp
 from .logbuf import log
 from .server_settings import guest_logins_enabled, guest_ttl_hours
@@ -32,13 +32,14 @@ NAME_PREFIX = "guest-"
 
 def logins_possible() -> bool:
     """Whether this server could take guest logins at all: not with
-    ``GAMMA_GUEST_MAX=0``, not on a hosted container (``config.guest_max``)
-    and not on a share host, which holds strangers' published pages. False
-    leaves Settings → Users without its Guests rows: there is nothing an
-    admin could turn on."""
+    ``GAMMA_GUEST_MAX=0``, not on a hosted container
+    (``server_options.guest_max``) and not on a share host, which holds
+    strangers' published pages. False leaves
+    Settings → Users without its Guests rows: there is nothing an admin
+    could turn on."""
     from . import cloud_auth  # local: cloud_auth imports auth, which imports this module
 
-    return config.guest_max() > 0 and not cloud_auth.settings()["share_host"]
+    return server_options.guest_max() > 0 and not cloud_auth.settings()["share_host"]
 
 
 def logins_open() -> bool:
@@ -77,9 +78,11 @@ def account_expires_at(user_id: str) -> str:
 
 def _insert_account() -> tuple[str, str]:
     """The users row of a new guest — ``(id, username)`` —, refused with 503
-    once the live guest accounts reach ``GAMMA_GUEST_MAX`` (count and insert
-    in one statement, so two logins cannot both take the last place)."""
-    cap = config.guest_max()
+    once the live guest accounts reach the most at once
+    (``server_options.guest_max``: Settings, or ``GAMMA_GUEST_MAX``; count
+    and insert in one statement, so two logins cannot both take the last
+    place)."""
+    cap = server_options.guest_max()
     for _ in range(5):
         user_id, name = new_account_id(), NAME_PREFIX + secrets.token_urlsafe(6)  # 6 bytes = 8 url-safe chars
         try:
@@ -92,7 +95,7 @@ def _insert_account() -> tuple[str, str]:
         except sqlite3.IntegrityError:
             continue  # the name is taken (by another guest, or a real account)
         if cur.rowcount != 1:
-            log.warning(f"[guests] a guest login was refused: {cap} guest accounts are live (GAMMA_GUEST_MAX)")
+            log.warning(f"[guests] a guest login was refused: {cap} guest accounts are live (the most at once)")
             raise HTTPException(503, "This server has as many guests as it can hold right now. "
                                      "Try again later.")
         return user_id, name

@@ -30,7 +30,7 @@ everything into a folder that carries the mark (``Layout.work``): its
 directory is the source. Every file it tracks is a page: a note, a PDF, or
 a **file** of any other format, pictures included (``kinds.FILE``: read in
 place, its page's document the file, titled by its leaf, never in the
-library by the switch; one past ``config.vault_keep_bytes`` is listed with
+library by the switch; one past ``server_options.vault_keep_bytes`` is listed with
 no bytes). Its new pages are stamped as its files, a move on
 disk files a page first in its new directory's folder and names it, pull
 renames or moves only a note that follows Gamma (no document, where the

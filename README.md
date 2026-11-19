@@ -260,13 +260,9 @@ Put a TLS-terminating reverse proxy (Caddy, nginx) in front of 9001 for a domain
 | `GAMMA_PORT` | No | `9001` | Listen port (Docker entrypoint only) |
 | `FORWARDED_ALLOW_IPS` | Behind a reverse proxy | `127.0.0.1` (Docker too) | Addresses of reverse proxies whose `X-Forwarded-For` / `-Proto` headers are believed (uvicorn's setting; comma list, networks allowed, `*` for any — only when nothing but the proxy can reach the port). Rate limits key on the client address this yields: behind a proxy that is not listed, every visitor shares the proxy's |
 | `GAMMA_ADMIN_USER` / `GAMMA_ADMIN_PASSWORD` | No | `admin` / random, printed to the log once | Overrides the account a **fresh** instance seeds itself at startup (only while no real accounts exist; never touched afterwards). Admins manage users from the GUI (Settings → Users) |
-| `GAMMA_AI_ANTHROPIC_BASE_URL` | No | `https://api.anthropic.com` | Default Anthropic-protocol endpoint, e.g. `https://api.deepseek.com/anthropic` |
-| `GAMMA_AI_OPENAI_BASE_URL` | No | `https://api.openai.com` | Default OpenAI-compatible endpoint |
-| `GAMMA_SEARXNG_URL` | No | unset | A SearXNG instance (JSON format enabled) that the assistant's web search uses for accounts without a search service of their own; it may be on the private network |
-| `GAMMA_OPENALEX_API_KEY` | No | unset | An OpenAlex key for accounts without their own: ten times the keyless daily budget for scholarly search, and no pauses under load |
 | `GAMMA_TRUSTSTORE` | No | on | `0` verifies outbound HTTPS with OpenSSL's certificate authorities instead of the system's trust store (an escape hatch; read at start) |
 
-AI is configured in the app, not the environment: each user adds provider entries under Settings → AI → Connections (pick the API format — Anthropic Messages or OpenAI Chat Completions — then a key, plus optional label, base URL, and model list), or connects a ChatGPT Plus/Pro subscription with *Sign in with ChatGPT* — OAuth, no key at all. Keys are stored server-side per user and never sent back to the browser. The base-URL variables above only change the per-protocol defaults shown in that dialog.
+AI is configured in the app, not the environment: each user adds provider entries under Settings → AI → Connections (pick the API format — Anthropic Messages or OpenAI Chat Completions — then a key, plus optional label, base URL, and model list), or connects a ChatGPT Plus/Pro subscription with *Sign in with ChatGPT* — OAuth, no key at all. Keys are stored server-side per user and never sent back to the browser. The rest of a server's settings are in the app too: an admin sets the search services every account shares (Settings → AI → Tool usage), whether the server looks papers up and reads the model catalog (Settings → Server → Online services), and the backup stores (Settings → Backups).
 
 </details>
 

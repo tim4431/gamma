@@ -6,6 +6,7 @@ The backend package. `app.py` assembles the middleware + routers and serves the 
 # Configuration, storage and upgrades
 config.py          env config
 server_settings.py storage limits admins edit at runtime, and their enforcement
+server_options.py  the server options of Settings once environment variables: guests at once, lookups, the model catalog, the vault's keep limit, shared search services
 db.py              schemas, SCHEMA_VERSION, per-workspace DB paths, the connect helpers (closed by their with block), account id ↔ name, user prefs
 db_maintenance.py  SQLite upkeep on the app's every() loop: idle connections closed, a grown WAL truncated, PRAGMA optimize
 migrations.py      versioned data-directory upgrades (snapshot, numbered steps)

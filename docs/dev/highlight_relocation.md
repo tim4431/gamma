@@ -306,7 +306,9 @@ as the file read them. Stretches with only a line's end between are one
 piece. A new piece begins where the file read words the highlight does not
 cover: a caption between two columns, a footnote, a mark the rectangles
 miss. Each piece has its own 40 characters either side and the count of
-words skipped before it.
+words skipped before it. A highlight in parts (the web app's Add a
+passage…, [api.md](api.md) "The highlight shape") is such a highlight:
+each of its passages is a piece, found after the one before.
 
 An area's needle is the text from its first covered glyph to its last. Its
 anchor is that text's line boxes (`rects_for_span`) as one box, in
@@ -1146,11 +1148,13 @@ App's `discardOf` picks the button's title from what the block carries
 Discard is on the card alone, one highlight at a time after a look at it.
 The highlight menu's Delete does the first, and no menu does the second.
 
-**Moving a highlight** (App's `moveHighlightId`) starts, for an editor,
-from the context menu's **Move to a selection…**, a lost row's button, or
-the card's **Move…**, which closes the card. Move mode and attach mode (a
-note's ⊕ waiting for a click on a highlight) end each other
-(`startHighlightMove`, `startAttachMode`), so one banner shows.
+**Moving a highlight** (a `move` wait, `pdf/useHighlightWait.js`) starts,
+for an editor, from the context menu's **Move to a selection…**, a lost
+row's button, or the card's **Move…**, which closes the card. The PDF
+waits for one thing at a time (`pdf/highlightWait.js`): a move, a note's ⊕
+waiting for a click on a highlight, or a highlight waiting for another
+passage (Add a passage…); starting one ends the one before, so one banner
+shows, and Escape ends it.
 
 In move mode the highlights let the pointer through (`.pdfMoving`), so the
 text under them can be selected, the highlight's own included. The next

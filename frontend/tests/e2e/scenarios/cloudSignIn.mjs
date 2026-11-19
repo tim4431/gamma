@@ -225,7 +225,7 @@ export async function cloudSignInScenarios(env) {
       await settingsPane(page, "Users");
       await page.locator('.setRow[data-setting="Default quota"]').getByText("The plan's cap of 1000 MB", { exact: false }).waitFor();
       await page.locator('.setRow[data-setting="Unknown cloud accounts"]').getByText("Set by this server's plan", { exact: true }).waitFor();
-      // a hosted container takes no guests, whatever GAMMA_GUEST_MAX says: no Guests section, no guest login
+      // a hosted container takes no guests, whatever the most at once says: no Guests section, no guest login
       await until(() => page.locator('.setSection[data-setting="Guests"]').count().then((n) => n === 0),
         { what: "the Guests section left out on a hosted container" });
       assertEq((await (await fetch(`${hosted.base}/api/server-config`)).json()).guest, false, "guest logins are off");

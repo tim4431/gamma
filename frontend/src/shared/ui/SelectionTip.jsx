@@ -6,7 +6,7 @@
 // (press.js tipPress; TipMarks takes it as its `act`). Imports no viewer,
 // so the code view's chunk takes it without pdf.js.
 import React from "react";
-import { CheckIcon, CopyIcon, LocateIcon, MessageSquareIcon } from "./Icons";
+import { CheckIcon, CopyIcon, LocateIcon, MessageSquareIcon, TextPlusIcon } from "./Icons";
 import { IconSwap } from "./MotionWidgets";
 import { useCopied } from "./Widgets";
 import { usePalette } from "./paletteContext.js";
@@ -44,13 +44,28 @@ export function TipMoveHere({ onMove }) {
   );
 }
 
+// The popup's whole row while a highlight waits for another passage (App's
+// extendHighlightId): this selection is added to it, nothing else is
+// offered.
+export function TipAddHere({ onAdd }) {
+  return (
+    <div className="colorRow">
+      <TipTool className="tipAddBtn" label={t("Add to the highlight")} onPress={onAdd}>
+        <TextPlusIcon size={14} />
+      </TipTool>
+    </div>
+  );
+}
+
 // Copy `text` (what was selected), where the host's own edit menu, which
-// has one, is off: on the click, as the system's Copy; a check for a moment.
-export function TipCopy({ text }) {
+// has one, is off; or what `copy()` copies (the chat's selection, as rich
+// text), true once it has: on the click, as the system's Copy; a check for
+// a moment.
+export function TipCopy({ text, copy = null }) {
   const [copied, flashCopied] = useCopied(1200);
   return (
     <button type="button" className="colorBtn linkTipBtn" title={t("Copy")} aria-label={t("Copy")} onMouseDown={keepSelection}
-      onClick={async () => { if (await copyText(text)) flashCopied(); }}>
+      onClick={async () => { if (await (copy ? copy() : copyText(text))) flashCopied(); }}>
       <IconSwap swap={copied} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
     </button>
   );

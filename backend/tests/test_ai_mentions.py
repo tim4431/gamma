@@ -1,4 +1,4 @@
-"""Attached library pages enter both prompt context and the read-tool scope."""
+"""Attached library pages enter both prompt context and the tool scope."""
 import json
 
 import pytest
@@ -8,9 +8,11 @@ from gamma.ai_tools.registry import run_agent_tool
 
 
 @pytest.mark.parametrize("scope_type", ["page", "folder"])
-def test_references_expand_reads_but_not_writes(org, scope_type):
+def test_references_expand_reads_and_edits(org, scope_type):
+    """An attached (@) page is in the chat's reach for reading and for
+    changes: the note tools edit it as they edit the chat's own page."""
     c, ids = org
-    child = c.post("/api/blocks", json={"parent_id": ids["note"], "content": "mentionneedle"}).json()["id"]
+    child = c.post("/api/blocks", json={"parent_id": ids["note"], "content": f"mentionneedle {scope_type}"}).json()["id"]
     scope = {"type": scope_type, "page_id": ids["b"], "folder": ids["readout"],
              "context_pages": [ids["note"], "missing"]}
     for tool, args in [("read_page", {"page_id": ids["note"]}),
@@ -19,15 +21,18 @@ def test_references_expand_reads_but_not_writes(org, scope_type):
         text, action = run_agent_tool(ids["ws"], scope, tool, args)
         assert not action.get("error"), text
         assert "mentionneedle" in text
-    for tool, args in [("edit_block", {"block_id": child, "content": "changed"}),
-                       ("create_block", {"parent_id": ids["note"], "content": "changed"}),
-                       ("move_block", {"block_id": child, "parent_id": ids["b"]})]:
+    for tool, args in [("edit_block", {"block_id": child, "content": "edited", "mode": "append"}),
+                       ("create_block", {"parent_id": ids["note"], "content": "made"})]:
         text, action = run_agent_tool(ids["ws"], scope, tool, args)
+        assert not action.get("error"), text
+    assert "edited" in props(c, child)["content"]
+    # Removing the attachment removes access, for reads and changes alike.
+    bare = {**scope, "context_pages": []}
+    for tool, args in [("read_page", {"page_id": ids["note"]}),
+                       ("edit_block", {"block_id": child, "content": "again", "mode": "append"})]:
+        text, action = run_agent_tool(ids["ws"], bare, tool, args)
         assert action.get("error"), text
-    assert props(c, child)["content"] == "mentionneedle"
-    # Removing the attachment removes access, too.
-    text, action = run_agent_tool(ids["ws"], {**scope, "context_pages": []}, "read_page", {"page_id": ids["note"]})
-    assert action.get("error"), text
+    assert "again" not in props(c, child)["content"]
 
 
 def test_chat_resolves_reference_context_and_tools(org, ai_provider, monkeypatch):
@@ -41,7 +46,7 @@ def test_chat_resolves_reference_context_and_tools(org, ai_provider, monkeypatch
             content = "\n".join(m["content"] for m in messages)
             assert f"Gamma page ID: {ids['note']}" in content
             assert f"Gamma page ID: {ids['b']}" in content
-            assert ids["note"] in system and "read-only" in system
+            assert ids["note"] in system and "for reading and for changes alike" in system
             return FakeResp([
                 {"type": "content_block_start", "content_block": {"type": "tool_use", "id": "r1", "name": "read_page"}},
                 {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": json.dumps({"page_id": ids["note"]})}},

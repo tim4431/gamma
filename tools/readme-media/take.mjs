@@ -39,9 +39,9 @@ export function scratch(name) {
  *  false` leaves the library empty, for a story that brings its own files.
  *  `computer` is the name the server gives this computer (its host name
  *  otherwise), which an agent's byline shows: "Codex on <computer>". */
-export async function library({ users = ['demo'], shared = null, env = {}, curated = true, computer = '' } = {}) {
+export async function library({ users = ['demo'], shared = null, env = {}, options = {}, curated = true, computer = '' } = {}) {
   if (curated && !fs.existsSync(DEMO_EXPORT)) throw new Error(`No curated export at ${DEMO_EXPORT}: run export-demo.py, or set DEMO_EXPORT`);
-  const server = new Server({ env });
+  const server = new Server({ env, options });
   if (computer) {
     // gamma/computers/channel.py computer_name() is socket.gethostname(): a
     // sitecustomize on the server's PYTHONPATH (in its temp dir, gone with

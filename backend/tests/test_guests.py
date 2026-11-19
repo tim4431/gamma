@@ -179,7 +179,7 @@ def test_logout_deletes_the_guest():
     assert not _exists(name)
 
 
-def test_live_guest_cap(monkeypatch):
+def test_live_guest_cap(monkeypatch, server_option):
     from gamma.db import connect_users_db
     assert _new_client().post("/api/login-guest").status_code == 200  # one live guest at least: a cap of 0 is "no guests" (403)
     with connect_users_db() as conn:
@@ -189,6 +189,12 @@ def test_live_guest_cap(monkeypatch):
     assert r.status_code == 503 and "guests" in r.json()["detail"]
     monkeypatch.setenv("GAMMA_GUEST_MAX", str(live + 1))
     assert _new_client().post("/api/login-guest").status_code == 200
+    # without the environment's, the admin's in Settings
+    monkeypatch.delenv("GAMMA_GUEST_MAX")
+    with connect_users_db() as conn:
+        live = conn.execute("SELECT COUNT(*) FROM users WHERE is_guest = 1").fetchone()[0]
+    server_option("guest_max", live)
+    assert _new_client().post("/api/login-guest").status_code == 503
 
 
 def test_guest_logins_off_hide_the_button(monkeypatch):
@@ -206,11 +212,11 @@ def test_a_hosted_container_takes_no_guests(monkeypatch):
     """GAMMA_HOSTED turns guest logins off by itself, so a container made
     before the account server sent GAMMA_GUEST_MAX=0 is covered too; the
     admin's settings say so and the Server pane leaves its Guests rows out."""
-    from gamma import config, guests
+    from gamma import guests, server_options
     assert guests.logins_open() is True
     monkeypatch.setenv("GAMMA_HOSTED", "1")
     monkeypatch.setenv("GAMMA_GUEST_MAX", "300")
-    assert config.guest_max() == 0 and guests.logins_open() is False
+    assert server_options.guest_max() == 0 and guests.logins_open() is False
     client = _new_client()
     assert client.get("/api/server-config").json()["guest"] is False
     assert client.post("/api/login-guest").status_code == 403

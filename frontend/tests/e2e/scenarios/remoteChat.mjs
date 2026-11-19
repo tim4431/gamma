@@ -385,7 +385,7 @@ export async function remoteChatScenarios(env) {
         await until(() => tick.isChecked(), { what: "@codex ticks the box" });
         assertEq((await thread.locator(".commentSendTick").innerText()).trim(), `Send to Codex on ${name}`, "the tick names the agent and its computer");
         await page.keyboard.type("fix this only");
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         // the computer takes the turn over its channel; its end is the agent's reply in the thread there
         const answer = thread.locator(".commentItem.reply", { hasText: CHAT_REPLY });
         await answer.waitFor({ timeout: 60000 });
@@ -483,7 +483,7 @@ export async function remoteChatScenarios(env) {
         await menu.waitFor({ state: "detached" });
         await until(() => tick.isChecked(), { what: "@codex ticks the box" });
         await page.keyboard.type("move it inside the plot");
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         const answer = thread.locator(".commentItem.reply", { hasText: CHAT_REPLY });
         await answer.waitFor({ timeout: 60000 });
         assertEq((await answer.locator(".commentAuthor").textContent()).trim(), "Codex", "the reply is Codex's");
