@@ -1,6 +1,6 @@
 ---
 name: cleanup
-description: Clean up the code and docs committed since the last "Cleanup of …" commit — unify scattered logic, delete what new work superseded (old implementations, their CSS, keys, endpoints, tests and doc sections), replace hard-coded colours and sizes with tokens, cut over-engineering, prune tests that cannot fail or only detect change, plain-prose the docs, list what was left unfinished, and remove the worktrees of merged branches. `cleanup sweep <area>` runs the code checks over an area's existing code instead. Behavior-preserving; commits each topic, never pushes.
+description: Clean up the code and docs committed since the last "Cleanup of …" commit — restructure what the range left tangled (split an overgrown module, merge parallel implementations, move a concern to its owner), unify scattered logic, delete what new work superseded (old implementations, their CSS, keys, endpoints, tests and doc sections), replace hard-coded colours and sizes with tokens, cut over-engineering, prune tests that cannot fail or only detect change, plain-prose the docs, list what was left unfinished, and remove the worktrees of merged branches. `cleanup sweep <area>` runs the code checks over an area's existing code instead. Behavior-preserving; commits each topic, never pushes.
 ---
 
 # Cleanup of recent commits
@@ -18,14 +18,25 @@ section of the old way), and the pass that leaves those in place has not
 done its job. A pass whose diff is mostly additions or rewording should
 look again.
 
+Expect to restructure. A feature built over several commits, or several
+merges, keeps the shape of its first step long after the plan changed: a
+module that grew a second job, a file past what one reads at a sitting,
+the same idea built twice by two steps, a branch per case where a table
+would do. Trimming around that shape is not cleaning it. Read the end
+state as one design and rebuild what the steps bent, as if the end state
+had been the plan. A pass that read a several-thousand-line topic and
+changed no structure should look again.
+
 Rules that hold throughout:
 
 - **Behavior-preserving.** What the user sees and what an endpoint returns
   stay the same. Within that, be bold: deleting unreachable code, a
   superseded implementation, a setting nothing reads, a test that cannot
   fail, or a shim for a shape no client still sends is behavior-preserving.
-  Do it; do not propose it. Only a change the user would notice goes in
-  the report as a proposal.
+  So is splitting a module, merging two implementations into one, or
+  moving a concern to the module that owns it, however many lines it
+  moves. Do it; do not propose it. Only a change the user would notice
+  goes in the report as a proposal, never one that is merely large.
 - **Settle doubt, don't defer it.** "Maybe still used" is a question with
   an answer: grep every name across `backend/`, `frontend/src`,
   `extension/`, `desktop/`, `ipad/`, `android/`, `cloud/`, `tests/` and
@@ -168,8 +179,29 @@ so the next one moves on. Subagents follow Step 1b: one area per lane.
 Work through all seven and collect findings first. Then fix in Step 3.
 Each finding is a line: `file:line — what — fix / proposal`.
 
-### 1. Scattered or duplicated logic
+### 1. Structure: tangled, scattered or duplicated logic
 
+Start each topic with a structural read of its end state. Then go line by
+line. For each module the topic added or grew, ask what it owns, and
+whether a newcomer would look for each of its parts there.
+
+- **An overgrown file.** A source file the range grew past about 1,000
+  lines, or by half, or a function past about 100 lines. Split it along
+  its seams, one module per concern, the way its neighbours are split
+  (`routers/` by resource, `frontend/src/<area>/` by the file map). The
+  tests move with the parts they test.
+- **A second job.** A module, component, router or hook that took on a
+  concern beside its own: a dialog that also syncs, a router that also
+  schedules, a component that also parses. The second job moves to its
+  own module or to the owner the file map names.
+- **A step's shape kept.** A later step worked around an earlier one: an
+  adapter between two shapes of the same record, a flag that tells the
+  old path from the new, a function whose arguments only make sense
+  for the first caller. Rebuild the earlier part to fit the end state and
+  drop the adapter.
+- **A branch per case.** A chain of `if kind == …` or a `switch` repeated
+  in several places, one arm per format, provider or kind. One table or
+  one per-kind object holds the cases, and each place reads it.
 - The same computation or rule in two places (two components, backend +
   frontend, two routers). Move it into one helper and call it from both.
   Exception: mirrors the docs declare on purpose (`textnorm.py` ↔
@@ -365,13 +397,22 @@ Signals, in rough order of reliability:
 ## Step 3 — apply
 
 Fix everything from checks 1–7 that is behavior-preserving, one topic at a
-time. Order: delete superseded and dead things → prune tests → dedupe →
-simplify → replace raw values → conform UI → rewrite docs.
+time. Order: delete superseded and dead things → prune tests → restructure
+and dedupe → simplify → replace raw values → conform UI → rewrite docs.
+Deleting first leaves less to move.
 
-- An edit may be large when it leaves the code smaller and clearer:
-  collapsing two implementations into one, rewriting a module the range
-  left tangled, deleting a file. Churn is the finding: renames,
-  reorderings and reformatting that change nothing.
+- Large edits are expected. Collapsing two implementations into one,
+  splitting a 2,000-line module, rewriting a module the range left
+  tangled, deleting a file: each is one topic's commit, not a proposal.
+  "Too big for a cleanup" is never a reason to propose instead.
+- A restructure is in scope when its behavior holds, tests cover what it
+  moves, and it lands with the topic's checks green. Where tests don't
+  cover a part you move, write a cheap one against its current behavior
+  first, then move it. A restructure that needs a change the user would
+  notice is a proposal with its plan in a few lines.
+- Churn is not a restructure: renames, reorderings and reformatting that
+  change nothing, or a split that leaves every caller importing all the
+  parts.
 - When you move logic, update every caller and the doc that names its
   location.
 - When you delete a helper, class, endpoint, setting, test or key, grep
@@ -481,7 +522,8 @@ One message, structured as:
    commits and the hash of its commit (or "found clean"), and what was
    left out and why (also when nothing was), as ranges `/cleanup` takes.
 2. **Applied**: bullets grouped by check (1–7), each `file — what changed`.
-   Lines removed and added by the pass's own commits
+   Under check 1, each restructure with its files' line counts before and
+   after. Lines removed and added by the pass's own commits
    (`git diff --shortstat <HEAD when the pass began>..HEAD`).
 3. **Tests**: deleted, merged and moved, per kind, with the files.
 4. **Proposals**: behavior-affecting or still-uncertain items, each with
