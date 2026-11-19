@@ -685,7 +685,7 @@ Both are in the **View menu (≡)**, on a page or on the home library (with a fo
 ## Backups and upgrades
 
 - **A workspace** exports as one zip from Settings → Workspaces; **Import** there restores or merges it.
-- **Snapshots** in Settings → Backups roll back a workspace; **Add task** schedules them. Administrators snapshot the whole server and can keep **off-site copies** in an S3 bucket.
+- **Snapshots** in Settings → Backups roll back a workspace; **Add task** schedules them. Administrators snapshot the whole server and can have tasks copy snapshots to an S3 bucket or Google Drive. **Cloud copies** there lists what they hold and brings workspaces back, one at a time or, after a lost disk, every one with **Restore all…**.
 - **A new version** upgrades your data by itself after taking a snapshot. If the data is too old for one step, Gamma changes nothing and shows a page naming the release to run once first. If an older Gamma opens data a newer one already upgraded, it shows a page too, changes nothing, and the fix is to update that Gamma.
 
 ## Install as an app

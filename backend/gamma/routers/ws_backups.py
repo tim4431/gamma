@@ -8,8 +8,10 @@ gamma/ws_backup.py.
   jobs (gamma/jobs.py, docs/dev/tasks.md): ``POST /api/jobs/workspace-export``,
   ``/jobs/restore`` (an uploaded zip; ``/jobs/restore/parts`` for one in
   parts), ``/jobs/restore-snapshot`` and ``/jobs/snapshot``; for admins, a
-  backup task's copy in the bucket downloaded (``/jobs/bucket-download``)
-  or restored (``/jobs/bucket-restore``). Pages copied into another
+  backup task's copy in the bucket or in Google Drive downloaded
+  (``/jobs/bucket-download``) or restored (``/jobs/bucket-restore``), and
+  several restored as new workspaces in one job
+  (``/jobs/bucket-restore-many``). Pages copied into another
   workspace of this server, or every page into a new one (Duplicate), run
   as ``/jobs/workspace-copy`` (gamma/workspace_copy.py), which
   ``/workspace-copy/preview`` sizes up first.
@@ -594,6 +596,77 @@ def start_bucket_restore(payload: BucketSnapshotJob, request: Request):
                       title=f"Restore of {_copy_label(ws)} from {snapshot_copies.destination(where).name}",
                       params={"ws": ws, "name": _copy_label(ws), "mode": "replace" if new else mode, "source": where,
                               "snapshot": name, "into": "new" if new else ""})
+
+
+class CloudCopy(BaseModel):
+    ws: str
+    name: str
+    store: str = "bucket"
+    label: str = Field("", max_length=200)   # the workspace's name as the listing has it, for the progress
+
+
+class CloudCopies(BaseModel):
+    items: list[CloudCopy] = Field(min_length=1, max_length=500)
+
+
+def _stop_only(job):
+    """A restore's progress inside a job over several: it reports nothing
+    of its own (the job counts workspaces), and a stop asked meanwhile ends
+    the job at the next workspace — never inside one, which a restore marks
+    unstoppable from its last phase on."""
+    return lambda **_: job.progress()  # no counts: raises jobs.Cancelled once the job was stopped
+
+
+@transfers.post("/jobs/bucket-restore-many")
+def start_bucket_restore_many(payload: CloudCopies, request: Request):
+    """Restore several copies in the bucket or in Google Drive, each as a
+    new workspace (``_made_for``), one after another in one job: Settings →
+    Backups → Cloud copies' Restore all, the way back after a lost disk. One
+    copy per workspace. A copy that cannot be restored is reported and the
+    rest go on (its workspace goes again); a stop takes effect between
+    workspaces. The result: ``{restored: [{ws, workspace, name}], failed:
+    [{ws, name, error}]}``; the job fails when none was restored."""
+    items = [item.model_dump() for item in payload.items]
+    if len({item["ws"] for item in items}) != len(items):
+        raise HTTPException(status_code=400, detail="one copy per workspace")
+    me = ""
+    for item in items:
+        me = _bucket_copy(request, item["ws"], item["name"], item["store"])
+
+    def run(job):
+        restored, failed = [], []
+        for n, item in enumerate(items):
+            label = item["label"] or _copy_label(item["ws"])
+            job.progress(phase="restoring", done=n, total=len(items), unit="workspaces", item=label)
+            zpath = jobs.incoming_path()
+            try:
+                snapshot_copies.fetch(item["store"], item["ws"], item["name"], zpath)
+                manifest = ws_backup.read_manifest(zpath)
+                target = _made_for(item["ws"], manifest, me)
+                try:
+                    ws_backup.restore_zip(target, zpath, "replace", by=me, progress=_stop_only(job))
+                except BaseException:
+                    try:
+                        workspaces.delete(target, by=me, keep=False)  # the copy in the store still holds it
+                    except Exception:  # noqa: BLE001 — the restore's own error is the one to report
+                        pass
+                    raise
+                restored.append({"ws": item["ws"], "workspace": target,
+                                 "name": manifest.get("workspace_name") or label})
+            except Exception as e:  # noqa: BLE001 — reported for this copy; a stop (jobs.Cancelled) ends the job
+                failed.append({"ws": item["ws"], "name": label, "error": str(e) or type(e).__name__})
+            finally:
+                zpath.unlink(missing_ok=True)
+        job.progress(done=len(items))
+        if failed and not restored:
+            raise RuntimeError(f"no copy could be restored: {failed[0]['name']}: {failed[0]['error']}")
+        return {"restored": restored, "failed": failed}
+
+    stores = sorted({item["store"] for item in items})
+    return jobs.start("copies-restore", owner=me, run=run,
+                      title=f"Restore of {len(items)} workspaces from "
+                            f"{' and '.join(snapshot_copies.destination(s).name for s in stores)}",
+                      params={"count": len(items), "items": items, "stores": stores, "into": "new"})
 
 
 # --- stored snapshots ---------------------------------------------------------------

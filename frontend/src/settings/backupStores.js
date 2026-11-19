@@ -14,6 +14,7 @@ const COPIES = "/admin/offsite/snapshots";
 
 export const STORE = {
   bucket: {
+    title: () => t("Bucket"),
     copies: COPIES, // GET: the tasks' copies, by workspace (gamma/snapshot_copies.py `listing`)
     copy: (ws, name) => `${COPIES}/${encodeURIComponent(ws)}/${encodeURIComponent(name)}`, // DELETE: one copy
     toggle: () => t("Copy to the bucket"),
@@ -32,6 +33,7 @@ export const STORE = {
     deleted: () => t("Deleted from the bucket."),
   },
   drive: {
+    title: () => t("Google Drive"),
     copies: `${COPIES}?store=drive`,
     copy: (ws, name) => `${COPIES}/${encodeURIComponent(ws)}/${encodeURIComponent(name)}?store=drive`,
     toggle: () => t("Copy to Google Drive"),

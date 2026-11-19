@@ -27,7 +27,7 @@ const PANE_FILES = {
   integrations: ["SettingsIntegrations.jsx"],
   account: ["SettingsUsers.jsx", "SettingsSync.jsx", "SettingsMirrors.jsx", "SettingsCloudSignIn.jsx", "SettingsZotero.jsx"],
   workspaces: ["SettingsWorkspace.jsx", "SettingsMirrors.jsx"],
-  backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "BackupBucket.jsx", "BackupDrive.jsx"],
+  backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "BackupBucket.jsx", "BackupDrive.jsx", "CloudCopies.jsx"],
   maintenance: ["SettingsDialog.jsx"],
   users: ["SettingsUsers.jsx", "SettingsServer.jsx", "SettingsCloudSignIn.jsx", "SettingsGuests.jsx", "SettingsReports.jsx"],
   server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsZoteroApp.jsx", "SettingsServerOptions.jsx", "SettingsAi.jsx",

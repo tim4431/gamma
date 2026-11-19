@@ -896,11 +896,22 @@ Library:
   snapshot also in the bucket is tagged "in the bucket", and a copy only
   the bucket holds is a row of its own with a cloud icon, "only in the
   bucket", and Download (a `bucket-download` job, saved when it ends),
-  Restore (Replace… / Merge…, a `bucket-restore` job) and Delete (from the
-  bucket). The copies of a workspace this list has no group for get a
-  group of their own after the others, named as the bucket recorded it and
-  tagged "not on this server" (or "another account's"), whose copies offer
-  Restore as new… in place of Restore: the way back after a lost disk.
+  Restore (Replace… / Merge… / As a new workspace…, a `bucket-restore`
+  job) and Delete (from the bucket). Below Google Drive, admins with a
+  store set up get **Cloud copies**
+  ([CloudCopies.jsx](../../frontend/src/settings/CloudCopies.jsx)): a row
+  per store ("s3://… · 12 copies · 4 workspaces · 1.2 GB", Browse…), and
+  when some are only in the cloud, "2 workspaces are only in the cloud"
+  with Restore all… and a row per workspace (its newest copy's date, size
+  and store; Restore… and, with several, "3 copies…"). Restore all… opens
+  "Restore workspaces from the cloud", every one checked, and Restore 2
+  workspaces starts one `copies-restore` job, whose progress shows in the
+  section and whose end says what came back. Browse… opens "Cloud copies":
+  All / Bucket / Google Drive, Find a workspace, Refresh, then each
+  workspace's copies under its name, tagged "on this server", "not on this
+  server" or "another account's", each row the same as above with its
+  store named; a workspace's "3 copies…" opens it on that workspace
+  alone.
   With `GAMMA_S3_BUCKET` set, the environment supplies every field: the
   summary's hint says where the bucket is and what sets it
   ("127.0.0.1:1/gamma-env · set by GAMMA_S3_BUCKET", the sentence "Set by

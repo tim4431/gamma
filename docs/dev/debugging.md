@@ -208,14 +208,20 @@ snapshot also in the bucket is tagged *in the bucket*, and a copy only the
 bucket holds (its snapshot deleted or pruned here) is a row of its own,
 which is downloaded (the `bucket-download` job), restored into its
 workspace (`bucket-restore`, replace or merge, as a stored snapshot
-restores) or deleted from the bucket. The copies of a workspace this
-server does not have are listed under the name `workspace.json` recorded
-and come back as a new workspace (`bucket-restore` with `into: "new"`):
-the copy's own id when it is free, its name and kind from the copy's
-manifest, the admin its owner. That is the way back after a lost disk: set
-up the bucket on the new server and restore each workspace; its members
-are invited again. Deleting a task, or a workspace, leaves its copies in
-the bucket.
+restores) or deleted from the bucket. Backups › Cloud copies
+(`CloudCopies.jsx`) lists what each store holds and the workspaces this
+server does not have, under the name `workspace.json` recorded; each comes
+back as a new workspace (`bucket-restore` with `into: "new"`): the copy's
+own id when it is free, its name and kind from the copy's manifest, the
+admin its owner. Restore all… brings back the ones picked, each from its
+newest copy, in one job (`bucket-restore-many`, kind `copies-restore`):
+one after another, a copy that fails reported while the rest go on (its
+workspace removed again), a stop taking effect between workspaces, never
+inside one. That is the way back after a lost disk: set up the bucket (or
+connect Google Drive) on the new server and restore all; members are
+invited again. Its Browse… lists every copy by workspace, by store and
+found by name. Deleting a task, or a workspace, leaves its copies in the
+bucket.
 
 #### Google Drive
 
