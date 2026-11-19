@@ -59,6 +59,7 @@ from .db import (DATA_SCHEMA, PAGES_SCHEMA, account_names, connect_pages_db, con
                  page_now, register_functions, safe_ws_id, ws_dir)
 from .logbuf import log
 from .note_app_import import page_kind
+from .note_markup import BLOCK_REF_RE
 from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db,
                         normalize_pages_db, page_changes, page_ops_batch_id, pages_db_chats)
 from .search import index as text_index
@@ -631,7 +632,7 @@ def _review_import(ws, tdir, upload_names):
             top_folders = filed if parent and not destination_id else []
             blocks = fetch_subtree(src, row[0])
             ids = {b[0] for b in blocks}
-            references = {ref for b in blocks for ref in re.findall(r"\[\[([A-Za-z0-9_-]+)\]\]", b[3] or "")}
+            references = {m[2] for b in blocks for m in BLOCK_REF_RE.finditer(b[3] or "")}
             page_chats = ids & chats.keys()
             claimed_chats.update(page_chats)
             uploads = upload_refs([{"content": b[3], "props": json.loads(b[4] or "{}")} for b in blocks]

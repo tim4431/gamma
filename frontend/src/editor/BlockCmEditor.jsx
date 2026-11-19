@@ -23,6 +23,7 @@ import { codeFences } from "../shared/lib/mdCode.js";
 import { scanImageSyntax, scanMarks } from "./mdMarks";
 import { mathTex, parseTable, protectedSpans, scanImages, scanMathSpans, scanTables } from "./mdScan";
 import { NO_MENTIONS, mentionChip, mentionChipClass, proseMentions } from "./mentions.js";
+import { CHIP_RE, refTargetTitle, refWords } from "./refLabels.js";
 import { pasteMath } from "./pasteMath.js";
 import { copiedText, isSourceCopy, sourceCopied } from "./sourceCopy.js";
 import { assetUrl } from "../shared/lib/utils";
@@ -61,16 +62,21 @@ class MathWidget extends WidgetType {
 }
 
 class RefChipWidget extends WidgetType {
-  constructor(label, embed, trashed) {
+  constructor(label, embed, trashed, title) {
     super();
     this.label = label;
     this.embed = embed; // ![[id]] transclusion — chip in the editor, card when rendered
     this.trashed = trashed; // its page is in Recently deleted: the label is that page's title
+    this.title = title; // a [[id|words]]'s: what the words name
   }
-  eq(other) { return other.label === this.label && other.embed === this.embed && other.trashed === this.trashed; }
+  eq(other) {
+    return other.label === this.label && other.embed === this.embed && other.trashed === this.trashed
+      && other.title === this.title;
+  }
   toDOM(view) {
     const span = document.createElement("span");
     span.className = "blockRefChip cmRefChip" + (this.embed ? " cmEmbedChip" : "") + (this.trashed ? " trashedRef" : "");
+    if (this.title) span.title = this.title;
     span.textContent = (this.embed ? "⧉ " : "") + this.label;
     span.addEventListener("mousedown", (e) => {
       e.preventDefault();
@@ -447,15 +453,17 @@ function buildInlineDecos(state, ctx) {
     }
   }
 
-  for (const m of text.matchAll(/!?\[\[([a-zA-Z0-9_-]+)\]\]/g)) {
+  for (const m of text.matchAll(CHIP_RE)) {
     const from = m.index, to = m.index + m[0].length;
     if (overlapsClaimed(from, to)) continue;
     claimed.push([from, to]);
     if (touched(from, to)) continue;
-    const ref = ctx.labels?.[m[1]];
-    const label = ref?.content || ref?.trashed?.title || m[1];
+    const ref = ctx.labels?.[m[1]], embed = m[0].startsWith("!");
+    // A [[id|words]] shows its words, what it names as the title.
+    const words = embed ? "" : refWords(m[2]);
+    const label = words || ref?.content || ref?.trashed?.title || m[1];
     ranges.push(Decoration.replace({
-      widget: new RefChipWidget(label, m[0].startsWith("!"), !!ref?.trashed),
+      widget: new RefChipWidget(label, embed, !!ref?.trashed, words && ref ? refTargetTitle(ref) : undefined),
     }).range(from, to));
   }
 
@@ -1225,7 +1233,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   // can mention (a comment's: the agent too) arrive after it opens; refresh
   // the chip decorations when either actually changes, not on every render.
   const labelsKey = Object.entries(refLabels || {})
-    .map(([id, r]) => `${id}:${r?.content}:${r?.trashed ? "trashed" : ""}`)
+    .map(([id, r]) => `${id}:${r?.content}:${r?.page_title}:${r?.trashed ? "trashed" : ""}`)
     .concat(mentions ? [mentions.me, ...mentions.known, ...(mentions.agents || []).map((a) => `agent:${a.name}`)] : [])
     .join("\u0000");
   useEffect(() => {

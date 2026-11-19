@@ -164,8 +164,9 @@ GitHub and in any export.
 - Math is `$…$` and `$$…$$`; a pasted `\( \)` or `\[ \]` is converted.
 - A diagram is a fenced `mermaid` or `svg` block.
 - Dates, people and page links are readable text: `@2026-10-09`, `@alice`,
-  `(remind @alice)`, `[[page]]`. The app draws them as chips, and every
-  other reader still shows something that makes sense.
+  `(remind @alice)`, `[[page]]`, and `[[page|words]]` for a link that shows
+  words of its own. The app draws them as chips, and every other reader
+  still shows something that makes sense.
 
 ## Who made a block
 

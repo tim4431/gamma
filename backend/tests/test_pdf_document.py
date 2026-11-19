@@ -45,6 +45,19 @@ def _blank_png(width, height):
 
 # --- markdown parsing --------------------------------------------------------
 
+def test_a_ref_reads_as_its_words_or_what_it_names():
+    """A [[ref]] reads as its target's first line, a ``[[id|words]]`` as its
+    words; an embed of a block (its words none) is the block."""
+    def resolve(bid):
+        return {"content": "The plan\nmore", "page_title": "P"} if bid == "b1" else None
+
+    def refs(md):
+        return [p for kind, p, _lv, st in inline(md, resolver=resolve) if kind == TEXT and st.bits & LINK]
+
+    assert refs("see [[b1]] and [[b1|that]] and [[b1\\|cell]]") == ["The plan", "that", "cell"]
+    assert [c["kind"] for c in chunks("before\n\n![[b1|x]]")][-1] == "embed"
+
+
 def test_inline_carries_the_style_of_each_construct():
     spans = inline("plain **bold** *it* `code` ~~gone~~ ==mark== [lab](https://e.dev) $x^2$")
     by_text = {p: st for k, p, _lv, st in spans if k == TEXT}

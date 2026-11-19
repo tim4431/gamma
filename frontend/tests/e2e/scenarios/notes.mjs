@@ -1623,6 +1623,44 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
+  // [[id|words]] (docs/dev/mentions.md "Page links with words of their own"):
+  // the chip shows the words, what it links to its hover title, in the
+  // rendered view and the editor; a "|" ends the picker's query, and
+  // [[exact title|words]] typed by hand links that page with the words.
+  await step("notes: a [[id|words]] link shows its words, titled by its page; a | ends the picker's query and [[exact title|words]] links with them", async () => {
+    const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Aliased Link Target" } });
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Alias source" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "alblock", parent: src.id, position: "a0", content: `see [[${target.id}|the target]] now` }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      const chip = row(p2, "now").locator(".blockRefChip");
+      await until(async () => (await chip.innerText()) === "the target", { what: "the chip shows its words" });
+      // The words show at once; the title waits for the target's label.
+      await until(async () => (await chip.getAttribute("title")) !== null, { what: "the target's label arrives" });
+      assertEq(await chip.getAttribute("title"), "Aliased Link Target", "its hover title names the page");
+      await editRow(p2, "now");
+      const cmChip = p2.locator(".blockEditorCm .cmRefChip");
+      assertEq(await cmChip.innerText(), "the target", "the editor's chip shows the words too");
+      assertEq(await cmChip.getAttribute("title"), "Aliased Link Target");
+      await p2.keyboard.type(" [[Aliased Link Tar");
+      const picker = p2.locator('.refPopup[data-guide="editor.refSearch"]');
+      await picker.waitFor();
+      await p2.keyboard.type("get|");
+      await picker.waitFor({ state: "hidden" });
+      await p2.keyboard.type("my words]] end");
+      await until(async () => (await tree(alice2, src.id))[0]?.content === `see [[${target.id}|the target]] now [[${target.id}|my words]] end`,
+        { what: "the typed title linked its page, keeping the words" });
+      await closeEditor(p2);
+      assertEq(JSON.stringify(await row(p2, "now").locator(".blockRefChip").allInnerTexts()), JSON.stringify(["the target", "my words"]));
+      await row(p2, "now").locator(".blockRefChip", { hasText: "my words" }).click();
+      await until(() => new URL(p2.url()).searchParams.get("block") === target.id, { what: "the chip opens its page" });
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
   // Notion's /page: a new page inside this one (a sub-page, with no folders
   // of its own: it is filed where its top is), linked where the command was
   // typed and opened with its title ready.

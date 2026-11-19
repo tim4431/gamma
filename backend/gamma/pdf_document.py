@@ -36,7 +36,8 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from . import vector_text
 from .documents.model import page_document, source_address
 from .logbuf import log
-from .note_markup import INLINE_RE, LINK_PARTS, LINK_TARGET, MATH, TEXT, WIDTH_SUFFIX, alt_and_width, latex_spans
+from .note_markup import (INLINE_RE, LINK_PARTS, LINK_TARGET, MATH, TEXT, WIDTH_SUFFIX, alt_and_width, latex_spans,
+                          ref_parts)
 from .pdf_export import parse_css_color
 from .pdf_glyphs import GlyphFonts
 from .pdf_image import XObjectStore
@@ -122,7 +123,7 @@ _LIST_RE = re.compile(r"^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$")
 # so "Foo_(bar).png" is one source.
 _MEDIA_RE = re.compile(
     r"!\[(?P<alt>[^\]]*)\]\(\s*(?P<src>" + LINK_TARGET + r")(?:\s[^)]*)?\)(?:" + WIDTH_SUFFIX + ")?"
-    r"|!\[\[(?P<refid>[a-zA-Z0-9_-]+)\]\]")
+    r"|!\[\[(?P<refid>[a-zA-Z0-9_-]+)(?:\\?\|[^\[\]\n]*)?\]\]")   # BLOCK_REF_RE's, its words none
 _DELIM_CELL_RE = re.compile(r":?-+:?")
 
 # The constructs that wrap their content: the characters that open and close
@@ -171,10 +172,10 @@ def inline(text: str, style: Style = PLAIN, resolver=None):
             out.extend(inline(body[opens:-closes], styled(style, bit), resolver))
         elif which in ("embed", "ref"):
             # A page reference can't be followed outside Gamma; it still reads
-            # as a reference — with the referenced block's text when the
-            # resolver knows it — in link colour without a target.
-            name = body.strip("![]").split("|")[0].strip()
-            out.append((TEXT, _ref_label(name, resolver), 0, Style(style.bits | LINK, None)))
+            # as a reference — its own words, or the referenced block's text
+            # when the resolver knows it — in link colour without a target.
+            name, alias = ref_parts(body)
+            out.append((TEXT, alias or _ref_label(name, resolver), 0, Style(style.bits | LINK, None)))
         elif which == "link":
             label, href = LINK_PARTS.match(body).groups()
             out.extend(inline(label or href, styled(style, LINK, href=href), resolver))

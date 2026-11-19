@@ -427,8 +427,8 @@ def test_a_notes_link_to_a_work_folders_file_is_a_mention_of_its_page(work):
     v.sync()
     pic = f"{_digest(PNG)}.png"
     assert v.texts(v.page_of("notes.md")) == [
-        f"[[{pages['sections/method.tex']}]] and [[{pages['main.md']}]] and [[{pages['figures/fig1.pdf']}]]",
-        f"![](/api/uploads/{pic}) and [[{pages['fig.png']}]]"]
+        f"[[{pages['sections/method.tex']}|the method]] and [[{pages['main.md']}]] and [[{pages['figures/fig1.pdf']}]]",
+        f"![](/api/uploads/{pic}) and [[{pages['fig.png']}|fig]]"]
     paper = v.doc(pages["main.md"])["hash"]
     assert v.texts(pages["main.md"]) == [f"the paper, see [main.pdf](/api/uploads/{paper}.pdf)"]
     assert v.text("notes.md") == text
@@ -464,7 +464,7 @@ def test_a_listed_files_link_is_its_page_and_a_listed_pictures_embed_stays_as_ty
     assert v.doc(big)["at"] == "listed" and v.doc(v.page_of("data/huge.png"))["at"] == "listed"
     v.write("notes/N.md", "the weights: [[big.h5]], [w](../data/big.h5)\n\n![[huge.png]]\n")
     v.sync()
-    assert v.texts(v.page_of("notes/N.md")) == [f"the weights: [[{big}]], [[{big}]]", "![[huge.png]]"]
+    assert v.texts(v.page_of("notes/N.md")) == [f"the weights: [[{big}]], [[{big}|w]]", "![[huge.png]]"]
     v.quiet()
 
 
@@ -480,13 +480,13 @@ def test_gammas_link_to_a_file_page_is_written_by_its_path_and_asks_no_anchor(wo
     v.write("notes.md", "see [the method](sections/method.tex)\n")
     v.sync()
     note = v.page_of("notes.md")
-    block, thought = v.find(note, f"see [[{method}]]"), v.find(method, "a thought on the method")
-    v.edit(note, set_(block, f"now see [[{method}]]"),
+    block, thought = v.find(note, f"see [[{method}|the method]]"), v.find(method, "a thought on the method")
+    v.edit(note, set_(block, f"now see [[{method}|the method]]"),
            insert(note, f"and [[{pages['figures/fig1.pdf']}]], [[{thought}]] and [[{pages['main.md']}]]"))
     v.sync()
     assert v.text("notes.md") == "now see [the method](sections/method.tex)\n\nand [[fig1.pdf]], [[method.tex]] and [[main]]\n"
     assert v.text("sections/method.tex") == "\\section{Method}\n" and v.text("main.md") == "the paper\n"
-    assert v.texts(note) == [f"now see [[{method}]]",
+    assert v.texts(note) == [f"now see [[{method}|the method]]",
                              f"and [[{pages['figures/fig1.pdf']}]], [[{thought}]] and [[{pages['main.md']}]]"]
     v.quiet()
     v.write(".obsidian/app.json", '{"useMarkdownLinks": true}')

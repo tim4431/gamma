@@ -22,6 +22,7 @@ draw that text as a chip.
 | `@2026-10-10 09:00 (remind @alice)` | a reminder for the account named `alice`; without a time it is due at 09:00 |
 | `@alice` | a person, by username |
 | `[[id]]` | a page: the `[[` picker's link ([ui-design.md](ui-design.md#file-map-frontendsrc)) |
+| `[[id\|words]]` | the same link showing its own words in place of the page's title ("Page links with words of their own" below) |
 
 Because a mention is readable text, every reader that knows nothing of it
 still shows something that makes sense. That covers the exports, the PDF
@@ -150,6 +151,39 @@ a reminder falls due, at midnight, and at least hourly. Only the chips read
 it, so a tick re-renders nothing else; memoized rows keep their markdown.
 The reminder chip's alarm clock is a CSS mask (`.mention-remind::before`),
 which the widget and the rendered chip share.
+
+## Page links with words of their own
+
+`[[id|words]]` is a `[[id]]` link that shows `words` in place of its
+target's title or first line, the way Obsidian and MediaWiki write a link's
+display text (Dendron reverses the two, Roam and Logseq write
+`[words]([[page]])`). It still links by id, so a renamed page keeps it, and
+it counts in backlinks. The rules:
+
+- The id comes first; the words run to the `]]`, with no bracket or line
+  break in them. In a table's row the pipe is `\|`, as Obsidian writes it,
+  since the table tools split cells on a bare `|` (`mdScan.js`
+  `splitCells`); both spellings read the same.
+- Blank words (`[[id| ]]`) are none: the chip shows its target's label.
+- An embed's words are none: `![[id|x]]` embeds the block as `![[id]]` does.
+- A hand-typed `[[title|words]]` that no page answers is a dashed unlinked
+  chip showing its words.
+
+To write one, pick the page in the `[[` picker, then type `|words` before
+the `]]`; or type `[[Exact title|words]]`, which links when one page has
+that title. A `|` typed in the picker's query closes it, since what follows
+is the link's words. The chip, in the editor and the rendered view, shows
+the words with what it names as its hover title (`refTargetTitle`); the
+caret touching it shows the source.
+
+`frontend/src/editor/refLabels.js` (`REF_RE`, `EMBED_RE`, `CHIP_RE`,
+`refWords`) and `backend/gamma/note_markup.py` (`BLOCK_REF_RE`,
+`ref_alias`, `ref_token`) hold the one syntax for every reader. A link's
+words reach every reader that writes a link as text: the readable Markdown,
+Obsidian (`[[Title|words]]`), Notion (a link with those words, never a page
+block, whose title would be the page's), PDF and Zotero exports, the Inbox's
+snippets ([import_export.md](import_export.md)). Folder sync carries them
+both ways ([synced_vaults.md](synced_vaults.md) "Links and highlights").
 
 ## People
 

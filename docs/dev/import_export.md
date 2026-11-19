@@ -781,7 +781,14 @@ The rest of this section holds for every dialect unless it says otherwise:
   `[Sub](Parent%20<id>/Sub%20<id>.md)`, whose balanced `( )` stay unencoded
   as in `Tasks%20(grid%20view)%20<id>.csv`, Gamma's `[label](Page-id.md)` and
   `*(from [title](file.md))*`) and Obsidian wikilinks (`[[Note]]`,
-  `[[Note|alias]]`, `[[folder/Note]]`) alike. A target is resolved relative
+  `[[Note|alias]]`, `[[folder/Note]]`) alike. A wikilink's alias is the
+  mention's words, `[[id|alias]]` ([mentions.md](mentions.md) "Page links
+  with words of their own"; `\|` in a table's cell, which resolves the note
+  too), and so is a Markdown link's label when it says more than the note's
+  file name or title, in any case and spacing, and holds no bracket
+  (`label_alias`; `[[One]](Two.md)` reads its wikilink first). A note of
+  Notion's keeps no label (`label_words`): Notion labels a link with the
+  page's title, marks and all. An embed's alias is none. A target is resolved relative
   to the note, then as an exact vault path, then by basename anywhere in the
   zip (nearest directory wins), case-insensitively — Obsidian's own rule.
   `[[Note#Heading]]` and `[[Note#^id]]` point at that heading block
@@ -2175,7 +2182,7 @@ non-highlight subtree one note written by `zotero_notes.note_html`, the
 inverse of the import's tree, its first block as its own element and the
 blocks under it as one list, as the page shows them (so a Zotero note's
 later paragraphs come back to Zotero as list items): headings, lists numbered or not, quotes, code,
-math, tables and links, a `[[ref]]` as the text it names, an image's alt and
+math, tables and links, a `[[ref]]` as the text it names (a `[[id|words]]` as its words), an image's alt and
 width as its `<img>`'s. A note page (`zotero_note` equal to `zotero_key`)
 goes back as a standalone note, its title an `<h1>` and then its blocks,
 and is left out when notes are off. The page's "Attachments" block is no
@@ -2692,7 +2699,8 @@ outside code to `![alt|N](url)`. Block links resolve against the export set
 (`resolve_block_links` + `_MarkdownBuilder.begin`'s page-id → filename map):
 a `[[ref]]` or PDF link region whose target page is in the same export
 becomes a relative link to that page's .md — so a folder zip is
-self-contained — and reads as plain text otherwise; a `![[embed]]`
+self-contained — and reads as plain text otherwise, its label the target's
+first line or a `[[id|words]]`'s words; a `![[embed]]`
 materializes the synced block's content with a *(from …)* attribution,
 nested embeds degrading to mentions; ids the resolver doesn't know stay as
 typed) and
@@ -2936,7 +2944,8 @@ one page.
 - **Links**: `[[id]]` / `![[id]]` whose target is in the export become
   `[[Title]]` for a page (`[[dir/Title]]` when two exported pages share a
   name — Obsidian's rule), `[[Title#^id]]` / `![[Title#^id]]` for a block
-  (`[[#^id]]` on the same page), and the target block gets ` ^id` written:
+  (`[[#^id]]` on the same page), a `[[id|words]]` the same with `|words` as
+  its alias (`\|` in a table's row), and the target block gets ` ^id` written:
   on its bullet line in a list, at the end of a paragraph, on its own line
   after a fence / table / quote / callout, a block that ends in a fence (text
   after a closing line would leave it open) or, under the bullet, a block that
@@ -3050,7 +3059,9 @@ changes a row and no block code:
   percent-encoded as Notion's own are; a mention of a block links its page;
   one outside the export is its label. A block's label is its first line less
   a list marker, or its page's title when that line has no words, as a code
-  block's or an image's has not.
+  block's or an image's has not; a `[[id|words]]`'s label is its words, and
+  on a line of its own it stays a link, not a page block, whose title would
+  be the page's.
 - **Images and other files**: an uploaded image goes in the page's directory
   (`Paper/<sha>.png`), its `|300` size gone, and an image from the web stays at
   its address. Handwriting is rendered as an SVG beside it, untried in Notion.

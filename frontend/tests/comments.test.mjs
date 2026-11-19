@@ -316,6 +316,9 @@ test("anchorSnippet is the anchor's words on one line", () => {
   const labelOf = (id) => (id === "pg1" ? { content: "Appendix tables" } : null);
   assert.equal(anchorSnippet("See [[pg1]] and [[zz9]]", 80, labelOf), "See Appendix tables and zz9");
   assert.equal(anchorSnippet("See [[pg1]]"), "See pg1");
+  // a [[link|words]] reads as its words, known or not
+  assert.equal(anchorSnippet("See [[pg1|the tables]] and [[zz9|that]]", 80, labelOf), "See the tables and that");
+  assert.equal(anchorSnippet("See [[pg1|the tables]]"), "See the tables");
 });
 
 test("threadLink names the page, the block (not twice for a page thread) and the thread", () => {

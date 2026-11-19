@@ -21,7 +21,7 @@ import { DEFAULT_HIGHLIGHT, darkPageLine } from "../shared/model/palette.js";
 import { blockStyle, isLineStyle } from "../shared/model/markStyle.js";
 import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
 import { citesSeveralSources, gammaLinkId, isSourceLink, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
-import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
+import { EMBED_RE, NO_LABELS, REF_RE, refIdsOf, refTargetTitle, refWords, unlinkedText } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
 import { RecordingCard } from "../recording/RecordingCard";
 import { isRecordingBlock } from "../recording/recording.js";
@@ -154,12 +154,16 @@ function mdPreprocessProse(content, nested) {
   }
   // Outside math, ``` fences and inline code (where two overlap, the earlier
   // wins in applyOutsideSpans) — a [[ref]] or == inside code stays literal.
+  // A [[ref]]'s link text is its words, or its id, which the chip reads as
+  // "show the target's label" (the a component below).
   return applyOutsideSpans(content, protectedSpans(content), (seg) => mentionMarkdown(sizedImagesHtml(seg)
-    .replace(/!\[\[([a-zA-Z0-9_-]+)\]\]/g, nested ? "[$1](blockref:$1)" : "[$1](blockembed:$1)")
-    .replace(REF_RE, "[$1](blockref:$1)")
+    .replace(EMBED_RE, nested ? "[$1](blockref:$1)" : "[$1](blockembed:$1)")
+    // (A backslash ending the words would escape the link text's "]".)
+    .replace(REF_RE, (_, id, words) => `[${refWords(words).replace(/(?<!\\)(\\\\)*\\$/, "$&\\") || id}](blockref:${id})`)
     // A hand-typed [[title]] no page answered (the editor links one that
-    // names exactly one page): a dashed "unlinked" chip.
-    .replace(/!?\[\[([^[\]\n]+)\]\]/g, "[$1](unlinked:)")
+    // names exactly one page): a dashed "unlinked" chip, showing its words
+    // when it has them ([[title|words]]).
+    .replace(/!?\[\[([^[\]\n]+)\]\]/g, (_, inner) => `[${unlinkedText(inner)}](unlinked:)`)
     .replace(/==([^=\n]+?)==/g, "<mark>$1</mark>")));
 }
 
@@ -515,6 +519,9 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
           if (href?.startsWith("blockref:")) {
             const refId = href.slice(9);
             const ref = refLabels?.[refId];
+            // Link text other than the id is a [[id|words]]'s words
+            // (mdPreprocess): the chip shows them, its title what it names.
+            const words = textOf(children) !== refId ? children : null;
             // An id nothing answers to reads as a hand-typed title no page
             // has: the unlinked chip below.
             if (!ref?.missing) return (
@@ -522,10 +529,11 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
                 href={`?block=${refId}`}
                 className={ref?.trashed ? "trashedRef" : ""}
                 title={ref?.trashed ? t("“{title}” is in Recently deleted.", { title: ref.trashed.title })
+                  : words && ref ? refTargetTitle(ref)
                   : ref?.page_title ? t("From: {page_title}", { page_title: ref.page_title }) : undefined}
                 onOpen={() => onBlockRefClick?.(refId)}
               >
-                {ref?.trashed ? ref.trashed.title : ref?.content || String(children)}
+                {words || (ref?.trashed ? ref.trashed.title : ref?.content || String(children))}
               </InternalLinkChip>
             );
           }
