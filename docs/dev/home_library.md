@@ -471,7 +471,7 @@ while any acted-on page is one, and a move into a page or out to the
 library that names one opens the dialog instead. Its dialog (`vault/FolderPickerDialog.jsx`) picks the
 workspace and the folder, and whether the file goes on pushing its new
 versions (a vault of one file). Duplicate leaves such pages out
-(`libraryUtils.duplicable`): a copy's stored file would stop answering when
+(`explorer/workFolders.js` `fileRules(…).duplicate`): a copy's stored file would stop answering when
 the file changes. The preference `openAddsToLibrary` stores every opened
 PDF at once instead ([settings.md](settings.md)).
 
