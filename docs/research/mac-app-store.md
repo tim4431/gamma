@@ -19,7 +19,9 @@ this note keeps the reasoning and what was left out. A fact marked
   `ipad/project.yml` names that bundle id. This repository's named
   `net.gammapdf.ipad` until the listing was settled on 2026-10-27, and now
   names `net.blitzbuild.gamma` as well. Mac 1.0 (2) was accepted as valid
-  and waits for review, to be released once approved.
+  and waits for review, to be released once approved. *Update 2026-11-18:*
+  the Mac app is on the store, at <https://apps.apple.com/us/app/gamma-pdf-reader/id6814705181?mt=12>, its page
+  saying *Only for Mac* (macOS 12 or later, an M1 or later).
 - **Most of what Apple asks is configuration.** A separate packaging
   config on Electron's Mac App Store runtime, the App Sandbox for every
   binary, the store's certificates and profile, no updater and no update

@@ -358,7 +358,7 @@ declaration), the listing and the closed test are in
    carries `assets/adi-registration.properties`).
 7. **The public link**, only once the app is public on production:
    `gh variable set PLAY_URL --body https://play.google.com/store/apps/details?id=com.gammapdf.gamma`
-   puts a Google Play button in the release notes. Never the closed
+   puts Google's *Get it on Google Play* badge in the release notes. Never the closed
    test's opt-in link, which only the testers on its lists can use.
 
 ## `android.yml`
@@ -706,7 +706,7 @@ hold configuration that is not a credential:
 |---|---|
 | `CWS_PUBLISHER_ID`, `CWS_ITEM_ID`, `CWS_SERVICE_ACCOUNT`, `CWS_WORKLOAD_IDENTITY_PROVIDER` | `chrome-store.yml` (and `desktop.yml`, which dispatches it only when `CWS_ITEM_ID` is set): the store item and the keyless Google sign-in ([extension/STORE.md](../../extension/STORE.md)) |
 | `PLAY_TRACK` (default `internal`), `PLAY_RELEASE_STATUS` (default `completed`; `draft` while the app is a draft, each upload then rolled out by hand in the Console) | `desktop.yml`, the `play` job |
-| `PLAY_URL` | `desktop.yml`, the release notes: a Google Play button beside the APK, the store listing; set only once the app is public on production ([above](#google-play-once)) |
+| `PLAY_URL` | `desktop.yml`, the release notes: Google's *Get it on Google Play* badge beside the APK's, the store listing; set only once the app is public on production ([above](#google-play-once)) |
 
 ## Adding or changing a workflow
 

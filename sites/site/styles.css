@@ -309,13 +309,18 @@ main { padding-bottom: var(--rhythm); }
 .dl__card .code pre { white-space: pre-wrap; overflow-wrap: anywhere; } /* a command reads whole on a phone */
 .dl__card .copy { box-shadow: none; } /* nothing scrolls under it here */
 @media (max-width: 639px) and (scripting: enabled) { .dl__card .code pre { padding: 46px 16px 14px; } } /* Copy gets a row of its own, the command the full width */
-/* The three store badges, one height. Microsoft's and TestFlight's dark frames
-   are all but the colour of a dark card: a hairline keeps their edge. */
+/* The store badges, one height. Microsoft's dark frame, and TestFlight's and
+   Android's drawn after it, are all but the colour of a dark card: a hairline
+   keeps their edge. Apple's badge carries its own grey border and is not to be
+   altered, so it gets none. */
 .store img { height: 60px; width: auto; }
 .store--text { display: none; }
 .store--failed .store { display: none; }
 .store--failed .store--text { display: inline-flex; }
-@media (prefers-color-scheme: dark) { .store img { border-radius: 6px; box-shadow: 0 0 0 1px var(--line); } }
+@media (prefers-color-scheme: dark) { .store img:not(.store--apple) { border-radius: 6px; box-shadow: 0 0 0 1px var(--line); } }
+/* A second download under the badge (the macOS card's .dmg beside the store),
+   in the notes' row, so the badges still line up across the cards. */
+.dl__alt { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
 /* Two columns on a tablet, the iPad card moving up to fill the hole the Server
    card would leave. One on a phone, where a badge no longer fits a half. */
 @media (max-width: 900px) { .dl { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-flow: dense; } }

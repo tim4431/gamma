@@ -386,7 +386,10 @@ config: the same app, server and frontend as the dmg, packaged as a signed
 `.pkg` for App Store Connect. It is listed under the App Store Connect
 record *Gamma - PDF Reader* (Apple ID 6814705181) of team `A436A36DDC`,
 with the iPad app: bundle id `net.blitzbuild.gamma`, so the two platforms
-share one listing (`ipad/project.yml` names the same id). The dmg and zip keep `io.github.tim4431.gamma`; on one
+share one listing (`ipad/project.yml` names the same id). The store's page
+is <https://apps.apple.com/us/app/gamma-pdf-reader/id6814705181?mt=12>; the README, the
+website and the release notes show Apple's *Download on the Mac App Store*
+badge for it (`docs/assets/badges/mac-app-store.svg`). The dmg and zip keep `io.github.tim4431.gamma`; on one
 Mac they are two apps with separate data. The first submission, and what
 was left out of it: [research/mac-app-store.md](../../docs/research/mac-app-store.md).
 

@@ -40,8 +40,9 @@ sites/
    repository's file, never a copy, so it is edited there;
 2. copies what the pages use from the repository into `dist/media/`: the
    favicon (`frontend/public/media/icons/`), the logo and the hero PNG, which
-   is the page's `og:image` (`docs/assets/branding/`), the TestFlight and
-   Chrome Web Store badges (`docs/assets/badges/`), the native-agentic
+   is the page's `og:image` (`docs/assets/branding/`), the Mac App Store,
+   TestFlight, Android and Chrome Web Store badges (`docs/assets/badges/`),
+   the native-agentic
    demo (`docs/assets/demos/`), the hero
    still (`docs/assets/screenshots/hero-app.webp`, shot by
    `tools/readme-media/shoot-hero.mjs`), and the app's Latin subset of Inter
@@ -130,7 +131,11 @@ The Windows card's badge is Microsoft's own image, from
 `https://get.microsoft.com`, the one picture from outside the site: it is
 lazy, so the browser fetches it as the section comes near, `_headers`
 lets that origin through `img-src`, and `site.js` swaps a plain button in
-when it cannot load.
+when it cannot load. The macOS card's badge is Apple's, kept as a file
+exactly as Apple publishes it (its guidelines allow no change, so the dark
+theme's hairline skips it). The macOS card offers both builds, the store's
+badge and a *Download .dmg* button; the primary download buttons give a
+visitor on macOS the .dmg, as they give one on Windows the Microsoft Store.
 Every element keeps a working fallback if a call fails. There are no
 cookies and no analytics, and `PRIVACY.md`'s "The website" section lists
 these requests, so a new one is added there.

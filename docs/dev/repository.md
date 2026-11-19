@@ -113,7 +113,7 @@ generated illustrations uses `branding.typewriter()`; see the
 | Location | Contents and consumers |
 |---|---|
 | `docs/assets/branding/` | Generated Gamma PDF logo, hero SVG/PNG pairs and README illustrations; edit sources in `design/brand/` and `tools/branding/` |
-| `docs/assets/badges/` | Store badges kept as files: Google's *Available in the Chrome Web Store* badge (used unmodified, only resized, by the README and the website; the Microsoft Store badge is linked from Microsoft), and the iPad badge both use, `testflight-ipad.svg`, drawn in the Microsoft badge's frame and size with Apple's logo (simple-icons), since TestFlight has no badge of its own |
+| `docs/assets/badges/` | Store badges kept as files, used by the README, the website and the release notes: Apple's *Download on the Mac App Store* (`mac-app-store.svg`, exactly as Apple's marketing guidelines publish it, which allow no change) and Google's *Available in the Chrome Web Store* badge (unmodified, only resized); the Microsoft Store badge is linked from Microsoft. Two are drawn here in the Microsoft badge's frame and size, for distribution with no badge of its own: `testflight-ipad.svg` with Apple's logo, and `android-apk.svg`, the APK on GitHub Releases, with the Android robot (both from simple-icons; the robot is Google's, CC BY 3.0). Google Play's own badge replaces the APK's only once the app is public there |
 | `docs/assets/demos/` | README demos as small animated WebP images |
 | `docs/assets/screenshots/` | Documentation stills |
 | `backend/gamma/onboarding/welcome.md` | The seeded Welcome page ([onboarding.md](onboarding.md)); Docker copies it with `gamma/`, the desktop freeze adds it with `--add-data` |
