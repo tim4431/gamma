@@ -14,7 +14,8 @@ A wait that nobody answers gives up (:data:`IDLE_TIMEOUT`), and the request
 stays open for six hours: its card remains under the reply, and it is listed
 in Background tasks until the PDF arrives or the user lets it go (the card's
 Dismiss, or the row's Stop). Skipping settles it at once and can tell the
-model what to do instead.
+model what to do instead. A reply the user stops (or whose connection
+drops) lets go of every request it asked for (routers/ai.py).
 
 The PDF's text is kept for the account alone, in memory like any fetched
 document, and the next ``fetch_paper`` of the same source reads it. The PDF

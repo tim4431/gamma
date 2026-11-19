@@ -1373,6 +1373,18 @@ cost one wait. What happens next:
   over, up to `MAX_WAIT`, 15 minutes). The model is told what blocked the
   paper and that nothing arrived (`ai_tools.unanswered_fetch`), the request
   stays open for its 6 hours, and its card stays under the reply.
+- **Stopped.** Stop, there or in Background tasks, ends the reply, and its
+  paper requests go with it, as a Dismiss lets one go: every request its
+  `fetch_paper` calls asked for (the chat scope's `handoffs`), waited on or
+  left under the reply by an earlier round, in either mode. The server lets
+  each one still waiting go as the reply ends with its client gone
+  (`agent_ndjson`, so a dropped connection does the same), including one
+  that a call running at Stop opened and the client never heard of. The
+  chat does it at once for those it knows (`stoppedRequests`): their stop
+  route, and Gamma Connector closing a tab it kept. Their cards under the
+  stopped reply start dismissed (`letGoOf`), so none asks the server or is
+  handed to the Connector after. One the user's browser already delivered
+  stays delivered.
 
 A wall on the PDF still falls back to the page's text, so the model keeps
 what was readable; an article-page-only read carries the same card. With

@@ -2062,7 +2062,8 @@ same event. So after Stop the turn streaming ends at its next event, no
 further turn opens, the loop's or a helper's, and only the calls
 already running finish: the round's reads (up to 4, a helper's read in
 flight included) or the one change. A waiting card or paper wait
-returns at once.
+returns at once, and the paper requests the reply asked for go with it
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
 
 Every tool call is announced by a `{"step": {id, tool, args}}` line before
 it runs; a batch sends one step with `batch: n` (and `tools` when they are

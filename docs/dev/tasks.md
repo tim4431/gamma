@@ -162,7 +162,9 @@ jobs".
   else the site), and its line says whose turn it is and the site
   (`progress.item`). While nothing has taken it up (phase `browser`) it
   waits for the person, as an ask does. A click on that row opens the
-  publisher's page; the chat's own card settles the request, and so does
+  publisher's page; the chat's own card settles the request, so does
+  stopping the reply that asked for it
+  ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)), and so does
   the row's Stop, which goes to the request's own stop route
   (`POST /api/ai/handoffs/{id}/stop`, not `cancelJob`), and `useAppJobs`
   `stopTask` then asks Gamma Connector to close the background tab it kept

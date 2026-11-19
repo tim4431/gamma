@@ -413,6 +413,54 @@ def test_a_chat_that_does_not_wait_ends_with_the_card(accounts, blocked_chat):
     assert PDF_TEXT in action["result"] and "handoff" not in action
 
 
+@pytest.mark.parametrize("paper_wait", [True, False])
+def test_a_reply_its_client_left_lets_its_paper_requests_go(accounts, blocked_chat, monkeypatch, paper_wait):
+    """Stop (or a dropped connection) ends the reply, and the requests it
+    asked for go with it, as a card's Dismiss lets one go: Background tasks
+    lists none. The client leaves while the reply waits on the card, or,
+    one that does not wait, as the model starts its next turn."""
+    import gamma.routers.ai as ai_mod
+
+    alice, _ = accounts
+    made, real = [], ai_mod.Alarm
+    monkeypatch.setattr(ai_mod, "Alarm", lambda: made.append(real()) or made[-1])
+
+    def relay(lines, what="ai", interval=None, abandoned=None, inbox=None):
+        """The stream as a client that left reads it: nothing once it is gone
+        (the real relay would ping a test client that never leaves)."""
+        try:
+            for line in lines:
+                yield line
+                if abandoned.is_set():
+                    return
+        finally:
+            lines.close()
+
+    monkeypatch.setattr(ai_mod, "keepalive_lines", relay)
+    thread = None
+    if paper_wait:
+        thread = _while_waiting(lambda rid: made[-1].set())
+    else:
+        inner = ai_mod._open_ai
+
+        def leaving(messages, *args, **kwargs):
+            if messages[-1]["role"] == "tool":
+                made[-1].set()
+            return inner(messages, *args, **kwargs)
+
+        monkeypatch.setattr(ai_mod, "_open_ai", leaving)
+    lines = blocked_chat(paper_wait=paper_wait)
+    if thread:
+        thread.join(5)
+    asked = [line["handoff"]["id"] for line in lines if "handoff" in line] + [
+        line["action"]["handoff"]["id"] for line in lines if line.get("action", {}).get("handoff")]
+    assert asked, lines
+    for rid in set(asked):
+        assert fetch_handoff.get(account_of(USER), rid)["status"] == "dismissed"
+    assert not fetch_handoff.waiting(account_of(USER))
+    assert not [row for row in alice.get("/api/jobs").json()["jobs"] if row["kind"] == "paper-handoff"]
+
+
 # ------------------------------------------------ cookies and agents
 
 def test_browsing_session_keeps_a_landing_pages_cookie_for_its_pdf(transport):
