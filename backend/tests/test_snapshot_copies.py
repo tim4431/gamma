@@ -1,4 +1,4 @@
-"""The backup tasks' copies in the bucket (gamma/bucket_snapshots.py,
+"""The backup tasks' copies in the bucket (gamma/snapshot_copies.py,
 gamma/backup_schedule.py, docs/dev/debugging.md "Snapshots and copies in a
 bucket") against moto's in-process bucket (skipped without moto): a task
 copying each snapshot it takes and pruning its copies to its retention,
@@ -12,7 +12,7 @@ import json
 import pytest
 
 from conftest import S3_TEST_BUCKET as BUCKET, account_of, login, make_page, make_user, workspace_of
-from gamma import backup_schedule as tasks, bucket_snapshots, db, offsite, s3, workspaces, ws_backup
+from gamma import backup_schedule as tasks, db, offsite, s3, snapshot_copies, workspaces, ws_backup
 from gamma.routers.backup_tasks import TaskInput
 
 PREFIX = "bs"
@@ -117,7 +117,7 @@ def test_a_copy_that_fails_leaves_the_snapshots_and_the_schedule(bucket, schedul
 
     def refused(*_args):
         raise s3.S3Error("PUT snapshots/x in s3://bucket/: AccessDenied")
-    monkeypatch.setattr(bucket_snapshots, "upload", refused)
+    monkeypatch.setattr(snapshot_copies, "upload", refused)
     done = _run(owner, task)
     assert done["state"] == "failed" and done["next_run"] == task["next_run"]  # no retry an hour on
     assert done["last_error"].startswith("The snapshots were taken, but copying them to the bucket failed")
@@ -143,7 +143,7 @@ def test_the_copies_through_the_api(bucket):
     make_page(boss, "In the copy")
     snap = ws_backup.create(ws, label="task-0123456789ab", uploads=False, scheduled=True,
                             task_id="0123456789ab" + "0" * 20)
-    bucket_snapshots.upload(bucket_snapshots.client(), ws, snap["name"])
+    snapshot_copies.upload(snapshot_copies.client("bucket"), ws, snap["name"])
     # the copy of a workspace this server does not have: a lost disk
     gone = workspaces.new_workspace_id()
     zipped = (ws_backup.store_dir(ws) / f"{snap['name']}.zip").read_bytes()

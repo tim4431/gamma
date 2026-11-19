@@ -57,12 +57,17 @@ export const TASK_KINDS = {
         return params.into === "new" ? t("Restore “{name}” from the bucket as a new workspace", args)
           : params.mode === "merge" ? t("Merge a copy from the bucket into “{name}”", args) : t("Restore “{name}” from the bucket", args);
       }
+      if (params.source === "drive") {
+        return params.into === "new" ? t("Restore “{name}” from Google Drive as a new workspace", args)
+          : params.mode === "merge" ? t("Merge a copy from Google Drive into “{name}”", args) : t("Restore “{name}” from Google Drive", args);
+      }
       return params.mode === "merge" ? t("Merge {file} into “{name}”", args) : t("Restore “{name}” from {file}", args);
     },
-    // An uploaded zip is gone once its job ended; a stored snapshot, and a copy in the bucket, are still there.
+    // An uploaded zip is gone once its job ended; a stored snapshot, and a copy in the bucket or in Google Drive, are still there.
     retry: ({ params }) => (params.source === "snapshot"
       ? ["restore-snapshot", { ws: params.ws, name: params.snapshot, mode: params.mode }]
-      : params.source === "bucket" ? ["bucket-restore", { ws: params.ws, name: params.snapshot, mode: params.mode, into: params.into || "" }]
+      : params.source === "bucket" || params.source === "drive"
+        ? ["bucket-restore", { ws: params.ws, name: params.snapshot, store: params.source, mode: params.mode, into: params.into || "" }]
         : null),
   },
   // Pages copied into another workspace (the library's Copy to workspace),
@@ -77,11 +82,13 @@ export const TASK_KINDS = {
     retry: ({ params }) => (params.all
       ? ["workspace-copy", { ws: params.ws, ...(params.new ? { name: params.to_name } : { to: params.to }) }] : null),
   },
-  // A backup task's copy in the bucket, downloaded (Settings → Backups, admins).
+  // A backup task's copy in the bucket or in Google Drive (`store`),
+  // downloaded (Settings → Backups, admins).
   "bucket-download": {
     icon: "download", open: "settings:backups",
-    title: ({ params }) => t("Download of “{name}” from the bucket", { name: named(params.name) }),
-    retry: ({ params }) => ["bucket-download", { ws: params.ws, name: params.snapshot }],
+    title: ({ params }) => (params.store === "drive" ? t("Download of “{name}” from Google Drive", { name: named(params.name) })
+      : t("Download of “{name}” from the bucket", { name: named(params.name) })),
+    retry: ({ params }) => ["bucket-download", { ws: params.ws, name: params.snapshot, store: params.store || "bucket" }],
   },
   import: {
     icon: "import", open: "import",

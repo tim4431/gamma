@@ -10,9 +10,12 @@ db.py              schemas, SCHEMA_VERSION, per-workspace DB paths, the connect 
 db_maintenance.py  SQLite upkeep on the app's every() loop: idle connections closed, a grown WAL truncated, PRAGMA optimize
 migrations.py      versioned data-directory upgrades (snapshot, numbered steps)
 backups.py         server backups: snapshots under backups/ (create, zip, delete, restore)
-backup_schedule.py named backup tasks: UTC cron, per-task retention, OS locking, an optional copy to the bucket
-bucket_snapshots.py the backup tasks' snapshots in the S3-compatible bucket: copied, pruned, listed, fetched (s3.py)
+backup_schedule.py named backup tasks: UTC cron, per-task retention, OS locking, an optional copy to the bucket and to Google Drive
+backup_store.py    what a backup store is: the Store interface s3.Client and gdrive.Client share, its two errors, the key rule
+snapshot_copies.py the backup tasks' snapshots copied to a store (DESTINATIONS: the bucket, Google Drive): copied, pruned, listed, fetched
 offsite.py         the bucket's settings, and the environment's off-site rounds of the databases and uploads (s3.py)
+gdrive.py          Google Drive: the OAuth device flow, tokens, and a folder of it as a backup store (drive.file)
+gdrive_account.py  the server's Google Drive connection: connect by code, poll, disconnect, the folder, Test
 proxy_settings.py  the server's network proxy setting: stored, checked, the admin API's view, the Test (docs/dev/network_proxy.md)
 ws_backup.py       one workspace's backup zip: export, restore, stored snapshots, a deleted workspace's final copy
 integrity.py       PRAGMA quick_check of a database; the latest failure per file (the db-damage notice)

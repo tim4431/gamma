@@ -4,16 +4,19 @@ A task is a file under ``backups/tasks/``; its ``owner`` is the id of the
 account it belongs to (``users.id``), so a rename never touches it. Its run
 state: ``last_run`` (when the latest run started), ``state``, ``last_success``,
 ``last_error``, and ``last_result`` (what the latest successful run made:
-``{snapshots, bytes, seconds}``, and ``bucket``: the copies sent, for a
-task that copies to the bucket; absent until a run succeeds).
+``{snapshots, bytes, seconds}``, and ``bucket`` / ``drive``: the copies
+sent, for a task that copies to the bucket or to Google Drive; absent
+until a run succeeds).
 
 A task with ``bucket`` on also uploads each snapshot it takes to the bucket
-set up in Settings → Backups (gamma/bucket_snapshots.py), and its retention
-prunes the copies there as it prunes the snapshots here. Only an admin's
-task may: the bucket is the server's. A copy that fails leaves the
-snapshots in place and fails the run (``last_error``, the
-``backup-failed`` notice); the task keeps its schedule, rather than
-retrying in an hour, since the snapshots were taken.
+set up in Settings → Backups, one with ``drive`` on to the Google Drive
+connected there, one with both to both (gamma/snapshot_copies.py, its
+DESTINATIONS); its retention prunes the copies in each as it prunes the
+snapshots here. Only an admin's task may: both are the server's. A copy
+that fails leaves the snapshots in place, goes on to the other store, and
+fails the run (``last_error``, the ``backup-failed`` notice); the task
+keeps its schedule, rather than retrying in an hour, since the snapshots
+were taken.
 
 Every run is a full copy, so the limits below bound what an account can
 make the server keep: a task runs at most hourly, keeps at most
@@ -34,7 +37,7 @@ import uuid
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 
-from . import bucket_snapshots, config, workspaces, ws_backup
+from . import config, snapshot_copies, workspaces, ws_backup
 from .db import connect_users_db
 from .logbuf import log
 
@@ -125,15 +128,26 @@ def check_limits(task):
         raise TaskError(f"A backup task keeps at most {MAX_RETENTION} {unit}.")
 
 
-def check_bucket(task):
-    """A task that copies to the bucket: its owner a server admin (the
-    bucket is the server's) and a bucket set up."""
-    if not task.get('bucket'):
+def stores(task):
+    """The stores a task copies to: those of snapshot_copies.STORES it has
+    on."""
+    return [where for where in snapshot_copies.STORES if task.get(where)]
+
+
+def check_copies(task, only=None):
+    """A task that copies off this server: its owner a server admin (the
+    bucket and Google Drive are the server's) and each of its stores (or
+    ``only``) set up."""
+    wanted = [only] if only else stores(task)
+    if not wanted:
         return
     if not _account(task['owner']):
-        raise TaskError("Only a server admin's backup tasks can copy to the bucket.")
-    if not bucket_snapshots.ready():
-        raise TaskError("No bucket is set up. An admin sets one up in Settings → Backups.")
+        raise TaskError(f"Only a server admin's backup tasks can copy to "
+                        f"{snapshot_copies.destination(wanted[0]).name}.")
+    for where in wanted:
+        store = snapshot_copies.destination(where)
+        if not store.ready():
+            raise TaskError(store.not_set_up)
 
 
 def root():
@@ -265,7 +279,7 @@ def save(owner, data, task_id=None):
         if updated['enabled'] or not task_id:
             check_limits(updated)
             targets(updated)  # Recheck permissions again at execution.
-            check_bucket(updated)
+            check_copies(updated)
         changed = not task_id or any(task.get(k) != updated[k] for k in ('cron', 'enabled'))
         updated['next_run'] = (next_time if changed else task.get('next_run')) if updated['enabled'] else None
         if not updated['enabled']:
@@ -313,16 +327,17 @@ def _prune(task, ws, at):
         ws_backup.delete(ws, snapshot['name'])
 
 
-def _to_bucket(task, ids, made, at):
+def _copy_to(where, task, ids, made, at):
     """Upload the run's snapshots (``made``, one per workspace of ``ids``)
-    and prune the task's copies there; how many were sent."""
-    check_bucket(task)
-    bucket = bucket_snapshots.client()
+    to the store ``where`` and prune the task's copies there; how many were
+    sent."""
+    check_copies(task, where)
+    bucket = snapshot_copies.client(where)
     sent = [(ws, snapshot['name']) for ws, snapshot in zip(ids, made) if snapshot]
     for ws, name in sent:
-        bucket_snapshots.upload(bucket, ws, name)
+        snapshot_copies.upload(bucket, ws, name)
     for ws in ids:
-        bucket_snapshots.prune(bucket, ws, task, at)
+        snapshot_copies.prune(bucket, ws, task, at)
     return len(sent)
 
 
@@ -349,20 +364,19 @@ def run_due(at=None):
                             for ws in ids]
                     for ws in ids:
                         _prune(task, ws, max(at, now()))
-                    sent, copy_error = None, None
-                    if task.get('bucket'):
+                    sent, copy_errors = {}, []
+                    for where in stores(task):
                         try:
-                            sent = _to_bucket(task, ids, made, max(at, now()))
-                        except (OSError, ValueError) as exc:  # the bucket's S3Error, S3ConfigError, a TaskError
-                            log.warning('[backups] Task %s could not copy to the bucket: %s', task['id'], exc)
-                            copy_error = f"The snapshots were taken, but copying them to the bucket failed: {exc}"
+                            sent[where] = _copy_to(where, task, ids, made, max(at, now()))
+                        except (OSError, ValueError) as exc:  # StoreError, StoreConfigError, a TaskError
+                            name = snapshot_copies.destination(where).name
+                            log.warning('[backups] Task %s could not copy to %s: %s', task['id'], name, exc)
+                            copy_errors.append(f"copying them to {name} failed: {exc}")
                     # What the run made, for the Settings table's Last run cell.
                     result = dict(snapshots=len(made), bytes=sum(m['size_bytes'] for m in made if m),
-                                  seconds=round(time.monotonic() - started, 1))
-                    if sent is not None:
-                        result['bucket'] = sent
-                    if copy_error:
-                        task.update(last_error=copy_error, state='failed')
+                                  seconds=round(time.monotonic() - started, 1), **sent)
+                    if copy_errors:
+                        task.update(last_error="The snapshots were taken, but " + "; ".join(copy_errors), state='failed')
                     else:
                         task.update(last_success=at.isoformat(), last_error=None, state='finished', last_result=result)
                     if due:
