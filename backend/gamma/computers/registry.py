@@ -453,16 +453,16 @@ def forget(token_id: str) -> None:
 
 def _fail_held(ws: str, token_id: str) -> None:
     """The turns of ``ws`` the runs of the computer behind ``token_id`` hold
-    running fail (``chats.fail_held``): its channel was taken back (the
+    running fail (``far_turns.fail_held``): its channel was taken back (the
     token revoked, replaced or expired). Never raises."""
-    from ..local_agents import chats
+    from ..local_agents import far_turns
 
     def words(agent: str) -> str:
         label = _label(agent) if agent in AGENTS else "the agent"
         return f"The computer's channel was taken back before {label} finished."
 
     try:
-        chats.fail_held(ws, token_id, words)
+        far_turns.fail_held(ws, token_id, words)
     except Exception as e:  # noqa: BLE001 — the computer goes all the same
         log.warning(f"[computers] the chat turns held by computer token {token_id} in workspace {ws}: {e}")
 
@@ -509,7 +509,7 @@ def _refusal(row, owner: str):
     take a turn of the account ``owner``'s agent there: ``(agent, person,
     kind, dir) → words`` ("" when it would), ``person`` the account the turn
     is for, ``kind`` and ``dir`` where its conversation works
-    (``chats.dir_of``)."""
+    (``far_turns.dir_of``)."""
     def refused(agent: str, person: str, kind: str, dir: str) -> str:
         label = _label(agent) if agent in AGENTS else "the agent"
         if row is None:
@@ -531,10 +531,10 @@ def _end_orphaned(ws: str, user_id: str, computer_id: str) -> None:
     """The turns queued in ``ws`` for the computer ``computer_id`` of the
     account ``user_id`` (its own and its co-authors') that it would not take
     as it last announced there, a valid token's row (``_refusal``), or every
-    one where it is shown no more, fail with why (``chats.fail_queued``):
+    one where it is shown no more, fail with why (``far_turns.fail_queued``):
     none would take them, and an agent turned on there again later must not
     run them unasked. Never raises."""
-    from ..local_agents import chats
+    from ..local_agents import far_turns
 
     try:
         with connect_users_db() as conn:
@@ -543,7 +543,7 @@ def _end_orphaned(ws: str, user_id: str, computer_id: str) -> None:
                 "ON t.id = c.token_id AND t.user_id = c.user_id AND t.expires_at > ? WHERE c.workspace_id = ? "
                 "AND c.user_id = ? AND c.computer = ? ORDER BY c.seen_at DESC LIMIT 1",
                 (int(time.time()), ws, user_id, computer_id)).fetchone()
-        chats.fail_queued(ws, user_id, computer_id, _refusal(row, user_id))
+        far_turns.fail_queued(ws, user_id, computer_id, _refusal(row, user_id))
     except Exception as e:  # noqa: BLE001 — the announce and the computer's end go on all the same
         log.warning(f"[computers] the chat turns queued in workspace {ws} for {user_id}: {e}")
 

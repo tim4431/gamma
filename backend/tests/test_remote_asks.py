@@ -51,7 +51,7 @@ from fake_agents import read_log, requests_in, script_agent
 from gamma import config, folder_links, gamma_sync, remote_servers
 from gamma.computers import channel
 from gamma.db import connect_pages_db, connect_vaults_db
-from gamma.local_agents import chats, home, runner, store
+from gamma.local_agents import chats, far_turns, home, runner, store
 from test_remote_chat import (EDITOR, OWNER, PASSWORD, SECRET, SHELL, _chat, _made, _reply,  # noqa: F401
                               _run_there, _say, _sent, _stop, _turn_row, _until, lab, nas)  # the fixtures
 
@@ -608,7 +608,7 @@ def test_an_end_or_a_failure_left_open_leaves_waiting_false(lab, nas, monkeypatc
     assert _reply(lab, f.page)["waiting"] is True
     assert computer.post(write, json={"run": run, "seq": 2, "fields": {"waiting": "yes"}}).status_code == 400
     with connect_pages_db(lab.ws) as conn:                                 # a failure that ends it there
-        chats._end_run(conn, chats.run_of(conn, turn_id), "failed", {"error": "x"})
+        far_turns._end_run(conn, far_turns.run_of(conn, turn_id), "failed", {"error": "x"})
     assert _reply(lab, f.page)["waiting"] is False
     turn_id = _say(lab.owner, f.page, "Again.")["turn"]["id"]
     run = home.chat_run_id(turn_id)

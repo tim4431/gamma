@@ -23,7 +23,7 @@ from gamma import agents, collab, folder_links, gamma_sync, workspaces
 from gamma.computers import channel, registry
 from gamma.db import connect_users_db, connect_vaults_db
 from gamma.folder_sync import ROOT
-from gamma.integrations import create_token, forget_workspace, grant, resolve_connection
+from gamma.integrations import forget_workspace, grant, resolve_connection
 from gamma.local_agents import catalog, runner, store
 
 PASSWORD = "cm-pass-1234"
@@ -885,7 +885,7 @@ def test_the_server_offers_the_agent_to_the_people_it_names_alone_and_no_longer_
     from gamma.auth import DISK_CLIENT
     from gamma.blocks_store import create_page
     from gamma.db import connect_pages_db
-    from gamma.local_agents import chats
+    from gamma.local_agents import chats, far_turns
 
     monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "0")      # a NAS: the computer runs the agent
     me, them = account_of("cptr_owner"), account_of("cptr_stranger")
@@ -911,12 +911,12 @@ def test_the_server_offers_the_agent_to_the_people_it_names_alone_and_no_longer_
             for c in listed] == [("TIM-PC", "cptr_owner", [("codex", True, "never", [])])]
     [shown] = _shown(theirs, page)
     assert (shown["lent_by"], shown["vault"]["work"], shown["dirs"]) == ("cptr_owner", True, [])
-    far = chats.remote_of(ws, page, them)
+    far = far_turns.remote_of(ws, page, them)
     assert (far["user_id"], far["lent_by"], far["agent"]) == (me, "cptr_owner", "codex")
     assert [s for s in registry.seats(ws, page, them) if not s["lent_by"]] == []    # none of their own
     with connect_pages_db(ws) as conn:                                           # a lent agent: a synced folder's files alone
         plain = create_page(conn, "plain", {}, actor=me, client=DISK_CLIENT)["id"]
-    assert chats.remote_of(ws, plain, them) is None and _shown(theirs, plain) == []
+    assert far_turns.remote_of(ws, plain, them) is None and _shown(theirs, plain) == []
     lent = (them, "cm-computer-1", "cptr_owner")
     assert registry.names_of({lent}, ws) == {lent: "TIM-PC"}
     # named only by the owner kept with the comment, in its workspace
@@ -927,7 +927,7 @@ def test_the_server_offers_the_agent_to_the_people_it_names_alone_and_no_longer_
     # its owner sees its own; anyone else sees nothing
     assert [c.get("lent_by") for c in mine.get("/api/computers").json()["computers"]] == [None]
     assert third.get("/api/computers").json()["computers"] == [] and _shown(third, page) == []
-    assert chats.remote_of(ws, page, account_of("cptr_third")) is None
+    assert far_turns.remote_of(ws, page, account_of("cptr_third")) is None
 
     # the person's turn waits for that computer, the owner's agent's: listed to it
     r = theirs.post("/api/local-agents/chat/turns", json={"bucket": page, "text": "Tighten the title."})
@@ -940,10 +940,10 @@ def test_the_server_offers_the_agent_to_the_people_it_names_alone_and_no_longer_
     # removed from the announce: the person sees the computer no more, and the turn that waited fails with why
     _announce(computer, _body({"kind": "folder", "folder_id": w}, assistants=[{**codex, "people": []}]))
     assert theirs.get("/api/computers").json()["computers"] == [] and _shown(theirs, page) == []
-    assert chats.remote_of(ws, page, them) is None
+    assert far_turns.remote_of(ws, page, them) is None
     with connect_pages_db(ws) as conn:
         reply = chats.get(conn, conversation_id)["messages"][-1]
-        assert chats.run_of(conn, turn_id)["state"] == "failed"
+        assert far_turns.run_of(conn, turn_id)["state"] == "failed"
     assert (reply["state"], reply["error"]) == (
         "failed", "The owner of Codex on TIM-PC no longer lets you use it.")
     assert computer.get("/api/computers/chats").json()["turns"] == []

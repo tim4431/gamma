@@ -33,7 +33,7 @@ from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page
 from gamma.computers import registry
 from gamma.db import connect_pages_db, connect_users_db
-from gamma.local_agents import chats
+from gamma.local_agents import chats, far_turns
 from gamma.ops import STALE, OpError
 from gamma.work_folders import takeover
 
@@ -372,7 +372,7 @@ def test_a_turn_is_listed_to_the_computer_it_is_for_alone(lab, pc):
     turn = _say(lab)["turn"]["id"]
     assert _reply(lab)["agent"] == "claude"
     assert _chats(pc)["turns"] == []
-    assert _claim(pc, turn, agent="claude", status=404)["detail"] == chats.NO_TURN
+    assert _claim(pc, turn, agent="claude", status=404)["detail"] == far_turns.NO_TURN
     assert _row(lab, turn)["state"] == "queued" and _reply(lab)["state"] == "queued"
     assert [t["id"] for t in _chats(lc)["turns"]] == [turn]
     _claim(lc, turn, agent="claude")
@@ -587,7 +587,7 @@ def test_a_detach_fails_the_turns_queued_and_leaves_a_running_one_to_its_compute
     r = lab.maker.post(f"/api/folders/{w}/detach", json={"pages": "keep"})
     assert r.status_code == 200, r.text
     reply = _reply_of(lab, queued)
-    assert (reply["state"], reply["error"]) == ("failed", chats.DETACHED) and _row(lab, queued)["state"] == "failed"
+    assert (reply["state"], reply["error"]) == ("failed", far_turns.DETACHED) and _row(lab, queued)["state"] == "failed"
     assert _row(lab, running)["state"] == "running" and _row(lab, elsewhere)["state"] == "queued"
     assert [t["id"] for t in _chats(pc)["turns"]] == [elsewhere, library]
     assert _write(pc, running, 1, state="failed", error="Stopped: the synced folder was detached.") == {"ok": True}
@@ -597,7 +597,7 @@ def test_a_detach_fails_the_turns_queued_and_leaves_a_running_one_to_its_compute
 def _reply_of(lab, turn_id) -> dict:
     """The turn's agent message, though the page's chat no longer answers."""
     with connect_pages_db(lab.ws) as conn:
-        row = chats.run_of(conn, turn_id)
+        row = far_turns.run_of(conn, turn_id)
         conversation = chats.get(conn, row["conversation_id"])
     return next(m for m in conversation["messages"] if m.get("turn_id") == turn_id)
 

@@ -455,7 +455,7 @@ def steer_chat(ws: str, turn_id: str, item: dict) -> None:
 
 def steer_relayed(link_id: str, turn_id: str, run: str, item: dict) -> bool:
     """A message the server of the channel ``link_id`` kept steered into its
-    turn ``turn_id`` (``chats.steers_of`` there, the listing's ``steers``),
+    turn ``turn_id`` (``far_turns.steers_of`` there, the listing's ``steers``),
     handed to the agent while this computer runs that turn under the run
     ``run`` → whether the agent took it to read. One it never reads goes as
     the next turn from that server's chat."""
@@ -601,7 +601,7 @@ def answer_computer(ask_id: str, decision: str, user_id: str) -> int:
 
 def answer_relayed(link_id: str, turn_id: str, run: str, ask_id: str, decision: str, note: str = "") -> bool:
     """The answer the server of the channel ``link_id`` kept for the ask
-    ``ask_id`` of its turn ``turn_id`` (``chats.answers_of`` there, the
+    ``ask_id`` of its turn ``turn_id`` (``far_turns.answers_of`` there, the
     listing's ``answers``), given to the agent while this computer runs that
     turn under the run ``run``, the ask waits, the decision is ``once`` or
     ``deny`` and the channel still lets that server answer (``_relays``) →

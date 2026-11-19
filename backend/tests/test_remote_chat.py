@@ -71,7 +71,7 @@ from gamma.computers import channel, registry, sessions as computer_sessions
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
 from gamma.annotations import files as annotation_files, sources
 from gamma.integrations import create_token
-from gamma.local_agents import catalog, chats, codex, events, home, procs, runner, sessions, store
+from gamma.local_agents import catalog, chats, codex, events, far_turns, home, procs, runner, sessions, store
 from gamma.ops import commit_ops
 from gamma.routers import computers as computer_routes
 from gamma.vault import kinds, store as vault_store
@@ -324,7 +324,7 @@ def _rows() -> list[dict]:
 def _run_there(lab, turn_id: str) -> dict | None:
     """The NAS's ``computer_chat_runs`` row of the turn."""
     with connect_pages_db(lab.ws) as conn:
-        return chats.run_of(conn, turn_id)
+        return far_turns.run_of(conn, turn_id)
 
 
 def _sent(log, method: str) -> list[dict]:
@@ -745,7 +745,7 @@ def test_a_message_steered_there_reaches_the_turn_here_once_and_joins_its_messag
     r = lab.owner.post(f"/api/local-agents/chat/turns/{turn_id}/steer", json=steer)
     assert r.status_code == 200 and r.json() == {"steered": True}
     f.turn.once()                                       # woken: the listing hands it over, the agent takes it
-    assert chats.steers_of(f.token["id"]) == []         # handed over once
+    assert far_turns.steers_of(f.token["id"]) == []         # handed over once
     assert runner.wait_idle(60)
     reply = _reply(lab, f.page)
     assert reply["state"] == "done" and reply["text"] == "Done: Lower the title's case.; Only the first word."
@@ -768,7 +768,7 @@ def test_the_conversation_reads_while_the_computer_is_away_and_a_message_for_it_
     assert read["computer"]["online"] is False and read["computer"]["since"]
     assert [m["state"] for m in read["conversation"]["messages"] if m["role"] == "agent"] == ["done"]
     computer = registry.computer_of(f.token["id"])[1]
-    assert _say(lab.owner, f.page, "Fix the abstract.", status=409)["detail"] == chats.OFFLINE.format(
+    assert _say(lab.owner, f.page, "Fix the abstract.", status=409)["detail"] == far_turns.OFFLINE.format(
         computer=computer)                                                 # never queued for a computer away
     nas.down.clear()
     f.turn.once()                                                          # back: announced again, online
@@ -959,7 +959,7 @@ def test_a_409_there_stops_the_turn_here(lab, nas, monkeypatch):
     turn_id = _say(lab.owner, f.page)["turn"]["id"]
     f.turn.once()
     _until(lambda: _reply(lab, f.page)["text"])                          # its reply is being typed there
-    assert chats.stop_run(lab.ws, turn_id, online=lambda holder: False)    # that server ended it (away, it thinks)
+    assert far_turns.stop_run(lab.ws, turn_id, online=lambda holder: False)    # that server ended it (away, it thinks)
     assert runner.wait_idle(30)                                            # the next write refused: the turn stops
     reply = _reply(lab, f.page)
     assert reply["state"] == "stopped" and "word39" not in reply["text"]   # nothing written after the end there
@@ -1332,14 +1332,14 @@ def test_a_conversations_directory_no_longer_kept_or_offered_gives_one_of_its_ow
     far = {"folder_id": "", "lent_by": "", "computer_id": "c1", "computer": "TIM-PC", "agent": "codex",
            "dirs": [{"id": "d1", "name": "Drafts"}]}
     kept_there = {"computer": "c1", "agent": "codex", "dir": "W-no-longer-kept"}
-    assert chats.far_dir(far, None, kept_there) == ""                   # begin archives it: a new one starts
-    assert chats.far_dir(far, None, {**kept_there, "dir": "d1"}) == "d1"   # still offered: kept
-    assert chats.far_dir(far, None, {**kept_there, "computer": "c2", "dir": "d1"}) == ""
-    assert chats.far_dir(far, None, None) == ""
+    assert far_turns.far_dir(far, None, kept_there) == ""                   # begin archives it: a new one starts
+    assert far_turns.far_dir(far, None, {**kept_there, "dir": "d1"}) == "d1"   # still offered: kept
+    assert far_turns.far_dir(far, None, {**kept_there, "computer": "c2", "dir": "d1"}) == ""
+    assert far_turns.far_dir(far, None, None) == ""
     with pytest.raises(chats.ChatError) as refused:
-        chats.far_dir(far, "W-no-longer-kept", kept_there)
+        far_turns.far_dir(far, "W-no-longer-kept", kept_there)
     assert refused.value.status == 400
-    assert chats.far_dir({**far, "folder_id": "W"}, None, kept_there) == "W"
+    assert far_turns.far_dir({**far, "folder_id": "W"}, None, kept_there) == "W"
 
 
 def test_a_claim_hands_the_turn_a_token_of_its_own_kept_by_its_writes_and_gone_at_its_end(lab, nas, monkeypatch):
@@ -1354,21 +1354,21 @@ def test_a_claim_hands_the_turn_a_token_of_its_own_kept_by_its_writes_and_gone_a
     first = computer.post(claim, json={"run": run, "agent": "codex"}).json()["tools"]
     assert first["url"] == f"{nas.url}/mcp" and first["token"].startswith("gamma_")
     agent_id = agents.computer_agent(registry.computer_of(f.token["id"])[0], "codex").id
-    assert minted == [(lab.user, lab.ws, agent_id, chats.TOKEN_S)]       # the account's, its workspace's, the agent's
+    assert minted == [(lab.user, lab.ws, agent_id, far_turns.TOKEN_S)]       # the account's, its workspace's, the agent's
     again = computer.post(claim, json={"run": run, "agent": "codex"}).json()["tools"]
     [(held, name, ws, _expires)] = _turn_tokens(lab.user)                 # a retry: a new one in place of the first
     assert again["token"] != first["token"] and (name, ws) == (agent_id, lab.ws)
     with connect_pages_db(lab.ws) as conn:
-        assert chats.run_of(conn, turn_id)["token"] == held
+        assert far_turns.run_of(conn, turn_id)["token"] == held
     # the run's writes keep it alive, its end deletes it
     with connect_users_db() as conn:
         conn.execute("UPDATE integration_tokens SET expires_at = ? WHERE id = ?", (int(time.time()) + 5, held))
     assert computer.post(write, json={"run": run, "seq": 1, "fields": {"text": "working"}}).status_code == 200
-    assert _turn_tokens(lab.user)[0][3] >= time.time() + chats.TOKEN_S - 5
+    assert _turn_tokens(lab.user)[0][3] >= time.time() + far_turns.TOKEN_S - 5
     assert computer.post(write, json={"run": run, "seq": 2, "fields": {"state": "done"}}).status_code == 200
     assert _turn_tokens(lab.user) == []
     with connect_pages_db(lab.ws) as conn:
-        assert chats.run_of(conn, turn_id)["token"] == ""
+        assert far_turns.run_of(conn, turn_id)["token"] == ""
     # a Stop that ends it here (its computer away) deletes it too, and so does the computer's channel taken back
     for end in ("stop", "revoke"):
         turn_id = _say(lab.owner, f.page, f"Again, {end}.")["turn"]["id"]
@@ -1638,7 +1638,7 @@ def test_history_there_says_why_this_computer_answers_nothing(lab, nas, monkeypa
 
     registry.reset()                                                              # that server sees it offline
     assert _sessions(lab.owner, far, f.w) == {"sessions": [], "away": "offline"}
-    assert _open(lab.owner, f.page, far, f.w, "019b-term-fix", 409)["detail"] == chats.OFFLINE.format(
+    assert _open(lab.owner, f.page, far, f.w, "019b-term-fix", 409)["detail"] == far_turns.OFFLINE.format(
         computer=computer)
     assert not computer_sessions._asks
 

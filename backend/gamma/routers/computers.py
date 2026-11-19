@@ -263,16 +263,16 @@ def waiting_chats(request: Request):
     at}], stops: [{id, run}], answers: [{id, run, ask, decision, note}],
     steers: [{id, run, steer: {id, text, selections}}]}``:
     the turns that wait for this computer's
-    agents (``chats.waiting_turns``), of the token's account's
+    agents (``far_turns.waiting_turns``), of the token's account's
     conversations with this computer and of the people its agent serves
     there (``registry.people_of``), each of an agent it has on, none in a
-    work folder paused there (oldest first, at most ``chats.MAX_WAITING``;
+    work folder paused there (oldest first, at most ``far_turns.MAX_WAITING``;
     none while the account may not edit, ``registry.taking``), ``dir``
     where its agent works by an id; the runs of it whose turns were asked
     to stop (listed until the run writes its end); the answers given
-    here to what its running turns ask (``chats.answers_of``); and the
-    messages steered into them, each handed out once (``chats.steers_of``)."""
-    from ..local_agents import chats
+    here to what its running turns ask (``far_turns.answers_of``); and the
+    messages steered into them, each handed out once (``far_turns.steers_of``)."""
+    from ..local_agents import far_turns
 
     user_id, _username, ws, token_id = _computer(request)
     taking = registry.taking(token_id, ws)
@@ -282,11 +282,11 @@ def waiting_chats(request: Request):
             people = {p for p in registry.people_of(token_id)
                       if workspaces.at_least(workspaces.role_of(ws, p), "editor")}
             paused = [w for w, held in taking["folders"].items() if held]
-            turns = [turn for turn in chats.waiting_turns(conn, user_id, taking["computer_id"], people, paused)
+            turns = [turn for turn in far_turns.waiting_turns(conn, user_id, taking["computer_id"], people, paused)
                      if turn["agent"] in taking["agents"]]
-        stops = chats.stops_of(conn, token_id)
-        answers = chats.answers_of(conn, token_id)
-    return {"turns": turns, "stops": stops, "answers": answers, "steers": chats.steers_of(token_id)}
+        stops = far_turns.stops_of(conn, token_id)
+        answers = far_turns.answers_of(conn, token_id)
+    return {"turns": turns, "stops": stops, "answers": answers, "steers": far_turns.steers_of(token_id)}
 
 
 @router.post("/computers/chats/{turn_id}/claim")
@@ -294,7 +294,7 @@ def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
     """``{run, agent}`` → ``{turn: {id, conversation_id, bucket, title,
     text, selections, model, effort, speed, for, thread_id?, comment_id?},
     history, about, dir: {kind, id}, seen, thread?, tools: {url, token} |
-    null}`` (``chats.claim``, ``_tools``): the turn taken for the run
+    null}`` (``far_turns.claim``, ``_tools``): the turn taken for the run
     ``run`` (it and its message ``running``) in one write, or held by that
     run already (a retry: answered again, with a new token in place of the
     one the lost answer carried). 400 for a run's id of another shape; 403
@@ -305,7 +305,7 @@ def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
     (``registry.serves``), this computer does not keep its work folder or
     it is paused there, or it no longer offers its directory; 423 while a
     delete holds the workspace."""
-    from ..local_agents import chats
+    from ..local_agents import chats, far_turns
     from ..work_folders.marks import Tree
 
     user_id, _username, ws, token_id = _computer(request)
@@ -317,10 +317,10 @@ def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
                                        f"{_label(payload.agent) if payload.agent in registry.AGENTS else 'an agent'}.")
         taking = registry.taking(token_id, ws)
         with connect_pages_db(ws) as conn:
-            row = chats.run_of(conn, turn_id)
-            where = chats.dir_of(Tree.read(conn), {"dir": row["dir"]}) if row else None
+            row = far_turns.run_of(conn, turn_id)
+            where = far_turns.dir_of(Tree.read(conn), {"dir": row["dir"]}) if row else None
         if row is None or taking is None or row["owner"] != user_id or row["computer_id"] != taking["computer_id"]:
-            raise chats.ChatError(404, chats.NO_TURN)
+            raise chats.ChatError(404, far_turns.NO_TURN)
         label, name = _label(payload.agent) if payload.agent in registry.AGENTS else "the agent", taking["name"]
         if payload.agent not in taking["agents"]:
             raise chats.ChatError(409, f"{label} is not on for you on {name}.")
@@ -332,7 +332,7 @@ def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
             raise chats.ChatError(409, f"The synced folder is paused: {label} starts once it syncs again.")
         if where["kind"] == "offered" and where["id"] not in taking["dirs"]:
             raise chats.ChatError(409, f"{name} no longer offers that directory.")
-        answer = chats.claim(ws, turn_id, user_id=user_id, holder=token_id, computer_id=taking["computer_id"],
+        answer = far_turns.claim(ws, turn_id, user_id=user_id, holder=token_id, computer_id=taking["computer_id"],
                              run=run, agent=payload.agent, computer=name)
     answer["tools"] = _tools(request, ws, turn_id, run, answer["turn"]["for"]["id"],
                              agents.computer_agent(taking["computer_id"], payload.agent).id)
@@ -363,19 +363,19 @@ def _tools(request: Request, ws: str, turn_id: str, run: str, person: str, agent
     token}``, a turn token minted for the account ``person`` the turn is for
     (``integrations.mint_turn``: of ``ws`` alone, named with the agent's id
     ``agent_id``, so what it writes is that agent's, living
-    ``chats.TOKEN_S``) in place of one an earlier claim of the run minted,
+    ``far_turns.TOKEN_S``) in place of one an earlier claim of the run minted,
     and this server's MCP address (``_mcp_url``), which the computer takes
     only where its origin is the server it speaks to. None where this server
     has no address another computer reaches: the turn runs without them."""
     from .. import integrations
-    from ..local_agents import chats
+    from ..local_agents import chats, far_turns
 
     url = _mcp_url(request)
     if not url:
         return None
-    token_id, token = integrations.mint_turn(person, ws, agent_id, chats.TOKEN_S)
+    token_id, token = integrations.mint_turn(person, ws, agent_id, far_turns.TOKEN_S)
     try:
-        old = chats.keep_token(ws, turn_id, run, token_id)
+        old = far_turns.keep_token(ws, turn_id, run, token_id)
     except chats.ChatError:
         integrations.drop(token_id)   # the turn ended meanwhile
         return None
@@ -460,7 +460,7 @@ def _turn_fields(raw: dict) -> dict:
     waits for an answer on the computer alone), ``steers`` (the messages
     steered in that the agent took, ``chats.steered_of``), ``state``
     (running or an end), ``model``, ``effort``, ``speed``; ``ended_at`` is this server's clock
-    (``chats.write_run``), any other field left out. 400 for one of another
+    (``far_turns.write_run``), any other field left out. 400 for one of another
     shape."""
     from ..local_agents import chats, prompt, runner, store
 
@@ -523,17 +523,17 @@ def _turn_fields(raw: dict) -> dict:
 def thread_picture(thread_id: str, request: Request, at: str = "now"):
     """The JPEG of a thread's region (``at`` now or before), as ``GET
     /api/annotations/{id}/picture`` answers it, for the thread of a turn a
-    run of this computer holds running (``chats.holds_thread``): what the
+    run of this computer holds running (``far_turns.holds_thread``): what the
     computer puts beside the thread in its prompt. 400 for another ``at``;
     404 for any other thread."""
-    from ..local_agents import chats
+    from ..local_agents import far_turns
     from .annotations import picture_of  # local: the annotations' routes reach the agents' package
 
     user_id, _username, ws, token_id = _computer(request)
     if at not in ("now", "before"):
         raise HTTPException(status_code=400, detail="at is now or before")
     with connect_pages_db(ws) as conn:
-        if not chats.holds_thread(conn, token_id, user_id, thread_id):
+        if not far_turns.holds_thread(conn, token_id, user_id, thread_id):
             raise HTTPException(status_code=404, detail="No thread of a turn on this computer has that id.")
     return picture_of(ws, thread_id, at)
 
@@ -654,13 +654,13 @@ def write_chat(turn_id: str, payload: ChatWrite, request: Request):
     field of another shape; 404 for no turn this computer holds or held; 409 when
     another run holds it, it was stopped here or its conversation is gone
     (the run stops)."""
-    from ..local_agents import chats
+    from ..local_agents import far_turns
 
     user_id, _username, ws, token_id = _computer(request)
     run = _run_id(payload.run)
     fields = _turn_fields(payload.fields)
     workspaces.refuse_writes(ws)
     with _chat_refusals():
-        written = chats.write_run(ws, turn_id, user_id=user_id, holder=token_id, run=run, seq=payload.seq,
+        written = far_turns.write_run(ws, turn_id, user_id=user_id, holder=token_id, run=run, seq=payload.seq,
                                   fields=fields)
     return {"ok": True} if written else {"ok": True, "stale": True}
