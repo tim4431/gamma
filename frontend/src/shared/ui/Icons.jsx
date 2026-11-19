@@ -688,7 +688,8 @@ export const Heading3Icon = (p) => (
 export const ListOrderedIcon = (p) => (
   <Icon {...p}><path d="M10 6h11" /><path d="M10 12h11" /><path d="M10 18h11" /><path d="M4 6h1v4" /><path d="M4 10h2" /><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1" /></Icon>
 );
-// Quotation marks — a quote block (QuoteIcon is a cited passage).
+// Quotation marks — a quote block, and a passage quoted into the chat (a PDF
+// passage, a quote from the conversation). QuoteIcon is a citation.
 export const QuoteMarkIcon = (p) => (
   <Icon {...p}><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" /><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" /></Icon>
 );

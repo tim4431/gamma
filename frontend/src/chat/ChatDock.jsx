@@ -58,7 +58,7 @@ import { formatOf } from "../documents/formats.js";
 import ChipPreview from "./ChipPreview.jsx";
 import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
 import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, EyeIcon, FileIcon,
-  HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteIcon, QuoteMarkIcon, SearchIcon,
+  HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteMarkIcon, SearchIcon,
   SettingsIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
@@ -152,7 +152,7 @@ function useModelInfo(modelId) {
 // attached — it rides along because of where the cursor is — with a dashed
 // border; `kind` is the modifier class (isCursor / isBlock / isNote /
 // isInk; none for a PDF passage).
-const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteIcon, block: OutlineIcon, ink: PenIcon, quote: QuoteMarkIcon };
+const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteMarkIcon, block: OutlineIcon, ink: PenIcon, quote: QuoteMarkIcon };
 
 export function SelChip({ kind, icon, label, note, file = "", cut, auto = false, text, title, onRemove, removeTitle }) {
   const Glyph = SEL_CHIP_ICONS[icon];

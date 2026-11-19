@@ -34,7 +34,7 @@ import ChipPreview from "./ChipPreview.jsx";
 import { composing } from "../shared/lib/hotkeys.js";
 import { openReport } from "../support/reportContent.js";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ClockIcon, CopyIcon, FileIcon, FlagIcon, FolderIcon,
-  CornerDownRightIcon, InfoIcon, PencilIcon, QuoteIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
+  CornerDownRightIcon, InfoIcon, PencilIcon, QuoteMarkIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // What the model was given for a reply, per document — streamed by
@@ -314,7 +314,7 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
               ))}
               {(m.passages || []).map((s, j) => (
                 <span key={`q${j}`} className="chatPdfChip" title={s.text}>
-                  <QuoteIcon size={14} />
+                  <QuoteMarkIcon size={14} />
                   {s.page ? t("p. {page}", { page: s.page }) : t("PDF passage")}
                 </span>
               ))}
