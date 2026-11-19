@@ -3,7 +3,7 @@
 A study of what one `/api/ai/chat` request carries, what grows as a
 conversation goes on, and what would make the chat cheaper and more robust.
 Read from the code in September 2026 (`gamma/ai_context.py`,
-`gamma/ai_tools.py`, `gamma/routers/ai.py`, `gamma/ai_client.py`,
+`gamma/ai_tools/`, `gamma/routers/ai.py`, `gamma/ai_client.py`,
 `gamma/ai_protocols/*`, `frontend/src/chat/ChatDock.jsx`). The mechanics as
 they are meant to work live in [docs/dev/ai.md](../dev/ai.md),
 [ai_context.md](../dev/ai_context.md) and [ai_tools.md](../dev/ai_tools.md);

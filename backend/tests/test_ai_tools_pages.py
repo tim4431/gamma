@@ -7,8 +7,8 @@ import re
 import secrets
 
 from conftest import doc_props, folder_names, make_folder, make_label
-from gamma import ai_tools
-from gamma.ai_tools import agent_tools, run_agent_tool
+from gamma.ai_tools import reading
+from gamma.ai_tools.registry import agent_tools, run_agent_tool
 
 from ai_fixtures import folder, org, props  # noqa: F401  (org is a fixture)
 
@@ -283,7 +283,7 @@ def test_read_page_never_repeats_what_the_context_holds(org, monkeypatch):
     cut short), a document the excerpt holds whole is not re-read, and the
     notes come once — with the first window, or on notes: true — never
     when the context already carries them."""
-    from gamma.ai_tools import agent_system, coverage_lines
+    from gamma.ai_tools.prompt import agent_system, coverage_lines
     from gamma.pdf_text import extract_text_pages
 
     c, ids = org
@@ -673,7 +673,7 @@ def test_new_pages_come_first_and_a_walk_does_not_revisit_them(org):
 
 def test_list_labels_shows_the_busiest_and_points_at_the_name_lookup(org, monkeypatch):
     c, ids = org
-    monkeypatch.setattr(ai_tools, "_LIST_CAP", 2)
+    monkeypatch.setattr(reading, "_LIST_CAP", 2)
     where = make_folder(c, "labcap")
     l1, l2, l3 = (make_label(c, name) for name in ("L1", "L2", "L3"))
     for labels in ([l1, l2, l3], [l1, l2], [l1]):
@@ -740,7 +740,7 @@ def test_view_pdf_page_renders_a_picture_for_the_model(org, monkeypatch, tmp_pat
     names the page and the count, and bad pages/pages without a PDF refuse."""
     c, ids = org
     pdf = _blank_pdf(tmp_path / "two.pdf")
-    monkeypatch.setattr("gamma.ai_tools.pdf_path", lambda ws, doc: pdf)
+    monkeypatch.setattr("gamma.ai_tools.viewing.pdf_path", lambda ws, doc: pdf)
     text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_pdf_page",
                                   {"page_id": ids["a"], "pdf_page": 2})
     assert text.startswith("PDF page 2 of 2"), text
@@ -772,7 +772,7 @@ def test_a_duplicated_page_reads_the_pdf_it_shows(org, monkeypatch, tmp_path):
     c, ids = org
     pdf = _blank_pdf(tmp_path / "shown.pdf")
     asked = []
-    monkeypatch.setattr("gamma.ai_tools.pdf_path", lambda ws, doc: asked.append(doc) or pdf)
+    monkeypatch.setattr("gamma.ai_tools.viewing.pdf_path", lambda ws, doc: asked.append(doc) or pdf)
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda ws, doc: asked.append(doc) or "fake.pdf")
     monkeypatch.setattr("gamma.ai_context.extract_text_pages",
                         lambda src, char_limit, empty_page_cap=50, start_page=1, label_pages=False:
@@ -873,7 +873,7 @@ def test_read_page_skips_the_lines_the_context_holds(org):
     shows: a read continues from the first line not shown, a range inside
     them and a file held whole are not read again, and the agent prompt
     says where to read on."""
-    from gamma.ai_tools import coverage_lines
+    from gamma.ai_tools.prompt import coverage_lines
 
     c, ids = org
     texts = make_folder(c, "text files held")
@@ -926,3 +926,117 @@ def test_a_secrets_file_and_a_listed_file_are_not_read(org):
     assert text == '".env" is a text file: read it with read_page'
     for page in (secret, listed, r.json()["id"]):
         c.delete(f"/api/blocks/{page}")
+
+
+def _writer_scope(ids, folder_id="", **more):
+    """A folder chat that writes as Gamma AI for the module's account."""
+    from gamma import agents
+
+    return {**folder(folder_id), "actor": ids["user_id"], "can_write": True, "can_comment": True,
+            "agent": agents.stamp(agents.gamma(), ids["user"]), **more}
+
+
+def test_create_page_makes_a_page_the_chat_then_writes_in(org):
+    c, ids = org
+    scope = _writer_scope(ids, ids["readout"])
+    text, action = run_agent_tool(ids["ws"], scope, "create_page", {"title": "  Reading   notes "})
+    assert text.startswith("ok — made the page [Reading notes](/?page="), text
+    page_id = action["block_id"]
+    assert (action["kind"], action["page_id"], action["to"], action["revert"]) == (
+        "create", page_id, "readout", {"made": page_id})
+    made = props(c, page_id)
+    assert made["content"] == "Reading notes" and made["properties"]["folders"] == [ids["readout"]]
+    # in the chat's reach: its notes go in with create_block
+    text, _ = run_agent_tool(ids["ws"], scope, "create_block", {"parent_id": page_id, "content": "First note"})
+    assert text.startswith("ok"), text
+    # a folder below that does not exist yet is made; a page inside a page is filed where that page is
+    text, action = run_agent_tool(ids["ws"], scope, "create_page", {"title": "Plan", "folder": "plans"})
+    assert action["to"] == "readout / plans" and ["readout", "plans"] in folder_names(c).values()
+    text, action = run_agent_tool(ids["ws"], scope, "create_page", {"title": "Inside", "parent_id": ids["a"]})
+    assert props(c, action["block_id"])["properties"]["parent_page"] == ids["a"]
+    assert action["inside"] == props(c, ids["a"])["content"]
+    # a page out of the chat's reach is refused, and a page chat makes no page
+    text, action = run_agent_tool(ids["ws"], scope, "create_page", {"title": "x", "parent_id": ids["note"]})
+    assert action["error"] and "outside this chat's scope" in text
+    assert "create_page" not in {t["name"] for t in agent_tools("page")}
+
+
+def test_a_made_page_reverts_once_it_is_empty_again(org):
+    import pytest
+
+    from gamma import ai_revert
+    from gamma.blocks_store import TRASH
+    from gamma.db import connect_pages_db
+
+    c, ids = org
+    scope = _writer_scope(ids, ids["cooling"])
+    _, action = run_agent_tool(ids["ws"], scope, "create_page", {"title": "Scratch"})
+    page_id = action["block_id"]
+    run_agent_tool(ids["ws"], scope, "create_block", {"parent_id": page_id, "content": "a note"})
+
+    def revert(**more):
+        return ai_revert.revert_change(ids["ws"], "made", page_id, action["revert"], actor=ids["user_id"], **more)
+
+    def place():
+        with connect_pages_db(ids["ws"]) as conn:
+            return conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()[0]
+
+    with pytest.raises(ai_revert.RevertError) as stop:  # a note on it: asked first
+        revert()
+    assert stop.value.conflict == "filled" and stop.value.preview == {"page": True, "children": 1, "pages": 0,
+                                                                      "threads": 0}
+    revert(force=True)
+    assert place() == TRASH  # to Recently deleted, never for good
+    revert(redo=True)
+    assert place() == "root"
+    _, empty = run_agent_tool(ids["ws"], scope, "create_page", {"title": "Empty"})
+    assert ai_revert.revert_change(ids["ws"], "made", empty["block_id"], empty["revert"],
+                                   actor=ids["user_id"])["noop"] is False
+
+
+def test_backlinks_list_the_notes_the_chat_reaches(org):
+    c, ids = org
+
+    def page(title, folder_id, content=""):
+        r = c.post("/api/blocks", json={"parent_id": "root", "content": title,
+                                        "properties": {"folders": [folder_id]}})
+        page_id = r.json()["id"]
+        if content:
+            c.post("/api/blocks", json={"parent_id": page_id, "content": content})
+        return page_id
+
+    target = page("Target", ids["readout"])
+    near = page("Near", ids["readout"], f"see [[{target}]]")
+    far = page("Far", ids["cooling"], f"also [[{target}]]")
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "backlinks", {"block_id": target})
+    assert text.startswith("1 note links to the page “Target”") and near in text and far not in text, text
+    text, _ = run_agent_tool(ids["ws"], folder(""), "backlinks", {"block_id": target})
+    assert text.startswith("2 notes link") and far in text
+    # an id is matched as written: its "_" is no wildcard (the route's too)
+    r = c.post("/api/pages", json={"id": "pg_and_more1", "title": "Underscored"})
+    assert r.status_code == 200, r.text
+    c.post("/api/blocks", json={"parent_id": near, "content": "[[pgXandXmore1]]"})
+    assert c.get("/api/blocks/pg_and_more1/backlinks").json() == {"backlinks": []}
+    # a link showing words of its own ([[id|words]], \| in a table) links all the same
+    c.post("/api/blocks", json={"parent_id": near, "content": "the [[pg_and_more1|underscored one]]"})
+    c.post("/api/blocks", json={"parent_id": near, "content": "| [[pg_and_more1\\|cell]] |\n| --- |"})
+    found = c.get("/api/blocks/pg_and_more1/backlinks").json()["backlinks"]
+    assert sorted(b["content"].split("[[")[0] for b in found) == ["the ", "| "]
+
+
+def test_show_page_and_export_need_the_app(org):
+    c, ids = org
+    scope = _writer_scope(ids, ids["readout"], app=True)
+    names = {t["name"] for t in agent_tools("folder", has=frozenset({"app"}))}
+    assert {"show_page", "export"} <= names and not {"show_page", "export"} & {t["name"] for t in agent_tools("folder")}
+    text, action = run_agent_tool(ids["ws"], scope, "show_page", {"page_id": ids["a"], "pdf_page": 3,
+                                                                  "quote": "cat  qubits"})
+    assert text.startswith(f"ok — the app shows the user “{props(c, ids['a'])['content']}” at PDF page 3"), text
+    assert action["show"] == {"page_id": ids["a"], "pdf_page": 3, "quote": "cat qubits"}
+    text, action = run_agent_tool(ids["ws"], scope, "show_page", {"page_id": ids["note"]})
+    assert action["error"] and "outside this chat's scope" in text
+    text, action = run_agent_tool(ids["ws"], scope, "export", {"page_id": ids["b"], "format": "bibtex"})
+    assert action["kind"] == "export" and action["job"]["kind"] == "export", text
+    assert action["job"]["id"] in {j["id"] for j in c.get("/api/jobs").json()["jobs"]}  # the person's job
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "export", {"page_id": ids["b"]})
+    assert action["error"] and "not enabled" in text  # no app, no export

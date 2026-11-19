@@ -33,7 +33,6 @@ each recipient's open page sockets hear a content-free ``{t: "inbox"}``
 """
 
 import json
-import re
 from datetime import datetime, timedelta, timezone
 
 from . import agents, collab, join_requests, mentions, workspaces
@@ -43,6 +42,7 @@ from .auth import (DISK_CLIENT, LINK_ACTOR_PREFIX, MIRROR_ACTOR, ZOTERO_ACTOR, Z
 from .blocks_store import new_block_id, page_ancestors, write_lock
 from .db import account_names, connect_pages_db, connect_users_db, format_stamp, page_now
 from .logbuf import log
+from .note_markup import BLOCK_REF_RE, ref_alias
 
 FILTERS = ("unread", "all", "archived")
 MAX_RECIPIENTS = 25        # accounts one event notifies at most
@@ -208,17 +208,17 @@ def _snippet(text: str) -> str:
     return " ".join((text or "").split())[:SNIPPET_CHARS]
 
 
-_REF_RE = re.compile(r"!?\[\[([A-Za-z0-9_-]{1,64})\]\]")
 _REF_NAME_CHARS = 80
 
 
 def _named_refs(ws: str, text: str) -> str:
-    """The text with its [[id]] links as the words they show: a page's
-    title, a note's first line, read from the workspace's pages.db when the
-    item is written, so the Inbox names what a comment or note links to
-    rather than its id. A link to nothing it finds, or a read that fails,
-    leaves the text as it is."""
-    ids = list(dict.fromkeys(_REF_RE.findall(text or "")))[:50]
+    """The text with its [[id]] links as the words they show: a
+    ``[[id|words]]``'s words, else a page's title, a note's first line, read
+    from the workspace's pages.db when the item is written, so the Inbox
+    names what a comment or note links to rather than its id. A link to
+    nothing it finds, or a read that fails, leaves the text as it is."""
+    text = BLOCK_REF_RE.sub(lambda m: ref_alias(m) or m[0], text or "")
+    ids = list(dict.fromkeys(m[2] for m in BLOCK_REF_RE.finditer(text) if len(m[2]) <= 64))[:50]
     if not ids:
         return text
     try:
@@ -234,7 +234,7 @@ def _named_refs(ws: str, text: str) -> str:
         first = " ".join((content or "").split("\n", 1)[0].split())
         if first:
             names[bid] = first[:_REF_NAME_CHARS]
-    return _REF_RE.sub(lambda m: names.get(m.group(1), m.group(0)), text)
+    return BLOCK_REF_RE.sub(lambda m: names.get(m[2], m[0]), text)
 
 
 def emit(kind: str, recipients, actor: str, ws: str, *, page_id: str = "", block_id: str = "",

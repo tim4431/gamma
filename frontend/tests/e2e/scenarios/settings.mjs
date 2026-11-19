@@ -1,5 +1,5 @@
-import { Account, FAKE_AI_MODELS, PYTHON, Server, arrived, fakeAiModels, keyLabel, keyParts, makePdf, wanted } from "../harness.mjs";
-import { execFileSync } from "node:child_process";
+import { Account, FAKE_AI_MODELS, PYTHON, ROOT, Server, arrived, fakeAiModels, keyLabel, keyParts, makePdf, wanted } from "../harness.mjs";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -1583,7 +1583,7 @@ export async function settingsScenarios(env) {
   });
 
   // Settings → Backups › Bucket (BackupBucket.jsx, gamma/offsite.py,
-  // gamma/bucket_snapshots.py, docs/dev/settings.md): an admin's section in
+  // gamma/snapshot_copies.py, docs/dev/settings.md): an admin's section in
   // a pane every account has. One row, the bucket's summary with Set up… /
   // Edit… (the editor dialog); backup tasks copy their snapshots to it.
   const bucketSection = (page) => page.locator('.settingsPane .setSection[data-setting="Bucket"]');
@@ -1615,7 +1615,7 @@ export async function settingsScenarios(env) {
       await row(page, "No bucket yet").waitFor();
       const sections = await page.locator(".settingsPane .setSection").evaluateAll((els) => els.map((el) => el.dataset.setting));
       const at = sections.indexOf("Bucket");
-      assertEq(sections.slice(at - 1, at + 2).join(" › "), "Periodic backup tasks › Bucket › Saved snapshots", "where the section sits");
+      assertEq(sections.slice(at - 1, at + 2).join(" › "), "Periodic backup tasks › Bucket › Google Drive", "where the section sits");
       assertEq((await bucketRows(page)).join(), "No bucket yet", "while nothing is saved, the summary alone: no switch, no schedule");
       assertEq(await row(page, "No bucket yet").getByRole("button").innerText(), "Set up…", "nothing saved yet: Set up…");
       assertEq(await bucketSection(page).getByRole("button").count(), 0, "no Save on the rule");
@@ -1886,6 +1886,156 @@ export async function settingsScenarios(env) {
     } finally {
       await ctx?.close();
       await managed.stop();
+    }
+  });
+
+  // Settings → Backups › Google Drive (BackupDrive.jsx, gamma/gdrive.py,
+  // gamma/gdrive_account.py, docs/dev/debugging.md "Google Drive"): a
+  // second server whose Google is the fake one (backend/tests/gdrive_fake.py
+  // over HTTP, its device codes asking for a 2 s interval), so nothing
+  // reaches Google. A code asked for and cancelled; another entered, which
+  // the fake approves, closing the dialog; Test; a backup task copying its
+  // snapshot into the folder, which Saved snapshots tags and, the snapshot
+  // deleted, lists alone and deletes from Drive; the folder renamed; and
+  // Disconnect, which revokes the token.
+  async function startFakeGoogle() {
+    const proc = spawn(PYTHON, ["-I", "backend/tests/gdrive_fake.py", "--port", "0", "--interval", "2"], {
+      cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+    });
+    let out = "";
+    const base = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`the fake Google did not start:\n${out}`)), 20000);
+      const read = (chunk) => {
+        out += chunk;
+        const found = /GOOGLE (\S+)/.exec(out);
+        if (found) { clearTimeout(timer); resolve(found[1]); }
+      };
+      proc.stdout.on("data", read);
+      proc.stderr.on("data", read);
+      proc.on("exit", (code) => { clearTimeout(timer); reject(new Error(`the fake Google exited (${code}):\n${out}`)); });
+    });
+    const stop = () => {
+      if (proc.exitCode != null) return;
+      if (process.platform === "win32") { try { execFileSync("taskkill", ["/pid", String(proc.pid), "/t", "/f"], { stdio: "ignore" }); } catch {} }
+      else proc.kill("SIGTERM");
+    };
+    return { base, stop, state: async () => (await fetch(`${base}/_fake/state`)).json(),
+      approve: () => fetch(`${base}/_fake/approve`, { method: "POST" }) };
+  }
+
+  await step("settings: Google Drive is connected with a code, tested, copied to by a backup task, read back in Saved snapshots and disconnected", async () => {
+    const google = await startFakeGoogle();
+    const drive = new Server({ env: { GAMMA_GOOGLE_DRIVE_CLIENT_ID: "fake-client.apps.googleusercontent.com",
+      GAMMA_GOOGLE_DRIVE_CLIENT_SECRET: "GOCSPX-fake", GAMMA_GOOGLE_OAUTH_BASE: google.base, GAMMA_GOOGLE_API_BASE: google.base } });
+    let ctx = null;
+    try {
+      await drive.start();
+      await drive.manage("create-user", "drive-admin", "drive-admin-pw");
+      await drive.manage("set-admin", "drive-admin", "on");
+      const admin = await new Account(drive, "drive-admin", "drive-admin-pw").login();
+      ctx = await admin.context(browser);
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const page = await openPage(ctx, drive.base);
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      const section = page.locator('.settingsPane .setSection[data-setting="Google Drive"]');
+      await section.waitFor();
+      const sections = await page.locator(".settingsPane .setSection").evaluateAll((els) => els.map((el) => el.dataset.setting));
+      const at = sections.indexOf("Google Drive");
+      assertEq(sections.slice(at - 1, at + 2).join(" › "), "Bucket › Google Drive › Saved snapshots", "where the section sits");
+      assertEq(await section.locator(".uiTag.admin").innerText(), "admin", "Google Drive is tagged an admin's");
+
+      // Connect…: the folder, then Google's code while the dialog waits; Cancel stops waiting.
+      const connect = page.getByRole("dialog", { name: "Connect Google Drive", exact: true });
+      const code = connect.getByRole("textbox", { name: "Code", exact: true });
+      await row(page, "Not connected").getByRole("button", { name: "Connect…", exact: true }).click();
+      assertEq(await connect.getByRole("textbox", { name: "Folder", exact: true }).inputValue(), "Gamma backups", "the folder's default");
+      await connect.getByRole("button", { name: "Get a code", exact: true }).click();
+      await code.waitFor();
+      assertEq(await code.inputValue(), "ABCD-0001", "the code Google gave");
+      assertEq(await connect.getByRole("link", { name: /^Open www\.google\.com\/device/ }).getAttribute("href"),
+        "https://www.google.com/device", "the link to Google's page");
+      await connect.getByText("Waiting for Google…", { exact: true }).waitFor();
+      await connect.getByRole("button", { name: "Cancel", exact: true }).click();
+      await connect.waitFor({ state: "detached" });
+      assertEq((await admin.api("/api/admin/gdrive")).pending, null, "Cancel stops waiting on the server too");
+      await row(page, "Not connected").getByRole("button", { name: "Connect…", exact: true }).click();
+      await connect.getByRole("button", { name: "Get a code", exact: true }).click();
+      await code.waitFor();
+      assertEq(await code.inputValue(), "ABCD-0002", "a new code");
+      await google.approve();
+      await connect.waitFor({ state: "detached", timeout: 20000 });
+      const connected = row(page, "someone@gmail.com");
+      await connected.waitFor();
+      assertEq(await connected.locator(".settingDesc").innerText(), "Gamma backups · backup tasks can copy their snapshots here");
+      const view = await admin.api("/api/admin/gdrive");
+      assert(view.connected && !JSON.stringify(view).includes("rt-"), "connected, and the token never reaches the browser");
+      await connected.getByRole("button", { name: "Test", exact: true }).click();
+      await connected.locator(".aiKeyCheck").filter({ hasText: "someone@gmail.com: 0 items in Gamma backups" }).waitFor({ timeout: 20000 });
+
+      // A new task copies there by default, the toggle naming where.
+      await page.getByRole("button", { name: "Add task", exact: true }).click();
+      const editor = page.getByRole("dialog", { name: "Add backup task", exact: true });
+      await editor.getByPlaceholder("e.g. Nightly research backup").fill("To Drive");
+      assert(await editor.getByRole("checkbox", { name: "Copy to Google Drive", exact: true }).isChecked(), "a new task copies to Drive");
+      assert((await editor.locator('[data-setting="Copy to Google Drive"]').innerText()).includes("someone@gmail.com › Gamma backups"),
+        "the toggle names the account and the folder");
+      assertEq(await editor.getByRole("checkbox", { name: "Copy to the bucket", exact: true }).count(), 0, "no bucket, no bucket toggle");
+      await editor.getByRole("checkbox", { name: "Include uploaded files", exact: true }).uncheck();
+      await editor.locator("ol li").first().waitFor(); // the schedule preview answered
+      await editor.getByRole("button", { name: "Create task", exact: true }).click();
+      await editor.waitFor({ state: "detached" });
+      const task = (await admin.api("/api/backup-tasks")).tasks.find((t) => t.name === "To Drive");
+      assert(task?.drive === true && !task.bucket, "the task was saved with Drive on");
+      const rowOf = page.getByRole("region", { name: "Periodic backup tasks" }).locator("tr", { hasText: "To Drive" });
+      assert((await rowOf.innerText()).includes("copies to Google Drive"), "the row says it copies to Google Drive");
+      await rowOf.getByRole("button", { name: "Actions for To Drive", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Run now", exact: true }).click();
+      await until(() => rowOf.innerText().then((t) => /finished|failed/i.test(t)), { timeout: 30000, what: "the run to finish" });
+      assert(/finished/i.test(await rowOf.innerText()), `the run finished: ${await rowOf.innerText()}`);
+      await until(() => rowOf.innerText().then((t) => t.includes("in Google Drive")), { what: "the Last run cell to say the copies went" });
+      const ws = (await admin.api("/api/workspaces/mine")).workspaces.find((w) => w.role === "owner").id;
+      const made = (await admin.api(`/api/workspaces/${ws}/backups`)).backups.find((b) => b.task_id === task.id);
+      const file = `Gamma backups/snapshots/${ws}/${made.name}.zip`;
+      const files = (await google.state()).files;
+      assertEq(files[file], made.size_bytes, `Drive holds ${file}, whole`);
+      assert(`Gamma backups/snapshots/${ws}/workspace.json` in files, "and the workspace's name beside it");
+      const tagged = page.locator(".aiProvRow").filter({ has: page.locator(".uiTag", { hasText: "in Google Drive" }) });
+      await until(async () => (await tagged.count()) >= 1, { what: "the snapshot to say it is in Google Drive" });
+
+      // The snapshot gone from the server, its copy is a row of its own, deleted from Drive there.
+      await admin.api(`/api/workspaces/${ws}/backups/${made.name}`, { method: "DELETE" });
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "detached" });
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      const only = page.locator(".aiProvRow", { hasText: "only in Google Drive" });
+      await until(async () => (await only.count()) === 1, { what: "the copy only Drive holds" });
+      await only.getByRole("button", { name: /^Delete the Google Drive copy from / }).click();
+      const question = page.locator(".confirmModal");
+      assert((await question.innerText()).includes("Delete the Google Drive copy of"), "the question names Drive");
+      await question.getByRole("button", { name: "Delete", exact: true }).click();
+      await until(async () => (await only.count()) === 0, { what: "the deleted copy to leave the list" });
+      assert(!(file in (await google.state()).files), "and Drive");
+
+      // Edit… renames the folder new copies go to, and holds Disconnect…, which revokes the access at Google.
+      const edit = page.getByRole("dialog", { name: "Edit Google Drive", exact: true });
+      await row(page, "someone@gmail.com").getByRole("button", { name: "Edit…", exact: true }).click();
+      await edit.getByRole("textbox", { name: "Folder", exact: true }).fill("Server A");
+      await edit.getByRole("button", { name: "Save", exact: true }).click();
+      await edit.waitFor({ state: "detached" });
+      assertEq(await row(page, "someone@gmail.com").locator(".settingDesc").innerText(), "Server A · backup tasks can copy their snapshots here");
+      await row(page, "someone@gmail.com").getByRole("button", { name: "Edit…", exact: true }).click();
+      await edit.getByRole("button", { name: "Disconnect…", exact: true }).click();
+      await page.locator(".confirmModal").getByRole("button", { name: "Disconnect", exact: true }).click();
+      await row(page, "Not connected").waitFor();
+      assertEq((await google.state()).revoked, 1, "the token was revoked at Google");
+      assertNoProblems(page);
+    } finally {
+      await ctx?.close();
+      await drive.stop();
+      google.stop();
     }
   });
 
@@ -2176,6 +2326,39 @@ export async function settingsScenarios(env) {
       const merged = (await user.api("/api/jobs")).jobs.find((job) => job.kind === "restore" && job.params.filename === "donor.zip");
       assertEq(merged?.state, "done");
       assertEq(merged.params.mode, "merge");
+    } finally { await ctx.close(); }
+  });
+
+  // Data → Duplicate… (docs/dev/workspaces.md "Copies between workspaces"):
+  // a new personal workspace with a copy of every page, made by a job; the
+  // dialog offers the copy's name, and the pill says it is done and opens it.
+  await step("settings: Duplicate… copies every page into a new personal workspace, which the pill opens", async () => {
+    const source = await user.api("/api/workspaces", { method: "POST", body: { name: "Dup source" } });
+    await user.api(`/api/blocks?ws=${source.id}`, { method: "POST", body: { parent_id: "root", content: "Duplicated page" } });
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Workspaces").click();
+      await page.locator(".settingsPane .aiProvRow").filter({ hasText: "Dup source" })
+        .getByRole("button", { name: "Data", exact: true }).click();
+      await page.locator(".ctxMenuItem", { hasText: "Duplicate…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Duplicate “Dup source”", exact: true });
+      await dialog.waitFor();
+      assertEq(await dialog.getByRole("textbox").inputValue(), "Dup source (copy)");
+      await dialog.getByRole("button", { name: "Duplicate", exact: true }).click();
+      const pill = page.locator(".statusPill", { hasText: "Duplicated “Dup source” as “Dup source (copy)”." });
+      await pill.waitFor({ timeout: 30000 });
+      const job = (await user.api("/api/jobs")).jobs.find((j) => j.kind === "workspace-copy" && j.params.ws === source.id);
+      assertEq(job?.state, "done");
+      const made = (await user.api(`/api/jobs/${job.id}`)).result.workspace;
+      assertEq((await user.api(`/api/workspaces/${made}`)).name, "Dup source (copy)");
+      const reloaded = page.waitForEvent("load", { timeout: 30000 });
+      await pill.getByRole("button", { name: "Open", exact: true }).click();
+      await reloaded;
+      await page.waitForSelector(".folderNewBtn");
+      assertEq(new URL(page.url()).searchParams.get("ws"), made);
+      await page.getByText("Duplicated page", { exact: true }).first().waitFor();
+      assertNoProblems(page);
     } finally { await ctx.close(); }
   });
 

@@ -8,9 +8,11 @@
 [![GitHub stars](https://img.shields.io/github/stars/tim4431/Gamma?style=flat&logo=github&color=eab308)](https://github.com/tim4431/Gamma/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/tim4431/Gamma?style=flat&logo=github&color=8b5cf6)](https://github.com/tim4431/Gamma/forks)
 
-<a href="https://apps.microsoft.com/detail/9N8WGWR2J2MV"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Download Gamma from the Microsoft Store" width="240"></a>
-<a href="https://testflight.apple.com/join/nTmSHDx6"><img src="./docs/assets/badges/testflight-ipad.svg" alt="Get the Gamma iPad app beta on TestFlight" width="240"></a>
-<a href="https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn"><img src="./docs/assets/badges/chrome-web-store.png" alt="Get the Gamma Connector browser extension from the Chrome Web Store" width="218"></a>
+<a href="https://apps.apple.com/us/app/gamma-pdf-reader/id6814705181?mt=12"><img src="./docs/assets/badges/mac-app-store.svg" alt="Download Gamma on the Mac App Store" width="172"></a>
+<a href="https://apps.microsoft.com/detail/9N8WGWR2J2MV"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Download Gamma from the Microsoft Store" width="161"></a>
+<a href="https://testflight.apple.com/join/nTmSHDx6"><img src="./docs/assets/badges/testflight-ipad.svg" alt="Get the Gamma iPad app beta on TestFlight" width="161"></a>
+<a href="https://github.com/tim4431/Gamma/releases/latest"><img src="./docs/assets/badges/android-apk.svg" alt="Download the Gamma Android app (APK) from GitHub Releases" width="161"></a>
+<a href="https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn"><img src="./docs/assets/badges/chrome-web-store.png" alt="Get the Gamma Connector browser extension from the Chrome Web Store" width="146"></a>
 
 **[Install](#install)** · **[User guide](./docs/user_guide/user_guide.md)** · [Design](./docs/design/README.md) · [Try the demo](https://demo.gammapdf.com) · [Website](https://gammapdf.com) · [Releases](https://github.com/tim4431/Gamma/releases)
 
@@ -75,7 +77,7 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 - **Live preview, Obsidian-style** — markdown, `$…$` / `$$…$$` math, code fences, callouts, tables, Mermaid diagrams and SVG figures render in place while the block you're on stays raw. Math gets bracket-pair coloring, `\command` autocomplete, and Tab hops between `{}` arguments.
 - **Pictures, tables and diagrams** — paste a screenshot and drag its edge to size it; tables are edited cell by cell, never as raw markdown; double-click a diagram to edit its source.
 - **Pages to write on** — type `/note` and a sheet of paper opens among your notes; write on it with a stylus or the mouse, or show a page's sheets large as a notebook.
-- **Link and embed** — `[[page]]` mentions, `/page` for a new page linked where you type, `![[block]]` embeds that edit the source in place, backlinks, and a "/" menu for everything else.
+- **Link and embed** — `[[page]]` mentions (`[[page|your words]]` to show your own text), `/page` for a new page linked where you type, `![[block]]` embeds that edit the source in place, backlinks, and a "/" menu for everything else.
 
 → Guide: [Notes](./docs/user_guide/user_guide.md#notes)
 
@@ -139,9 +141,12 @@ Coming from Zotero? A folder is a collection and a label is a tag. Importing or 
 
 ### Downloads
 
-Get the Windows app from the [**Microsoft Store**](https://apps.microsoft.com/detail/9N8WGWR2J2MV), the iPad app from [**TestFlight**](https://testflight.apple.com/join/nTmSHDx6), or download standalone installers and the Android APK from [**GitHub Releases**](https://github.com/tim4431/Gamma/releases/latest).
+Get the Mac app from the [**Mac App Store**](https://apps.apple.com/us/app/gamma-pdf-reader/id6814705181?mt=12), the Windows app from the [**Microsoft Store**](https://apps.microsoft.com/detail/9N8WGWR2J2MV), the iPad app from [**TestFlight**](https://testflight.apple.com/join/nTmSHDx6), or download standalone installers and the Android APK from [**GitHub Releases**](https://github.com/tim4431/Gamma/releases/latest).
 
-- **Desktop app** (Windows installer, macOS dmg, Debian/Ubuntu deb) — a self-contained Gamma with local libraries on your disk, no Docker, Python or Node. It also opens any Gamma server you host (the NAS, a VPS) and keeps [offline copies](./docs/user_guide/user_guide.md#offline-copies) of its workspaces. Details: [desktop/](./desktop/). Builds are not notarized: Windows SmartScreen → *More info → Run anyway*; macOS says *Apple could not verify Gamma* on first launch → *System Settings → Privacy & Security → Open Anyway* (once); Linux: `sudo apt install ./Gamma-<version>-linux-amd64.deb`. Windows and Linux apps update themselves.
+- **Desktop app** — a self-contained Gamma with local libraries on your disk, no Docker, Python or Node. It also opens any Gamma server you host (the NAS, a VPS) and keeps [offline copies](./docs/user_guide/user_guide.md#offline-copies) of its workspaces. Details: [desktop/](./desktop/).
+  - **macOS** (Apple silicon) — two builds, use either: the [**Mac App Store**](https://apps.apple.com/us/app/gamma-pdf-reader/id6814705181?mt=12)'s, which the store keeps up to date, or the dmg from GitHub Releases. The store's runs in Apple's sandbox: it opens PDFs from the Finder but not folders, and keeps its data apart from a dmg install's. The dmg is not notarized: on first launch macOS says *Apple could not verify Gamma* → *System Settings → Privacy & Security → Open Anyway* (once).
+  - **Windows** — from the [**Microsoft Store**](https://apps.microsoft.com/detail/9N8WGWR2J2MV), or the installer from GitHub Releases, which is not signed: SmartScreen → *More info → Run anyway*. Both update themselves.
+  - **Debian/Ubuntu** — `sudo apt install ./Gamma-<version>-linux-amd64.deb`; it updates itself.
 - **iPad app** (beta) — join on [**TestFlight**](https://testflight.apple.com/join/nTmSHDx6): install Apple's TestFlight app, then open the link on the iPad. It opens your servers with the Pencil captured natively, and keeps a workspace on the iPad itself, so it works with no connection. Details: [ipad/](./ipad/).
 - **Android app** — `Gamma-<version>-android-arm64.apk` from [**GitHub Releases**](https://github.com/tim4431/Gamma/releases/latest), on every release; on Google Play once it is listed there. Android 10 or later on 64-bit ARM, phones and tablets. Open the APK on the device and allow your browser to install apps when Android asks; install the next release's APK over it to update. It opens your servers with a stylus (S Pen, USI, Wacom) captured natively, and keeps a workspace on the device itself, so it works with no connection. Details: [android/](./android/).
 - **iPad, phone, any browser** — open your server and install it from the browser; see [Install as an app](./docs/user_guide/user_guide.md#install-as-an-app).

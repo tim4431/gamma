@@ -33,7 +33,7 @@ next round starts over; from then on vaults.db holds it all.
      (``obsidian_export.page_dir``); a sub-page's directory is no folder.
    A cloud placeholder is taken by its stat and never read: a note as the
    client wrote it has its hash learnt by the first pull that finds its
-   bytes here (``sync.UNREAD``), a PDF keeps its identity. A file that
+   bytes here (``pull.UNREAD``), a PDF keeps its identity. A file that
    is not there is not taken: pull writes it again. But a pass during which
    the disk went (the marker gone by its end) is ``Offline``, nothing taken,
    as a scan's is: files the disk no longer answers for are not files gone.
@@ -50,7 +50,7 @@ next round starts over; from then on vaults.db holds it all.
    the commit point on it stands for nothing.
 
 The ``gamma_id`` line those notes carry is read where a file has it, when its
-row does not say which page it is (``sync._gamma_id``), and no pull
+row does not say which page it is (``round._gamma_id``), and no pull
 writes it again.
 """
 
@@ -65,7 +65,8 @@ from ..logbuf import log
 from ..obsidian_export import page_dir
 from ..work_folders import ignore_rules
 from . import disk, store
-from .sync import BOTH_PDF, UNREAD, _gamma_id
+from .pull import BOTH_PDF, UNREAD
+from .round import _gamma_id
 
 UPGRADED = "upgraded_at"   # the state's key, and the status's, of when the folder was taken onto the engine
 
@@ -151,9 +152,9 @@ def _files(root: Path, link: dict, entries: dict, docs: dict) -> dict:
     ``docs``: each page's PDF in Gamma now. A PDF changed on disk whose page's
     PDF Gamma replaced too, which the client keeps, is kept: its stat the
     file's, so that push reads it once it changes again (a PDF replaced in
-    Gamma stands until then), and pull reports it (``sync.BOTH_PDF``).
+    Gamma stands until then), and pull reports it (``pull.BOTH_PDF``).
     A cloud placeholder is never read: a note as the client wrote it waits
-    for its hash (``sync.UNREAD``), a PDF keeps no ``/ID``."""
+    for its hash (``pull.UNREAD``), a PDF keeps no ``/ID``."""
     out, now = {}, time.time()
     for path, entry in entries.items():
         kind = gamma_sync.kind(entry)

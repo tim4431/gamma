@@ -5,12 +5,43 @@
 // keystroke in one block re-renders no other row.
 import { gammaLinkIds } from "../shared/model/gammaLinks.js";
 import { sameObject } from "../shared/lib/keepIfSame.js";
+import { t } from "../shared/i18n/i18n.js";
 
 export const NO_LABELS = Object.freeze({});
 
-// A [[ref]] in a block's content, its id as the group: the one spelling
+// A [[ref]] in a block's content, its id the first group: the one spelling
 // every scan of a block's refs uses (the rows, the backlinks, the picker).
-export const REF_RE = /\[\[([a-zA-Z0-9_-]+)\]\]/g;
+// `[[id|words]]` shows the words in place of what it names (`\|` too, the
+// pipe a table's cell escapes, as Obsidian writes it): the second group,
+// read through refWords. A "!" before it embeds the block, and an embed's
+// words are none (EMBED_RE). The server's twin is gamma/note_markup.py
+// BLOCK_REF_RE.
+export const REF_RE = /\[\[([a-zA-Z0-9_-]+)(?:\\?\|([^[\]\n]*))?\]\]/g;
+export const EMBED_RE = new RegExp(`!${REF_RE.source}`, "g");
+// A mention or an embed, the "!" the match's first character.
+export const CHIP_RE = new RegExp(`!?${REF_RE.source}`, "g");
+
+// A REF_RE match's words (its second group) as the chip shows them, "" for
+// none: blank words are none, and the chip shows its target's own.
+export const refWords = (words) => (words || "").trim();
+
+// The hover title of a chip showing its own words: what it names, a note's
+// first line with the page it is on ("Line · From: Page"), a page's title.
+export function refTargetTitle(ref) {
+  const line = String(ref?.content || "").trim().split("\n")[0].trim();
+  const page = String(ref?.page_title || "").trim();
+  const from = page && page !== line ? t("From: {page_title}", { page_title: page }) : "";
+  return [line, from].filter(Boolean).join(" · ") || undefined;
+}
+
+// What is between a hand-typed [[title]]'s brackets, no page answering it,
+// as its dashed chip reads: the words after its first pipe when it has some
+// ([[title|words]]), else the title.
+export function unlinkedText(inner) {
+  const at = inner.search(/\\?\|/);
+  if (at < 0) return inner;
+  return refWords(inner.slice(at).replace(/^\\?\|/, "")) || inner.slice(0, at).trim() || inner;
+}
 
 // A cached ref as the chips and embed cards read it: the block's text and
 // its page's title, or, for a block no page holds (App's onFetchRefs), its

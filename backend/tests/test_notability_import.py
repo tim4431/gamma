@@ -38,7 +38,7 @@ def send(client, data: bytes, name: str = "notes.zip", *, folder: str = "", sele
     fields = {"folder": folder}
     if selected is not None:
         fields["selected"] = json.dumps(selected)
-    return client.post("/api/import/notability/preview" if preview else "/api/import/notability",
+    return client.post("/api/import/note-apps/preview" if preview else "/api/import/note-apps",
                        files={"file": (name, data, "application/zip")}, data=fields)
 
 
@@ -100,25 +100,6 @@ def test_a_preview_writes_nothing_and_lists_each_note(accounts):
         ("Export/Biology/Cells.note", "source"), ("Export/Physics/Waves.note", "source"),
         ("Export/readme.txt", "not_imported")}
     assert plan["pages_created"] == 0 and plan["ok"] is True
-
-
-def test_the_review_imports_the_selected_note(accounts):
-    owner = accounts["nbi_owner"]
-    upload = fx.zip_of({"A.note": note("Reviewed one", curves=[fx.curve(WORKED)]),
-                        "B.note": note("Reviewed two", curves=[fx.curve(WORKED)])})
-    r = owner.post("/api/import/review", data={"source": "notability"},
-                   files={"file": ("pair.zip", upload, "application/zip")})
-    assert r.status_code == 200, r.text
-    plan = r.json()
-    chosen = next(p for p in plan["pages"] if p["title"] == "Reviewed two")
-    started = owner.post("/api/jobs/import", json={"review_id": plan["review_id"], "selected": chosen["selection_ids"]})
-    assert started.status_code == 200, started.text
-    jobs.wait(started.json()["id"])
-    job = owner.get(f"/api/jobs/{started.json()['id']}").json()
-    assert job["state"] == "done", job.get("error")
-    result = job["result"]
-    assert result["pages_created"] == 1 and [p["title"] for p in result["pages"]] == ["Reviewed two"]
-    assert result["strokes_imported"] == 1
 
 
 # --- what a note becomes -------------------------------------------------------------------
@@ -539,7 +520,7 @@ def test_a_packed_note_is_opened_only_while_it_is_read(monkeypatch):
     monkeypatch.setattr(import_zip.tempfile, "TemporaryFile", tracked)
     upload = fx.zip_of({f"N{i}.note": note(f"Many {i}", curves=[fx.curve(WORKED)]) for i in range(3)})
     with connect_pages_db(ws) as conn:
-        report = ni.import_notes(ws, io.BytesIO(upload), conn, name="many.zip", actor="nbi")
+        report = app.import_note_apps(ws, io.BytesIO(upload), conn, name="many.zip", actor="nbi")
     assert report["pages_created"] == 3 and len(spools) == 3 and all(f.closed for f in spools)
 
 
@@ -594,7 +575,7 @@ def imported_at_once(monkeypatch, ws: str, uploads: dict) -> dict:
     def run(name, data):
         try:
             with connect_pages_db(ws) as conn:
-                reports[name] = ni.import_notes(ws, io.BytesIO(data), conn, name=f"{name}.note", actor="nbi")
+                reports[name] = app.import_note_apps(ws, io.BytesIO(data), conn, name=f"{name}.note", actor="nbi")
         except BaseException as exc:  # noqa: BLE001 — failed below, with the others let go
             errors.append(exc)
             together.abort()
@@ -664,7 +645,7 @@ def test_a_note_whose_page_fails_to_write_leaves_no_folder(monkeypatch):
     upload = fx.zip_of({"Export/Failed/Failed.note": note("Failed note", curves=[fx.curve(WORKED)]),
                         "Export/Kept/Kept.note": note("Kept note", curves=[fx.curve(WORKED)])})
     with connect_pages_db(ws) as conn:
-        report = ni.import_notes(ws, io.BytesIO(upload), conn, name="Failed.zip", actor="nbi")
+        report = app.import_note_apps(ws, io.BytesIO(upload), conn, name="Failed.zip", actor="nbi")
     assert report["pages_created"] == 1
     assert report["skipped"] == [{"title": "Failed note", "reason": "the write failed"}]
     with connect_pages_db(ws) as conn:
@@ -680,9 +661,9 @@ def test_what_is_refused(accounts):
     r = send(owner, b"noteSN_FILE_VER_20230015" + bytes(64), "supernote.note")
     assert r.status_code == 400 and r.json()["detail"] == nb.SUPERNOTE_REASON
     r = send(owner, b"%PDF-1.7 not a zip", "file.note")
-    assert r.status_code == 400 and r.json()["detail"] == nb.NO_NOTES_REASON
+    assert r.status_code == 400 and r.json()["detail"] == app.NO_NOTES_REASON
     r = send(owner, fx.zip_of({"readme.txt": b"x"}), "other.zip")
-    assert r.status_code == 400 and r.json()["detail"] == nb.NO_NOTES_REASON
+    assert r.status_code == 400 and r.json()["detail"] == app.NO_NOTES_REASON
     beside = imported(owner, fx.zip_of({"Old.ntb": fx.ntb(), "Renamed.note": fx.ntb(),
                                         "New.note": note("Beside a damaged ntb")}))
     assert beside["pages_created"] == 1  # an .ntb named .note is read as one, and neither reads
@@ -817,7 +798,7 @@ def test_a_stopped_import_keeps_the_notes_it_finished():
 
     with connect_pages_db(ws) as conn:
         with pytest.raises(jobs.Cancelled):
-            ni.import_notes(ws, io.BytesIO(upload), conn, name="stop.zip", actor="nbi", progress=progress)
+            app.import_note_apps(ws, io.BytesIO(upload), conn, name="stop.zip", actor="nbi", progress=progress)
     with connect_pages_db(ws) as conn:
         titles = [r[0] for r in conn.execute("SELECT content FROM unified_blocks WHERE parent_id = 'root'")]
     assert "Stopped 0" in titles and "Stopped 1" not in titles
@@ -828,7 +809,7 @@ def test_a_viewer_cannot_import(accounts):
     owner = account_of("nbi_owner")
     ws = workspaces.create("Notability shared", owner, kind="shared")["id"]
     workspaces.set_member(ws, account_of("nbi_other"), "viewer", by=owner)
-    for path in ("/api/import/notability", "/api/import/notability/preview"):
+    for path in ("/api/import/note-apps", "/api/import/note-apps/preview"):
         r = accounts["nbi_other"].post(path, headers={"X-Gamma-Workspace": ws},
                                        files={"file": ("x.note", note("Viewer note"), "application/zip")})
         assert r.status_code == 403, r.text

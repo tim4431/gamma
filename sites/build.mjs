@@ -11,12 +11,14 @@
 //                        Cloud account, the user guide and the design pages (DOCS below)
 //   ./dist/sitemap.xml   every page above
 //
-// `node build.mjs --strict` fails on a broken internal link, picture or anchor
-// (CI does this); without the flag they are warnings.
+// `node build.mjs --strict` fails on a broken internal link, picture or anchor,
+// or a diagram wider than the page's column (CI does this); without the flag
+// they are warnings.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Marked } from 'marked';
+import { renderMermaidSVG } from 'beautiful-mermaid';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -35,7 +37,9 @@ const MEDIA = {
   'logo.svg': 'docs/assets/branding/gamma-logo.svg',
   'app.webp': 'docs/assets/screenshots/hero-app.webp',
   'hero-light.png': 'docs/assets/branding/gamma-hero-light.png',
+  'mac-app-store.svg': 'docs/assets/badges/mac-app-store.svg',
   'testflight-ipad.svg': 'docs/assets/badges/testflight-ipad.svg',
+  'android-apk.svg': 'docs/assets/badges/android-apk.svg',
   'chrome-web-store.png': 'docs/assets/badges/chrome-web-store.png',
   'demo-native-agentic.webp': 'docs/assets/demos/demo-native-agentic.webp',
   'inter.woff2': 'desktop/ui/fonts/inter-latin-wght-normal.woff2',
@@ -180,6 +184,47 @@ const resolver = page => {
   };
 };
 
+// A ```mermaid fence. GitHub draws it itself; here it becomes an inline SVG at
+// build time (beautiful-mermaid: a layout in plain JavaScript, no browser), so
+// the page runs no script for it and fetches nothing. The drawing's colours
+// are CSS variables, renamed to --dg-* so the site's own --bg, --line, --accent
+// … cannot leak in, and set from the site's tokens by `.diagram` in
+// styles.css, so a diagram follows light and dark. Its Google Fonts import is
+// dropped for the page's own faces, its ids are made unique on the page, and
+// an accTitle / accDescr line (which GitHub reads too) labels it. A diagram
+// that does not render fails the build; one wider than the column is a warning
+// (an error under --strict), since it would be shrunk until it reads badly.
+const DIAGRAM_WIDTH = 720; // .docs__main's 820px less the figure's padding
+let diagrams = 0;
+const diagram = (source, page) => {
+  const acc = key => source.match(new RegExp(`^\\s*${key}\\s*:\\s*(.+)$`, 'm'))?.[1].trim();
+  const [title, descr] = [acc('accTitle'), acc('accDescr')];
+  let svg;
+  try {
+    svg = renderMermaidSVG(source.replace(/^\s*acc(Title|Descr)\s*:.*$/gm, ''), { transparent: true, padding: 12 });
+  } catch (e) {
+    throw new Error(`${page.source}: a mermaid diagram does not render: ${e.message}`);
+  }
+  const prefix = `d${++diagrams}-`;
+  for (const id of new Set([...svg.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]))) {
+    svg = svg.replaceAll(`id="${id}"`, `id="${prefix}${id}"`).replaceAll(`url(#${id})`, `url(#${prefix}${id})`).replaceAll(`href="#${id}"`, `href="#${prefix}${id}"`);
+  }
+  svg = svg
+    .replace(/^\s*@import url\([^)]*\);\s*$/gm, '')
+    .replace(/font-family: 'Inter'[^;]*;/g, 'font-family: var(--font);')
+    .replace(/font-family: 'JetBrains Mono'[^;]*;/g, 'font-family: var(--mono);')
+    .replace(/--(bg|fg|line|accent|muted|surface|border)(?![\w-])/g, '--dg-$1')
+    .replace(/^<svg\b[^>]*>/, tag => tag.replace(/\sstyle="[^"]*"/, '')
+      .replace('<svg', `<svg role="img"${title ? ` aria-label="${esc(descr ? `${title}: ${descr}` : title)}"` : ''}`));
+  const width = Number(svg.match(/^<svg\b[^>]*\swidth="([\d.]+)"/)?.[1]);
+  if (width > DIAGRAM_WIDTH) warn(`${page.source}: diagram ${title ? `"${title}" ` : ''}is ${Math.round(width)}px wide, more than the column's ${DIAGRAM_WIDTH}px`);
+  // On a narrow screen it scrolls sideways rather than shrinking below 75 %.
+  return `<figure class="diagram"><div class="diagram__scroll">${svg.replace(/^<svg\b/, `<svg style="min-width:${Math.round(width * 0.75)}px"`)}</div></figure>\n`;
+};
+
+// GitHub's alerts, `> [!NOTE]` … `> [!CAUTION]`, as callouts.
+const CALLOUTS = { NOTE: 'Note', TIP: 'Tip', IMPORTANT: 'Important', WARNING: 'Warning', CAUTION: 'Caution' };
+
 const render = page => {
   const md = fs.readFileSync(path.join(ROOT, page.source), 'utf8');
   const resolve = resolver(page);
@@ -196,8 +241,34 @@ const render = page => {
         return `<h${depth} id="${id}">${this.parser.parseInline(tokens)}${anchor}</h${depth}>\n`;
       },
       code({ text, lang }) {
-        const cls = lang ? ` class="language-${esc(lang.split(/\s/)[0])}"` : '';
+        const language = lang?.split(/\s/)[0];
+        if (language === 'mermaid') return diagram(text, page);
+        // A `text` fence is a picture made of characters (a tree, a layout),
+        // not something to copy and run: a light box with no Copy button.
+        if (language === 'text') return `<div class="code code--figure"><pre><code class="language-text">${esc(text)}\n</code></pre></div>\n`;
+        const cls = language ? ` class="language-${esc(language)}"` : '';
         return `<div class="code"><pre><code${cls}>${esc(text)}\n</code></pre><button class="copy" type="button" data-copy>Copy</button></div>\n`;
+      },
+      blockquote({ tokens }) {
+        const html = this.parser.parse(tokens);
+        const m = html.match(/^<p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/);
+        if (!m) return `<blockquote>\n${html}</blockquote>\n`;
+        const kind = m[1].toLowerCase();
+        const body = html.slice(m[0].length).replace(/^<\/p>\s*/, '');
+        return `<div class="callout callout--${kind}"><p class="callout__title">${CALLOUTS[m[1]]}</p>\n${body.startsWith('<') ? body : `<p>${body}`}</div>\n`;
+      },
+      // A table whose every row starts with a link to a page of the site, and
+      // says what it is in one more cell, is a list of pages: shown as cards.
+      table({ header, rows }) {
+        if (header.length !== 2 || !rows.length) return false;
+        const cards = rows.map(([first, second]) => {
+          const parts = first.tokens.filter(t => !(t.type === 'text' && !t.text.trim()));
+          if (parts.length !== 1 || parts[0].type !== 'link') return null;
+          const href = resolve(parts[0].href);
+          return pages.some(p => p.url === href) ? { href, title: plain(parts[0].tokens), text: plain(second.tokens) } : null;
+        });
+        if (cards.some(c => !c)) return false;
+        return `<ul class="cards">\n${cards.map(c => `<li><a href="${esc(c.href)}"><strong>${esc(c.title)}</strong><span>${esc(c.text)}</span></a></li>`).join('\n')}\n</ul>\n`;
       },
       link({ href, title, tokens }) {
         const t = title ? ` title="${esc(title)}"` : '';
@@ -244,12 +315,54 @@ ${s.pages.map(p => {
 </nav>
 </details>`;
 
+// Beside the page on a wide screen: its headings, the section it is reading
+// marked by site.js. Narrower, the sidebar's list of the page's sections
+// stands in for it (styles.css shows one or the other).
+const toc = page => {
+  const items = [];
+  for (const h of page.headings.filter(h => h.depth === 2 || h.depth === 3)) {
+    if (h.depth === 2) items.push({ ...h, children: [] });
+    else if (items.length) items.at(-1).children.push(h);
+  }
+  if (!items.length) return '';
+  const link = h => `<a href="#${h.id}">${esc(h.text)}</a>`;
+  return `<aside class="doctoc" aria-label="On this page">
+<p class="doctoc__title">On this page</p>
+<ol>
+${items.map(h => `<li>${link(h)}${h.children.length ? `<ol>${h.children.map(c => `<li>${link(c)}</li>`).join('')}</ol>` : ''}</li>`).join('\n')}
+</ol>
+<a class="doctoc__top" href="#main">Back to top</a>
+</aside>`;
+};
+// Docs › the section › this page, above the title of any page but the
+// documentation's front page.
+const crumbs = page => {
+  if (page.url === '/docs/') return '';
+  const first = pages.find(p => p.section === page.section);
+  const trail = [`<a href="/docs/">Docs</a>`];
+  if (first !== page) trail.push(`<a href="${first.url}">${esc(page.section)}</a>`);
+  trail.push(`<span aria-current="page">${esc(first === page ? page.section : page.title)}</span>`);
+  return `<nav class="crumbs" aria-label="Breadcrumb">${trail.join('<span class="crumbs__sep" aria-hidden="true">/</span>')}</nav>\n`;
+};
+// The pages before and after this one in its section.
+const pager = page => {
+  const list = pages.filter(p => p.section === page.section);
+  const i = list.indexOf(page);
+  const [prev, next] = [list[i - 1], list[i + 1]];
+  if (!prev && !next) return '';
+  const card = (p, cls, label) => p ? `<a class="pager__${cls}" href="${p.url}"><span>${label}</span>${esc(p.title)}</a>` : '<span></span>';
+  return `<nav class="pager" aria-label="${esc(page.section)} pages">${card(prev, 'prev', 'Previous')}${card(next, 'next', 'Next')}</nav>\n`;
+};
+
 for (const page of pages) {
   const html = expand(template(page.section ? 'doc' : 'page'))
     .replaceAll('{{title}}', esc(page.title))
     .replaceAll('{{description}}', esc(page.description))
     .replaceAll('{{path}}', page.url)
     .replace('{{nav}}', () => (page.section ? nav(page) : ''))
+    .replace('{{crumbs}}', () => (page.section ? crumbs(page) : ''))
+    .replace('{{toc}}', () => (page.section ? toc(page) : ''))
+    .replace('{{pager}}', () => (page.section ? pager(page) : ''))
     .replace('{{content}}', () => page.html)
     .replace('{{source}}', () => `Rendered from <a href="${REPO}/blob/${BRANCH}/${page.source}">${page.source}</a> in the Gamma repository.`);
   write(page.rel, html);

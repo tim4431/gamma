@@ -450,9 +450,11 @@ export async function motionScenarios(env) {
       await upload([1, 2].map((i) => ({ name: `quick-${i}.pdf`, mimeType: "application/pdf", buffer: Buffer.from(makePdf([[`Quick ${i}`]])) })));
       const tray = page.locator(live(".tasksPopover"));
       const row = (text) => tray.locator(live(".taskRow"), { hasText: text });
+      // (files picked together go up as one batch, on one row)
+      const QUICK = "Upload 2 files";
       // (what the quick ones start, indexing and the rest, over before the slow one)
       await page.click("button[aria-label='Background tasks']");
-      await row("quick-2.pdf").waitFor();
+      await row(QUICK).waitFor();
       await sleep(2000); // (a poll's turn: the jobs the uploads start show)
       await until(async () => !(await tray.locator(live(".popoverSection"), { hasText: "In progress" }).count()), { timeout: 15000, what: "nothing running" });
       await page.keyboard.press("Escape");
@@ -463,7 +465,7 @@ export async function motionScenarios(env) {
       await upload([{ name: "slow.pdf", mimeType: "application/pdf", buffer: Buffer.from(makePdf([["Slow"]], { padBytes: 1024 * 1024 })) }]);
       await page.click("button[aria-label='Background tasks']");
       await row("slow.pdf").locator(".taskBar").waitFor({ timeout: 10000 });
-      await row("quick-2.pdf").waitFor();
+      await row(QUICK).waitFor();
       await moves(page);
       await until(async () => (await row("slow.pdf").getAttribute("class")).includes("done"), { timeout: 20000, what: "the slow upload finishes" });
       await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
@@ -471,12 +473,12 @@ export async function motionScenarios(env) {
       assert(seen.some((m) => m === "moving head:finished"), `Finished's header moves up: ${seen}`);
       assert(seen.includes("leaving row popoverSection"), `In progress goes with its last row: ${seen}`);
       await copiesGone(page);
-      await arrived(row("quick-2.pdf"));
+      await arrived(row(QUICK));
 
       await moves(page);
-      const quick = row("quick-2.pdf");
+      const quick = row(QUICK);
       await quick.hover();
-      await quick.getByRole("button", { name: "Remove quick-2.pdf", exact: true }).click();
+      await quick.getByRole("button", { name: `Remove ${QUICK}`, exact: true }).click();
       await quick.waitFor({ state: "detached" });
       seen = await moves(page);
       assert(seen.includes("leaving row taskRow"), `it leaves through a copy: ${seen}`);

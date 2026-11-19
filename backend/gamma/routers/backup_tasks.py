@@ -18,7 +18,8 @@ class TaskInput(BaseModel):
     workspaces: list[str] = Field(default_factory=list, max_length=100)
     cron: str = Field(default='0 3 * * *', max_length=200)
     uploads: bool = True
-    bucket: bool = False   # also copy each snapshot to the bucket (admins; gamma/bucket_snapshots.py)
+    bucket: bool = False   # also copy each snapshot to the bucket (admins; gamma/snapshot_copies.py)
+    drive: bool = False    # also copy each snapshot to Google Drive (admins; the same)
     retention_mode: Literal['days', 'count'] = 'days'
     retention_value: int = Field(default=30, ge=1, le=tasks.MAX_RETENTION)
 

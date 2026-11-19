@@ -9,13 +9,11 @@ lists every format and how to use it.
 
 Notes are stored as Markdown ([Blocks and pages](blocks.md#notes-are-markdown)):
 math in dollars, diagrams as fenced blocks, mentions and links as readable
-text. Files are stored as you added them, with one exception: annotations
-another app wrote into a PDF become Gamma's own marks when it is added,
-and by default leave the stored file, so they are not drawn twice
-(Settings → Reading & editing can keep the file as it came). So a page
-exported to Markdown
-reads well anywhere, and a synced folder's notes open in Obsidian or any
-editor as they are.
+text. Files are stored as you added them, except that annotations another
+app wrote into a PDF become Gamma's own marks
+([Reading](reading.md#your-marks-live-beside-the-pdf)). So a page exported
+to Markdown reads well anywhere, and a synced folder's notes open in
+Obsidian or any editor as they are.
 
 ## What comes back intact
 
@@ -24,21 +22,19 @@ keeps the most.
 
 | Route | What survives | What does not |
 |---|---|---|
-| Gamma export, imported into a Gamma | pages, notes, chats and files, with their ids; importing it again adds nothing | a page's or a folder's export leaves out kept translations; a note whose id is already taken comes in under a new one |
+| Gamma export, imported into a Gamma | pages, notes, chats and files, with their ids; importing it again adds nothing | a page's or a folder's export leaves out kept translations |
 | Annotated PDF, opened again in Gamma | highlights in their style, ink with its pressure and timing, text boxes, pictures | recordings |
 | Annotated PDF, in another reader | the PDF's own highlight, underline, squiggly, strikeout, ink, text and stamp annotations | pressure (ink is drawn at one width), Gamma's own fields |
-| Obsidian vault | notes, folders as directories, labels as tags | on the way back, text after a heading nests under it, a plain note that had notes under it comes back as a bullet, and highlights come back as quotes |
+| Obsidian vault | notes, folders as directories, labels as tags | on the way back, text after a heading nests under it, and highlights come back as quotes |
 | Notion zip | notes and their pictures, for Notion's importer | PDFs and recordings; importing it again makes the pages twice, since Notion keeps no ids |
-| Notability note | the PDF or the sheets, handwriting with pressure and tilt, text boxes, pictures, notes as typed text, recordings made as .m4a | highlights, recordings in other formats |
+| Notability note | the PDF or the sheets, handwriting with pressure and tilt, text boxes, pictures, typed notes, .m4a recordings | highlights, recordings in other formats |
 | GoodNotes notebook | the PDF or the sheets, highlights as highlighter strokes, handwriting, text boxes, pictures | pressure (GoodNotes' pen has one width), the notes, recordings |
-| Zotero RDF | the library as Zotero's import reads it, the exact inverse of Gamma's Zotero import | annotations, which are only drawn into the exported PDFs; chats and comments |
+| Zotero RDF | the library as Zotero's import reads it, the exact inverse of Gamma's Zotero import | annotations, which are drawn into the exported PDFs; chats and comments |
 
-**Every import says what it left out.** The last step lists the pages it
-skipped and what each one lost, rather than dropping it quietly; a
-Notability or GoodNotes import lists what each page lost.
-
-**An export holds to what you may see.** An export made through a share
-link contains only the shared pages.
+- **Every import says what it left out.** Its last step lists the pages it
+  skipped and what each one lost, rather than dropping anything quietly.
+- **An export holds to what you may see.** An export made through a share
+  link contains only the shared pages.
 
 ## The annotated PDF
 
@@ -46,16 +42,28 @@ link contains only the shared pages.
 as the PDF's own annotations, so any PDF reader shows them and Zotero can
 read them. The original stored in Gamma is never changed.
 
-- Highlights become highlight, underline, squiggly or strikeout marks;
-  area highlights become squares; ink becomes ink annotations; text boxes
-  become free text; pictures become stamps.
-- Notes can be printed as cards in a widened column beside each page, or
-  in the page's own free space. Open comment threads can be printed as
-  cards beside the page.
-- A shown translation is written into the copy.
-- Gamma also writes keys of its own that other readers ignore. Importing
-  the PDF into Gamma again reads them back, so pressure, timing and colours
-  return exactly.
+```mermaid
+flowchart TB
+  accTitle: The annotated PDF, there and back
+  g["Your page in Gamma"]
+  pdf["A copy of the PDF,<br/>your marks as its own annotations"]
+  other["Highlights, ink and text boxes<br/>as that reader's own"]
+  back["Every mark as it was,<br/>pressure and timing included"]
+  g -->|Export → Annotated PDF| pdf
+  pdf -->|in another reader, or Zotero| other
+  pdf -->|back into Gamma| back
+```
+
+- **Each mark becomes its PDF kind**: highlights become highlight,
+  underline, squiggly or strikeout marks, area highlights squares, ink ink,
+  text boxes free text, and pictures stamps.
+- **Notes and comments can come along.** Notes print as cards in a
+  widened column beside each page or in the page's own free space, open
+  comment threads as cards beside the page. A shown translation is written
+  into the copy.
+- **Gamma also writes keys of its own** that other readers ignore, so
+  importing the PDF into Gamma again brings back pressure, timing and
+  colours exactly.
 
 Highlights, drawings, typed notes and stamps made in other PDF apps are
 imported when a paper is added, and an image stamp becomes a picture.
@@ -63,7 +71,9 @@ imported when a paper is added, and an image stamp becomes a picture.
 ## Long work: background tasks
 
 Some work takes minutes: importing a library, exporting a folder, taking
-a snapshot. Gamma splits it into two kinds:
+a snapshot. It runs as a task you can watch, not as one long request,
+since a request that goes quiet for long is cut off by proxies on the way
+and would show you an error for work that succeeded.
 
 | | Runs on the server | Runs in this tab |
 |---|---|---|
@@ -71,12 +81,9 @@ a snapshot. Gamma splits it into two kinds:
 | Outlives the tab | yes, and shows on every device | no: closing the tab stops it |
 | Shown | in Background tasks, with progress and Stop | the same list, with Stop |
 
-A request that goes quiet for long is cut off by proxies on the way,
-which would show you an error for work that succeeded. So long work runs
-as a task you can watch, rather than one long request. A stop is honoured
-up to the point where stopping would leave things half done. A server
-restart marks a running task as interrupted rather than pretending it
-finished.
+A stop is honoured up to the point where stopping would leave things half
+done. A server restart marks a running task as interrupted, rather than
+pretending it finished.
 
 ## Behind this page
 

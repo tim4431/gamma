@@ -78,8 +78,17 @@ link from the guide or a design page to them lands.
 
 The [design pages](../design/README.md) explain how Gamma is designed and
 why, for people who use it: the models, the rules and the reasoning, in
-the user guide's plain words. They state a rule, not its mechanics, and end
-by linking the `docs/dev/` and `docs/research/` files that hold those. A
+the user guide's plain words. Each leads with what a user can count on
+and the idea behind it, stays brief on the rest, states a rule rather than
+its mechanics, and ends by linking the `docs/dev/` and `docs/research/`
+files that hold those. A model with parts and arrows is a `mermaid` fence,
+which GitHub draws and the site draws at build time: give it an
+`accTitle`, define each node before the edges that use it, prefer
+flowcharts and sequence diagrams, and keep it within the column (the
+site's strict build fails a diagram wider than 720px). A `text` fence is
+for a picture made of characters, such as a file tree. GitHub's
+`> [!NOTE]` and `> [!IMPORTANT]` set off what a page promises
+([sites/README.md](../../sites/README.md#what-the-build-does)). A
 change to a rule a design page states updates that page in the same
 commit, as it does the topic doc. A design page names a number only where
 the number is the design (30 days in Recently deleted), not a tunable
@@ -104,7 +113,7 @@ generated illustrations uses `branding.typewriter()`; see the
 | Location | Contents and consumers |
 |---|---|
 | `docs/assets/branding/` | Generated Gamma PDF logo, hero SVG/PNG pairs and README illustrations; edit sources in `design/brand/` and `tools/branding/` |
-| `docs/assets/badges/` | Store badges kept as files: Google's *Available in the Chrome Web Store* badge (used unmodified, only resized, by the README and the website; the Microsoft Store badge is linked from Microsoft), and the iPad badge both use, `testflight-ipad.svg`, drawn in the Microsoft badge's frame and size with Apple's logo (simple-icons), since TestFlight has no badge of its own |
+| `docs/assets/badges/` | Store badges kept as files, used by the README, the website and the release notes: Apple's *Download on the Mac App Store* (`mac-app-store.svg`, exactly as Apple's marketing guidelines publish it, which allow no change) and Google's *Available in the Chrome Web Store* badge (unmodified, only resized); the Microsoft Store badge is linked from Microsoft. Two are drawn here in the Microsoft badge's frame and size, for distribution with no badge of its own: `testflight-ipad.svg` with Apple's logo, and `android-apk.svg`, the APK on GitHub Releases, with the Android robot (both from simple-icons; the robot is Google's, CC BY 3.0). Google Play's own badge replaces the APK's only once the app is public there |
 | `docs/assets/demos/` | README demos as small animated WebP images |
 | `docs/assets/screenshots/` | Documentation stills |
 | `backend/gamma/onboarding/welcome.md` | The seeded Welcome page ([onboarding.md](onboarding.md)); Docker copies it with `gamma/`, the desktop freeze adds it with `--add-data` |

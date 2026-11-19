@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 from .. import (agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_steer, ai_usage,
                 chatgpt_oauth, net_proxy, search_services, translate_engines)
 from ..ai_client import (
+    Alarm,
     CallRefused,
     UpstreamError,
     add_usage as _add_usage,
@@ -33,13 +34,11 @@ from ..ai_client import (
     wire_protocol as _wire_protocol,
 )
 from ..ai_agent import AgentLoop, ApprovalGate, Conversation, Helper, PaperWait
-from ..ai_tools import (
-    AGENT_PROMPT,
-    CITATION_PROMPT,
+from ..ai_tools.base import READ_CHARS_MAX
+from ..ai_tools.prompt import AGENT_PROMPT, CITATION_PROMPT, agent_system
+from ..ai_tools.registry import (
     DATED_TOOLS,
     PICTURE_TOOLS,
-    READ_CHARS_MAX,
-    agent_system,
     agent_tools,
     available,
     tool_states,
@@ -187,7 +186,7 @@ class AIChatRequest(BaseModel):
     max_pictures: int = Field(default=ai_pictures.DEFAULT_BUDGET, ge=1, le=ai_pictures.MAX_BUDGET)
     files: list = Field(default_factory=list)  # uploaded PDFs as {name, data} data URLs
     stream: bool = False  # NDJSON stream of {"delta": …} lines instead of one JSON body
-    # Agent chat (gamma/ai_tools.py): agent_scope declares what this chat's
+    # Agent chat (gamma/ai_tools/): agent_scope declares what this chat's
     # tools reach — "folder" (the home/folder view; `folder` is the folder's
     # id, "" = library root) or "page" (the per-page chat; `page_id` is the
     # focused page — read tools + note editors). "" = plain chat (page_id
@@ -224,6 +223,10 @@ class AIChatRequest(BaseModel):
     # wait in this chat" the card's Skip offers: the reply ends and the card
     # stays under it.
     paper_wait: bool = True
+    # Whether the client acts on the tools that work in the app: it shows a
+    # page show_page names and downloads a file export starts (App.jsx
+    # handleAgentEvent). An older client, a script or a token sends none.
+    shows_pages: bool = False
     # Whether read_paper is offered: a long document is read by a helper on
     # the same connection, and the chat carries its answer instead of the
     # document (Settings → AI → Tool usage → "Read long papers with a helper").
@@ -1583,6 +1586,10 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
             # Whether read_paper is offered: a long document read by a
             # helper whose own conversation carries the windows.
             "delegates": bool(payload.delegate_reads),
+            # Whether show_page and export are offered (ai_tools.available,
+            # ``needs: "app"``): a live reply to the person's own app, which
+            # acts on them while it streams.
+            "app": bool(payload.shows_pages and can_ask and user_id and not is_token(request)),
             "paper_save": {key: payload.paper_save.get(key, True) is not False
                            for key in ("allow_oa", "save_copy", "fetch_metadata")},
             # This turn's reads, {block_id: full text}: what an edit_block
@@ -1737,7 +1744,7 @@ def ai_chat_steer(reply_id: str, payload: AISteer, request: Request):
 
 
 class AIRevert(BaseModel):
-    kind: Literal["edit", "create", "move", "delete", "pages", "trash"]
+    kind: Literal["edit", "create", "move", "delete", "pages", "trash", "made"]
     block_id: str = Field(default="", max_length=64)  # "" for "pages": a page tool's record names its pages
     revert: dict   # the action's `revert`, as the tool recorded it
     force: bool = False
@@ -1815,8 +1822,9 @@ def ai_chat(payload: AIChatRequest, request: Request):
     # Only a streamed reply can show an approval card and wait for it.
     scope = _chat_scope(request, ws, user_id, payload, rt, entry, effort, can_ask=payload.stream)
     # Set once the client is gone (Stop, a dropped connection; WatchedStream):
-    # a tool call waiting on its approval card gives up, and nothing runs for it.
-    stopped = threading.Event()
+    # a tool call waiting on its approval card gives up, nothing runs for it,
+    # and the provider turn being read ends at once (ai_steer.TurnRead).
+    stopped = Alarm()
     # The conversation the agent loop grows across tool rounds (agent mode);
     # how many of the oldest turns are left out, and the budget for what the
     # message points at, to fit the model's window.
@@ -2054,8 +2062,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
             def ndjson():
                 # One provider turn, and one more for each time the user
                 # steered a message in while the model wrote (ai_steer): the
-                # turn stops at its next event, what it wrote so far and the
-                # message join the conversation, and the model goes on.
+                # turn stops at once (ai_steer.TurnRead), what it wrote so far
+                # and the message join the conversation, and the model goes on.
                 steering = ai_steer.open_reply(user_id, steer_turn)
                 current = resp
                 try:
@@ -2063,22 +2071,25 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         yield first
                     while True:
                         usage, text, truncated = [], [], False
-                        for kind, data in _sse_events(current, _protocol(rt, entry)):
-                            if kind in ("text", "reasoning") and steering and steering.pending():
-                                break                   # cut short: the steered message goes next
-                            if kind == "text":
-                                text.append(data)
-                                yield json.dumps({"delta": data}) + "\n"
-                            elif kind == "reasoning":
-                                # Saved with the reply and sent back on the next turn.
-                                said = reasoning_text(data)
-                                if said:
-                                    yield json.dumps({"reasoning": said}) + "\n"
-                            elif kind == "usage":
-                                usage.append(data)
-                            elif kind == "stop" and truncated_stop(data):
-                                truncated = True
-                                yield json.dumps({"truncated": True}) + "\n"
+                        with ai_steer.TurnRead(current, steering) as read:
+                            for kind, data in read.events(_sse_events(current, _protocol(rt, entry))):
+                                if kind in ("text", "reasoning") and steering and steering.pending():
+                                    break               # cut short: the steered message goes next
+                                if kind == "text":
+                                    text.append(data)
+                                    yield json.dumps({"delta": data}) + "\n"
+                                elif kind == "reasoning":
+                                    # Saved with the reply and sent back on the next turn.
+                                    said = reasoning_text(data)
+                                    if said:
+                                        yield json.dumps({"reasoning": said}) + "\n"
+                                elif kind == "usage":
+                                    usage.append(data)
+                                elif kind == "stop":
+                                    read.ended()
+                                    if truncated_stop(data):
+                                        truncated = True
+                                        yield json.dumps({"truncated": True}) + "\n"
                         current.close()
                         # The provider's token report closes the turn — after
                         # the model line again when it served another speed.

@@ -1,6 +1,6 @@
 // The names of the entries a zip holds, read from its central directory: what
 // the shell looks for in a Gamma export before it takes it to another server
-// (main.js carryPage), the bytes of the page's PDF among them. Pure. A file
+// (lib/systemFiles.js carryPage), the bytes of the page's PDF among them. Pure. A file
 // that is no zip, or a damaged one, holds nothing.
 
 const EOCD = 0x06054b50; // end of central directory

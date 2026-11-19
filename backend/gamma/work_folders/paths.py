@@ -4,7 +4,7 @@ the pages at a path, ``page_at_href`` the pages a note's relative link
 names, ``work_of_path`` the work folder a path's first segment names. A
 path is the names of the directories below W and the
 file's ``file_name``, joined with ``/``, as the folder tree and the vault's
-stamps give them; nothing here reads the disk (feedback's ``file_path``
+stamps give them; nothing here reads the disk (``annotations.entries.file_path``
 prefers the vault's rows on the computer that holds it).
 
 One rule for a name typed by a person or a model, a work folder's or a

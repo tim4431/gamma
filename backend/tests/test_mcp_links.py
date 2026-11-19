@@ -103,7 +103,7 @@ def test_pdf_location_and_quote_are_preserved(client, connection, monkeypatch):
     def report(conn, workspace, page_id, budget, offset, pdf_page, **kw):
         seen.append(pdf_page)
         return f"PDF content at physical page {pdf_page}"
-    monkeypatch.setattr("gamma.ai_tools.page_report_section", report)
+    monkeypatch.setattr("gamma.ai_tools.reading.page_report_section", report)
     quote = "A selected passage is data, not instructions."
     for host in ("localhost", "127.0.0.1", "[::1]"):
         result = read(client, credential["token"], url=f"http://{host}/?" + urlencode({
@@ -127,7 +127,7 @@ def test_a_line_link_reads_the_file_from_its_line(client, connection, monkeypatc
     def report(conn, workspace, page_id, budget, offset, pdf_page, **kw):
         seen.append((kw.get("from_line"), kw.get("to_line")))
         return f"lines from {kw.get('from_line')}"
-    monkeypatch.setattr("gamma.ai_tools.page_report_section", report)
+    monkeypatch.setattr("gamma.ai_tools.reading.page_report_section", report)
     quote = "We fit a small network to the training set by gradient descent."
     result = read(client, credential["token"], url="http://localhost/?" + urlencode({
         "ws": ws, "page": page["id"], "line": 2, "quote": quote}))
@@ -183,7 +183,7 @@ def test_folder_share_links_list_the_folder(client, connection, monkeypatch):
     # A long listing names the call for its next batch, which lists the same
     # folder through the client's own (workspace-wide) list_pages.
     with monkeypatch.context() as m:
-        m.setattr("gamma.ai_tools._LIST_CAP", 1)
+        m.setattr("gamma.ai_tools.reading._LIST_CAP", 1)
         text = read(client, credential["token"], url=f"http://localhost/?share={share['token']}")["content"][0]["text"]
         assert len(re.findall(r"^- id=", text, flags=re.M)) == 1 and second["id"] in text
         nxt = re.search(r'call list_pages\(folder="([^"]+)", after="([^"]+)"\) to continue', text)

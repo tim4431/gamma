@@ -26,7 +26,7 @@ import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { Section, SubDialog, Field, DialogButtons, IconChoices, Segmented, Empty, WorkspaceFolder } from "./SettingsKit";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import {
-  AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, BookIcon, CheckIcon, CloudDownloadIcon, CloudIcon, CloudOffIcon, HardDriveIcon,
+  AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, BookIcon, CheckIcon, CloudDownloadIcon, CloudIcon, CloudOffIcon, DuplicateIcon, HardDriveIcon,
   KeyIcon, LinkIcon, MoreIcon, PlusIcon, RefreshIcon, SettingsIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
@@ -57,6 +57,16 @@ function useListed({ data, error, reload }, key, running, setRunning) {
 // The account's mirrors (null while loading), the pane's read, kept while
 // the dialog is open (settingsReads.js). Only the panes App.jsx renders
 // for a signed-in account that is no guest call it, so it always reads.
+// The Duplicate… row of a workspace's menu (its Data menu in Settings →
+// Workspaces; a clone's or a Zotero link's More, below): `duplicate(w)`
+// opens the dialog for the workspace row `w` (SettingsWorkspace.jsx
+// DuplicateDialog).
+export const duplicateItem = (w, duplicate) => ({
+  icon: DuplicateIcon, label: T("Duplicate…"),
+  title: T("A new personal workspace of yours with a copy of every page; this one stays as it is"),
+  onClick: () => duplicate(w),
+});
+
 export function useMirrors() {
   const [running, setRunning] = React.useState(false);
   const read = useSettingsRead(LINK_BASES.mirror, { poll: running ? 2000 : 0 });
@@ -266,7 +276,7 @@ export function MirrorConflicts({ mirror, onClose, setStatus, closeSettings }) {
 // moves the tab to another workspace, a navigation whose session read
 // lists a workspace made here.
 export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId, switchWorkspace, closeSettings, confirm, setStatus, onAccount,
-  refreshSession }) {
+  refreshSession, onDuplicate }) {
   const [creating, setCreating] = React.useState(null); // "clone" | "zotero" | null
   const [createError, setCreateError] = React.useState("");
   const [busy, setBusy, syncNow] = useSyncNow(refresh, setStatus);
@@ -393,6 +403,8 @@ export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId,
       { icon: UnlinkIcon, label: T("Detach"), title: words.detach,
         onClick: () => call(m, "/detach", { method: "POST" }, t("Detached — reattach whenever you like.")) },
     ];
+    // a copy of its pages that is neither linked nor a clone (DuplicateDialog says so)
+    if (onDuplicate) more.push(duplicateItem(byWs[m.workspace_id] || { id: m.workspace_id, name: nameOf(m) }, onDuplicate));
     more.push({ icon: TrashIcon, label: words.remove, danger: true, title: words.removeTitle, onClick: () => forget(m) });
     // a key only a new connection mends: Reconnect in Sync's place (PDFs waiting for file access: beside it)
     const reconnect = st.action === "reconnect" && onAccount;

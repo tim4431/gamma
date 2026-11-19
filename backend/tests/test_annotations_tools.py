@@ -1,5 +1,5 @@
 """list_annotations and read_annotation, the chat registry's two
-annotations tools (gamma/ai_tools.py, docs/dev/ai_tools.md
+annotations tools (gamma/ai_tools/annotations.py, docs/dev/ai_tools.md
 "list_annotations and read_annotation"): the highlights and comment threads
 of a page, a folder or the library in their Markdown form, a batch at a
 time; a work folder, a directory, a file, a work folder by name, a library
@@ -17,7 +17,7 @@ from pypdf import PdfWriter
 
 from conftest import (account_of, doc_props, login, make_folder, make_page, make_user, mark_work_folder, thread_on,
                       work_props, workspace_of)
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.blocks_store import create_page
 from gamma.db import connect_pages_db
 
@@ -111,7 +111,7 @@ def test_a_work_folder_a_file_and_the_library(tim):
     text, action = run_agent_tool(_ws(), _folder_chat(), "list_annotations", {"scope": paper.files["main.pdf"]})
     assert first["id"] in text and second["id"] not in text and action["page_id"] == paper.files["main.pdf"]
     # the system prompt names them
-    from gamma.ai_tools import agent_system
+    from gamma.ai_tools.prompt import agent_system
     assert "list_annotations and read_annotation read the highlights and comment threads" in agent_system(
         _folder_chat())
 

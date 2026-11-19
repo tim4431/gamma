@@ -20,8 +20,10 @@
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
-import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, Empty, QuotaMeter, UnitInput, AccountPicker, PersonRow, Segmented, WorkspaceFolder } from "./SettingsKit";
-import { MirrorsSection, useMirrors, useZoteroLinks } from "./SettingsMirrors";
+import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, Empty, FormNotice, QuotaMeter, UnitInput, AccountPicker, PersonRow, Segmented, WorkspaceFolder } from "./SettingsKit";
+import { duplicateName, zoteroPdfsNote } from "../transfers/workspaceCopy.js";
+import { copyPreview } from "../transfers/exportApi";
+import { MirrorsSection, duplicateItem, useMirrors, useZoteroLinks } from "./SettingsMirrors";
 import { useSettingsRead } from "./settingsReads.js";
 import { parseStamp } from "../library/libraryUtils";
 import {
@@ -342,8 +344,9 @@ export function InviteDialog({ name, accounts, exclude, email, busy, error, onSu
   );
 }
 
-// A one-field dialog: rename, or name a new workspace.
-export function NameDialog({ title, label, hint, initial, submitLabel, busy, error, onSubmit, onClose }) {
+// A one-field dialog: rename, or name a new workspace. `children`: what it
+// says under the field (a warning, a note).
+export function NameDialog({ title, label, hint, initial, submitLabel, busy, error, onSubmit, onClose, children }) {
   const [name, setName] = React.useState(initial || "");
   return (
     <SubDialog title={title} onClose={onClose} draft={name}>
@@ -355,6 +358,7 @@ export function NameDialog({ title, label, hint, initial, submitLabel, busy, err
             onKeyDown={(e) => { if (e.key === "Enter" && !composing(e) && name.trim()) onSubmit(name.trim()); }}
           />
         </Field>
+        {children}
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
         <DialogButtons footnote={name.trim() ? null : t("Type a name to continue.")}>
           <button className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
@@ -616,18 +620,20 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, tasks, confir
   );
 }
 
-// The Export / Import menus every workspace row carries. Export downloads
-// an /api/export zip of that workspace; Import restores or merges one into
-// it (owners restore, editors merge).
-// One "Data" menu per workspace row: export (everything / databases) and,
-// for editors and owners, import (merge / restore).
-export function WorkspaceDataMenus({ w, exportWorkspace, importWorkspace, closeSettings, disabled }) {
+// One "Data" menu per workspace row: export (everything / databases),
+// Duplicate… (a new personal workspace with a copy of every page, which
+// anyone who may read it makes: `duplicate(w)` opens its dialog) and, for
+// editors and owners, import (merge / restore). Export downloads an
+// /api/export zip of that workspace; Import restores or merges one into it
+// (owners restore, editors merge).
+export function WorkspaceDataMenus({ w, exportWorkspace, importWorkspace, duplicate, closeSettings, disabled }) {
   const run = (fn) => { closeSettings?.(); fn(); }; // progress shows in the status pill, the confirm wants the screen
   const items = [
     { icon: ExportIcon, label: T("Export everything (.zip)"), title: t("A zip of {name}: its databases + every uploaded PDF", { name: w.name }),
       onClick: () => run(() => exportWorkspace(w.id, true)) },
     { icon: DatabaseIcon, label: T("Export databases only (.zip)"), title: T("A small zip with just the databases — no uploaded PDFs"),
       onClick: () => run(() => exportWorkspace(w.id, false)) },
+    ...(duplicate ? [duplicateItem(w, duplicate)] : []),
   ];
   if (w.role !== "viewer") {
     items.push({ icon: PlusIcon, label: T("Merge a backup into it…"), title: T("Add the backup's pages that are not there yet; nothing existing changes"),
@@ -638,9 +644,33 @@ export function WorkspaceDataMenus({ w, exportWorkspace, importWorkspace, closeS
   return <ActionMenu label={t("Data")} icon={DatabaseIcon} items={items} disabled={disabled} />;
 }
 
+// Duplicate… a workspace (`w`, a row of GET /workspaces/mine): the name of
+// the new personal workspace, and what the copy leaves behind — the link to
+// Zotero or the clone's origin, the members, and the PDFs still in Zotero,
+// which the server counts first (exportApi.js copyPreview).
+export function DuplicateDialog({ w, onSubmit, onClose }) {
+  const [waiting, setWaiting] = React.useState(0);
+  React.useEffect(() => {
+    let live = true;
+    copyPreview({ ws: w.id }).then((p) => { if (live) setWaiting(p.zotero_pdfs || 0); }, () => {});
+    return () => { live = false; };
+  }, [w.id]);
+  const left = w.zotero_of || w.zotero_detached ? t("The copy is not linked to Zotero: what changes in it stays in it.")
+    : w.mirror_of || w.mirror_detached ? t("The copy is no clone: what changes in it stays on this server.")
+      : !w.personal ? t("Its members are not added: the copy is yours alone.") : "";
+  return (
+    <NameDialog title={t("Duplicate “{name}”", { name: w.name })} label={t("Name of the copy")} initial={duplicateName(w.name)}
+      hint={t("A new personal workspace with a copy of every page of “{name}”, with their notes, highlights, comments and chats. “{name}” stays as it is.", { name: w.name })}
+      submitLabel={t("Duplicate")} onSubmit={onSubmit} onClose={onClose}>
+      {left ? <FormNotice tone="info">{left}</FormNotice> : null}
+      {waiting ? <FormNotice tone="warn">{zoteroPdfsNote(waiting)}</FormNotice> : null}
+    </NameDialog>
+  );
+}
+
 export function WorkspacesSettings({ value, onServer, onAccount }) {
   const { workspace, me, isAdmin, switchWorkspace, refreshSession,
-          exportWorkspace, exportAll, importWorkspace, tasks, setStatus, confirm, closeSettings } = value;
+          exportWorkspace, exportAll, importWorkspace, duplicateWorkspace, tasks, setStatus, confirm, closeSettings } = value;
   // GET /api/workspaces/mine: {workspaces, account}, the pane's read (settingsReads.js)
   const { data, error: readError, reload } = useSettingsRead("/workspaces/mine");
   const [ownError, setError] = React.useState("");
@@ -648,6 +678,7 @@ export function WorkspacesSettings({ value, onServer, onAccount }) {
   const [manage, setManage] = React.useState(null); // workspace id
   const [creating, setCreating] = React.useState(false);
   const [createError, setCreateError] = React.useState("");
+  const [duplicating, setDuplicating] = React.useState(null); // the workspace row Duplicate… is for
   const [busy, setBusy] = React.useState(false);
   const accounts = useAccounts();
   const currentId = workspace?.id;
@@ -724,7 +755,7 @@ export function WorkspacesSettings({ value, onServer, onAccount }) {
         <span className="aiProvActions">
           {!current ? <button className="uiBtn sm" disabled={!!job} onClick={() => { closeSettings?.(); switchWorkspace(w.id); }}>{t("Open")}</button> : null}
           <WorkspaceDataMenus w={w} exportWorkspace={exportWorkspace} importWorkspace={importWorkspace} closeSettings={closeSettings}
-            disabled={!!job} />
+            duplicate={duplicateWorkspace ? setDuplicating : null} disabled={!!job} />
           <button className="uiBtn sm" disabled={!!job} onClick={() => setManage(w.id)} title={t("Manage {name}", { name: w.name })}>
             <PenIcon size={14} /> {t("Manage")}
           </button>
@@ -789,7 +820,7 @@ export function WorkspacesSettings({ value, onServer, onAccount }) {
           </Section>
           <MirrorsSection mirrors={mirrors} links={links} refresh={refreshClones} workspaces={all} currentId={currentId}
             switchWorkspace={switchWorkspace} closeSettings={closeSettings} confirm={confirm} setStatus={setStatus} onAccount={onAccount}
-            refreshSession={refreshSession} />
+            refreshSession={refreshSession} onDuplicate={duplicateWorkspace ? setDuplicating : null} />
         </>
       ) : null}
 
@@ -797,6 +828,11 @@ export function WorkspacesSettings({ value, onServer, onAccount }) {
         <NameDialog title={t("New personal workspace")} label={t("Name")}
           hint={t("A separate library of your own — work, life, play")}
           submitLabel={t("Create and open")} busy={busy} error={createError} onSubmit={submitCreate} onClose={() => setCreating(false)} />
+      ) : null}
+      {duplicating ? (
+        // the copy runs as a job: its progress, and Open once it is done, show in the pill
+        <DuplicateDialog w={duplicating} onClose={() => setDuplicating(null)}
+          onSubmit={(name) => { setDuplicating(null); closeSettings?.(); duplicateWorkspace(duplicating.id, name); }} />
       ) : null}
     </>
   );

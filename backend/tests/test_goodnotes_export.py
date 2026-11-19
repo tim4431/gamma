@@ -59,7 +59,7 @@ def read(data: bytes) -> gn.Notebook:
 
 
 def reimport(client, data: bytes) -> dict:
-    r = client.post("/api/import/goodnotes", files={"file": ("Round trip.goodnotes", data, "application/zip")},
+    r = client.post("/api/import/note-apps", files={"file": ("Round trip.goodnotes", data, "application/zip")},
                     data={"folder": ""})
     assert r.status_code == 200, r.text
     report = r.json()

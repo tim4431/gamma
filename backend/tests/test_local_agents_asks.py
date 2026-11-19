@@ -252,7 +252,7 @@ def test_claude_speaks_the_control_protocol_with_ask(work, monkeypatch):
          "response": {"behavior": "allow", "updatedInput": {"command": BUILD, "description": "Build the PDF"},
                       "toolUseID": "toolu_ask3"}}]
     entries = read_log(work.log)
-    assert entries[0]["argv"] == claude.ASK_FLAGS
+    assert entries[0]["argv"] == claude.ASK_FLAGS + claude.settings_flags(ask=True)
     lines = [e["in"] for e in entries if "in" in e]
     assert lines[0] == {"type": "control_request", "request_id": "gamma-init", "request": {"subtype": "initialize"}}
     assert lines[1] == {"type": "user", "session_id": "", "parent_tool_use_id": None, "client_composed": True,
@@ -491,7 +491,8 @@ def test_claude_code_asks_to_run_a_command_and_nothing_else(lab, disk, monkeypat
                      {"id": "toolu_ask2", "kind": "run", "status": "completed", "program": "latexmk"}]
     assert [a["response"]["response"]["behavior"] for a in _answers(disk.log)] == ["deny", "deny", "allow"]
     entries = read_log(disk.log)
-    assert [e["argv"] for e in entries if "-p" in (e.get("argv") or [])][-1] == claude.ASK_FLAGS + [claude.STREAM_FLAG]
+    assert [e["argv"] for e in entries if "-p" in (e.get("argv") or [])][-1] == claude.ASK_FLAGS + claude.settings_flags(ask=True) + [
+        claude.STREAM_FLAG]
     told =[e["stdin"] for e in entries if "stdin" in e][-1]
     assert "use Bash: each command is asked of" in told and "You cannot run commands" not in told
 

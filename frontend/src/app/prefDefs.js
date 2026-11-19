@@ -238,8 +238,8 @@ export const PREFS = {
   metaAutoFetch: flag("gamma-meta-auto", ACCOUNT, true),
   pdfSaveLocal: flag("gamma-pdf-save", ACCOUNT, true),
   // The desktop app's Open with: off, a PDF opened from this computer is read
-  // where it lies, inside *Opened files*; on, it is added to the library as
-  // before (the shell reads it from the profile, desktop/main.js readPdf).
+  // where it lies, inside *Opened files*; on, it is added to the library (the
+  // shell reads it from the profile, desktop/lib/systemFiles.js addsToLibrary).
   openAddsToLibrary: flag("gamma-open-adds-to-library", ACCOUNT, false),
 
   // --- Highlights after a replaced PDF (Settings → Reading › Replacing a
@@ -261,7 +261,7 @@ export const PREFS = {
   // removes them from the stored file at import time, so the blocks are the
   // only copy and deleting one deletes it from the exports too; "hide" keeps
   // the file as it came and leaves them out of the canvas. The desktop app
-  // reads it by this name for a PDF opened with it (desktop/main.js importAnnotations).
+  // reads it by this name for a PDF opened with it (desktop/lib/systemFiles.js importAnnotations).
   embAnnots: pref("gamma-embedded-annots", ACCOUNT, "strip", oneOf(["hide", "strip"])),
   // Ease each notch of a mouse wheel over the PDF instead of jumping
   // (shared/lib/smoothWheel.js). Touchpads are smooth either way.
@@ -357,6 +357,11 @@ export const PREFS = {
   // — chat/modelPrefs.js SPEED_ORDER). Each model gets it only when it has
   // that tier; a model without one is called as usual.
   chatSpeed: pref("gamma-chat-speed", ACCOUNT, ""),
+  // What a message sent while a reply runs does (chat/enterKey.js
+  // followUpSteers): "queue" waits for the reply to end, "steer" goes into
+  // it at once; Ctrl/⌘+Shift+Enter does the other. Codex's "Follow-up
+  // behavior".
+  chatFollowUp: pref("gamma-chat-follow-up", ACCOUNT, "queue", oneOf(["queue", "steer"])),
   // Connection check of the active provider at login (POST /api/ai/health):
   // "ping" (default) is the free credential check — OAuth entries hit the
   // usage endpoint, API keys list /v1/models, both 401 on a dead credential
@@ -386,7 +391,7 @@ export const PREFS = {
   toolRoundsUnlimited: flag("gamma-ai-tool-rounds-unlimited", ACCOUNT, false),
   // Per-read_page-call cap on document text the folder/paper agent may pull.
   // The default matches the backend's fallback (READ_CHARS_CAP in
-  // gamma/ai_tools.py) — keep the two in sync.
+  // gamma/ai_tools/base.py) — keep the two in sync.
   agentReadChars: pref("gamma-ai-read-chars", ACCOUNT, 20000, CONTEXT_CHARS),
   // Off by default: rectangle snapshots stay attached until removed or sent.
   // On, a plain click elsewhere in the PDF drops them — the same gesture that

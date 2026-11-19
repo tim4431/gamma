@@ -27,6 +27,7 @@ test("plainSnippet: nested quotes, image sizes, aliased embeds, any inline tag",
   assert.equal(plainSnippet("> - quoted item\n> ## quoted heading"), "quoted item quoted heading");
   assert.equal(plainSnippet("      - [ ] deep item"), "deep item");
   assert.equal(plainSnippet("![[Target|shown]] and ![[Plain]]"), "shown and Plain");
+  assert.equal(plainSnippet("| [[pg1\\|the table's]] | [[pg1| ]] |"), "| the table's | pg1 |", "a cell's escaped pipe; blank words are none");
   assert.equal(plainSnippet("![old](/api/uploads/a.png){:width 300} and ![wide|300x200](/api/uploads/b.png)"), "old and wide");
   assert.equal(plainSnippet("<mark>kept</mark> a<br>b <u>under</u>"), "kept a b under");
   assert.equal(plainSnippet("**bold across\nlines** and *a **b** c*"), "bold across lines and a b c");

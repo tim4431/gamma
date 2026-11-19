@@ -69,7 +69,9 @@
   .folderNewInput,
   .fileRowRename,
   .tileRenameInput,
-  .linkNameInput
+  .linkNameInput,
+  .linkCardInput,
+  .linkCardTarget
 ) {
   box-sizing: border-box;
   background: var(--bg-input);
@@ -3915,6 +3917,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatMessages {
   flex: 1;
   overflow-y: auto;
+  /* The scrollbar's room is kept while nothing scrolls yet, so a reply
+     growing past the window does not narrow and rewrap the whole
+     transcript the moment the bar appears (as .blockList). */
+  scrollbar-gutter: stable;
   min-height: 0;
   padding: 4px 2px 0;
 }
@@ -4021,6 +4027,25 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   line-height: 1.5;
 }
 .chatUserText { white-space: pre-wrap; }
+/* A passage the message quoted (chat/chatQuotes.js splitQuoted): a muted
+   bar-led quote, three lines at most, the whole of it in its title. */
+.chatUserQuote {
+  margin: 0 0 var(--space-1);
+  padding: 0 0 0 var(--space-2);
+  border-left: 2px solid var(--border-hover);
+  color: var(--text-secondary);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  line-height: 1.45;
+}
+.chatUserText + .chatUserQuote { margin-top: var(--space-1); }
+.chatUserQuoteText {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
 /* A failed request (ChatErrorCard): what went wrong, the fix, the details. */
 .chatErrorCard {
   margin-top: 8px;
@@ -4184,13 +4209,19 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatAskDiff { font-family: var(--font-mono); }
 .chatAskDiff > * { display: block; white-space: break-spaces; unicode-bidi: plaintext; direction: ltr; }
 .chatAskDiffHead { color: var(--text-muted); }
-/* "Allowed in this chat" in the composer's toolbar: click to ask again. In a
-   narrow chat its words give way first (down to the shield and the ×), so
-   the send button keeps its place. */
+/* Chips in the composer's toolbar that a press acts on: "Allowed in this
+   chat" (chat/GrantChip.jsx) and "No tools". In a narrow chat a label gives
+   way first, so the send button keeps its place. */
 .chatGrantChip { padding: 2px 6px; cursor: pointer; min-width: 0; overflow: hidden; }
 .chatGrantChip svg { flex: none; }
 .chatGrantLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chatGrantChip:hover { color: var(--text-primary); border-color: var(--border-light); }
+/* "Allowed in this chat": the shield alone, the × under the pointer or the
+   focus (a press asks again). */
+.chatGrantShield { padding: 2px 4px; }
+.chatGrantShield svg:last-child,
+.chatGrantShield:is(:hover, :focus-visible) svg:first-child { display: none; }
+.chatGrantShield:is(:hover, :focus-visible) svg:last-child { display: block; }
 /* A reply's papers (chat/ReplyPapers.jsx): one pill, opening to a checklist
    saved into the library together. */
 .chatPapersWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; min-width: 0; }
@@ -4627,8 +4658,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatSelChipMath .katex { font-size: 1.05em; }
 /* Look comes from .uiClose.uiCloseSm; keep it pinned to the right of the chip. */
 .chatSelChipClose { margin-left: auto; }
-/* Selected note text a user attached reads in the muted label colour. */
-.chatSelChip.isNote .chatSelChipLabel { color: var(--text-muted); }
+/* Selected note text a user attached, and a quote of the transcript, read
+   in the muted label colour. */
+.chatSelChip:is(.isNote, .isQuote) .chatSelChipLabel { color: var(--text-muted); }
 /* attach-PDF toggle */
 .chatAttachToggle {
   display: inline-flex;
@@ -5683,6 +5715,40 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .citePreviewOpen:hover { color: var(--accent-bright); text-decoration: underline; }
 .citePreviewOpen kbd { font-family: inherit; }
+.citePreviewOpen svg { vertical-align: -1px; }
+
+/* The link card (shared/ui/LinkCard.jsx): the citation preview above for
+   every link, its last line the way to open it and, in a note that may be
+   edited, Edit, Copy link and Remove link on the right. Edit turns it into
+   its form: Text and Link, a search's rows under them, the buttons. */
+.linkCard { max-width: 300px; }
+.linkCardFoot { display: flex; align-items: center; gap: var(--space-2); min-height: 24px; margin-top: 4px; }
+.linkCardFoot .citePreviewOpen { margin-top: 0; }
+.linkCardTools { display: inline-flex; gap: 2px; margin: 0 -4px 0 auto; }
+.linkCard .linkCardTools .uiBtn.iconSq { width: 24px; height: 24px; min-height: 24px; color: var(--text-muted); }
+.linkCard .linkCardTools .uiBtn.iconSq:hover { color: var(--text-primary); }
+.linkCardEditing { width: 300px; max-width: calc(100vw - 16px); padding: 10px; }
+.linkCardForm { display: grid; gap: 8px; }
+.linkCardField { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 8px; }
+.linkCardField > span:first-child { color: var(--text-muted); font-size: var(--fs-2xs); }
+.linkCardInput,
+.linkCardTarget { width: 100%; min-width: 0; height: 28px; padding: 0 8px; font-size: var(--fs-sm); }
+.linkCardTarget { display: flex; align-items: center; gap: 6px; padding-right: 6px; cursor: text; }
+.linkCardTargetIcon,
+.linkCardTargetClear { display: inline-flex; flex: none; color: var(--text-muted); }
+.linkCardTargetClear { opacity: 0.6; }
+.linkCardTarget:hover .linkCardTargetClear { opacity: 1; }
+.linkCardTargetText { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linkCardRows { max-height: 220px; overflow-y: auto; margin: 0 -6px; }
+/* The [[ picker's rows a step smaller, in the card's own type. */
+.linkCardRows .refPopupItem { padding: 4px 8px; gap: 8px; }
+.linkCardRows .refPopupText { font-size: var(--fs-sm); }
+.linkCardRows .refPopupMeta { font-size: var(--fs-2xs); }
+.linkCardHint { padding: 4px 8px; color: var(--text-muted); font-size: var(--fs-2xs); }
+.linkCardActions { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.linkCardSpacer { flex: 1; }
+/* A held finger opens the card, never the system's callout for a link. */
+.linkAnchor a { -webkit-touch-callout: none; }
 .chatToolActionHead:hover:not(.plain) { color: var(--text); }
 .chatToolAction.err .chatToolActionHead { color: var(--danger); }
 .chatToolActionHead svg { flex: none; }

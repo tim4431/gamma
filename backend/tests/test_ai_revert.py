@@ -9,7 +9,7 @@ import pytest
 
 from conftest import make_folder
 from gamma.ai_context import build_messages
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.db import connect_pages_db
 
 from ai_fixtures import children, folder, org, payload, props  # noqa: F401  (fixtures)

@@ -2,7 +2,6 @@
 // markdown, and the auto-growing textarea.
 import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { textOf } from "../lib/textOf";
-import { createPortal } from "react-dom";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -13,12 +12,12 @@ import { CheckIcon, CopyIcon, ExternalLinkIcon, FileTextIcon, MoreIcon, PinIcon,
 import { ContextMenu, MenuItem, MenuLabel, SubMenuItem, useMenuTrigger } from "./Menus";
 import { useWheelPan } from "./wheelPan";
 import { tabDrag, useTabDrag } from "./tabDrag.js";
-import { useMenuAim } from "./menuAim";
+import { LinkHover, describeLink } from "./LinkCard.jsx";
 import { doublePress, menuPress } from "./press.js";
 import { assetUrl, copyText } from "../lib/utils";
 import { citesSeveralSources, isSourceLink, parseGammaLink } from "../model/gammaLinks.js";
 import { remarkPaperLinks } from "../lib/remarkPaperLinks.js";
-import { diagramFence, normalizeChatMarkdown, remarkDiagrams } from "../lib/diagramMarkdown.js";
+import { diagramFence, normalizeChatMarkdown, remarkDiagrams, remarkLoneDisplayMath } from "../lib/diagramMarkdown.js";
 import { DiagramFigure, diagramCodeProps } from "./DiagramFigure";
 import { highlightCode } from "../../editor/codeHighlight.js";
 import { t } from "../../shared/i18n/i18n.js";
@@ -305,8 +304,13 @@ function fragmentToMarkdown(node, ctx = {}) {
     case "IMG": return `![${el.getAttribute("alt") || ""}](${el.getAttribute("src") || ""})`;
     case "BR": return "\n";
     case "HR": return "\n\n---\n\n";
-    case "H1": case "H2": case "H3": case "H4": case "H5": case "H6":
-      return `\n\n${"#".repeat(Number(el.tagName[1]))} ${kids().trim()}\n\n`;
+    // A heading or a list item the selection only touches (a triple click
+    // ends it at the start of the next block) copies as nothing, not as a
+    // bare "## " or "- ".
+    case "H1": case "H2": case "H3": case "H4": case "H5": case "H6": {
+      const inner = kids().trim();
+      return inner ? `\n\n${"#".repeat(Number(el.tagName[1]))} ${inner}\n\n` : "";
+    }
     case "UL": case "OL": {
       const indent = "  ".repeat(ctx.listDepth || 0);
       const items = Array.from(el.children).filter((c) => c.tagName === "LI").map((li, i) => {
@@ -314,9 +318,9 @@ function fragmentToMarkdown(node, ctx = {}) {
         const inner = Array.from(li.childNodes)
           .map((n) => fragmentToMarkdown(n, { ...ctx, listDepth: (ctx.listDepth || 0) + 1 }))
           .join("").replace(/^\n+|\n+$/g, "");
-        return `${indent}${marker}${inner.replace(/\n+/g, "\n").replace(/\n/g, `\n${indent}  `)}`;
-      });
-      return `\n\n${items.join("\n")}\n\n`;
+        return inner.trim() ? `${indent}${marker}${inner.replace(/\n+/g, "\n").replace(/\n/g, `\n${indent}  `)}` : "";
+      }).filter(Boolean);
+      return items.length ? `\n\n${items.join("\n")}\n\n` : "";
     }
     case "BLOCKQUOTE":
       return `\n\n${kids().trim().split("\n").map((l) => `> ${l}`).join("\n")}\n\n`;
@@ -334,21 +338,31 @@ function fragmentToMarkdown(node, ctx = {}) {
   }
 }
 
+// A selection of rendered Markdown (`from`: a Selection, the document's by
+// default, or one Range) as a copy puts it on the clipboard: `md` its
+// Markdown source (text/plain), `html` the fragment without what is marked
+// data-markdown-copy-ignore (text/html). Both "" for an empty selection.
+export function selectionMarkdown(from = window.getSelection()) {
+  const ranges = !from ? [] : typeof from.cloneContents === "function" ? [from]
+    : from.isCollapsed ? [] : Array.from({ length: from.rangeCount }, (_, i) => from.getRangeAt(i));
+  if (!ranges.length || ranges.every((r) => r.collapsed)) return { md: "", html: "" };
+  const holder = document.createElement("div");
+  for (const range of ranges) holder.appendChild(range.cloneContents());
+  const md = Array.from(holder.childNodes).map((n) => fragmentToMarkdown(n))
+    .join("").replace(/\n{3,}/g, "\n\n").trim();
+  holder.querySelectorAll("[data-markdown-copy-ignore]").forEach((el) => el.remove());
+  return { md, html: holder.innerHTML };
+}
+
 function handleMarkdownCopy(e) {
   // A copy something inside already made stays: a synced block's editor puts
   // its source on the clipboard (and remembers it, editor/sourceCopy.js).
-  if (e.defaultPrevented) return;
-  const sel = window.getSelection();
-  if (!sel || sel.isCollapsed || !e.clipboardData) return;
-  const holder = document.createElement("div");
-  for (let i = 0; i < sel.rangeCount; i++) holder.appendChild(sel.getRangeAt(i).cloneContents());
-  const md = Array.from(holder.childNodes).map((n) => fragmentToMarkdown(n))
-    .join("").replace(/\n{3,}/g, "\n\n").trim();
+  if (e.defaultPrevented || !e.clipboardData) return;
+  const { md, html } = selectionMarkdown();
   if (!md) return;
   e.preventDefault();
   e.clipboardData.setData("text/plain", md);
-  holder.querySelectorAll("[data-markdown-copy-ignore]").forEach((el) => el.remove());
-  e.clipboardData.setData("text/html", holder.innerHTML);
+  e.clipboardData.setData("text/html", html);
 }
 
 // Copy the contents of a code/prompt block without its surrounding reply or
@@ -424,16 +438,19 @@ const GammaNavContext = createContext(null);
 // (a link written against another host, e.g. copied before the server moved,
 // or pointing at somebody else's Gamma) is handed to the card by a caller
 // that could resolve it, and falls back to a plain external link otherwise.
-function GammaLinkCard({ link, label, children }) {
+//
+// Its link card (shared/ui/LinkCard.jsx) says where it goes; `edit` is the
+// card's, from a note that may be edited.
+function GammaLinkCard({ link, label, edit, children }) {
   const nav = useContext(GammaNavContext);
   // A bare link (autolinked, or link text that is the URL itself) is not a
   // label — the resolved title reads better.
   const raw = textOf(children).trim();
   const text = /^(https?:\/\/|\/?\?)/i.test(raw) ? "" : raw;
-  const title = t("Open this page");
   return (
+    <LinkHover edit={edit}
+      describe={(_, ctx) => describeLink({ kind: "url", href: link.href, label: label || text }, { ctx })}>
     <a href={link.href || "#"} className={`gammaLinkCard gammaLink-${link.kind}`}
-      title={label && label !== text ? t("{label} — {title}", { label: label, title: title }) : title}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || !nav) return;
@@ -449,6 +466,7 @@ function GammaLinkCard({ link, label, children }) {
       {/* The page beside the author's own label ("see this · Paper"). */}
       {text && label && label !== text ? <span className="gammaLinkSrc">{label}</span> : null}
     </a>
+    </LinkHover>
   );
 }
 
@@ -470,44 +488,23 @@ function linePlace(link) {
 // A citation, in a chat reply or a note: a small tinted pill on the text's
 // baseline, so a "p. 2" mid-sentence doesn't push the lines apart. It cites a
 // PDF passage (`link.kind` "citation") or a text file's lines ("line").
-// Hovering, focusing or long-pressing it previews the cited place (the
-// source, the PDF page or the lines, the quote); a click (or Enter) opens it
-// in the PDF or the file, and so does the preview's own link. `multi`: the
-// text cites several sources, so a pill that names only the place also names
-// its source ("Vaswani · p. 2", "main.tex · line 7"). `guide` marks the
-// chat's citations for the tour.
-//
-// The pointer on its way from the pill into the preview crosses the text
-// between them: while it heads for the preview (menuAim.js's triangle, aimed
-// at the preview's near edge), leaving the pill does not close it.
-function CitationPill({ link, multi, guide, children }) {
+// Hovering or focusing it previews its link card (shared/ui/LinkCard.jsx:
+// the source, the PDF page or the lines, the quote), a right-click or a
+// held finger pins it; a click (or Enter) opens it in the PDF or the file,
+// and so does the card's own link. `multi`: the text cites several
+// sources, so a pill that names only the place also names its source
+// ("Vaswani · p. 2", "main.tex · line 7"). `guide` marks the chat's
+// citations for the tour; `edit` is the card's, from a note that may be
+// edited.
+function CitationPill({ link, multi, guide, edit, children }) {
   const nav = useContext(GammaNavContext);
-  const ref = useRef(null);
-  const tipRef = useRef(null);
-  const timer = useRef(null);
-  const longPressed = useRef(false); // a long-press opened the preview: its click doesn't navigate
-  const [preview, setPreview] = useState(null); // {left, top | bottom}
-  const aim = useMenuAim({ active: !!preview });
   const raw = textOf(children).trim();
   const own = /^(https?:\/\/|\/?\?)/i.test(raw) ? "" : raw;
   const source = nav?.citeSource?.(link.pageId) || null;
   const isLine = link.kind === "line";
-  const range = isLine && link.to > link.line;
   const placeLabel = isLine ? linePlace(link) : `p. ${link.page}`;
   const named = multi && source?.short && (!own || PLACE_LABEL.test(own));
-  const show = () => {
-    clearTimeout(timer.current);
-    const r = ref.current?.getBoundingClientRect();
-    if (!r) return;
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - 296));
-    setPreview(r.bottom + 170 > window.innerHeight
-      ? { left, bottom: window.innerHeight - r.top + 6 }
-      : { left, top: r.bottom + 6 });
-  };
-  const hide = () => { clearTimeout(timer.current); aim.keep(); setPreview(null); };
-  const later = (fn, ms) => { clearTimeout(timer.current); timer.current = setTimeout(fn, ms); };
   const open = (e) => {
-    hide();
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || !nav) return;
     e.preventDefault();
     e.stopPropagation();
@@ -515,53 +512,16 @@ function CitationPill({ link, multi, guide, children }) {
       ? { kind: "line", pageId: link.pageId, line: link.line, to: link.to, quote: link.quote }
       : { kind: "citation", pageId: link.pageId, page: link.page, quote: link.quote });
   };
-  useEffect(() => () => clearTimeout(timer.current), []);
-  useLayoutEffect(() => { aim.setTarget(preview ? tipRef.current?.getBoundingClientRect() : null); }, [preview]);
-  // The preview is fixed to the viewport: any scroll would leave it behind.
-  useEffect(() => {
-    if (!preview) return undefined;
-    window.addEventListener("scroll", hide, true);
-    return () => window.removeEventListener("scroll", hide, true);
-  }, [preview]);
-  const tipId = `cite-${link.kind}-${link.pageId}-${isLine ? `${link.line}-${link.to ?? link.line}` : link.page}`;
   return (
-    <>
-      <a ref={ref} href={link.href || "#"} className={`citePill gammaLink-${link.kind}`} data-guide={guide}
-        aria-describedby={preview ? tipId : undefined}
-        onMouseEnter={() => { aim.keep(); if (preview) clearTimeout(timer.current); else later(show, 250); }}
-        onMouseLeave={() => aim.guard(hide)}
-        onFocus={show}
-        onBlur={hide}
-        onTouchStart={() => { longPressed.current = false; later(() => { longPressed.current = true; show(); }, 450); }}
-        onTouchMove={() => clearTimeout(timer.current)}
-        onTouchEnd={() => clearTimeout(timer.current)}
-        onContextMenu={(e) => { if (longPressed.current) e.preventDefault(); }}
+    <LinkHover edit={edit}
+      describe={(_, ctx) => describeLink({ kind: "url", href: link.href, label: own }, { ctx })}>
+      <a href={link.href || "#"} className={`citePill gammaLink-${link.kind}`} data-guide={guide}
         onMouseDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          if (longPressed.current) { e.preventDefault(); longPressed.current = false; return; }
-          open(e);
-        }}>
+        onClick={open}>
         {named ? <span className="citePillSrc" data-markdown-copy-ignore="">{source.short} · </span> : null}
         <span className="gammaLinkLabel">{own ? children : placeLabel}</span>
       </a>
-      {/* Portalled, its events still bubble through the note's row in the
-          React tree, whose press would start editing: they stop here. The
-          press keeps the focus where it was, so a focused pill's blur
-          doesn't take the preview away under it. Leaving it lingers a
-          moment, for a pointer on its way back to the pill. */}
-      {preview ? createPortal(
-        <div ref={tipRef} id={tipId} role="tooltip" className="citePreview" style={preview}
-          onPointerEnter={() => { aim.keep(); clearTimeout(timer.current); }}
-          onMouseLeave={() => later(hide, 200)}
-          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
-          onClick={(e) => e.stopPropagation()}>
-          <div className="citePreviewTitle">{source?.title || (isLine ? t("This file") : t("This paper"))}</div>
-          <div className="citePreviewPage">{!isLine ? t("PDF page {page}", { page: link.page })
-            : range ? t("Lines {from}–{to}", { from: link.line, to: link.to }) : t("Line {line}", { line: link.line })}</div>
-          {link.quote ? <blockquote className="citePreviewQuote">“{link.quote}”</blockquote> : null}
-          <a href={link.href || "#"} className="citePreviewOpen" tabIndex={-1} onClick={open}>{isLine ? t("Open in the file") : t("Open in PDF")} <kbd>↵</kbd></a>
-        </div>, document.body) : null}
-    </>
+    </LinkHover>
   );
 }
 
@@ -580,9 +540,19 @@ function ChatMarkdownLink({ href, children, title }) {
     return <CitationPill link={{ ...link, href }} multi={multi} guide={link.kind === "citation" ? "chat.citation" : undefined}>{children}</CitationPill>;
   }
   if (link && !link.foreign) return <GammaLinkCard link={{ ...link, href }}>{children}</GammaLinkCard>;
-  return <a href={href} className="gammaLinkCard" target="_blank" rel="noreferrer" title={title || href}>
-    <ExternalLinkIcon size={14} aria-hidden="true" /><span className="gammaLinkLabel">{children}</span>
-  </a>;
+  return <ChatWebLink href={href} title={title}>{children}</ChatWebLink>;
+}
+
+// A web link in a chat reply: its link card says where it goes.
+function ChatWebLink({ href, title, children }) {
+  return (
+    <LinkHover siteHref={href}
+      describe={(siteTitle, ctx) => describeLink({ kind: "url", href, label: title || textOf(children) }, { ctx, siteTitle })}>
+      <a href={href} className="gammaLinkCard" target="_blank" rel="noreferrer">
+        <ExternalLinkIcon size={14} aria-hidden="true" /><span className="gammaLinkLabel">{children}</span>
+      </a>
+    </LinkHover>
+  );
 }
 const CHAT_MARKDOWN_COMPONENTS = { a: ChatMarkdownLink, pre: ChatPre };
 const CHAT_MARKDOWN_COPY_COMPONENTS = { ...CHAT_MARKDOWN_COMPONENTS, ...CHAT_COPY_COMPONENTS };
@@ -597,7 +567,7 @@ const ChatMarkdown = React.memo(function ChatMarkdown({ text, copyBlocks = false
     <div onCopy={handleMarkdownCopy}>
       <CiteMultiContext.Provider value={multiSource}>
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath, remarkPaperLinks, remarkDiagrams]}
+          remarkPlugins={[remarkGfm, remarkMath, remarkLoneDisplayMath, remarkPaperLinks, remarkDiagrams]}
           rehypePlugins={[rehypeKatex]}
           urlTransform={(url) => assetUrl(defaultUrlTransform(url))}
           components={copyBlocks ? CHAT_MARKDOWN_COPY_COMPONENTS : CHAT_MARKDOWN_COMPONENTS}

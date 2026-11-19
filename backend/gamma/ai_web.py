@@ -1,7 +1,7 @@
 """The agent's scholarly reach: searching the registries, following a
 paper's citations, and reading a paper that is not in the library
 (``search_papers`` / ``related_papers`` / ``fetch_paper`` in
-``ai_tools.py``; general web search is gamma/search_services.py, reading
+``ai_tools/web.py``; general web search is gamma/search_services.py, reading
 any web page gamma/web_fetch.py).
 
 Nothing here writes to a workspace. ``search_papers`` asks three registries
@@ -36,7 +36,7 @@ from urllib.parse import quote, urlsplit
 
 from fastapi import HTTPException
 
-from . import openalex, paper_links, publisher_sessions, web_fetch, web_page
+from . import openalex, paper_links, publisher_sessions, web_fetch
 from .net_guard import browsing_session
 from .web_fetch import (BROWSER_HEADERS, WALLS, DocCache, FetchError, access_wall, entry, get, page_document,
                         pdf_document, read_bounded, refusal, uri)
@@ -306,7 +306,7 @@ def fetch_document(source: str, published_only: bool = False) -> dict:
     open-access copy. A web page (web_fetch.page_document: also ``meta``,
     ``outline``, ``fetched`` and ``truncated``) says in ``note`` why no PDF
     was reachable, carries ``links`` (its PDF-looking links with their
-    text, paper_links.pdf_links) and, when it is an article page whose PDF
+    text, web_page.Page.links) and, when it is an article page whose PDF
     was out of reach, ``wall`` with ``open_url`` / ``pdf_url``. A URL is
     read as the URI it spells (web_fetch.uri), so an address copied as a
     page shows it reads too. Raises FetchError with a model-readable
@@ -393,7 +393,7 @@ def _fetch(source: str, published_only: bool = False) -> dict:
     doc = page_document(got)
     # PDF links the resolver has not tried already (those met the wall).
     tried = {pdf_url, *(trace.get("pdf_urls") or [])}
-    links = paper_links.pdf_links(web_page.decode(got.body, got.ctype), got.url) if doc["kind"] == "html" else []
+    links = got.page.links
     served = got.ctype.split(";")[0].strip() or "a page without a content type"
     doc.update(note=reason or f"the address serves {served}, not a PDF",
                links=[link for link in links if link["url"] not in tried], version="")

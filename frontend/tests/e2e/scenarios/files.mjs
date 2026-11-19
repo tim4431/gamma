@@ -8,7 +8,9 @@
 // (docs/dev/documents.md "Writing a document"): a PNG, a .tex and a .bin
 // dropped on the library are pages showing them, one page per stored file;
 // the paperclip's Upload a file… on a note page; a .json chip's Add to
-// library; a dropped directory brings its files and leaves its .git out.
+// library; a dropped directory brings its files and leaves its .git out,
+// as one batch with its dialog, and one past a hundred files asks first and
+// stops from Background tasks (transfers/uploadBatch.js).
 import { PNG_1PX, editRow, tree } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
@@ -546,7 +548,7 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     await ctx.close();
   });
 
-  await step("files: a folder dropped on the library brings its files as pages in its folder, leaving its .git out", async () => {
+  await step("files: a folder dropped on the library brings its files as pages in its folder, leaving its .git out, in a dialog that shows where they went", async () => {
     ctx = await account.context(browser);
     page = await openPage(ctx, `${server.base}/?ws=${account.ws}`);
     await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
@@ -559,6 +561,13 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
       { path: ".git/HEAD", bytes: Buffer.from("ref: refs/heads/main\n") },
       { path: ".git/config", bytes: Buffer.from("[core]\n") },
     ]);
+    // One batch: its dialog follows it to its end, and Background tasks has one row for it.
+    const dialog = page.getByRole("dialog", { name: "Upload “thesis”", exact: true });
+    await dialog.getByText("Uploaded 3 files.", { exact: true }).waitFor({ timeout: 30000 });
+    const said = await dialog.innerText();
+    assert(said.includes("1 Markdown note · 2 other files") && said.includes("Its 2 directories become folders there."), said);
+    await dialog.getByText("1 item left out: hidden, temporary or unstorable", { exact: true }).click();
+    await dialog.getByText("thesis/.git/", { exact: true }).waitFor(); // the .git it never read is named
     // a folder of the tree by name, under the folder named `under` when given
     const folderNamed = async (name, under = null) => {
       const walk = (node, parent) => (node.content === name && (!under || parent?.content === under) ? node
@@ -576,6 +585,54 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     const all = (await account.api("/api/blocks/root/children")).children;
     assertEq(all.filter((p) => ["HEAD", "config"].includes(p.content)).length, 0, "nothing of .git");
     assert(!(await folderNamed(".git")), "no .git folder");
+    await dialog.getByRole("button", { name: "Show in library", exact: true }).click();
+    await dialog.waitFor({ state: "detached" });
+    await until(() => new URL(page.url()).searchParams.get("folder") === thesis.id, { what: "the library shows the folder they went into" });
+    await page.click("button[aria-label='Background tasks']");
+    await page.locator(".taskRow.done", { hasText: "Upload “thesis”" }).waitFor();
+    assertEq(await page.locator(".taskRow", { hasText: "main.tex" }).count(), 0, "no row per file");
+    await page.keyboard.press("Escape");
+    assertNoProblems(page);
+    await ctx.close();
+  });
+
+  // Past a hundred files a batch asks first, and Cancel uploads nothing.
+  // Upload runs it as one row of Background tasks, which goes on with its
+  // dialog closed, stops from there and opens the dialog again on where the
+  // Stop left it; the files that went stay.
+  await step("files: a folder past a hundred files asks first; its batch is one row of Background tasks that stops and opens its dialog again", async () => {
+    ctx = await account.context(browser);
+    page = await openPage(ctx, `${server.base}/?ws=${account.ws}`);
+    await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
+    const many = Array.from({ length: 101 }, (_, i) => ({ path: `batch note ${String(i).padStart(3, "0")}.txt`, bytes: Buffer.from(`batch note ${i}\n`) }));
+    let uploads = 0;
+    page.on("request", (r) => { if (r.method() === "POST" && new URL(r.url()).pathname === "/api/upload-file") uploads++; });
+    await dropFolder(page, ".app", "many", many);
+    let dialog = page.getByRole("dialog", { name: "Upload “many”", exact: true });
+    await dialog.getByText("Each of the 101 files becomes a page of its own.", { exact: true }).waitFor();
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await dialog.waitFor({ state: "detached" });
+    assertEq(uploads, 0, "Cancel uploads nothing");
+    // each request slowed, so the Stop lands part way
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 400, downloadThroughput: -1, uploadThroughput: -1 });
+    await dropFolder(page, ".app", "many", many);
+    await dialog.getByRole("button", { name: "Upload 101 files", exact: true }).click();
+    await until(async () => / of 101 files/.test(await dialog.innerText()), { timeout: 15000, what: "the dialog counts the batch's files" });
+    assert((await dialog.innerText()).includes("the upload goes on in Background tasks"), "the dialog says it may close");
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await page.click("button[aria-label='Background tasks']");
+    const row = page.locator(".taskRow", { hasText: "Upload “many”" });
+    await row.locator(".taskBar").waitFor();
+    assertEq(await page.locator(".taskRow", { hasText: "batch note 000.txt" }).count(), 0, "no row per file");
+    await row.getByRole("button", { name: "Stop Upload “many”", exact: true }).click();
+    await until(async () => (await row.innerText()).includes("Stopped after"), { timeout: 20000, what: "the row says where the Stop left it" });
+    await row.getByRole("button", { name: "Open Upload “many”", exact: true }).click();
+    await dialog.getByText(/^Stopped after \d+ of 101 files: what went up stays in the library\.$/).waitFor();
+    await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    const went = (await account.api("/api/blocks/root/children")).children.filter((p) => /^batch note \d{3}\.txt$/.test(p.content)).length;
+    assert(went > 0 && went < 101, `what went up stays and the rest never went: ${went} of 101`);
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
     assertNoProblems(page);
     await ctx.close();
   });

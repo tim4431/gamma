@@ -9,7 +9,7 @@ entries into one `.bib` file whose keys are unique.
 (`properties.bibtex`). `routers/export.py` (`_BibtexBuilder`,
 `?mode=bibtex`) concatenates the entries of a page or a folder into the
 bibliography a LaTeX document cites — see
-[import_export.md](../../docs/dev/import_export.md). `ai_tools.py` (`cite`)
+[import_export.md](../../docs/dev/import_export.md). `ai_tools/library.py` (`cite`)
 and the Zotero import (`routers/imports.py`) build entries the same way.
 Every surface that prints a page's entry — the .bib export and its review
 (which the share popover's Copy BibTeX reads), `cite`, the Markdown and

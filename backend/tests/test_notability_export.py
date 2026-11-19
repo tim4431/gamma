@@ -120,7 +120,7 @@ def export(client, pid: str) -> bytes:
 
 
 def reimport(client, data: bytes, name: str) -> dict:
-    r = client.post("/api/import/notability", files={"file": (name, data, "application/zip")}, data={"folder": ""})
+    r = client.post("/api/import/note-apps", files={"file": (name, data, "application/zip")}, data={"folder": ""})
     assert r.status_code == 200, r.text
     report = r.json()
     assert report["pages_created"] == 1, report

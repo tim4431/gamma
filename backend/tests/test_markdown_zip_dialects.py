@@ -185,7 +185,7 @@ def test_a_plain_zip_anchors_what_a_percent_encoded_link_names(library, link):
     report = _import(library, {"A.md": "Keep it. ^abc\n", "Z.md": f"[x]({link})\n"})
     block = _page(library, report, "A")["children"][0]
     assert block["content"] == "Keep it."
-    assert _lines(library, report, "Z") == [f"[[{block['id']}]]"]
+    assert _lines(library, report, "Z") == [f"[[{block['id']}|x]]"]
 
 
 def test_a_skipped_note_s_link_still_names_its_anchor(library):

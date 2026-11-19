@@ -134,7 +134,10 @@ All state is SQLite + files on disk under a data directory (env
     `{bucket, endpoint, region, access_key, secret_key, prefix}` as JSON,
     the secret key encrypted like the AI keys; an older value's `enabled`,
     `interval_s` and `keep` are read as nothing;
-    [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)) and the
+    [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)), the
+    Google Drive connection (`gdrive`: `{refresh_token, email, name, folder,
+    connected_at, client_id}` as JSON, the token encrypted the same way, ""
+    once disconnected; [debugging.md](debugging.md#google-drive)) and the
     network proxy (`proxy`: `{mode, server, username, password, bypass,
     proxy_dns}` as JSON, the password encrypted the same way;
     [network_proxy.md](network_proxy.md));

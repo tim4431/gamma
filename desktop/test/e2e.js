@@ -353,7 +353,7 @@ async function chooserRow(bar, folder) {
   return item;
 }
 
-// The vault dialog in the sync panel (main.js askVault), once it is up: its
+// The vault dialog in the sync panel (lib/vaults.js askVault), once it is up: its
 // sentence, and Sync pressed.
 async function syncInDialog(bar, said) {
   const box = bar.locator('#syncPanel #vaultAsk');

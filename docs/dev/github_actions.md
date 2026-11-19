@@ -358,7 +358,7 @@ declaration), the listing and the closed test are in
    carries `assets/adi-registration.properties`).
 7. **The public link**, only once the app is public on production:
    `gh variable set PLAY_URL --body https://play.google.com/store/apps/details?id=com.gammapdf.gamma`
-   puts a Google Play button in the release notes. Never the closed
+   puts Google's *Get it on Google Play* badge in the release notes. Never the closed
    test's opt-in link, which only the testers on its lists can use.
 
 ## `android.yml`
@@ -442,7 +442,7 @@ backend pytest (Python 3.12, `requirements.txt` + `requirements-dev.txt`,
 test at 300 s, after which it fails with every thread's stack instead of
 holding the job), the frontend lint, unit tests + build (Node 22,
 `npm run lint`, `npm test`, `npm run build`, then `npm run budget`: what the first screen downloads and the lazy boundaries, [frontend-refactor.md](frontend-refactor.md#the-startup-budget)) followed by the desktop shell's unit
-tests (`node --test desktop/test/*.test.js`: the pure modules,
+tests (`node --test desktop/test/*.test.js`: the modules of `desktop/lib/`,
 `main.js` under a stand-in for Electron and the one switch for test
 windows, Node's built-ins only, so no install), the browser suite
 (`npm run e2e -- --continue --jobs 3 --shard <k>/3`, the three shards as a
@@ -706,7 +706,7 @@ hold configuration that is not a credential:
 |---|---|
 | `CWS_PUBLISHER_ID`, `CWS_ITEM_ID`, `CWS_SERVICE_ACCOUNT`, `CWS_WORKLOAD_IDENTITY_PROVIDER` | `chrome-store.yml` (and `desktop.yml`, which dispatches it only when `CWS_ITEM_ID` is set): the store item and the keyless Google sign-in ([extension/STORE.md](../../extension/STORE.md)) |
 | `PLAY_TRACK` (default `internal`), `PLAY_RELEASE_STATUS` (default `completed`; `draft` while the app is a draft, each upload then rolled out by hand in the Console) | `desktop.yml`, the `play` job |
-| `PLAY_URL` | `desktop.yml`, the release notes: a Google Play button beside the APK, the store listing; set only once the app is public on production ([above](#google-play-once)) |
+| `PLAY_URL` | `desktop.yml`, the release notes: Google's *Get it on Google Play* badge beside the APK's, the store listing; set only once the app is public on production ([above](#google-play-once)) |
 
 ## Adding or changing a workflow
 

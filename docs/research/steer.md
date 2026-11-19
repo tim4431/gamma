@@ -82,8 +82,17 @@ tool results). Differences, on purpose:
   provider's accounting, which the Responses API's interrupt gives it.
 - The last round a limit allows is never cut, so a reply never ends
   half-written with nothing after it.
-- A provider silent while it thinks is cut at its next event, as Stop is;
-  closing a blocked socket from another thread was not worth it.
+- A provider silent while it thinks was first cut at its next event, as
+  Stop was. Since 2026-11-18 (`ai-chat-improve-3`) both end the read at
+  once, as Codex's `preempt` does: the turn is read in a thread of its own,
+  one event at a time, and the reply stops waiting on it; the call's slot
+  is freed and its socket shut down. Shutting a socket down wakes a read
+  blocked on it on Linux and macOS but not on Windows, where that read
+  ends when the provider next sends (measured on Windows 11, Python 3.14:
+  the read stayed blocked until the server wrote again), and closing the
+  socket from the other thread could hand the blocked read a reused
+  handle, which is why the reply leaves that read rather than ends it
+  ([dev/ai.md](../dev/ai.md#queue-and-steer) "How a read ends at once").
 - The queue is the tab's, per conversation, and lost on reload, as Codex's
   is.
 

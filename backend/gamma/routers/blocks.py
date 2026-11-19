@@ -19,6 +19,7 @@ from ..blocks_store import (
     MAX_SEARCH_PAGES,
     TREES,
     ancestor_chains,
+    backlinks,
     assert_block_in_scope,
     batch_page,
     block_to_dict,
@@ -621,25 +622,21 @@ def ub_get_subtree(block_id: str, request: Request):
 
 @router.get("/blocks/{block_id}/backlinks")
 def ub_get_backlinks(block_id: str, request: Request):
-    """Return all blocks that reference `block_id` via [[block_id]] syntax."""
+    """Return all blocks that reference `block_id` via [[block_id]] syntax
+    (or [[block_id|words]])."""
     # Backlinks span the whole library by nature, so a share link can't use
     # them without leaking other pages.
     if share_scope(request) is not None:
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     with connect_pages_db(resolve_ws(request)) as conn:
-        # (a page in Recently deleted links to nothing)
-        rows = conn.execute(
-            f"SELECT id, content FROM unified_blocks WHERE id != ? AND content LIKE ? AND {IN_PAGE} "
-            "ORDER BY updated_at DESC LIMIT 50",
-            (block_id, f"%[[{block_id}]]%"),
-        ).fetchall()
+        rows = backlinks(conn, block_id)
         if not rows:
             return {"backlinks": []}
 
         ancestors_by_id, page_root_by_id = ancestor_chains(conn, [r[0] for r in rows])
 
         results = []
-        for bid, content in rows:
+        for bid, content, _page in rows:
             ancestors = ancestors_by_id.get(bid)
             results.append({
                 "id": bid,

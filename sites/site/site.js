@@ -9,6 +9,8 @@
 //    star count (api.github.com; every element keeps a working fallback link)
 //  - on the pricing page, "Coming soon" for a plan Gamma Cloud does not sell
 //    right now (one call to its /api/plans; a failure leaves the page as written)
+//  - on a documentation page, the section being read marked in its
+//    "On this page" list
 (() => {
   const REPO = 'tim4431/Gamma';
   const STORE = 'https://apps.microsoft.com/detail/9N8WGWR2J2MV';
@@ -144,6 +146,29 @@
         stars.forEach(el => { el.textContent = fmt(n); el.hidden = false; });
       })
       .catch(() => stars.forEach(el => el.remove())); // its empty place would stay
+  }
+
+  // "On this page": the last heading above the sticky header's foot is the
+  // section being read; at the very bottom, the last one, which may be too
+  // short ever to reach the top.
+  const toc = document.querySelector('.doctoc');
+  if (toc) {
+    const links = new Map([...toc.querySelectorAll('li > a')].map(a => [decodeURIComponent(a.hash.slice(1)), a]));
+    const heads = [...document.querySelectorAll('.docs__main :is(h2, h3)[id]')].filter(h => links.has(h.id));
+    let marked = null, queued = false;
+    const mark = () => {
+      queued = false;
+      let at = null;
+      for (const h of heads) { if (h.getBoundingClientRect().top <= 96) at = h; else break; }
+      if (innerHeight + scrollY >= document.documentElement.scrollHeight - 2) at = heads.at(-1) ?? at;
+      const link = at && links.get(at.id);
+      if (link === marked) return;
+      marked?.removeAttribute('aria-current');
+      link?.setAttribute('aria-current', 'location');
+      marked = link;
+    };
+    addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(mark); } }, { passive: true });
+    mark();
   }
 
   // Plans on sale: the account server says which paid plans can be bought now.

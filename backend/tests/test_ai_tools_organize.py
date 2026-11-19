@@ -7,8 +7,8 @@ deleted again."""
 import json
 
 from conftest import folder_names, label_names, make_folder, make_label
-from gamma import ai_tools
-from gamma.ai_tools import approval_preview, mcp_tools, run_agent_tool
+from gamma.ai_tools import folders
+from gamma.ai_tools.registry import approval_preview, mcp_tools, run_agent_tool
 from gamma.blocks_store import folder_subtree_ids, label_by_name
 from gamma.db import connect_pages_db
 from gamma.ops import tree_deletion
@@ -362,7 +362,7 @@ def test_a_deletion_too_large_to_revert_is_refused_without_a_card(org, monkeypat
     with connect_pages_db(ids["ws"]) as conn:
         rows, _, _ = tree_deletion(conn, "labels", big)
     # Room for the label's own record, not for its two pages (~34 characters each).
-    monkeypatch.setattr(ai_tools, "_DELETE_REVERT_MAX", len(json.dumps(ai_tools._tree_revert("labels", rows, {}))) + 10)
+    monkeypatch.setattr(folders, "_DELETE_REVERT_MAX", len(json.dumps(folders._tree_revert("labels", rows, {}))) + 10)
     preview, answer = approval_preview(ids["ws"], _scope(), "delete_label", {"label": "Big label"})
     assert preview is None and "too many to record for a revert" in answer, answer
     text, _ = run_agent_tool(ids["ws"], folder(""), "delete_label", {"label": "Big label"})
@@ -372,7 +372,7 @@ def test_a_deletion_too_large_to_revert_is_refused_without_a_card(org, monkeypat
     text, _ = run_agent_tool(ids["ws"], folder(""), "delete_label", {"label": "Spare"})
     assert text.startswith("ok") and spare not in label_names(c), text
     monkeypatch.undo()
-    monkeypatch.setattr(ai_tools, "MAX_OPS", 1)
+    monkeypatch.setattr(folders, "MAX_OPS", 1)
     top, sub = make_folder(c, "orgBig"), make_folder(c, "orgBig/sub")
     text, _ = run_agent_tool(ids["ws"], folder(""), "delete_folder", {"folder": "orgBig"})
     assert text.startswith("error") and "too large to record for a revert" in text, text

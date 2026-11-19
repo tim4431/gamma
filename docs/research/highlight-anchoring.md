@@ -174,6 +174,27 @@ gone from v7. The budget, the frozen words, the four-word minimum and the
 context-first ranking above no longer hold; the measurements below are of
 the edit-budget matcher.
 
+**Later still: chat citations by the same finder** (November 2026). The
+browser matcher still had the frozen words, and it searched pdf.js's text
+for quotes the model copied from MuPDF's, which its special passes
+(superscript references by their geometry, `(Methods)` pointers, wrapped
+compounds) were there to bridge. A citation is now found on the server
+([dev/pdf_citations.md](../dev/pdf_citations.md#finding-the-quote)). Run as
+it was, the finder found the three saved Krantz citations (arXiv
+1904.06560v5, pages 20–22) at 0.97 to 0.996, each a correct place but none
+exact. Two things kept them from 1.0. The page's line-end join had dropped
+a compound's own hyphen ("Carr-PurcellMeiboom-Gill", "πpulses"). And
+superscript references the model left out stood glued to their words
+("sequence159,160.", "decoupling78."). A hyphen inside a word is now
+optional in an exact copy. A reference mark, told by the browser matcher's
+geometry rule read off MuPDF's glyph boxes (there 0.70 of the letter's
+height, raised by 0.41 of it), may be left out. With both, all three are
+exact, about 150 ms each with the named page read alone. The journal
+transduction paper's page 4 quote, which left out `(Methods)`, reads 0.99
+and is marked as approximate. Its arXiv preprint (2207.10121) words the
+sentence differently on page 5, and the lookup from page 4 still finds it,
+at 0.82.
+
 **Line numbers.** A review copy (lineno) prints a number beside every
 line, which MuPDF reads as a line of its own. Lines made of one to five
 digits alone are left out of both files' text, so the numbered copy and

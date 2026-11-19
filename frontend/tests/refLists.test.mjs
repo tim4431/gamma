@@ -73,6 +73,8 @@ test("a block reads as one plain line, its [[refs]] as their labels", () => {
   assert.equal(refBlockText("```python\nimport torch\n```", labelOf), "import torch");
   assert.equal(refBlockText("> [!tip] Idea\n> See [[odd]]", labelOf), "Idea See A weird title");
   assert.equal(refBlockText("see [[unknown1]]", labelOf), "see unknown1");
+  assert.equal(refBlockText("see [[paper|the paper]] and [[paper\\|it]]", labelOf), "see the paper and it", "a link's words win");
+  assert.equal(refBlockText("see [[paper| ]]", labelOf), "see Attention Is All You Need", "blank words are none");
 });
 
 test("a block's page path, plain", () => {
@@ -94,6 +96,7 @@ test("the [[query typed before the caret opens the picker; a closed or broken on
   assert.equal(refQueryAt("see [[Att]] and"), null);
   assert.equal(refQueryAt("see [[Att\nnext"), null);
   assert.equal(refQueryAt(""), null);
+  assert.equal(refQueryAt("see [[paper|the pa"), null, "after a pipe come the link's words, not a query");
 });
 
 test("a picked row puts [[id]] in place of the typed [[query, the caret after it", () => {
@@ -110,4 +113,14 @@ test("]] typed after a page's exact title links it; an id or an unknown title st
   });
   assert.equal(typedTitleLink("read [[paper]]", 14, PAGES), null, "an id already");
   assert.equal(typedTitleLink("read [[Nothing like it]]", 24, PAGES), null);
+});
+
+test("]] typed after [[title|words]] links the title and keeps the words; a title may hold a pipe", () => {
+  const typed = (value, pages = PAGES) => typedTitleLink(value, value.length, pages)?.insert ?? null;
+  assert.equal(typed("read [[Attention is all you need|the paper]]"), "[[paper|the paper]]");
+  assert.equal(typed("| [[Rydberg Atom Arrays\\|arrays]] |"), null, "the ]] must end the text before the caret");
+  const row = "| [[Rydberg Atom Arrays\\|arrays]]";
+  assert.equal(typed(row), "[[rydberg\\|arrays]]", "a table's escaped pipe stays escaped");
+  assert.equal(typed("read [[A | B]]", [page("ab", "A | B"), page("a", "A")]), "[[ab]]", "the whole title first");
+  assert.equal(typed("read [[paper|it]]"), null, "an id with words already");
 });

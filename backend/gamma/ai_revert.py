@@ -2,7 +2,7 @@
 folder or label it deleted, and putting it back again.
 
 Each note tool's action records what its change needs to be undone and
-redone (``revert`` on the action, gamma/ai_tools.py): an edit the block's
+redone (``revert`` on the action, gamma/ai_tools/): an edit the block's
 text just before and just after the write, a new block the text it was
 made with and where it went, a move the parent and key it left and the
 ones it went to, a deletion every block of the subtree it took. A folder's
@@ -48,9 +48,11 @@ like any other.
 import json
 
 from . import textmerge
-from .ai_tools import BATCH_MAX, cross_page_refusal, text_diff
+from .ai_tools.base import text_diff
+from .ai_tools.notes import cross_page_refusal
+from .ai_tools.organizing import BATCH_MAX
 from .blocks_store import (FOLDERS, LABELS, TRASH, TREES, existing_in, fetch_subtree, filing, free_position,
-                           load_props, named, page_root_id, tree_children, write_lock)
+                           load_props, named, page_root_id, sub_pages, tree_children, write_lock)
 from .db import connect_pages_db
 from .ops import (OpError, after_commit, after_commits, apply_batches, apply_ops, delete_tree, move_across_pages,
                   restore_page, trash_page)
@@ -103,8 +105,26 @@ def _plan_edit(conn, block_id: str, revert: dict, force: bool, redo: bool):
     return page_id, None if text == current else [{"op": "set", "id": block_id, "content": text}]
 
 
+def _threads_on(conn, block_id: str) -> int:
+    """The comment threads open or resolved on the block (not deleted):
+    someone's writing about it, which a revert of the block would hide."""
+    return conn.execute("SELECT COUNT(*) FROM comments WHERE block_id = ? AND id = thread_id AND deleted_at IS NULL "
+                        "AND orphaned_at IS NULL", (block_id,)).fetchone()[0]
+
+
 def _plan_create(conn, block_id: str, revert: dict, force: bool, redo: bool):
+    """A new block deleted again; a redo makes it again where it went, with
+    the properties it was made with (``props``: a drawing's, a text box's,
+    a picture's or a page of paper's, gamma/ai_draw.py; a note made by
+    create_block records none). The deletion stops (``filled``, forceable)
+    once someone else's work is in it: its text changed, notes under it,
+    comment threads on it, or, for handwriting, strokes drawn into it (its
+    stroke file is another). A move or a restyle loses nothing and does not
+    stop it."""
     row = _row(conn, block_id)
+    props = revert.get("props", {})
+    if not isinstance(props, dict):
+        raise RevertError(400, MALFORMED)
     if redo:
         if row:
             return page_root_id(conn, block_id), None  # back already
@@ -117,17 +137,52 @@ def _plan_create(conn, block_id: str, revert: dict, force: bool, redo: bool):
         if not page_id:
             raise RevertError(409, "The note it was added under was deleted.", "gone")
         return page_id, [{"op": "insert", "id": block_id, "parent": parent, "content": content,
-                          "position": position if isinstance(position, str) else None}]
+                          "position": position if isinstance(position, str) else None,
+                          **({"props": props} if props else {})}]
     if not row:
         return "", None  # deleted already
     if row[0] == "root":
         raise RevertError(400, MALFORMED)
     under = len(fetch_subtree(conn, block_id)) - 1
+    threads = _threads_on(conn, block_id)
     current = row[2] or ""
-    if (current != revert.get("after") or under) and not force:
+    drawn = bool(props.get("ink_url")) and load_props(conn.execute(
+        "SELECT properties FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()[0]).get("ink_url") != props["ink_url"]
+    if (current != revert.get("after") or under or threads or drawn) and not force:
         raise RevertError(409, "The note was changed since.", "filled",
-                          {"diff": text_diff(current, ""), "children": under})
+                          {"diff": text_diff(current, ""), "children": under, "threads": threads, "drawn": drawn})
     return page_root_id(conn, block_id), [{"op": "delete", "id": block_id}]
+
+
+def _plan_made(conn, block_id: str, revert: dict, force: bool, redo: bool):
+    """A page create_page made (``revert["made"]``, its id) moved to Recently
+    deleted, and with ``redo`` brought back from there, as ``("trash",
+    [(page id, "trash" | "restore")], 0)`` for ``_move_pages``. The move
+    stops (``filled``, forceable) while the page holds anything: notes,
+    pages inside it, comment threads. The agent's own notes on it are
+    changes of their own, which the Revert… dialog takes back first (newest
+    first), so the page is empty by then. A page already where it goes is a
+    no-op; one deleted for good since is gone."""
+    if revert.get("made") != block_id:
+        raise RevertError(400, MALFORMED)
+    row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
+    if redo:
+        if not row:
+            raise RevertError(409, "The page was deleted for good since.", "gone")
+        if row[0] != TRASH:
+            return block_id, None
+        return block_id, ("trash", [(block_id, "restore")], 0)
+    if not row or row[0] != "root":
+        return "", None  # deleted already
+    notes = conn.execute("SELECT COUNT(*) FROM unified_blocks WHERE page_id = ? AND id != ?",
+                         (block_id, block_id)).fetchone()[0]
+    pages = len(sub_pages(conn, block_id))
+    threads = conn.execute("SELECT COUNT(*) FROM comments WHERE page_id = ? AND id = thread_id AND deleted_at IS NULL "
+                           "AND orphaned_at IS NULL", (block_id,)).fetchone()[0]
+    if (notes or pages or threads) and not force:
+        raise RevertError(409, "The page was filled in since.", "filled",
+                          {"page": True, "children": notes, "pages": pages, "threads": threads})
+    return block_id, ("trash", [(block_id, "trash")], 0)
 
 
 def _plan_move(conn, block_id: str, revert: dict, force: bool, redo: bool):
@@ -374,7 +429,7 @@ def _plan_pages(conn, block_id: str, revert: dict, force: bool, redo: bool):
 KEPT_TRASH = "The pages were deleted for good since."
 
 _PLANS = {"edit": _plan_edit, "create": _plan_create, "move": _plan_move, "delete": _plan_delete,
-          "pages": _plan_pages, "trash": _plan_trash}
+          "pages": _plan_pages, "trash": _plan_trash, "made": _plan_made}
 
 
 def revert_change(ws: str, kind: str, block_id: str, revert: dict, *, force: bool = False,

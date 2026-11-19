@@ -276,7 +276,7 @@ Per-workspace backups — the snapshots users keep on the server from
 Settings → Backups and the `/api/export` zips — are `gamma/ws_backup.py`
 ([workspaces.md](workspaces.md) "Export and backups"), a different, smaller thing.
 A backup task may also copy its snapshots to a bucket, from where Settings
-→ Backups restores them (`gamma/bucket_snapshots.py`). With the
+→ Backups restores them (`gamma/snapshot_copies.py`). With the
 environment's off-site rounds on, each database is also copied to the
 bucket every interval it changed, with the uploaded files, and those
 copies come back with `manage.py offsite --restore` instead

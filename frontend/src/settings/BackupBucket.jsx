@@ -22,7 +22,6 @@ import { MorphText } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 export const BUCKET_READ = "/admin/offsite";
-export const BUCKET_COPIES_READ = "/admin/offsite/snapshots";
 const ENDPOINT = `${API}${BUCKET_READ}`;
 const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
 

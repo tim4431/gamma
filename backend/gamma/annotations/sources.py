@@ -1,5 +1,5 @@
-"""Where in the sources a place on a work folder's PDF was typeset: a
-feedback entry's ``source`` (docs/dev/annotations.md "SyncTeX"), read from the
+"""Where in the sources a place on a work folder's PDF was typeset: an
+annotation entry's ``source`` (docs/dev/annotations.md "SyncTeX"), read from the
 build's SyncTeX file (gamma/annotations/synctex.py) on this computer.
 
 ``source_for`` maps a place on the page's current PDF (an anchor, or the

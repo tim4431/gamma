@@ -229,6 +229,9 @@ No schema change: sheets are blocks and properties.
 - The Sketchbook every new account starts with is a notebook made on the
   server too: four sheets, each with one ink group and its text boxes
   ([onboarding.md](onboarding.md#the-sketchbook)).
+- The chat's agent adds a sheet (`add_sheet`) and draws or places on one
+  (`draw`, `add_text_box`, `place_picture`: `sheet_id`), one block a call
+  under its stamp ([ai_tools.md](ai_tools.md) "Drawing on pages").
 
 ## Client
 

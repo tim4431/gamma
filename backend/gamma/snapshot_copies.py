@@ -1,30 +1,42 @@
-"""The backup tasks' snapshots in the bucket (docs/dev/debugging.md
-"Snapshots and copies in a bucket").
+"""The backup tasks' snapshots copied off this server, to the bucket or to
+Google Drive (docs/dev/debugging.md "Snapshots and copies in a bucket",
+"Google Drive").
 
-A backup task with ``bucket`` on (gamma/backup_schedule.py) uploads each
-snapshot it takes, whole, to ``<prefix>snapshots/<ws>/<name>.zip``: the
-snapshot's own name, so a copy and the snapshot it came from match. Beside
-the copies, ``snapshots/<ws>/workspace.json`` (``{id, name, kind}``) names
-the workspace, so a server that does not have it (a new one after a lost
-disk) can still say whose copies they are. The task's retention then prunes
-its copies in the bucket as it prunes its snapshots on the server; the
-copies of other tasks are never touched. The bucket has no schedule of its
-own: it holds what the tasks send it.
+``DESTINATIONS`` names the stores a task may copy to, each with what a
+message calls it, why nothing can go there while it is not set up, whether
+it is and its client: ``bucket``, the S3-compatible bucket (gamma/s3.py,
+its settings gamma/offsite.py), and ``drive``, the server's Google Drive
+connection (gamma/gdrive.py, gamma/gdrive_account.py). Both clients are
+backup stores (gamma/backup_store.py ``Store``), so everything below works
+on either alike; a store is named by its key in ``DESTINATIONS``.
 
-The bucket is the one Settings → Backups sets up (gamma/offsite.py
-``settings``: saved by an admin, or from the environment). Admins read it
-from the same pane: ``listing`` (one listing of ``snapshots/``), ``fetch``
-(one copy down into a local file, for a download or a restore) and
-``delete``.
+A backup task with ``bucket`` or ``drive`` on (gamma/backup_schedule.py),
+or both, uploads each snapshot it takes, whole, to
+``snapshots/<ws>/<name>.zip`` of that store (under the bucket's prefix, or
+the Drive folder): the snapshot's own name, so a copy and the snapshot it
+came from match. Beside the copies, ``snapshots/<ws>/workspace.json``
+(``{id, name, kind}``) names the workspace, so a server that does not have
+it (a new one after a lost disk) can still say whose copies they are. The
+task's retention then prunes its copies in each store as it prunes its
+snapshots on the server; the copies of other tasks are never touched.
+Neither store has a schedule of its own: each holds what the tasks send
+it.
+
+Admins read each store from Settings → Backups: ``listing`` (one listing
+of ``snapshots/``), ``fetch`` (one copy down into a local file, for a
+download or a restore) and ``delete``.
 """
 
 import json
 import re
 import time
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
+from typing import Callable
 
-from . import offsite, s3, workspaces, ws_backup
+from . import gdrive_account, offsite, s3, workspaces, ws_backup
+from .backup_store import Store
 from .db import safe_ws_id
 
 SPACE = "snapshots"
@@ -32,17 +44,45 @@ MARKER = "workspace.json"
 _TASK_RE = re.compile(r"^\d{8}-\d{6}-task-([0-9a-f]{12})(?:\.\d+)?$")  # backup_schedule's label, task-<id[:12]>
 
 
-def ready() -> bool:
-    """Whether a bucket is set up."""
-    return bool(offsite.settings()["bucket"])
+@dataclass(frozen=True)
+class Destination:
+    """A store the backup tasks copy to: what a message calls it, why
+    nothing can be copied there while it is not set up, whether it is, and
+    its client (a StoreConfigError without one that can work)."""
+    name: str
+    not_set_up: str
+    ready: Callable[[], bool]
+    client: Callable[..., Store]
 
 
-def client(**kwargs) -> s3.Client:
-    """The bucket set up in Settings → Backups. S3ConfigError without one."""
+def _bucket_client(**kwargs) -> s3.Client:
     conf = offsite.settings()
     if not conf["bucket"]:
         raise s3.S3ConfigError("no bucket is set up: an admin sets one up in Settings → Backups")
     return s3.Client.from_settings(conf, **kwargs)
+
+
+DESTINATIONS = {
+    "bucket": Destination("the bucket", "No bucket is set up. An admin sets one up in Settings → Backups.",
+                          lambda: bool(offsite.settings()["bucket"]), _bucket_client),
+    "drive": Destination("Google Drive", "Google Drive is not connected. An admin connects it in Settings → Backups.",
+                         gdrive_account.ready, gdrive_account.client),
+}
+STORES = tuple(DESTINATIONS)
+
+
+def destination(where: str) -> Destination:
+    """The store named ``where``; ValueError for a name none has."""
+    found = DESTINATIONS.get(where) if isinstance(where, str) else None
+    if found is None:
+        raise ValueError(f"no store is named {where!r}")
+    return found
+
+
+def client(where: str, **kwargs) -> Store:
+    """The client of the store named ``where``. StoreConfigError while it is
+    not set up, ValueError for a name no store has."""
+    return destination(where).client(**kwargs)
 
 
 def key(ws: str, name: str) -> str:
@@ -53,7 +93,7 @@ def key(ws: str, name: str) -> str:
     return f"{SPACE}/{safe_ws_id(ws)}/{name}.zip"
 
 
-def upload(bucket: s3.Client, ws: str, name: str) -> None:
+def upload(bucket: Store, ws: str, name: str) -> None:
     """Copy the stored snapshot ``name`` up, and the workspace's
     ``workspace.json`` beside it."""
     bucket.put_object(key(ws, name), ws_backup.backup_path(ws, name))
@@ -76,7 +116,7 @@ def _newest_first(copies: list[dict]) -> list[dict]:
     return sorted(copies, key=lambda c: (c["mtime"], c["name"]), reverse=True)
 
 
-def prune(bucket: s3.Client, ws: str, task: dict, at) -> int:
+def prune(bucket: Store, ws: str, task: dict, at) -> int:
     """Remove the task's copies of the workspace past its retention, as
     backup_schedule._prune removes its snapshots: all but the newest
     ``retention_value``, or those older than that many days but the
@@ -94,7 +134,7 @@ def prune(bucket: s3.Client, ws: str, task: dict, at) -> int:
     return len(expired)
 
 
-def _recorded(bucket: s3.Client, ws: str) -> dict:
+def _recorded(bucket: Store, ws: str) -> dict:
     """What ``workspace.json`` says of a workspace this server lacks, {}
     when it says nothing readable."""
     try:
@@ -104,14 +144,14 @@ def _recorded(bucket: s3.Client, ws: str) -> dict:
     return about if isinstance(about, dict) else {}
 
 
-def listing() -> list[dict]:
-    """Every workspace the bucket holds copies of: ``[{workspace, name,
+def listing(where: str) -> list[dict]:
+    """Every workspace the store holds copies of: ``[{workspace, name,
     here, snapshots: [{name, size_bytes, created_at, task}]}]``, the copies
     newest first (``created_at`` is when the copy was sent), the workspaces
     this server has first. ``name`` is this server's, else the one
-    ``workspace.json`` recorded ("" when there is none). S3Error or
-    S3ConfigError when the bucket cannot be read."""
-    bucket = client()
+    ``workspace.json`` recorded ("" when there is none). A StoreError or a
+    StoreConfigError when the store cannot be read."""
+    bucket = client(where)
     groups: dict[str, list] = {}
     for object_key, size, mtime in bucket.list_objects(f"{SPACE}/"):
         parts = object_key.split("/")
@@ -132,13 +172,14 @@ def listing() -> list[dict]:
     return sorted(out, key=lambda g: (not g["here"], g["name"].lower(), g["workspace"]))
 
 
-def fetch(ws: str, name: str, dest: Path) -> None:
-    """Download the copy into ``dest``. FileNotFoundError when the bucket
-    has no such copy."""
+def fetch(where: str, ws: str, name: str, dest: Path) -> None:
+    """Download the copy in the store ``where`` into ``dest``.
+    FileNotFoundError when it holds no such copy."""
     object_key = key(ws, name)
-    if not client().get_object(object_key, dest):
-        raise FileNotFoundError(f"the bucket holds no copy {name} of this workspace")
+    if not client(where).get_object(object_key, dest):
+        raise FileNotFoundError(f"{destination(where).name} holds no copy {name} of this workspace")
 
 
-def delete(ws: str, name: str) -> None:
-    client().delete_object(key(ws, name))
+def delete(where: str, ws: str, name: str) -> None:
+    """Delete a copy from the store ``where``."""
+    client(where).delete_object(key(ws, name))

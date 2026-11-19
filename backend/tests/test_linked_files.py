@@ -25,9 +25,10 @@ import pymupdf
 
 from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_label, make_page, make_user,
                       thread_on, workspace_of)
-from gamma import (ai_tools, app as app_mod, backups, comments, config, db, db_maintenance, folder_links, gamma_sync,
-                   integrity, jobs, linked_files, offsite, pdf_meta, seed, storage, upload_gc, workspaces, ws_backup)
+from gamma import (app as app_mod, backups, comments, config, db, db_maintenance, folder_links, gamma_sync, integrity,
+                   jobs, linked_files, offsite, pdf_meta, seed, storage, upload_gc, workspaces, ws_backup)
 from gamma.ai_context import pdf_path
+from gamma.ai_tools import registry
 from gamma.annotations import kept
 from gamma.blocks_store import pages_for_docs
 from gamma.db import connect_data_db, connect_pages_db, connect_users_db, connect_vaults_db
@@ -127,7 +128,7 @@ def _rows(ws, page_id) -> list:
 
 def _opened_files(ws) -> str:
     with connect_pages_db(ws) as conn:
-        return linked_files._opened_files(conn)
+        return linked_files.opened_files_page(conn)
 
 
 def _inside(c, ws) -> list:
@@ -2104,10 +2105,10 @@ def test_an_ai_tool_that_fails_on_a_file_sends_no_path_to_the_model(owner, ws, m
     def reads(conn, ws, scope, args):
         raise PermissionError(13, "Permission denied", "/home/ann/private/paper.pdf")
 
-    name, tool = next((n, t) for n, t in ai_tools._BY_NAME.items() if not t["mutating"])
-    monkeypatch.setitem(ai_tools._BY_NAME, name, {**tool, "run": reads})
-    monkeypatch.setattr(ai_tools, "agent_tools", lambda *a, **kw: [{"name": name}])
-    result, _action = ai_tools.run_agent_tool(ws, {"type": sorted(tool["scopes"])[0]}, name, {})
+    name, tool = next((n, t) for n, t in registry._BY_NAME.items() if not t["mutating"])
+    monkeypatch.setitem(registry._BY_NAME, name, {**tool, "run": reads})
+    monkeypatch.setattr(registry, "agent_tools", lambda *a, **kw: [{"name": name}])
+    result, _action = registry.run_agent_tool(ws, {"type": sorted(tool["scopes"])[0]}, name, {})
     assert result == "error: Permission denied"
 
 

@@ -13,8 +13,8 @@ opened in a turn of this computer (to ask a decision) resumes the session
 of the conversation that opened it (``opener_of``). Its turns run as a
 chat's do: queued
 for this computer's runner (gamma/local_agents/runner.py ``_ChatTurn``), or
-for the other computer whose agent ``to`` names (``chats.remote_of``), which
-claims it over its channel (``chats.claim``) and works in the vault of the
+for the other computer whose agent ``to`` names (``far_turns.remote_of``), which
+claims it over its channel (``far_turns.claim``) and works in the vault of the
 page's work folder where it keeps it, else where the page's chat with it
 works. A co-author the agent's owner
 named on the computer (decision 13 of
@@ -50,7 +50,7 @@ from .. import agents, comments, hosted, mentions, workspaces
 from ..blocks_store import new_block_id
 from ..db import account_names, connect_pages_db, connect_users_db
 from ..logbuf import log
-from . import catalog, chats, enabled, home, store
+from . import catalog, chats, enabled, far_turns, home, store
 
 # Why a comment's ``to`` started no turn, as the client words it (comments.js
 # ``turnRefusal``), each with an English ``why``.
@@ -168,21 +168,21 @@ def _start(ws: str, event: dict, to: str, name: str, by_name: str) -> dict:
             runner.queue_chat(ws, place, reply["turn_id"], conversation_id=conversation["id"], bucket=page_id,
                               agent=name, user_id=actor, owner=row["set_by"], thread_id=thread["id"])
     else:
-        far = chats.remote_of(ws, page_id, actor, computer, name) if computer else None
+        far = far_turns.remote_of(ws, page_id, actor, computer, name) if computer else None
         if far is None:
             return refused(name, "elsewhere", f"{label} on that computer does not work on this page.")
         if not far["online"]:
-            return refused(name, "offline", chats.OFFLINE.format(computer=far["computer"]), far["computer"])
+            return refused(name, "offline", far_turns.OFFLINE.format(computer=far["computer"]), far["computer"])
         if far["paused"]:
             return refused(name, "paused", f"The synced folder is paused on {far['computer']}: {label} starts once "
                                            "it syncs again.", far["computer"])
         if far["ready"] is False:
-            return refused(name, "not_ready", chats.far_problem(far))
+            return refused(name, "not_ready", far_turns.far_problem(far))
         # where the thread's conversation works, else the page's chat with that computer's agent
         kept = next((c for c in (mine, chat) if c is not None and (c["computer"], c["agent"]) == (computer, name)),
                     None)
         try:
-            dir = chats.far_dir(far, None, kept)
+            dir = far_turns.far_dir(far, None, kept)
         except chats.ChatError as e:
             return refused(name, "folder" if e.status == 409 else "other", e.detail)
         conversation, reply, new = chats.begin(ws, dir=dir, link_id="", remote=True, computer=far["computer"],
@@ -339,7 +339,7 @@ def chats_of(ws: str, user_id: str, thread_ids) -> dict[str, dict]:
             busy = chats.busy(conversation)
             turn = None
             if busy is not None:
-                run = chats.run_of(conn, busy["turn_id"])
+                run = far_turns.run_of(conn, busy["turn_id"])
                 turn = {"turn_id": busy["turn_id"], "state": busy.get("state"), "asking": bool(busy.get("asks")),
                         "waiting": bool(busy.get("waiting")), "computer": run["computer"] if run else ""}
             out[conversation["thread_id"]] = {"conversation_id": conversation["id"], "agent": conversation["agent"],

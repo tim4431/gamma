@@ -6,14 +6,14 @@ names, among those its writer may use on the page (gamma/agents.py ids:
 this computer's agent the account turned on or its owner lends it, else
 the agent of that name of the first far seat, a computer of the account's,
 or of the owner's that lends it, that keeps the page's work folder first,
-``chats.remote_of``), "" for none. Everywhere else ``@codex`` is what it
+``far_turns.remote_of``), "" for none. Everywhere else ``@codex`` is what it
 was: plain text, or a member named codex.
 
 This module is imported inside functions (gamma/local_agents/__init__.py).
 """
 
 from .. import agents, mentions
-from . import catalog, chats, enabled, store
+from . import catalog, chats, enabled, far_turns, store
 
 
 def to_of(ws: str, event: dict) -> str:
@@ -23,7 +23,7 @@ def to_of(ws: str, event: dict) -> str:
     for none: the agent of that name the writer turned on here or its
     owner lends it (``store.usable``) where a vault here keeps the page's
     work folder, else the agent of that name of a computer that keeps it
-    (a far seat's, ``chats.remote_of``), else this computer's, else the
+    (a far seat's, ``far_turns.remote_of``), else this computer's, else the
     first far seat's that has it, in the catalog's order."""
     names = mentions.people_in(event.get("body") or "")
     if event.get("kind") == "edit":
@@ -36,7 +36,7 @@ def to_of(ws: str, event: dict) -> str:
     mine = next((name for name in named if store.usable(actor, ws, name)), "") if place is not None else ""
     if mine and place["link"] is not None:
         return agents.here(mine).id
-    seats = [seat for name in named if (seat := chats.remote_of(ws, page_id, actor, agent=name))]
+    seats = [seat for name in named if (seat := far_turns.remote_of(ws, page_id, actor, agent=name))]
     far = next((seat for seat in seats if seat["folder_id"]), None) or (None if mine else next(iter(seats), None))
     if far is not None:
         return agents.computer_agent(far["computer_id"], far["agent"]).id

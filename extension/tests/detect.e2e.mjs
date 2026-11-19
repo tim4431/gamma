@@ -6,8 +6,9 @@
 // "Save the web page instead"; a reference list naming several DOIs names
 // none; a repository's thesis page has no PDF or DOI but its citation tags,
 // which "Save this URL anyway" sends as the record — filed by the same
-// folder and labels a paper is, and taken back out again by Undo; and a
-// publisher page's tags ride along with its clip.
+// folder and labels a paper is, and taken back out again by Undo; a
+// publisher page's tags ride along with its clip; and a popup opened on an
+// arXiv PDF tab while its look-up is under way waits for that look-up.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -54,18 +55,29 @@ const site = await listen(siteHttp);
 
 const clips = [];
 const deleted = [];   // the pages DELETE /api/blocks/<id> was sent (Undo)
+const PREPRINT = "2611.04242";  // an arXiv id the library has under its journal DOI
+const preprintLookups = [];     // the look-ups of its PDF tab, held until releasePreprint()
+let releasePreprint;
+const preprintHeld = new Promise((resolve) => { releasePreprint = resolve; });
 const gammaHttp = createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
   let body = Buffer.alloc(0);
   for await (const chunk of req) body = Buffer.concat([body, chunk]);
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/api/session") res.end('{"user":"alice"}');
+  else if (url.pathname === "/api/library/lookup" && url.searchParams.get("arxiv_id") === PREPRINT) {
+    // The server asks arXiv for the published DOI before it answers.
+    preprintLookups.push(url.searchParams.get("url"));
+    await preprintHeld;
+    res.end(JSON.stringify({ block_id: "pub", title: "Published", existed: true, doc_id: "d1",
+                             open_url: "/?block=pub", folders: [], labels: [] }));
+  }
   else if (url.pathname === "/api/library/folders") res.end('{"folders":[{"id":"f-lab","path":["Lab"]}],"labels":[{"id":"l-1","name":"theses"}]}');
   else if (req.method === "DELETE" && url.pathname.startsWith("/api/blocks/")) {
     deleted.push(decodeURIComponent(url.pathname.slice("/api/blocks/".length)));
     res.end('{"ok":true}');
   }
-  else if (url.pathname === "/api/library/preview" && url.searchParams.get("doi").toLowerCase() === "10.5555/news.1") {
+  else if (url.pathname === "/api/library/preview" && (url.searchParams.get("doi") || "").toLowerCase() === "10.5555/news.1") {
     res.end(JSON.stringify({ title: "A thing, found", authors: ["A. Scientist"], year: "2026", venue: "Nature",
                              doi: "10.5555/news.1", arxiv_id: "", source: "doi" }));
   } else if (url.pathname === "/api/clip") {
@@ -171,8 +183,32 @@ try {
   assert.deepEqual([clip.doi, clip.doi_from_text, clip.record.kind, clip.record.venue, clip.record.authors],
     ["10.5555/article.7", false, "journalArticle", "Journal of Things", ["Charles Babbage"]]);
 
+  // An arXiv PDF tab (no content script: what its URL says) whose paper the
+  // library has under its journal DOI. The look-up waits on the server, and
+  // a popup opened meanwhile waits for it rather than sending another.
+  await context.route("https://arxiv.org/pdf/**", (route) =>
+    route.fulfill({ status: 200, contentType: "application/pdf", body: "%PDF-1.4\n%%EOF\n" }));
+  const pdfTab = await context.newPage();
+  const tabUrl = `https://arxiv.org/pdf/${PREPRINT}v2`;
+  await pdfTab.goto(tabUrl);
+  const pdfTabId = await worker.evaluate(async () => (await chrome.tabs.query({ url: "https://arxiv.org/pdf/*" }))[0].id);
+  for (let i = 0; i < 100 && !preprintLookups.length; i++) await new Promise((r) => setTimeout(r, 50));
+  await new Promise((r) => setTimeout(r, 1000));  // every look-up the tab's load sends is in
+  const loadLookups = preprintLookups.length;
+  assert.ok(loadLookups >= 1, "the tab's load looked the paper up");
+  const pdfPopup = await context.newPage();
+  pdfPopup.on("pageerror", (error) => errors.push(error.message));
+  await pdfPopup.goto(`chrome-extension://${id}/popup.html?tab=${pdfTabId}`);
+  await new Promise((r) => setTimeout(r, 800));  // the popup's get-state is in
+  assert.equal(preprintLookups.length, loadLookups, "the popup waits for the look-up under way");
+  releasePreprint();
+  await pdfPopup.locator("#existing:not(.hidden)").waitFor();
+  assert.equal(preprintLookups.length, loadLookups);
+  assert.equal(preprintLookups[0], tabUrl);
+  assert.equal(await worker.evaluate((tabId) => chrome.action.getBadgeText({ tabId }), pdfTabId), "✓");
+
   assert.deepEqual(errors, []);
-  console.log("PASS: a story's one DOI, saving the story instead, a list of DOIs, a thesis page's tags with its filing and Undo, a publisher page's record.");
+  console.log("PASS: a story's one DOI, saving the story instead, a list of DOIs, a thesis page's tags with its filing and Undo, a publisher page's record, an arXiv PDF tab's look-up under way.");
 } finally {
   await context?.close();
   gammaHttp.close();

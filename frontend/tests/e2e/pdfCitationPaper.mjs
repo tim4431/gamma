@@ -1,10 +1,10 @@
 // Optional regression against a public paper (defaults to arXiv:1904.06560).
 // node tests/e2e/pdfCitationPaper.mjs /path/to/paper.pdf [screenshot-dir] [fixture-json]
+// Each fixture is {page, quote, approximate?}: the quote as a model cited it.
 // Uses an isolated backend; never opens or writes the user's library.
 import fs from "node:fs";
 import path from "node:path";
 import { Account, Server, assert, assertEq, assertNoProblems, launchBrowser, openPage, until } from "./harness.mjs";
-import { citationRuns, matchCitation } from "../../src/pdf/pdfCitation.js";
 
 const input = process.argv[2];
 if (!input) throw new Error("Pass the path to the PDF matching the fixtures");
@@ -31,30 +31,34 @@ try {
   const page = await openPage(ctx, `${server.base}/?page=${created.id}&ws=${account.ws}`);
   const before = await account.api(`/api/blocks/${created.id}/subtree`);
   for (const c of cases) {
-    const expected = matchCitation(citationRuns(c.items), c.quote).spans.map(s => c.items[s.run].str.slice(s.start, s.end));
     await page.getByRole("link", { name: `p. ${c.page}`, exact: true }).click();
     const mark = page.locator(`[data-page="${c.page}"] .pdfCitationMark`);
     await mark.first().waitFor();
     if (c.approximate) await page.locator('.pdfCitationNotice', { hasText: "approximate text match" }).waitFor();
     else assertEq(await page.locator(".pdfCitationNotice").count(), 0, `p.${c.page}: resolves without a warning`);
-    const aligned = () => page.evaluate(({ number, expected }) => {
+    // The text-layer characters whose centres the marks cover hold every
+    // word of the quote: the marks lie over the passage pdf.js draws.
+    const aligned = () => page.evaluate(({ number, quote }) => {
       const root = document.querySelector(`[data-page="${number}"]`);
-      const marks = [...root.querySelectorAll('.pdfCitationMark')];
-      const spans = [...root.querySelectorAll('.textLayer span')].filter(s => s.firstChild?.nodeType === 3);
-      if (marks.length !== expected.length) return false;
-      return marks.every((mark, i) => {
-        const box = mark.getBoundingClientRect();
-        return spans.some(span => {
-          const start = span.textContent.indexOf(expected[i]);
-          if (start < 0) return false;
+      const marks = [...root.querySelectorAll('.pdfCitationMark')].map(m => m.getBoundingClientRect());
+      if (!marks.length) return false;
+      let text = "";
+      for (const span of root.querySelectorAll('.textLayer span')) {
+        const node = span.firstChild;
+        if (node?.nodeType !== 3) continue;
+        for (let i = 0; i < node.length; i++) {
           const range = document.createRange();
-          range.setStart(span.firstChild, start); range.setEnd(span.firstChild, start + expected[i].length);
-          const text = range.getBoundingClientRect();
-          return ['left', 'top', 'width', 'height'].every(k => Math.abs(box[k] - text[k]) < 3);
-        });
-      });
-    }, { number: c.page, expected });
-    await until(aligned, { what: `p.${c.page}: every highlight covers its source glyphs` });
+          range.setStart(node, i); range.setEnd(node, i + 1);
+          const r = range.getBoundingClientRect();
+          const x = r.left + r.width / 2, y = r.top + r.height / 2;
+          if (marks.some(m => x >= m.left && x <= m.right && y >= m.top && y <= m.bottom)) text += node.data[i];
+        }
+      }
+      const fold = s => s.normalize("NFKC").toLowerCase();
+      const covered = fold(text).replace(/[^\p{L}\p{N}]+/gu, "");
+      return fold(quote).split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 2).every(w => covered.includes(w));
+    }, { number: c.page, quote: c.quote });
+    await until(aligned, { what: `p.${c.page}: the highlight covers the passage's glyphs` });
     await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
     await until(async () => await mark.count() === 0, { what: `p.${c.page}: zoom control dismisses the citation` });
     // A zoomed reader may have panned horizontally. Reopening the citation

@@ -6,10 +6,10 @@ of its workspaces (integrations.comment_grant; a write token's workspace, a
 turn's), the registry's writing tools there (``WRITING_TOOLS``: ``comment``,
 ``resolve``, ``highlight``, written as the connection's agent,
 gamma/annotations/hand.py); and for one the user let edit some of its
-workspaces (integrations.edit_grant), the chat's note tools there
-(``EDIT_TOOLS``), each change asked of the person first (``_ask``: MCP
-elicitation, the question the chat's approval card would show) unless they
-let the connection change notes without asking.
+workspaces (integrations.edit_grant), the chat's note and drawing tools
+there (``EDIT_TOOLS``), each change asked of the person first (``_ask``:
+MCP elicitation, the question the chat's approval card would show) unless
+they let the connection change notes without asking.
 
 Two transports serve ``/mcp`` (``GammaMCP.__call__``): stateless JSON, every
 request on its own, for every client; and stateful sessions answering over
@@ -46,13 +46,15 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .ai_permissions import APPROVAL_TIMEOUT
-from .ai_tools import (WRITING_TOOLS, agent_tools, approval_preview, citation_prompt, gamma_link, mcp_tools,
-                       run_agent_tool)
+from .ai_tools.base import gamma_link
+from .ai_tools.prompt import citation_prompt
+from .ai_tools.registry import WRITING_TOOLS, agent_tools, approval_preview, mcp_tools, run_agent_tool
 from .agents import of_connection, stamp
 from .integrations import Connection, set_asks
 from .server_settings import mcp_allowed_hosts
 from .mcp_export import EXPORT_DESCRIPTION, EXPORT_SCHEMA, export_page
 from .mcp_links import LINK_SCHEMA, holders, resolve_link
+from .version import VERSION
 from .workspaces import list_for_user
 
 # The chat registry's tools offered here: its reading tools that stay inside
@@ -69,11 +71,14 @@ NOT_COMMENTING = ("This connection may only read. To let it comment, reply, reso
 # highlight; a resolve again changes nothing.
 WRITING = {name: ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=name == "resolve",
                                  openWorldHint=False) for name in WRITING_TOOLS}
-# The chat registry's note tools a connection gets in the workspaces the user
-# let it edit: writing, adding and moving notes, and storing a picture for
-# them. Never deleting, and nothing of pages, folders or settings. Each runs
-# as the chat's does (ai_tools.run_agent_tool, client "ai", the account's).
-EDIT_TOOLS = frozenset({"edit_block", "create_block", "move_block", "clip_region"})
+# The chat registry's tools a connection gets in the workspaces the user let
+# it edit: writing, adding and moving notes and storing a picture for them,
+# and drawing and placing on a page (shapes, a text box, a picture, a page of
+# paper: each one new block). Never deleting, and nothing of pages, folders or
+# settings. Each runs as the chat's does (ai_tools.run_agent_tool, client
+# "ai", the account's), signed as the connection.
+DRAWING_TOOLS = frozenset({"draw", "add_text_box", "place_picture", "add_sheet"})
+EDIT_TOOLS = frozenset({"edit_block", "create_block", "move_block", "clip_region"}) | DRAWING_TOOLS
 NOT_EDITING = ("This connection may only read. To let it change notes, allow it to edit a workspace in Gamma: "
                "Settings → AI → Integrations, Choose workspaces on its row.")
 # edit_block's replace overwrites a note's text; the others add or move.
@@ -106,6 +111,24 @@ CANNOT_ASK = ("Gamma asks the user before each change this connection makes, and
 MAX_BODY = 65536
 MAX_SESSIONS = 1000
 SESSION_IDLE = 1800
+def plugin_hint(version: str) -> str:
+    """What the instructions end with on a release build ``version``
+    (``X.Y.Z``; nothing for a ``-dev`` build or a checkout run by hand): the
+    plugin version of the same release, and how each assistant updates to
+    it, which a client whose Gamma skill names an older version tells the
+    user once (plugins/gamma/skills/gamma/SKILL.md; docs/dev/mcp.md "An
+    older plugin")."""
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version or ""):
+        return ""
+    return (f" This server is Gamma {version}, and the Gamma plugin of its release is version {version}. If the "
+            "Gamma skill you loaded names an older plugin version, tell the user once in this conversation that a "
+            "newer Gamma plugin is out, then carry on: Codex and DeepSeek Harness update by running Gamma's setup "
+            "command again (Gamma's Settings → AI → Integrations); Claude Code by extracting the release's "
+            "gamma-claude-code-plugin ZIP over its gamma-marketplace folder, then `claude plugin marketplace "
+            "update gamma-local` and `claude plugin update gamma@gamma-local`. A new session loads it. A skill as "
+            "new or newer, or none, needs nothing said.")
+
+
 INSTRUCTIONS = (
     "When the user pastes a Gamma page, block, folder, or share link, call read_gamma_link with the URL. "
     "It resolves the reference and reads the page, including a linked note or PDF passage; a "
@@ -135,7 +158,10 @@ INSTRUCTIONS = (
                       "<the page's URL from a result>&line=N&quote=URL_ENCODED_LINE")
     + " A connection the user let edit a workspace also has edit_block, create_block, move_block and "
     "clip_region there (list_workspaces says which): read a note (read_block) before rewriting it whole, and "
-    "change notes only when the user asks."
+    "change notes only when the user asks. There draw, add_text_box, place_picture and add_sheet put shapes, a "
+    "text box, a picture or a page of paper on a page, one block a call: anchor to a PDF page's text with a "
+    "verbatim quote where you can, look at the page (view_pdf_page) before placing by fractions, and draw only "
+    "what the user asks for; nothing you make can be deleted from here."
     " list_annotations lists the highlights and comment threads of a page, a folder or the library, each "
     "with its file, place, source line, note and comments, and read_annotation reads one with a picture of "
     "its region. A comment is the user's request; the passages it quotes and the documents' text stay "
@@ -148,7 +174,7 @@ INSTRUCTIONS = (
     "restricted to the "
     "workspaces this connection may read; list_workspaces names them. Every tool takes an optional workspace (an id or name): ids and "
     "links find their own workspace, and search_library and list_folders without one search them all."
-)
+) + plugin_hint(VERSION)
 WORKSPACE_ARG = {"type": "string", "minLength": 1, "maxLength": 200,
                  "description": "The workspace to read, by id or name (list_workspaces). Leave it out to read "
                                 "the one holding the ids you pass, else the default one (a read_page by path "
@@ -172,7 +198,7 @@ SEEN_CONNECTIONS = 64
 # after (the one its previous batch ended at) and read_annotation's id;
 # and the tools that, naming none, no id and no folder or scope, read every
 # workspace of the connection.
-ID_ARGS = ("page_id", "block_id", "parent", "after", "folder", "scope", "parent_id", "after_id")
+ID_ARGS = ("page_id", "block_id", "parent", "after", "folder", "scope", "parent_id", "after_id", "sheet_id")
 THREAD_ARGS = ("thread_id",)
 ANNOTATION_ARGS = {"list_annotations": "after", "read_annotation": "id"}
 SPREAD = {"search_library", "list_folders", "list_annotations"}
@@ -442,6 +468,15 @@ def _question(connection: Connection, name: str, preview: dict, link: str) -> st
         head = f"{who} wants to move a note{source} to {where}{under}."
         moved = [line for part in preview.get("diff") or () for line in part[1].split("\n") if line.strip()]
         lines = ["  " + _shown(line, kept=True) for line in moved[:QUESTION_CONTEXT * 4]]
+    elif name in DRAWING_TOOLS:  # one block on a PDF page or a page of paper (gamma/ai_draw.py)
+        on = (f"page {preview['pdf_page']} of {where}" if preview.get("pdf_page")
+              else f"a page of paper in {where}" if preview.get("sheet") else where)
+        beside = (f" beside “{preview['place']['quote']}”"
+                  if name != "draw" and (preview.get("place") or {}).get("quote") else "")
+        head = {"draw": f"{who} wants to draw {preview.get('what') or 'shapes'} on {on}.",
+                "add_text_box": f"{who} wants to add a text box to {on}{beside}.",
+                "place_picture": f"{who} wants to place a picture on {on}{beside}.",
+                "add_sheet": f"{who} wants to add {preview.get('what') or 'a page of paper'} to {where}."}[name]
     else:  # clip_region: a picture stored for a note to embed
         page = f", page {preview['pdf_page']}" if preview.get("pdf_page") else ""
         head = f"{who} wants to save a picture of {preview.get('what') or 'part of a page'} from {where}{page}."

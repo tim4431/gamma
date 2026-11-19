@@ -11,7 +11,7 @@ import { t, tn } from "../shared/i18n/i18n.js";
 const listOf = (items = [], total = 0) => items.join(", ")
   + (total > items.length ? t(", and {n} more", { n: total - items.length }) : "");
 
-// The page tools that take a list of pages (gamma/ai_tools.py): a card for
+// The page tools that take a list of pages (gamma/ai_tools/organizing.py): a card for
 // two or more pages carries `count`, and one line per page in its `diff`.
 const BATCH_TOOLS = new Set(["rename_page", "move_page", "label_page", "restore_page", "delete_page"]);
 export const isBatchPreview = (tool, preview) => BATCH_TOOLS.has(tool) && typeof preview?.count === "number";
@@ -86,7 +86,22 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
       return (preview.reply ?? !!args.thread_id) ? t("Reply in a comment thread in “{title}”", { title })
         : t("Comment on “{title}”", { title });
     case "resolve": return t("Resolve a comment thread in “{title}”", { title });
-    case "highlight": return t("Highlight a passage in “{title}”", { title });
+    case "highlight": return preview.place?.kind === "area" ? t("Highlight an area in “{title}”", { title })
+      : t("Highlight a passage in “{title}”", { title });
+    case "draw": return preview.sheet || args.sheet_id ? t("Draw on a page of paper in “{title}”", { title })
+      : t("Draw on page {page} of “{title}”", { page: preview.pdf_page || args.pdf_page || "?", title });
+    case "add_text_box": return preview.sheet || args.sheet_id ? t("Add a text box to a page of paper in “{title}”", { title })
+      : t("Add a text box to page {page} of “{title}”", { page: preview.pdf_page || args.pdf_page || "?", title });
+    case "place_picture": return preview.sheet || args.sheet_id ? t("Place a picture on a page of paper in “{title}”", { title })
+      : t("Place a picture on page {page} of “{title}”", { page: preview.pdf_page || args.pdf_page || "?", title });
+    case "add_sheet": return t("Add a page of paper to “{title}”", { title });
+    case "create_page":
+      if (preview.inside) return t("Make the page “{title}” inside “{parent}”", { title, parent: preview.inside });
+      return preview.to ? t("Make the page “{title}” in {folder}", { title, folder: preview.to })
+        : t("Make the page “{title}” at the library root", { title });
+    case "show_page": return t("Show you “{title}”", { title });
+    case "export": return t("Export “{title}”", { title: args.folder || title });
+    case "backlinks": return t("Find the notes that link to “{title}”", { title });
     case "restore_page": return t("Restore “{title}” from Recently deleted", { title });
     case "delete_page": return t("Move “{title}” to Recently deleted", { title });
     case "rename_folder": return t("Rename the folder “{title}”", { title });
@@ -118,7 +133,7 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
 }
 
 // Where a writing tool's call writes (a comment, a resolve, a highlight:
-// the preview's `place`, gamma/ai_tools.py _card_place, {kind, page?,
+// the preview's `place`, gamma/ai_tools/base.py _card_place, {kind, page?,
 // lines?, quote?}), in the user's language; "" for none.
 export function placeText(place) {
   if (!place) return "";
@@ -134,7 +149,7 @@ export function placeText(place) {
   return place.quote ? t("{place}: “{quote}”", { place: where, quote: place.quote }) : where;
 }
 
-// What a deletion takes, as the server names it (gamma/ai_tools.py
+// What a deletion takes, as the server names it (gamma/ai_tools/notes.py
 // _DELETED_KIND), in the user's language.
 export function deletedKind(what) {
   return {
@@ -145,7 +160,7 @@ export function deletedKind(what) {
 }
 
 // What a deletion takes besides itself, one line each, from its card's
-// preview (gamma/ai_tools.py _preview_delete_folder / _preview_delete_label /
+// preview (gamma/ai_tools/ _preview_delete_folder / _preview_delete_label /
 // _preview_delete_page): a folder's subfolders, the pages that lose the
 // filing and stay, and the folders whose AI chats move to the library chat's
 // history; the pages inside deleted pages, and how long Recently deleted
@@ -182,7 +197,7 @@ export function deletionNotes(tool, preview = {}) {
   return notes;
 }
 
-// What a card for several pages says besides its lines (gamma/ai_tools.py
+// What a card for several pages says besides its lines (gamma/ai_tools/organizing.py
 // _batch_preview): the folder or labels the call makes first, the pages it
 // leaves out (the assistant hears why) and the ones already so.
 export function batchNotes(preview = {}) {

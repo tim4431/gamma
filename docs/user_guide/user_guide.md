@@ -193,7 +193,7 @@ Read a paper on one side while you write up your notes on the other, each in a p
 
 <img alt="Two brackets are typed in a note, a picker lists pages, one becomes a chip in the line, and a Linked from row under the page lists the note" src="assets/page-links.svg" width="100%">
 
-- **`[[`** links to a page or a note; the link is a clickable chip, and **Linked from** under a page lists everything that links to it. `![[block]]` embeds a block you can edit in place.
+- **`[[`** links to a page or a note; the link is a clickable chip, and **Linked from** under a page lists everything that links to it. Hover any link to see where it goes; right-click it (or hold a finger on it) to pin its card, whose ✎ changes the words the link shows and where it points, and whose other buttons copy or remove it. Empty words show the page's title. In Markdown that's `[[page|your words]]`. **Ctrl+K** on selected words opens the same card to link them to a page or an address, and pasting an address over selected words links them. `![[block]]` embeds a block you can edit in place.
 - **`@`** mentions a date, a person or a page, as in Notion: **Today**, **Remind me** (tomorrow at 9, or what you type, such as `@fri 3pm` or `@remind me next mon`; `@remind @bob fri` reminds a colleague), the people of the workspace, and pages by title. A reminder shows a card at its time, and a system notification if you allow them, while Gamma is open.
 - **/page** makes a new page inside the open one and links it where you typed ([pages inside pages](#pages-inside-pages)).
 
@@ -210,6 +210,8 @@ Open the chat from the **View menu (≡) → AI Chat**. Gamma has no AI of its o
 - **Citations are clickable**: `p. 12` jumps the PDF to the passage and highlights it, and `method.tex:12` opens the file at line 12 and marks it. When the file has changed since, the line is found again by its text, and the code view says it moved.
 - The **model chip** switches the model, reasoning effort and speed. Each reply says what wrote it and what it cost in tokens.
 - Select part of a note and ask for a change: the assistant rewrites only that selection.
+- **Select text in the chat itself** to talk about it: **Ask about this** in the bar under the selection quotes it into your next message, ahead of your question. Right-click the selection (or use the bar's **⋯**) for **Copy** (as Markdown, formulas included) and **Create note**: **As it is** puts the passage at the end of the open page's notes (in a folder's or the library's chat it becomes a page of its own), and **Structured by AI** has the chat's model rewrite it into headings and bullet points first, adding nothing, without a turn in the conversation.
+- **While a reply runs**, a message you send waits above the box and goes when the reply ends; its **Steer** hands it to the reply at once, as Ctrl+Shift+Enter (⌘⇧↩ on a Mac) does. Settings → AI → Chat → **Follow-up while a reply runs** swaps them: on **Steer**, Enter steers and Ctrl+Shift+Enter queues.
 - Each paper and folder keeps its own conversation. **New chat** starts over and keeps the old one in History; Alt+click it to throw the old one away.
 
 ### AI services you can connect
@@ -250,16 +252,18 @@ On the home page or in a folder, the chat can act on your library: list, read an
 |---|---|---|
 | **Read your library** | | |
 | List pages | `list_pages`, `list_folders`, `list_deleted` | Browse page titles, folders, metadata and Recently deleted, a synced folder's files by their paths; a long library in batches (folder chats) |
-| Read pages | `read_page`, `read_chats`, `cite` | Read PDF text, a text file's lines, highlights, notes, earlier chats and citation records (metadata, BibTeX) |
+| Read pages | `read_page`, `read_chats`, `cite`, `backlinks`, `export` | Read PDF text, a text file's lines, highlights, notes, earlier chats and citation records (metadata, BibTeX), find the notes that link to a page, and export a page or a folder to a file that downloads in the app |
 | Read note blocks | `read_block` | Read individual notes and their outline |
 | View pages and handwriting | `view_pdf_page`, `view_ink`, `view_image` | Look at figures, tables, scanned pages, your handwriting and the pictures in your notes and on your pages |
 | Search library | `search_library` | Find text in your notes, PDFs and text files |
+| Show pages | `show_page` | Open a page for you at a PDF page, a passage or a note: at once on the page the chat is beside, else when the reply ends |
 | **Web research** | | |
 | Search online | `search_papers`, `related_papers`, `search_web` | Find papers on Crossref, arXiv and OpenAlex and follow their citations; search the web for current facts, documentation and news, by date or on one site, through your AI connection, Brave Search, Tavily or SearXNG (Tool usage → Online search) |
 | Fetch documents | `fetch_paper`, `fetch_url`, `read_paper` | Read a paper by DOI, arXiv id or URL, or any web page as text, without saving it; a paper behind a paywall or sign-in is handed to your browser |
 | Use journal sign-ins | | Use the publisher sign-ins Gamma Connector saved when fetching |
 | **Make changes** | | |
 | Save papers | `save_paper` | Add a paper found online to the library |
+| Create pages | `create_page` | Make a new page of notes in a folder or inside a page; you can revert it from the reply while it is empty (folder chats) |
 | Rename pages | `rename_page` | Change pages' titles, many in one call (folder chats) |
 | Move pages | `move_page` | File pages into a folder, many in one call (folder chats) |
 | Restore deleted pages | `restore_page` | Bring pages back from Recently deleted (folder chats) |
@@ -267,9 +271,10 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | Organize folders and labels | `rename_folder`, `create_label`, `rename_label`, `label_page` | Rename folders, and make, rename and apply labels — to many pages in one call (folder chats) |
 | Delete folders and labels | `delete_folder`, `delete_label` | Delete a folder or a label, never its pages; you can revert it from the reply (folder chats) |
 | Edit note blocks | `edit_block`, `create_block`, `move_block`, `delete_block`, `clip_region` | Create, edit, move and delete notes, transcribe handwriting, and clip a region of a PDF page into a note |
-| Comments and highlights | `comment`, `resolve`, `highlight` | Write under its own name, Gamma AI, for you: reply in a comment thread, ask about a passage with a comment on it, resolve a thread, highlight a passage. A comment on a quote highlights it; a quote not on the page is refused with the closest passage. Viewers' chats have it too |
+| Comments and highlights | `comment`, `resolve`, `highlight` | Write under its own name, Gamma AI, for you: reply in a comment thread, ask about a passage with a comment on it, resolve a thread, highlight a passage or an area of a page (a figure, a table). A comment on a quote highlights it; a quote not on the page is refused with the closest passage. Viewers' chats have it too |
+| Draw on pages | `draw`, `add_text_box`, `place_picture`, `add_sheet` | Draw shapes (boxes, circles, arrows, lines, curves) on a PDF page or a page of paper, add a text box beside a passage, place a picture, add a page of paper. Each is one change you can revert from the reply, made under its own name |
 
-The agent never deletes a page for good: a deleted page stays in Recently deleted for 30 days, and deleting a folder or a label leaves its pages in your library. An assistant connected from outside ([Assistants](#assistants)) gets the reading tools, and the comment and note tools only where you give its connection the Comment or Edit level.
+The agent never deletes a page for good: a deleted page stays in Recently deleted for 30 days, and deleting a folder or a label leaves its pages in your library. An assistant connected from outside ([Assistants](#assistants)) gets the reading tools, and the comment tools, and the note and drawing tools, only where you give its connection the Comment or Edit level.
 
 ## Library
 
@@ -392,6 +397,8 @@ A workspace is a separate library. The account menu lists yours and switches bet
 - **Personal** workspaces are yours alone; make more for separate projects.
 - **Shared** workspaces are created by an administrator, with **owners**, **editors** and **viewers**. An owner invites people from the workspace's **Manage** page: an account on this server or, where Gamma Cloud sign-in allows it, an e-mail address, which gets a link to join as an editor or a viewer.
 - Edits and cursors appear live; two people in the same block merge by span. On a network that blocks live connections, others' edits still arrive within a couple of seconds, without cursors.
+- **Copy pages to another workspace**: select them in the library, right-click, **Copy to workspace** and pick one you can edit. Each comes with its notes, highlights, handwriting, comments, chat and the pages inside it, filed in folders and labels of the same names there; the pages stay here too, and copying again adds nothing.
+- **Duplicate a workspace**: Settings → Workspaces, the workspace's **Data** menu (a clone's or a Zotero link's **More**) → **Duplicate…** makes a new personal workspace with a copy of every page. Recently deleted stays behind. A copy of a Zotero-linked workspace or of a clone is an ordinary workspace: what changes in it stays in it.
 - **Deleting** a workspace (its Manage page → Delete…) first keeps one final copy of it on the server, which an administrator can restore. For a big workspace that takes minutes: it runs in **Background tasks**, where you can stop it until the copy is written. Stopped, nothing is deleted.
 - Open tabs, pinned folders and reading positions follow your account across devices.
 
@@ -587,6 +594,7 @@ Settings → Workspaces › Clones and Zotero links → **Link a Zotero library�
 - **Detach** pauses the link and **Reattach** resumes it, merging what both sides did meanwhile. A PDF still in Zotero waits for the reattach.
 - **Remove link** ends it for good: the workspace stays an ordinary workspace of yours and the library stays in Zotero. A PDF that never came stays in Zotero, and the page takes one you attach. To link the library again later, pick that workspace under **Into**: its papers pair with their items by Zotero key, so nothing is doubled.
 - **Rolling back** a linked workspace from a snapshot (Settings → Backups) sends the restored version to Zotero; what Zotero changed meanwhile waits under Conflicts.
+- **Copying papers out** (Copy to workspace, or Duplicate…) makes ordinary pages that are not linked: a change to a copy never reaches Zotero, and a copy put in a workspace linked to another library becomes a new item there. A PDF Gamma has not downloaded yet stays in Zotero and the copy comes without it; Gamma says how many before it copies. To bring them first, open the papers, or set **PDFs from Zotero** to **All**.
 
 ### Limits
 
@@ -640,6 +648,7 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 | `list_folders` | The folder tree, each folder with its path and page counts |
 | `list_pages` | Pages with titles, folders, labels and metadata, a synced folder's files with their paths; filter by folder, label or title |
 | `search_library` | Full-text hits in notes, PDF text and text files, with where each one is: a PDF's page, a file's line |
+| `backlinks` | The notes that link to a page or a note |
 | `read_page` | A page's notes, highlights, properties and PDF text in windows, a text file by its lines; a synced folder's file also by its path |
 | `read_block` | One note block or a page's note outline |
 | `read_chats` | The AI chat kept with a page or folder |
@@ -653,7 +662,7 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 | `read_gamma_link` | A pasted page, block or share link, read in place (a line link from its line); a folder share lists its pages |
 | `export_page` | A page as Markdown, or as a PDF: the annotated paper or the notes typeset |
 
-The first twelve are the chat's own reading tools; each takes an optional workspace. In a workspace you mark **Comment**, an assistant also gets the chat's writing tools: `comment` (a reply in a thread, or a new comment on a PDF passage, lines of a file, a note or the page), `resolve` and `highlight`, each written under its own name. In one you mark **Edit**, it gets those and the chat's note tools: `edit_block`, `create_block`, `move_block` and `clip_region`. It never gets the chat's other write tools, or its web tools: the assistant has web access of its own.
+The first thirteen are the chat's own reading tools; each takes an optional workspace. In a workspace you mark **Comment**, an assistant also gets the chat's writing tools: `comment` (a reply in a thread, or a new comment on a PDF passage, an area of a page, lines of a file, a note or the page), `resolve` and `highlight`, each written under its own name. In one you mark **Edit**, it gets those, the chat's note tools (`edit_block`, `create_block`, `move_block` and `clip_region`) and its drawing tools (`draw`, `add_text_box`, `place_picture` and `add_sheet`: shapes, a text box, a picture or a page of paper on a page, each made under its own name; you remove one in Gamma). It never gets the chat's other write tools, or its web tools: the assistant has web access of its own.
 
 ## Import and export
 
@@ -683,7 +692,7 @@ Both are in the **View menu (≡)**, on a page or on the home library (with a fo
 
 - **iPad / iPhone**: open your Gamma in Safari, Share → **Add to Home Screen**. The Apple Pencil writes with a tool picked on the strip.
 - **Android**: Chrome → ⋮ → **Install app**. **Desktop browsers**: the install icon in the address bar.
-- **Desktop app** (Windows, macOS, Linux): a self-contained Gamma with local libraries, which also opens your servers and keeps [offline copies](#offline-copies). From the [Microsoft Store](https://apps.microsoft.com/detail/9N8WGWR2J2MV) or the [releases](https://github.com/tim4431/Gamma/releases/latest). A PDF, a Markdown file or a LaTeX, BibTeX or Typst source opened with Gamma (**Open with → Gamma**, or Gamma chosen as its default app) is [read where it is](#files-read-where-they-are) and opens under *Opened files*, a PDF with any annotations another reader saved in it; a library other people see asks first, and *Add to library…* keeps it. A folder opened with Gamma opens what Gamma keeps there or becomes a [synced folder](#working-in-a-synced-folder).
+- **Desktop app** (Windows, macOS, Linux): a self-contained Gamma with local libraries, which also opens your servers and keeps [offline copies](#offline-copies). From the [Microsoft Store](https://apps.microsoft.com/detail/9N8WGWR2J2MV), the [Mac App Store](https://apps.apple.com/us/app/gamma-pdf-reader/id6814705181?mt=12) or the [releases](https://github.com/tim4431/Gamma/releases/latest). A PDF, a Markdown file or a LaTeX, BibTeX or Typst source opened with Gamma (**Open with → Gamma**, or Gamma chosen as its default app) is [read where it is](#files-read-where-they-are) and opens under *Opened files*, a PDF with any annotations another reader saved in it; a library other people see asks first, and *Add to library…* keeps it. A folder opened with Gamma opens what Gamma keeps there or becomes a [synced folder](#working-in-a-synced-folder).
 - **The Gamma iPad app** (beta) keeps a copy of one workspace on the iPad for handwriting with no connection. Install Apple's TestFlight app, then open [the TestFlight invitation](https://testflight.apple.com/join/nTmSHDx6) on the iPad. The chevron at the right end of its server bar hides the bar (⌘⇧B with a keyboard), and **View → Server bar** brings it back (**More** when the iPad is upright).
 - **The Gamma Android app** does the same on an Android phone or tablet (Android 10 or later, 64-bit ARM), with a stylus (S Pen, USI, Wacom) captured natively. Download `Gamma-<version>-android-arm64.apk` from the [releases](https://github.com/tim4431/Gamma/releases/latest) on the device, open it, and allow your browser to install apps when Android asks; install the next release's APK over it to update. It will also be on Google Play once listed there. A click of the pen's button with the tip off the screen switches to the eraser and back, and holding the button down while the tip touches the screen erases; **Settings → Handwriting → Stylus** says what the buttons do. The chevron at the right end of its server bar hides the bar (Ctrl+Shift+B with a keyboard), and **View → Server bar** brings it back.
 
@@ -736,7 +745,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Del / Backspace · Tab / Shift+Tab · Enter | With notes selected: delete them · indent / outdent them · edit the last one picked |
 | Ctrl+C / Ctrl+X / Ctrl+D · Ctrl+A · Ctrl+/ | With notes selected: copy / cut as Markdown, duplicate · select every note · their menu |
 | Ctrl+B / Ctrl+I / Ctrl+U / Ctrl+E / Ctrl+Shift+X / Ctrl+Shift+H | Bold / italic / underline / code / strike / highlight |
-| Ctrl+K | Link the selection (URL from the clipboard) |
+| Ctrl+K | Link the selection, or edit the link at the cursor |
 | Ctrl+Shift+. | Quote or unquote the selected lines |
 | Ctrl+Shift+M | Comment on the note being edited |
 | Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D / Ctrl+A | With the pen strip open: copy / cut / paste / duplicate the selected handwriting; select all handwriting on the page |

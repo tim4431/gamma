@@ -287,7 +287,7 @@ Import → Summary.
 
 - The review is a background job ([tasks.md](tasks.md)):
   `POST /api/jobs/import-preview` takes the file, its `source` (`zotero`,
-  `markdown-zip`, `markdown-file`, `obsidian`, `gamma`, `note-apps`, `notability`, `goodnotes`), an optional `folder` (the
+  `markdown-zip`, `markdown-file`, `obsidian`, `gamma`, `note-apps`), an optional `folder` (the
   destination folder's id, `""` the library's top; 400 when it is no
   folder, or is a work folder or one of its directories, which follow the
   disk ([work_folders.md](work_folders.md); `import_review.destination`))
@@ -392,8 +392,21 @@ Import → Summary.
   drops the upload the restart left and uploads the file again (a close
   drops it too). The source column is headed by
   what was uploaded: one file, a ZIP's contents, a folder, or the files
-  picked together.
-  `ImportTree.jsx` renders one tree with its checkboxes (a folder toggles
+  picked together. While the file goes up the dialog shows its bytes and
+  the time left at the rate kept so far (`taskKinds.bytesInfo`).
+- **One page opens.** An import the dialog watched run that brought one
+  page and warned of nothing opens that page and closes, the summary on
+  the status line. The page is `importReview.onlyPage`'s: of the report's
+  pages, chats left out, those the import made or changed (else, when it
+  made none, those already in the library), the one inside none of the
+  others. So a single note, a notebook, or a Notion page with the pages
+  inside it opens; two pages side by side show the summary. A summary that
+  stays (warnings, several pages, a dialog opened on a finished job's row)
+  offers *Open “title”* for one page, else *Show in library*, the
+  destination folder. An import that ends with its dialog closed says its
+  summary on the status line, or for one page offers it in the pill with
+  Open (`useAppJobs`).
+- `ImportTree.jsx` renders one tree with its checkboxes (a folder toggles
   its descendants). A tree of more than 300 files (a vault) starts with its
   folders closed, a closed folder's rows are made only once it opens, and
   a list shows 300 files at a time, so 20,000 notes open and click as fast
@@ -435,6 +448,58 @@ Import → Summary.
     (`files/999` before `files/1000`).
 
 Logseq and in-PDF annotations keep their own import controls.
+
+## Uploading a folder or many files
+
+The add menu's *Upload folder…*, a directory dropped on the library, and
+*Upload files…* or a drop of more than one file go up as one batch
+(App's `uploadFiles` → `transfers/useUploadBatches.js`, the owner of the
+batch and its dialog, its rules in `uploadBatch.js`). A single file keeps
+its own row of Background tasks and opens its page.
+
+- **What goes.** A dropped directory's walk
+  (`shared/lib/dropEntries.js` `collectEntryFiles`) never goes into a
+  hidden directory or `node_modules` (`fileRouting.hiddenName`), so a
+  project's `.git` is not read file by file, and a pill counts the files
+  found while a large tree is read. `dropFilter` then leaves out dot
+  files, temporary names and executables. Each file goes the way
+  `routeFile` says: a PDF the PDF way, a Markdown file a note, any other a
+  document page. The directories become folders below the open library
+  folder, made once before any file lands (`ensureFolders`).
+- **The question.** `planUpload` counts the files by kind, their bytes,
+  the folders they make and what was left out, and compares the stored
+  bytes with the room the workspace's storage has left (`GET /quota`; a
+  note is no stored file, and a file the library has already takes no
+  room, so it may warn of more than fails). Past 100 files
+  (`ASK_PAST_FILES`, each file is a page), past 500 MB (`ASK_PAST_BYTES`)
+  or past that room (`askFirst`), the dialog (`transfers/UploadDialog.jsx`)
+  asks first and says which. It lists what was left out, a hidden
+  directory once with its count, or none when it was never read
+  (`skippedGroups`). Cancel uploads nothing.
+- **The run.** One row of Background tasks, local kind `uploads`, however
+  many files: "12 of 340 files · 120 MB of 1.2 GB · about 3 minutes left".
+  `runUploads` keeps three files on their way (`POOL`), each reporting its
+  bytes into the batch's. The row is patched as files start and end, and
+  once per visible percent. Every 10 s the library is read again and the
+  PDFs that came meanwhile have their metadata looked up as one job, so
+  the pages show as they land. Stop, the row's or the dialog's, aborts the
+  files on their way and starts no more; what went stays. The batch holds
+  no `loading`, so the menus stay free while it runs.
+- **The dialog.** A directory's batch shows its dialog from the start;
+  files picked together show it only when they ask first. It reads the
+  batch from its row (`uploads`): the progress, the files on their way,
+  the failures so far. It may close any time, and the row's click opens it
+  again (`openTask` → the owner's `open`). Once over it says what went
+  (`batchSummary`) and lists each failed file with its reason, with
+  *Retry n failed files* (a batch of its own, of the files the tab still
+  holds), and *Show in library* opens the folder the batch went into. A
+  batch watched in its dialog that made one page and failed none opens
+  that page, as a single upload does. With the dialog closed, the status
+  line says how it ended, naming the first failure.
+- **The tab's work.** The batch lives in the tab, as the library's page
+  batches do ([tasks.md](tasks.md)): a reload or a closed tab ends it part
+  way, keeping what went. The dialog says so ("while this tab stays
+  open").
 
 ## Plain Markdown uploads
 
@@ -716,7 +781,14 @@ The rest of this section holds for every dialect unless it says otherwise:
   `[Sub](Parent%20<id>/Sub%20<id>.md)`, whose balanced `( )` stay unencoded
   as in `Tasks%20(grid%20view)%20<id>.csv`, Gamma's `[label](Page-id.md)` and
   `*(from [title](file.md))*`) and Obsidian wikilinks (`[[Note]]`,
-  `[[Note|alias]]`, `[[folder/Note]]`) alike. A target is resolved relative
+  `[[Note|alias]]`, `[[folder/Note]]`) alike. A wikilink's alias is the
+  mention's words, `[[id|alias]]` ([mentions.md](mentions.md) "Page links
+  with words of their own"; `\|` in a table's cell, which resolves the note
+  too), and so is a Markdown link's label when it says more than the note's
+  file name or title, in any case and spacing, and holds no bracket
+  (`label_alias`; `[[One]](Two.md)` reads its wikilink first). A note of
+  Notion's keeps no label (`label_words`): Notion labels a link with the
+  page's title, marks and all. An embed's alias is none. A target is resolved relative
   to the note, then as an exact vault path, then by basename anywhere in the
   zip (nearest directory wins), case-insensitively — Obsidian's own rule.
   `[[Note#Heading]]` and `[[Note#^id]]` point at that heading block
@@ -1205,7 +1277,7 @@ rechecks the current library, and leaves actual results and warnings in the dial
 
 ## Notability notes
 
-`POST /api/import/notability` (View menu ≡ → Import… → Notability & GoodNotes;
+`POST /api/import/note-apps` (View menu ≡ → Import… → Notability & GoodNotes;
 `gamma/notability_import.py`, which reads a note through
 `gamma/notability.py` and `gamma/notability_archive.py` and places it through
 `gamma/notability_map.py`) imports Notability's "Note" export. A `.note` is a
@@ -1219,10 +1291,9 @@ shared with the [GoodNotes import](#goodnotes-notebooks)
 (`gamma/note_app_import.py`). The upload is one `.note` or `.ntb`, several picked together (the
 dialog packs them into one `.zip`), a `.zip` of them (a library's export),
 or a zip of an unzipped note folder (`.nbn`, iCloud's form). Each note
-becomes one page. It is a source of the
-reviewed import above (`source` `note-apps` from the dialog's card, which
-reads GoodNotes notebooks in the same upload; `notability` alone for
-scripts), so the import itself is the
+becomes one page. It is read by the
+reviewed import's `note-apps` source above, which reads GoodNotes
+notebooks in the same upload, so the import itself is the
 `import` job. The format, its sources and what was decided where they
 disagree are in [research/notability-format.md](../research/notability-format.md).
 
@@ -1656,15 +1727,15 @@ the same way.
 
 ## GoodNotes notebooks
 
-`POST /api/import/goodnotes` (View menu ≡ → Import… → Notability & GoodNotes;
+`POST /api/import/note-apps` (View menu ≡ → Import… → Notability & GoodNotes;
 `gamma/goodnotes_import.py`, which reads a notebook through
 `gamma/goodnotes.py`, `gamma/goodnotes_codec.py` and `gamma/rtf.py` and
 places it through `gamma/goodnotes_map.py`) imports GoodNotes' own format,
 the `.goodnotes` its iPad, iPhone and Mac apps export. The upload is one
 `.goodnotes`, several picked together (the dialog packs them into one
 `.zip`), a `.zip` of a folder's export, or a `.goodnotes.zip` backup. Each
-notebook becomes one page. It is a source of the reviewed import (`source`
-`note-apps` from the dialog's card, `goodnotes` alone for scripts), and it shares the run over the upload, its guards, the
+notebook becomes one page. It is read by the reviewed import's `note-apps`
+source, with Notability's notes in the same upload, and it shares the run over the upload, its guards, the
 commit, the storing of pictures and the report with the Notability import
 (`gamma/note_app_import.py`): what [Notability notes](#notability-notes)
 says of one note at a time, of folders, of a 507 and a note skipped, of the
@@ -1911,7 +1982,7 @@ computed by the same function on the note's own layout:
 - Its file goes under `Images/` as it is. An animated GIF is its still
   frame under `Images/` and the GIF under `Assets/<id>/media.gif`, as
   Notability keeps one. Notability takes no SVG, so an SVG is a PNG of it,
-  `SVG_PNG_SIDE` (2048) px on its longer side; one that does not draw is
+  `pdf_image.SVG_DRAW_SIDE` (2048) px on its longer side; one that does not draw is
   left out and said ("picture svg"). Two pictures that show one file are
   written as two files.
 - A surface's pictures come before its boxes in `zIndex`, and both before
@@ -2060,7 +2131,7 @@ A highlight's notes stay behind, counted as notes.
   whole goes as it is; any other is its pixels upright (the EXIF
   orientation the browser applies), cut to its crop and flipped, a JPEG
   again for a JPEG and a PNG for anything else, an SVG drawn first
-  (`SVG_PNG_SIDE`). One file per picture file and look.
+  (`pdf_image.SVG_DRAW_SIDE`). One file per picture file and look.
 
 **Left out, and said:** the notes (beside the page, under a highlight or
 a recording), recordings, a sheet on a PDF page, handwriting or a picture
@@ -2110,7 +2181,7 @@ non-highlight subtree one note written by `zotero_notes.note_html`, the
 inverse of the import's tree, its first block as its own element and the
 blocks under it as one list, as the page shows them (so a Zotero note's
 later paragraphs come back to Zotero as list items): headings, lists numbered or not, quotes, code,
-math, tables and links, a `[[ref]]` as the text it names, an image's alt and
+math, tables and links, a `[[ref]]` as the text it names (a `[[id|words]]` as its words), an image's alt and
 width as its `<img>`'s. A note page (`zotero_note` equal to `zotero_key`)
 goes back as a standalone note, its title an `<h1>` and then its blocks,
 and is left out when notes are off. The page's "Attachments" block is no
@@ -2367,7 +2438,12 @@ block whose id the workspace already uses on another page gets a fresh id
 Import dialog's "Gamma export (.zip)" source reviews the zip like the
 other library sources, then merges the selected pages (`restore_zip` merge
 with a selection) as the import job; guests can't import. A Gamma export is
-a complete copy, so the Export dialog has no switches for it.
+a complete copy, so the Export dialog has no switches for it. Between two
+workspaces of one server the same export carries pages with no file to
+download: an opened file's Add to library (`page_gamma_zip`,
+[synced_vaults.md](synced_vaults.md)) and a copy or a Duplicate
+(`pages_gamma_zip`, which leaves a Zotero link's marks behind,
+[workspaces.md](workspaces.md) "Copies between workspaces").
 
 The review (`ws_backup._review_import`) reads the workspace through
 `connect_pages_db`, so one nobody has opened since the server's upgrade is
@@ -2622,7 +2698,8 @@ outside code to `![alt|N](url)`. Block links resolve against the export set
 (`resolve_block_links` + `_MarkdownBuilder.begin`'s page-id → filename map):
 a `[[ref]]` or PDF link region whose target page is in the same export
 becomes a relative link to that page's .md — so a folder zip is
-self-contained — and reads as plain text otherwise; a `![[embed]]`
+self-contained — and reads as plain text otherwise, its label the target's
+first line or a `[[id|words]]`'s words; a `![[embed]]`
 materializes the synced block's content with a *(from …)* attribution,
 nested embeds degrading to mentions; ids the resolver doesn't know stay as
 typed) and
@@ -2866,7 +2943,8 @@ one page.
 - **Links**: `[[id]]` / `![[id]]` whose target is in the export become
   `[[Title]]` for a page (`[[dir/Title]]` when two exported pages share a
   name — Obsidian's rule), `[[Title#^id]]` / `![[Title#^id]]` for a block
-  (`[[#^id]]` on the same page), and the target block gets ` ^id` written:
+  (`[[#^id]]` on the same page), a `[[id|words]]` the same with `|words` as
+  its alias (`\|` in a table's row), and the target block gets ` ^id` written:
   on its bullet line in a list, at the end of a paragraph, on its own line
   after a fence / table / quote / callout, a block that ends in a fence (text
   after a closing line would leave it open) or, under the bullet, a block that
@@ -2980,7 +3058,9 @@ changes a row and no block code:
   percent-encoded as Notion's own are; a mention of a block links its page;
   one outside the export is its label. A block's label is its first line less
   a list marker, or its page's title when that line has no words, as a code
-  block's or an image's has not.
+  block's or an image's has not; a `[[id|words]]`'s label is its words, and
+  on a line of its own it stays a link, not a page block, whose title would
+  be the page's.
 - **Images and other files**: an uploaded image goes in the page's directory
   (`Paper/<sha>.png`), its `|300` size gone, and an image from the web stays at
   its address. Handwriting is rendered as an SVG beside it, untried in Notion.

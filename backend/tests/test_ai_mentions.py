@@ -4,7 +4,7 @@ import json
 import pytest
 
 from ai_fixtures import FakeResp, ai_provider, indexed_pdf, org, props  # noqa: F401
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 
 
 @pytest.mark.parametrize("scope_type", ["page", "folder"])

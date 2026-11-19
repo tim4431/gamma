@@ -96,6 +96,15 @@ fence's sanitized drawing.
   is not the note's (`pasteMath.dollarMath`), on purpose: a model writes
   `\[ x \]` only as display math, while in a note `\[x\]` may be an
   escaped bracket. [latex_editing.md](latex_editing.md) has the pair.
+- `remarkLoneDisplayMath`, the chat's remark plugin after `remark-math`,
+  makes a `$$…$$` written on a line of its own (formula and both `$$` on
+  one line, as models often write it) the display math it is meant as,
+  splitting its paragraph around it. remark-math reads that line as inline
+  math, which KaTeX cannot wrap, so a wide formula ran past the reply and
+  gave the whole transcript a sideways scroll. It works on the tree, so the
+  formula stays in its list item or quote; one mid-sentence stays inline.
+  A note reshapes the same span in its source instead
+  (`editor/BlockTree.jsx` `mdPreprocessProse`).
 
 The two kinds share one index sequence: the nth diagram of a note, whatever
 its kind, is the nth fence `scanDiagramFences` reports and the nth figure

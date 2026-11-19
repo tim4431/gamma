@@ -13,7 +13,7 @@ import pytest
 
 from conftest import account_of, doc_props, login, make_page, make_user, thread_on, workspace_of
 from gamma import agents, ai_permissions, integrations, storage
-from gamma.ai_tools import agent_tools, approval_preview, run_agent_tool
+from gamma.ai_tools.registry import agent_tools, approval_preview, run_agent_tool
 from gamma.db import connect_pages_db
 from gamma.documents.model import stored_name
 from gamma.blocks_store import load_props
@@ -374,3 +374,29 @@ def test_a_turns_token_comments_as_its_agent(client, tim, anon):
         assert http.status_code == 403
     finally:
         integrations.drop(token_id)
+
+
+def test_an_area_highlight_and_a_comment_on_an_area(tim):
+    pdf = tim.pages["pdf"]
+    box = [0.1, 0.2, 0.6, 0.45]
+    text, action = _run("highlight", {"page_id": pdf, "pdf_page": 2, "box": box, "color": "green"})
+    assert not action.get("error"), text
+    assert text.startswith("ok — highlighted an area of page 2 of “The paper”") and action["area"] is True
+    parent, _, props = _block(action["block_id"])
+    pos = props["pdf_position"]
+    # the rectangle a person's Ctrl+drag makes: no quote, in the page's own 600 × 800 frame
+    assert (parent, props["quote"], pos["area"], pos["pageNumber"]) == (pdf, "", True, 2)
+    assert pos["rects"] == [{"x1": 60, "y1": 160, "x2": 360, "y2": 360}] and "style" not in props
+    # the same area again answers with the first; an area takes the wash alone
+    again, act = _run("highlight", {"page_id": pdf, "pdf_page": 2, "box": box})
+    assert act["error"] and f"highlight {action['block_id']}" in again
+    styled, act = _run("highlight", {"page_id": pdf, "pdf_page": 2, "box": [0.1, 0.5, 0.2, 0.6], "style": "underline"})
+    assert act["error"] and "takes no other style" in styled
+    # a comment on an area opens its thread on a new area highlight, and is not written twice
+    asked = {"page_id": pdf, "pdf_page": 2, "box": [0.1, 0.6, 0.9, 0.9], "body": "Explain this figure."}
+    text, action = _run("comment", asked)
+    assert not action.get("error"), text
+    assert _block(action["block_id"])[2]["pdf_position"]["area"] is True
+    assert _threads(tim, pdf)[action["thread_id"]]["block_id"] == action["block_id"]
+    again, act = _run("comment", asked)
+    assert act["error"] and "moments ago" in again

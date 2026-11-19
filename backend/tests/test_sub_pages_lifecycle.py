@@ -369,7 +369,7 @@ def test_filing_and_a_folder_listing_pass_the_cascade_by(owner):
     kid = _page(owner, "Filed kid", top)
     owner.delete(f"/api/blocks/{top}").raise_for_status()
     # the agent's list_deleted reads the listing: the page, by its folder, alone
-    from gamma.ai_tools import run_agent_tool
+    from gamma.ai_tools.registry import run_agent_tool
 
     text, _ = run_agent_tool(_ws(), {"type": "folder", "folder": ""}, "list_deleted", {"title_contains": "Filed"})
     assert top in text and kid not in text

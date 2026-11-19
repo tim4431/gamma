@@ -3,7 +3,10 @@ import { test } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
-import { diagramFence, diagramWidth, mermaidMath, normalizeChatMarkdown, remarkDiagrams, scanDiagramFences, setDiagramWidth } from "../src/shared/lib/diagramMarkdown.js";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import { diagramFence, diagramWidth, mermaidMath, normalizeChatMarkdown, remarkDiagrams, remarkLoneDisplayMath, scanDiagramFences,
+  setDiagramWidth } from "../src/shared/lib/diagramMarkdown.js";
 
 const render = (text) => renderToStaticMarkup(React.createElement(ReactMarkdown, {
   remarkPlugins: [remarkDiagrams], children: text,
@@ -119,5 +122,22 @@ test("note-style $…$ labels become the $$…$$ Mermaid typesets", () => {
   // Already Mermaid's form, escaped dollars, prices and spaced dollars stay put.
   for (const same of ["A[$$x$$] --> B", String.raw`A[costs \$5]`, "A[$5 and $6]", "A[$ x $]", "A[$a\nb$]", "A[$$]"]) {
     assert.equal(mermaidMath(same), same);
+  }
+});
+
+test("a reply's $$…$$ on a line of its own is display math, in whatever holds it; one mid-sentence stays inline", () => {
+  const html = (text) => renderToStaticMarkup(React.createElement(ReactMarkdown, {
+    remarkPlugins: [remarkGfm, remarkMath, remarkLoneDisplayMath], children: text,
+  })).replace(/>\n</g, "><");
+  const shown = '<pre><code class="language-math math-display">x^2</code></pre>';
+  assert.equal(html("Before\n\n$$x^2$$\n\nAfter"), `<p>Before</p>${shown}<p>After</p>`);
+  assert.equal(html("The sum\n$$x^2$$\nconverges."), `<p>The sum</p>${shown}<p>converges.</p>`, "its paragraph is split around it");
+  assert.equal(html("Hard break  \n$$x^2$$  \nafter"), `<p>Hard break</p>${shown}<p>after</p>`, "no break is left at a split");
+  assert.equal(html("$$x^2$$\n$$y$$"), `${shown}${shown.replace("x^2", "y")}`);
+  assert.equal(html("- $$x^2$$"), `<ul><li>${shown}</li></ul>`);
+  assert.equal(html("- item\n\n  $$x^2$$"), `<ul><li><p>item</p>${shown}</li></ul>`, "an indented one stays in its list item");
+  assert.equal(html("> $$x^2$$"), `<blockquote>${shown}</blockquote>`);
+  for (const inline of ["Mid $$x^2$$ sentence.", "$x^2$", "Ends with $$x^2$$", "$$x^2$$ starts it", "| a |\n|---|\n| $$x^2$$ |"]) {
+    assert.doesNotMatch(html(inline), /math-display/, inline);
   }
 });

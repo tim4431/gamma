@@ -186,18 +186,18 @@ def _turn_row(user_id: str, turn: dict, title: str, people: dict[str, str], *, a
 def _far_turns(user_id: str, ws: str) -> list[dict]:
     """The turns of the chat's computer side queued or running on another
     computer for the account and the co-authors its agents serve (step 4d,
-    ``chats.remote_turns``: kept in the workspaces its computers keep a work
+    ``far_turns.remote_turns``: kept in the workspaces its computers keep a work
     folder of with an agent, and the one the request works in), as ``_computer_turns`` gives them (phase
     ``asking`` while an ask waits for an answer, in the chat where that
     computer relays it, else on that computer, ``there``), newest first;
     Stop the same route."""
     from ..computers import registry
-    from ..local_agents import chats
+    from ..local_agents import far_turns
 
     rows = []
     try:
         for each in sorted({*registry.workspaces_of(user_id), *([ws] if ws else [])}):
-            turns = chats.remote_turns(each, user_id)
+            turns = far_turns.remote_turns(each, user_id)
             people = _people(user_id, turns)
             rows += [_turn_row(user_id, turn, turn["title"], people, asking=turn["asking"], there=turn["there"])
                      for turn in turns]

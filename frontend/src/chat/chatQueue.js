@@ -17,8 +17,10 @@
 //
 // An item: {id, text, parts, state: "queued" | "steering"}, `parts` what
 // went with the message from the composer (Gamma AI's pictures, files,
-// passages and notes; a computer agent's passages).
+// passages and notes; a computer agent's passages; for both, the
+// transcript's passages it quotes, `quotes`).
 import { useCallback, useSyncExternalStore } from "react";
+import { quoteMarkdown, withChatQuotes } from "./chatQuotes.js";
 
 const EMPTY = Object.freeze({ items: Object.freeze([]), paused: false, reply: "" });
 const queues = new Map(); // key -> {items, paused, reply}: `reply` the running reply's steer id, "" for none
@@ -142,8 +144,12 @@ export function quotesOf(parts = {}) {
 // of what it quotes.
 export function quotedText(text, quotes) {
   const quoted = quotes.join("\n\n---\n\n");
-  return quoted ? `${text}\n\n> ${quoted.slice(0, SHOWN_QUOTE)}${quoted.length > SHOWN_QUOTE ? "…" : ""}` : text;
+  return quoted ? `${text}\n\n${quoteMarkdown(`${quoted.slice(0, SHOWN_QUOTE)}${quoted.length > SHOWN_QUOTE ? "…" : ""}`)}` : text;
 }
+
+// What a message says as it goes: the transcript's passages it quotes
+// (chat/chatQuotes.js), then what the user wrote.
+export const messageText = (text, parts = {}) => withChatQuotes(String(text || "").trim(), parts?.quotes);
 
 // Whether Steer can carry the message: its text, pictures and quoted
 // passages go into the reply; files, attached blocks and handwriting only
@@ -156,9 +162,9 @@ export function canSteer(item) {
 // The steer request's body (POST /api/ai/chat/steer/{reply}): the text with
 // the passages it quotes in full, and its pictures.
 export function steerBody(item) {
-  const quotes = quotesOf(item.parts);
-  const quoted = quotes.map((q) => q.split("\n").map((line) => `> ${line}`).join("\n")).join("\n\n---\n\n");
-  const text = quoted ? `${item.text.trim()}\n\n${quoted}` : item.text.trim();
+  const quoted = quotesOf(item.parts).map((q) => q.split("\n").map((line) => `> ${line}`).join("\n")).join("\n\n---\n\n");
+  const said = messageText(item.text, item.parts);
+  const text = quoted ? `${said}\n\n${quoted}` : said;
   return { id: item.id, text: text.slice(0, STEER_MAX), images: item.parts?.images || [] };
 }
 
@@ -168,7 +174,7 @@ export function steeredMessage(items, id) {
   const images = items.flatMap((m) => m.parts?.images || []);
   return {
     id, role: "user", steered: true,
-    text: items.map((m) => quotedText(m.text.trim(), quotesOf(m.parts))).join("\n\n"),
+    text: items.map((m) => quotedText(messageText(m.text, m.parts), quotesOf(m.parts))).join("\n\n"),
     ...(images.length ? { images } : {}),
   };
 }

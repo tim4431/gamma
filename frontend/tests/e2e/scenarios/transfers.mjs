@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { ROOT, arrived } from "../harness.mjs";
+import { ROOT, arrived, until } from "../harness.mjs";
 import { newPageViaUi } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
@@ -20,6 +20,32 @@ export async function openDialog(page, name) {
   const dialog = page.getByRole("dialog", { name, exact: true });
   await dialog.waitFor();
   return dialog;
+}
+
+// An import that brought one page and warned of nothing opens that page in
+// place of its summary (ImportReviewDialog; importReview.js onlyPage) and
+// says the summary on the status line. Waits for another page than the one
+// open before, titled `title`, to be open (`?block=`) → {id, said}, `said`
+// the status line, watched for from the start: it fades a moment after.
+// A PDF page's own lookup may cover that line as it opens (no metadata
+// found, an error's rank): `said: false` waits for the page alone.
+export async function openedImport(page, account, title, { said: watch = true } = {}) {
+  const opened = () => new URL(page.url()).searchParams.get("block") || "";
+  const before = opened();
+  const seen = new Set();
+  const saying = !watch ? Promise.resolve("") : until(async () => {
+    const text = (await page.locator(".statusPill").allTextContents()).join(" ");
+    if (text) seen.add(text);
+    return text.includes(`Imported “${title}”`) ? text : null;
+  }, { timeout: 20000, every: 50, what: `the status line on “${title}”` })
+    .catch((err) => { throw new Error(`${err.message}; the pill said: ${[...seen].join(" | ") || "nothing"}`); });
+  const id = await until(async () => {
+    const now = opened();
+    return now && now !== before && (await account.api(`/api/blocks/${now}`)).content === title ? now : null;
+  }, { timeout: 20000, every: 250, what: `the imported “${title}” open` });
+  const said = await saying;
+  if (await page.getByRole("dialog", { name: "Import complete", exact: true }).count()) throw new Error("the summary stayed open");
+  return { id, said };
 }
 
 export async function transferScenarios({ server, browser, alice, bob, makePdf, step, assert, assertEq, assertNoProblems, openPage, until, flags }) {
@@ -422,7 +448,7 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
     } finally { await ctx.close(); }
   });
 
-  await step("transfer: shared Markdown upload progress, selection and persistent summary", async () => {
+  await step("transfer: shared Markdown upload progress and selection, and the one note it brought opened", async () => {
     const { ctx, page } = await setup();
     try {
       await page.waitForSelector(".folderNewBtn");
@@ -452,11 +478,9 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
       assert(await choice(review, "Import to library").isDisabled());
       await review.getByRole("checkbox", { name: "Select folder Imported notes", exact: true }).check();
       await choice(review, "Import to library").click();
-      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor();
-      assert((await report.innerText()).includes("1 new page"));
-      assert(await report.getByText("Reviewed Markdown", { exact: true }).isVisible());
-      await choice(report, "Done").click();
+      // one note: its page opens in place of the summary, which the status line says
+      const { said } = await openedImport(page, alice, "Reviewed Markdown");
+      assert(said.includes("1 new page"), said);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -596,10 +620,8 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       assert((await review.innerText()).includes("1 of 2 items selected"), "the choices are kept");
       assert(!(await review.getByRole("checkbox", { name: "Import Dropped review note", exact: true }).isChecked()));
       await choice(review, "Import to library").click();
-      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor();
-      assert((await report.innerText()).includes("1 new page"));
-      await choice(report, "Done").click();
+      const { said } = await openedImport(page, alice, "Kept review note");
+      assert(said.includes("1 new page"), said);
       assertNoProblems(page, [/^POST \/api\/jobs\/import\S* -> 404$/]);
     } finally { await ctx.close(); }
   });
@@ -700,10 +722,8 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await review.getByRole("checkbox", { name: "Import Held review", exact: true }).waitFor();
       assert((await review.innerText()).includes("Held review.md"), "the dialog names the file it reviews");
       await choice(review, "Import to library").click();
-      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor();
-      assert((await report.innerText()).includes("1 new page"));
-      await choice(report, "Done").click();
+      const { said } = await openedImport(page, alice, "Held review");
+      assert(said.includes("1 new page"), said);
       await page.click("button[aria-label='Background tasks']");
       await page.locator(".taskRow.done", { hasText: "Import Held review.md" }).waitFor();
       assertEq(await page.locator(".taskRow", { hasText: title }).count(), 0, "the import's row stands for the review");
@@ -922,13 +942,10 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
       await choice(review, "Deselect all").click();
       await review.getByRole("checkbox", { name: "Import Selected Gamma review", exact: true }).check();
       await choice(review, "Import to library").click();
-      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor();
-      assert((await report.innerText()).includes("1 new page"));
-      assertEq(await report.getByText("Excluded Gamma review", { exact: true }).count(), 0);
-      assertEq((await alice.api(`/api/blocks/${donorA.id}`)).content, "Selected Gamma review");
+      const { id, said } = await openedImport(page, alice, "Selected Gamma review");
+      assert(said.includes("1 new page"), said);
+      assertEq(id, donorA.id, "the page it opens keeps its id");
       assertEq((await alice.api(`/api/blocks/${donorB.id}`, { raw: true })).status, 404);
-      await choice(report, "Done").click();
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -979,9 +996,7 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
       await review.getByRole("region", { name: "Library after import", exact: true })
         .getByText("E2E NTB note", { exact: true }).waitFor();
       await choice(review, "Import to library").click();
-      const fromNtb = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await fromNtb.waitFor();
-      await choice(fromNtb, "Done").click();
+      await openedImport(page, alice, "E2E NTB note");
       const ntbPage = (await alice.api("/api/blocks/root/children")).children.find((p) => p.content === "E2E NTB note");
       const [typed, sheet] = (await alice.api(`/api/blocks/${ntbPage.id}/subtree`)).block.children;
       assertEq(typed.content, "Typed in the bundle", "its typed text, the page's note");
@@ -994,11 +1009,7 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
       assertEq((await target.locator(".importKind").allTextContents()).join(","), "PDF");
       assert(await review.getByRole("heading", { name: "Source file", exact: true }).isVisible());
       await choice(review, "Import to library").click();
-      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor();
-      const summary = await report.locator(".importReviewHeader").innerText();
-      assert(summary.includes("1 new page") && summary.includes("1 recording"), summary);
-      await choice(report, "Done").click();
+      await openedImport(page, alice, "E2E Notability note", { said: false }); // a PDF page: its recording is checked below
 
       // The page carries one PDF, the note's PDF page and its paper page; an
       // ink group per page; the text box and the picture on page 1; the recording.
@@ -1078,11 +1089,7 @@ open(sys.argv[1], 'wb').write(n.bytes())
       await target.getByText("E2E GoodNotes notebook", { exact: true }).waitFor();
       assertEq((await target.locator(".importKind").allTextContents()).join(","), "Page");
       await choice(review, "Import to library").click();
-      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor();
-      const summary = await report.locator(".importReviewHeader").innerText();
-      assert(summary.includes("1 new page") && summary.includes("1 recording"), summary);
-      await choice(report, "Done").click();
+      await openedImport(page, alice, "E2E GoodNotes notebook", { said: false }); // its recording is checked below
 
       // A sheet per page on its paper; the ink, the box and the picture on the
       // squared one; the recording after them.
@@ -1155,9 +1162,7 @@ open(sys.argv[1], 'wb').write(n.bytes())
       await review.getByRole("region", { name: "Library after import", exact: true })
         .getByText("E2E Notability note", { exact: true }).waitFor();
       await choice(review, "Import to library").click();
-      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor();
-      await choice(report, "Done").click();
+      await openedImport(page, alice, "E2E Notability note", { said: false });
       const copies = (await alice.api("/api/blocks/root/children")).children.filter((p) => p.content === "E2E Notability note");
       assertEq(copies.length, 2, "the note came in as a page of its own");
       const back = copies.find((p) => p.id !== original.id);
@@ -1223,9 +1228,7 @@ open(sys.argv[1], 'wb').write(n.bytes())
       await review.getByRole("region", { name: "Library after import", exact: true })
         .getByText("E2E Notability note", { exact: true }).waitFor();
       await choice(review, "Import to library").click();
-      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor();
-      await choice(report, "Done").click();
+      await openedImport(page, alice, "E2E Notability note", { said: false });
       const after = await titled();
       assertEq(after.length, before.length + 1, "the notebook came in as a page of its own");
       const back = after.find((p) => !before.some((b) => b.id === p.id));
@@ -1271,10 +1274,9 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       const review = page.getByRole("dialog", { name: "Review Notion import", exact: true });
       await review.getByRole("checkbox", { name: "Import Grandchild A1 — Unicode 中文", exact: true }).waitFor({ timeout: 15000 });
       await choice(review, "Import to library").click();
-      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
-      await report.waitFor({ timeout: 15000 });
-      assert((await report.innerText()).includes("10 new pages"), `every page of the export: ${await report.innerText()}`);
-      await choice(report, "Done").click();
+      // one page and the pages inside it: that page opens
+      const { said } = await openedImport(page, alice, "Round trip");
+      assert(said.includes("10 new pages"), `every page of the export: ${said}`);
 
       const pages = (await alice.api("/api/blocks/root/children")).children;
       const byTitle = (title) => pages.find((p) => p.content === title);
@@ -1805,4 +1807,42 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
     }
   });
 
+  // The library's Copy to workspace ▸ (docs/dev/workspaces.md "Copies
+  // between workspaces"): the selected pages go into another workspace as a
+  // job. A page whose PDF is still in Zotero (its zotero_pdf mark) makes the
+  // menu ask first; the copy carries no mark, and the pill says what came
+  // and opens the other workspace.
+  await step("transfer: Copy to workspace copies the selected pages, says first which PDFs are still in Zotero, and the pill opens the copy", async () => {
+    const bin = await alice.folder("Copy out");
+    const target = await alice.api("/api/workspaces", { method: "POST", body: { name: "Copy target" } });
+    const paper = await alice.api("/api/pages", { method: "POST", body: { title: "Copy out paper",
+      properties: { folders: [bin], zotero_pdf: { key: "ABCD2345", state: "remote", filename: "paper.pdf" } } } });
+    await alice.api("/api/pages", { method: "POST", body: { title: "Copy out note", properties: { folders: [bin] } } });
+    const ctx = await alice.context(browser);
+    const page = await openPage(ctx, `${server.base}/?folder=${bin}&ws=${alice.ws}`);
+    try {
+      const rows = page.locator(".fileRow", { hasText: "Copy out" });
+      await until(async () => (await rows.count()) === 2, { what: "the two pages are listed" });
+      await rows.first().click();
+      await rows.last().click({ modifiers: ["Shift"] });
+      await rows.last().click({ button: "right" });
+      await page.locator(".ctxMenu .ctxSubTrigger", { hasText: "Copy to workspace" }).click();
+      const flyout = page.getByRole("menu", { name: "Copy to workspace", exact: true });
+      await flyout.locator(".ctxMenuItem", { hasText: "Copy target" }).click();
+      const confirm = page.locator(".confirmModal", { hasText: "1 paper's PDF is still in Zotero, not here yet: its copy comes without it." });
+      await confirm.getByRole("button", { name: "Copy anyway", exact: true }).click();
+      const pill = page.locator(".statusPill", { hasText: "Copied 2 pages to “Copy target”. 1 came without its PDF, which is still in Zotero." });
+      await pill.waitFor({ timeout: 30000 });
+      const copied = (await alice.api(`/api/blocks/${paper.id}/subtree?ws=${target.id}`)).block;
+      assertEq(copied.content, "Copy out paper");
+      assertEq(copied.properties.zotero_pdf, undefined, "the copy carries none of the link's marks");
+      const reloaded = page.waitForEvent("load", { timeout: 30000 });
+      await pill.getByRole("button", { name: "Open", exact: true }).click();
+      await reloaded;
+      await page.waitForSelector(".folderNewBtn");
+      assertEq(new URL(page.url()).searchParams.get("ws"), target.id);
+      await page.getByText("Copy out note", { exact: true }).first().waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

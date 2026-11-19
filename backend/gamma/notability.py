@@ -59,9 +59,6 @@ MAX_RECORDS = 1_500_000         # records read from an .ntb's noteBundle
 COORD_LIMIT = 1e6               # an item with a |coordinate| past this, in document units, is damage
 UNFILED = frozenset({"unsortedNotesKey", "Unfiled Notes", ""})
 SUPERNOTE_REASON = "This .note file is from a Supernote, not from Notability."
-NO_NOTES_REASON = ("No Notability notes in this file. Gamma reads Notability's “Note” and “NTB” exports: "
-                   ".note and .ntb files, or a .zip of them. A “PDF + Recording” backup holds a PDF and "
-                   "its audio: add the PDF to the library instead.")
 SUPERNOTE_MAGIC = b"noteSN_FILE_VER_"
 NEWEST_FORMAT = 9               # sessionFormatVersion of Notability 15 and 16
 TITLE_CHARS = 500
@@ -387,10 +384,11 @@ def _inside(path: str, folder: str) -> bool:
 
 
 def nested_zip(name: str) -> bool:
-    """walk_zip's ``nested`` for this source: a ``*.zip`` opens in place,
+    """walk_zip's ``nested`` for the note apps' import: a ``*.zip`` opens in
+    place (a library's or a folder's export, a ``.goodnotes.zip`` backup),
     except under an ``NBPDFIndex/`` folder (Notability's own search cache,
-    never read). A .note or .ntb is not opened by the walk: the import opens
-    each one when it reads it."""
+    never read). A .note, .ntb or .goodnotes is not opened by the walk: the
+    import opens each one when it reads it."""
     parts = name.lower().split("/")
     return parts[-1].endswith(".zip") and "nbpdfindex" not in parts[:-1]
 

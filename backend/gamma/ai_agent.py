@@ -34,9 +34,10 @@ branched on:
 - ``steering`` is the reply's inbox of messages the user steered in while
   it runs (:mod:`gamma.ai_steer`). The chat passes one, so such a message
   joins the conversation at once, as Codex's instant interrupt has it: the
-  provider turn streaming stops at its next event, what the model wrote so
-  far is its turn, the round's calls not started yet are skipped (those
-  running finish), and the reply goes on with the message.
+  provider turn being read stops at once, even a model silent while it
+  thinks (``ai_steer.TurnRead``), what the model wrote so far is its turn,
+  the round's calls not started yet are skipped (those running finish),
+  and the reply goes on with the message.
 
 A helper passes none of them: it has no card to show, so a blocked fetch
 reports what stopped it and the chat's own wait takes over once the helper
@@ -58,13 +59,17 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from . import ai_permissions
+from . import ai_permissions, ai_steer
 from .ai_client import UpstreamError, failure_kind, partial_json_object
 from .ai_context import canonical_tool, elide_live_results
 from .ai_protocols.base import reasoning_text, truncated_stop
-from .ai_tools import (CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, MUTATING_TOOLS,
-                       TREE_DELETES, approval_preview, ensure_tally, find_selection, listed_pages, run_agent_tool,
-                       settled_action, skipped_fetch, tool_action, tool_permission, unanswered_fetch)
+from .ai_tools.base import CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, ensure_tally
+from .ai_tools.folders import TREE_DELETES
+from .ai_tools.notes import find_selection
+from .ai_tools.organizing import listed_pages
+from .ai_tools.registry import (MUTATING_TOOLS, approval_preview, run_agent_tool, settled_action, tool_action,
+                                tool_permission)
+from .ai_tools.web import skipped_fetch, unanswered_fetch
 from .logbuf import log
 
 # Tool calls of one round that run at the same time. Reads are network- or
@@ -87,7 +92,7 @@ PREVIEW_TOOLS = frozenset({"edit_block", "create_block"})
 # The short arguments a step event repeats, for the label the chat shows
 # while a call runs ("Searching library for …"). Never a note's content.
 STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "source", "url",
-             "pdf_page", "mode", "question", "thread_id")
+             "pdf_page", "mode", "question", "thread_id", "sheet_id", "format")
 
 # What the model hears for a call the user did not allow (with what they want
 # done instead, when they said it), or did not answer in time.
@@ -306,46 +311,57 @@ class AgentLoop:
         """Stream one provider turn, then run its tool calls. Returns the
         calls it ran ([] when the model answered, None to stop). With
         ``can_cut`` (another round may follow) a message the user steered in
-        cuts the round short: at the next event the model streams, its text
-        so far is its answer and it calls nothing; once the stream ended, the
-        calls not started yet are skipped. The provider's end of the turn
-        (its stop reason, its token report) is never cut off."""
+        cuts the round short at once (``ai_steer.TurnRead``), even while the
+        model is silent; its text so far is its answer and it calls nothing.
+        Once the stream ended, the calls not started yet are skipped. The
+        client leaving ends the read at once too. The provider's end of the
+        turn (its stop reason, its token report) is never cut off."""
         calls, text_parts = [], []
         previewed = {}   # call id -> content previewed so far (dedup)
         stop = ""
         thinking = None  # what the wire reported of the model's thinking
         cut = False
         try:
-            for kind, data in self.read_events(resp):
-                if self._left():
-                    return None                         # the client left: stop the turn here
-                if can_cut and kind not in ("stop", "usage") and self._steer_waits():
-                    cut = True                          # the user steered in: the turn ends here
-                    break
-                if kind == "text":
-                    text_parts.append(data)
-                    yield ("delta", data)
-                elif kind == "stop":
-                    stop = data
-                elif kind == "tool":
-                    calls.append(data)
-                elif kind == "tool_delta":
-                    progress = self._preview(data, previewed)
-                    if progress:
-                        yield ("progress", progress)
-                elif kind == "reasoning":
-                    # Kept whole on the turn the next round replays; its
-                    # text goes up for the reply to save and send back.
-                    thinking = data
-                    said = reasoning_text(data)
-                    if said:
-                        yield ("reasoning", said)
-                elif kind == "usage":
-                    if self.on_usage:
-                        self.on_usage(data)
-                    yield ("usage", data)
+            with ai_steer.TurnRead(resp, self.steering if can_cut else None, self.stopped) as read:
+                for kind, data in read.events(self.read_events(resp)):
+                    if self._left():
+                        return None                     # the client left: stop the turn here
+                    if can_cut and kind not in ("stop", "usage") and self._steer_waits():
+                        cut = True                      # the user steered in: the turn ends here
+                        break
+                    if kind == "text":
+                        text_parts.append(data)
+                        yield ("delta", data)
+                    elif kind == "stop":
+                        stop = data
+                        read.ended()
+                    elif kind == "tool":
+                        calls.append(data)
+                    elif kind == "tool_delta":
+                        progress = self._preview(data, previewed)
+                        if progress:
+                            yield ("progress", progress)
+                    elif kind == "reasoning":
+                        # Kept whole on the turn the next round replays; its
+                        # text goes up for the reply to save and send back.
+                        thinking = data
+                        said = reasoning_text(data)
+                        if said:
+                            yield ("reasoning", said)
+                    elif kind == "usage":
+                        if self.on_usage:
+                            self.on_usage(data)
+                        yield ("usage", data)
         finally:
             resp.close()
+        if read.woken:
+            # Ended from outside: the client left, or a message was steered
+            # in (only a turn that may be cut listens for one), before the
+            # provider's end of the turn was read; a turn whose end was read
+            # goes on as a whole one, its calls skipped below.
+            if self._left():
+                return None
+            cut = cut or not stop
         if cut:
             self.answer = {"role": "assistant", "content": "".join(text_parts),
                            **({"reasoning": thinking} if thinking else {})}
@@ -470,7 +486,7 @@ class AgentLoop:
             if changes:
                 # What this message may still change: a call naming several
                 # pages changes at most that many, or is refused whole before
-                # any card (ai_tools._batch_answer). The gate's preview reads
+                # any card (ai_tools.organizing._batch_answer). The gate's preview reads
                 # the same scope.
                 self.scope["changes_left"] = None if self.max_changes is None else self.max_changes - self.mutations
             if self.gate:

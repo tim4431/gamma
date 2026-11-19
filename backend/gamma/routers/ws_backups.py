@@ -9,12 +9,16 @@ gamma/ws_backup.py.
   ``/jobs/restore`` (an uploaded zip; ``/jobs/restore/parts`` for one in
   parts), ``/jobs/restore-snapshot`` and ``/jobs/snapshot``; for admins, a
   backup task's copy in the bucket downloaded (``/jobs/bucket-download``)
-  or restored (``/jobs/bucket-restore``).
+  or restored (``/jobs/bucket-restore``). Pages copied into another
+  workspace of this server, or every page into a new one (Duplicate), run
+  as ``/jobs/workspace-copy`` (gamma/workspace_copy.py), which
+  ``/workspace-copy/preview`` sizes up first.
 - ``router`` (``/api/workspaces/{ws}/backups``): the snapshots Settings →
   Backups manages — take one, list, download, restore in place, delete.
 
-Who may do what: any member (or admin) exports, lists and downloads; an
-owner takes, restores and deletes snapshots, and a merge needs an editor.
+Who may do what: any member (or admin) exports, lists and downloads, and
+copies pages out; an owner takes, restores and deletes snapshots, and a
+merge (a copy into a workspace too) needs an editor.
 A guest's workspace keeps no snapshots and takes no restore: it goes away
 with the guest (docs/dev/guests.md).
 """
@@ -26,11 +30,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from .. import bucket_snapshots, import_staging, jobs, upload_parts, workspaces, ws_backup
+from .. import import_staging, jobs, snapshot_copies, upload_parts, workspace_copy, workspaces, ws_backup
 from ..auth import require_user_id, requested_ws
-from ..db import account_id, connect_users_db, page_now, ws_dir
+from ..db import account_id, connect_pages_db, connect_users_db, page_now, ws_dir
 from ..downloads import TempFileResponse, temp_file
 from ..storage import display_filename
 from .workspaces import _member
@@ -420,25 +424,100 @@ def start_snapshot_restore(payload: SnapshotRestoreJob, request: Request):
                               "snapshot": payload.name, "snapshot_at": snapshot.get("created_at", "")})
 
 
-# --- the backup tasks' copies in the bucket (admins; gamma/bucket_snapshots.py) ------
+# --- pages copied into another workspace of this server (gamma/workspace_copy.py) -----
+
+# A copy names at most this many pages (the library's selection; each brings
+# the pages inside it). Naming none copies every page, however many.
+COPY_PAGES_MAX = 10_000
+
+
+class WorkspaceCopy(BaseModel):
+    ws: str = ""                    # the workspace the pages are in: the request's when empty
+    pages: list[str] | None = Field(default=None, max_length=COPY_PAGES_MAX)  # None: every page
+    to: str = ""                    # the workspace they go into…
+    name: str = ""                  # …or the name of a new personal workspace of mine
+
+
+def _copy_source(request: Request, payload: WorkspaceCopy) -> str:
+    """The workspace a copy reads, which any member may (as an export), and
+    400 for an empty list of pages."""
+    if payload.pages is not None and not payload.pages:
+        raise HTTPException(status_code=400, detail="name the pages to copy")
+    return _target_ws(request, payload.ws or None, None, "viewer")
+
+
+@transfers.post("/workspace-copy/preview")
+def preview_copy(payload: WorkspaceCopy, request: Request):
+    """What a copy of the pages would take, before the app asks for it:
+    ``{pages, zotero_pdfs}``, the pages with the pages inside them and how
+    many of them come without a PDF their Zotero item holds and this
+    workspace does not yet (``workspace_copy.preview``)."""
+    return workspace_copy.preview(_copy_source(request, payload), payload.pages)
+
+
+@transfers.post("/jobs/workspace-copy")
+def start_workspace_copy(payload: WorkspaceCopy, request: Request):
+    """Copy pages (``pages``: each with the pages inside it; none named:
+    every page) of a workspace into another the caller may edit (``to``, as
+    a merge: 403 for a viewer, a guest's workspace), or with ``name`` into a
+    new personal workspace of theirs (Duplicate: refused for a guest, past
+    ``MAX_WORKSPACES_PER_USER``) — as a job whose result is the copy's
+    counts and the target (``workspace_copy.copy``)."""
+    me = require_user_id(request)
+    source = _copy_source(request, payload)
+    name = workspaces.clean_name(payload.name)
+    if bool(payload.to) == bool(name):
+        raise HTTPException(status_code=400, detail="name the workspace to copy into, or a name for a new one")
+    if payload.to:
+        target = _restorable(request, payload.to, None, "merge")
+        if target == source:
+            raise HTTPException(status_code=400, detail="the pages are in that workspace already")
+    else:
+        if request.state.is_guest:
+            raise HTTPException(status_code=403, detail="the guest account cannot create workspaces")
+        if workspaces.membership_count(me) >= workspaces.MAX_WORKSPACES_PER_USER:
+            raise HTTPException(status_code=400, detail="too many workspaces")
+        target = ""
+    with connect_pages_db(source) as conn:
+        count = len(workspace_copy.pages_of(conn, payload.pages))
+    if not count:
+        raise HTTPException(status_code=404, detail="none of these pages is in the library any more")
+    pages, to_name = payload.pages, _name_of(target) if target else name
+
+    def run(job):
+        return workspace_copy.copy(source, pages, to=target, name=name, by=me, progress=job.progress)
+
+    return jobs.start("workspace-copy", owner=me, ws=target, run=run, writes=bool(target),
+                      title=f"Duplicate {_name_of(source)} as {name}" if name else f"Copy {count} pages to {to_name}",
+                      params={"ws": source, "name": _name_of(source), "to": target, "to_name": to_name,
+                              "pages": count, "all": pages is None, "new": bool(name)})
+
+
+# --- the backup tasks' copies in the bucket and in Google Drive (admins; gamma/snapshot_copies.py) ------
 
 class BucketSnapshotJob(BaseModel):
     ws: str
     name: str
+    store: str = "bucket"   # where the copy is: a key of snapshot_copies.DESTINATIONS
     mode: str = "replace"   # a restore's
     into: str = ""          # a restore's: "" the copy's own workspace, "new" a workspace made for it
 
 
-def _bucket_copy(request: Request, ws: str, name: str) -> str:
-    """The admin asking for a copy in the bucket: 403 for anyone else, 400
-    with no bucket set up, 404 for a workspace id or a name no copy has."""
+def _bucket_copy(request: Request, ws: str, name: str, where: str) -> str:
+    """The admin asking for a copy in the bucket or in Google Drive: 403 for
+    anyone else, 400 for a store that is not set up, 404 for a workspace
+    id, a name or a store no copy has."""
     me = require_user_id(request)
-    if not request.state.is_admin:
-        raise HTTPException(status_code=403, detail="only a server admin reads the bucket")
-    if not bucket_snapshots.ready():
-        raise HTTPException(status_code=400, detail="no bucket is set up")
     try:
-        bucket_snapshots.key(ws, name)
+        store = snapshot_copies.destination(where)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if not request.state.is_admin:
+        raise HTTPException(status_code=403, detail=f"only a server admin reads {store.name}")
+    if not store.ready():
+        raise HTTPException(status_code=400, detail=store.not_set_up)
+    try:
+        snapshot_copies.key(ws, name)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return me
@@ -450,19 +529,20 @@ def _copy_label(ws: str) -> str:
 
 @transfers.post("/jobs/bucket-download")
 def start_bucket_download(payload: BucketSnapshotJob, request: Request):
-    """A copy in the bucket as a job whose file is the zip, named like a
-    stored snapshot's download."""
-    ws, name = payload.ws, payload.name
-    me = _bucket_copy(request, ws, name)
+    """A copy in the bucket or in Google Drive as a job whose file is the
+    zip, named like a stored snapshot's download."""
+    ws, name, where = payload.ws, payload.name, payload.store
+    me = _bucket_copy(request, ws, name, where)
     filename = _backup_filename(ws, name) if workspaces.get(ws) else f"gamma-backup-{ws}-{name}.zip"
 
     def run(job):
-        bucket_snapshots.fetch(ws, name, job.artifact_path)
+        snapshot_copies.fetch(where, ws, name, job.artifact_path)
         job.set_artifact(filename, "application/zip")
         return {"size": job.artifact_path.stat().st_size}
 
-    return jobs.start("bucket-download", owner=me, run=run, artifact=True, title=f"Download of {name} from the bucket",
-                      params={"ws": ws, "name": _copy_label(ws), "snapshot": name})
+    return jobs.start("bucket-download", owner=me, run=run, artifact=True,
+                      title=f"Download of {name} from {snapshot_copies.destination(where).name}",
+                      params={"ws": ws, "name": _copy_label(ws), "snapshot": name, "store": where})
 
 
 def _made_for(ws: str, manifest: dict, me: str) -> str:
@@ -478,13 +558,14 @@ def _made_for(ws: str, manifest: dict, me: str) -> str:
 
 @transfers.post("/jobs/bucket-restore")
 def start_bucket_restore(payload: BucketSnapshotJob, request: Request):
-    """Restore a copy in the bucket as a job: into its own workspace
-    (``replace`` or ``merge``, as a stored snapshot restores), or with
-    ``into: "new"`` into a workspace made for it (``_made_for``; the way
-    back after a lost disk), which goes again when the restore fails. The
-    copy is downloaded first and restored like an uploaded zip."""
-    ws, name, mode, new = payload.ws, payload.name, _mode(payload.mode), payload.into == "new"
-    me = _bucket_copy(request, ws, name)
+    """Restore a copy in the bucket or in Google Drive as a job: into its
+    own workspace (``replace`` or ``merge``, as a stored snapshot
+    restores), or with ``into: "new"`` into a workspace made for it
+    (``_made_for``; the way back after a lost disk), which goes again when
+    the restore fails. The copy is downloaded first and restored like an
+    uploaded zip."""
+    ws, name, mode, new, where = payload.ws, payload.name, _mode(payload.mode), payload.into == "new", payload.store
+    me = _bucket_copy(request, ws, name, where)
     if not new:
         if not workspaces.get(ws):
             raise HTTPException(status_code=404, detail="this server has no such workspace: restore it as a new one")
@@ -493,7 +574,7 @@ def start_bucket_restore(payload: BucketSnapshotJob, request: Request):
     def run(job):
         zpath = jobs.incoming_path()
         try:
-            bucket_snapshots.fetch(ws, name, zpath)
+            snapshot_copies.fetch(where, ws, name, zpath)
             if not new:
                 return ws_backup.restore_zip(ws, zpath, mode, by=me, progress=job.progress)
             target = _made_for(ws, ws_backup.read_manifest(zpath), me)
@@ -502,7 +583,7 @@ def start_bucket_restore(payload: BucketSnapshotJob, request: Request):
                         "workspace": target}
             except BaseException:
                 try:
-                    workspaces.delete(target, by=me)
+                    workspaces.delete(target, by=me, keep=False)  # the copy in the store still holds it
                 except Exception:  # noqa: BLE001 — the restore's own error is the one to report
                     pass
                 raise
@@ -510,8 +591,8 @@ def start_bucket_restore(payload: BucketSnapshotJob, request: Request):
             zpath.unlink(missing_ok=True)
 
     return jobs.start("restore", owner=me, ws="" if new else ws, run=run, writes=not new,
-                      title=f"Restore of {_copy_label(ws)} from the bucket",
-                      params={"ws": ws, "name": _copy_label(ws), "mode": "replace" if new else mode, "source": "bucket",
+                      title=f"Restore of {_copy_label(ws)} from {snapshot_copies.destination(where).name}",
+                      params={"ws": ws, "name": _copy_label(ws), "mode": "replace" if new else mode, "source": where,
                               "snapshot": name, "into": "new" if new else ""})
 
 

@@ -64,12 +64,12 @@ def test_a_zotero_import_merging_into_a_sub_page_files_it_nowhere(owner):
 def test_a_notability_re_import_names_a_sub_page_s_folders(owner):
     data = fx.note_zip("Spin note", session_bytes=fx.session(name="Spin note"),
                        meta=fx.metadata("Spin note", "unsortedNotesKey"))
-    r = owner.post("/api/import/notability", files={"file": ("Spin.note", data, "application/zip")})
+    r = owner.post("/api/import/note-apps", files={"file": ("Spin.note", data, "application/zip")})
     assert r.status_code == 200, r.text
     [first] = r.json()["pages"]
     top = _page(owner, "Spin notebook", folders=[make_folder(owner, "Spin notes")])
     assert owner.put(f"/api/blocks/{first['id']}", json={"properties": {"parent_page": top}}).status_code == 200
-    for path in ("/api/import/notability/preview", "/api/import/notability"):
+    for path in ("/api/import/note-apps/preview", "/api/import/note-apps"):
         r = owner.post(path, files={"file": ("Spin.note", data, "application/zip")})
         assert r.status_code == 200, r.text
         [again] = r.json()["pages"]

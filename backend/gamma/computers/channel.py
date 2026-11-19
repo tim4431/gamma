@@ -84,7 +84,7 @@ import socket
 import threading
 import time
 import uuid
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode
 
 from cryptography.fernet import InvalidToken
 
@@ -104,7 +104,7 @@ QUICK_S = 1.0            # a poll answered at once with nothing: the next waits 
 CHATS_EVERY_S = 180      # the turns that wait there are asked for at least this often (a wake lost)
 MAX_MODELS = 32          # models an assistant's announce names
 _TURN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a chat turn's id there (``blocks_store.new_block_id``'s)
-_ANSWER = ("id", "run", "ask", "decision")        # an answer's fields there (``chats.answers_of``), and its note
+_ANSWER = ("id", "run", "ask", "decision")        # an answer's fields there (``far_turns.answers_of``), and its note
 _ASK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")    # an ask's id there (gamma/computers/sessions.py)
 STATES = ("connecting", "connected", "refused", "older", "unreachable")
 
@@ -283,7 +283,7 @@ def assistants(link: dict) -> list[dict]:
     """The agents on this computer as the catalog last found them
     (``catalog.known``: one probe when none was ever made, never one to
     refresh it, so a channel keeps no agent probed), each with the models
-    it offers (``[{id, label, efforts, effort, default}]``, at most
+    it offers (``[{id, label, efforts, effort, default, speeds, speed}]``, at most
     ``MAX_MODELS``: what a chat turn there may ask for), whether it is on
     for the channel ``link``'s account (``enabled``: on, and that account
     turned it on; another account's agent is not that server's to use),

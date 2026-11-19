@@ -463,6 +463,24 @@ def _jobs_end_with_their_test(monkeypatch, _page_ids_kept):
     assert not left, f"jobs still running {JOB_END_WAIT_S:.0f} s after the test that started them: {left}"
 
 
+@pytest.fixture(autouse=True)
+def _agent_probes_end_with_their_test(monkeypatch):
+    """An agent's probe that a read path started in the background
+    (gamma/local_agents/catalog.py ``cached``, ``known``) ends within the
+    test that started it, and the probes kept are then dropped. One still
+    running into the next test outlives that test's ``catalog.forget()``,
+    keeps its answer after it, and is the answer the next fresh probe takes
+    (callers at the same time share one probe): this computer's own Codex
+    where the test set up the stand-in. Taking ``monkeypatch`` puts the wait
+    before the test's patches are undone, so the probe ends under the
+    stand-ins it started with."""
+    yield
+    from fake_agents import settle_probes
+    from gamma.local_agents import catalog
+    settle_probes()
+    catalog.forget()
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _no_timed_upload_pass():
     """The upload GC's full pass over every workspace runs only when a test

@@ -94,6 +94,60 @@ function normalizeMath(text) {
         : `$${inner.replace(/\\\|/g, "\\Vert ").replace(/\|/g, "\\vert ")}$`);
 }
 
+// A reply's $$…$$ written on a line of its own, formula and dollars
+// together, as the display math it is meant as. remark-math reads $$ as a
+// display block only when each $$ stands alone on its line, and a one-line
+// $$…$$ as inline math: a run-in formula KaTeX cannot wrap, so a wide one
+// ran past the reply and gave the whole transcript a sideways scroll as it
+// streamed in. The notes reshape such a span in their source
+// (editor/BlockTree mdPreprocessProse); a reply's is turned in its tree, so
+// it stays in the list item or quote it was written in. Its paragraph is
+// split around it; a $$…$$ mid-sentence stays inline.
+export function remarkLoneDisplayMath() {
+  return (tree, file) => {
+    const source = String(file);
+    const endsLine = (node) => !node || node.type === "break" || (node.type === "text" && /\n[ \t]*$/.test(node.value));
+    const startsLine = (node) => !node || node.type === "break" || (node.type === "text" && /^[ \t]*\n/.test(node.value));
+    const lone = (kids, i) => kids[i].type === "inlineMath" && source.startsWith("$$", kids[i].position?.start.offset)
+      && endsLine(kids[i - 1]) && startsLine(kids[i + 1]);
+    // What stays of the paragraph on either side, without the line break
+    // that set the formula apart.
+    const paragraph = (run) => {
+      const kids = run.slice();
+      if (kids[0]?.type === "break") kids.shift();
+      if (kids.at(-1)?.type === "break") kids.pop();
+      if (kids[0]?.type === "text") kids[0] = { ...kids[0], value: kids[0].value.replace(/^[ \t]*\n/, "") };
+      const last = kids.at(-1);
+      if (last?.type === "text") kids[kids.length - 1] = { ...last, value: last.value.replace(/\n[ \t]*$/, "") };
+      const left = kids.filter((k) => k.type !== "text" || k.value);
+      return left.length ? [{ type: "paragraph", children: left }] : [];
+    };
+    // The node remark-math makes of a $$ block (mdast-util-math's math flow).
+    const display = ({ value, position }) => ({
+      type: "math", meta: null, value, position,
+      data: { hName: "pre", hChildren: [{ type: "element", tagName: "code",
+        properties: { className: ["language-math", "math-display"] }, children: [{ type: "text", value }] }] },
+    });
+    function visit(node) {
+      if (!node.children) return;
+      node.children = node.children.flatMap((child) => {
+        if (child.type !== "paragraph") { visit(child); return [child]; }
+        const kids = child.children;
+        if (!kids.some((_, i) => lone(kids, i))) return [child];
+        const out = [];
+        let run = [];
+        kids.forEach((kid, i) => {
+          if (!lone(kids, i)) { run.push(kid); return; }
+          out.push(...paragraph(run), display(kid));
+          run = [];
+        });
+        return [...out, ...paragraph(run)];
+      });
+    }
+    visit(tree);
+  };
+}
+
 // `text` with `transform` applied outside its code fences (unfinished ones,
 // tildes, and fences in lists and quotes: mdCode.codeFences), each fence
 // kept with its closing line's line break. Inline code is left to the

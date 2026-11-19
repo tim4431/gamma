@@ -54,12 +54,11 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..blocks_store import BLOCK_ID_RE
 from ..documents.formats import IMAGE_MEDIA_TYPES, media_type
-from ..markdown_export import _BLOCK_REF_RE
 from ..markdown_import import _FENCE_LINE_RE, _fence_marks, shuts_fence
 from ..markdown_zip_links import (_IMAGE_SIZE_RE, _LINK_RE, _MD_EXTS, _WIKILINK_RE, _norm_heading, _split_ext,
-                                 named_block, resolve_path)
+                                 label_alias, named_block, resolve_path, wiki_parts)
 from ..md_lens import _ESCAPED_ANCHOR_RE, _opcodes, flatten
-from ..note_markup import LITERAL_SPANS
+from ..note_markup import BLOCK_REF_RE, LITERAL_SPANS, ref_alias, ref_token, table_pipe
 from ..obsidian_export import anchor_marker
 from ..storage import UPLOAD_REF_RE
 
@@ -75,7 +74,7 @@ ATTACHMENTS = "attachments"
 _FILE_LINKS_RE = re.compile(f"(?P<wiki>{_WIKILINK_RE.pattern})|(?P<md>{_LINK_RE.pattern})|{LITERAL_SPANS}")
 # Gamma's: a mention or an embed, a Markdown link (an upload's when its
 # address is one).
-_GAMMA_LINKS_RE = re.compile(f"(?P<ref>{_BLOCK_REF_RE.pattern})|(?P<md>{_LINK_RE.pattern})|{LITERAL_SPANS}")
+_GAMMA_LINKS_RE = re.compile(f"(?P<ref>{BLOCK_REF_RE.pattern})|(?P<md>{_LINK_RE.pattern})|{LITERAL_SPANS}")
 # What stands before a line's text that a fence may follow: quote marks and
 # list markers.
 _LEAD_RE = re.compile(r"[ \t]*(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])[ \t]+)*")
@@ -387,33 +386,47 @@ def _cut(line: str) -> int:
 
 
 def _wiki_parts(text: str):
-    """A wikilink's ``(bang, target, sub, alias)``, the backslash of a pipe
-    escaped in a table's cell its pipe's, not the target's."""
-    bang, target, sub, alias = _WIKILINK_RE.fullmatch(text).groups()
-    if alias is not None and sub.endswith("\\"):
-        sub = sub[:-1]
-    elif alias is not None and not sub and target.endswith("\\"):
-        target = target[:-1]
-    return bang, target, sub, alias
+    """A wikilink's ``(bang, target, sub, alias)`` (``wiki_parts``)."""
+    return wiki_parts(_WIKILINK_RE.fullmatch(text))
+
+
+def _shown(ctx, page_id) -> str:
+    """The label a new Markdown link to the page is written with: its note's
+    name, a file page's file name, the title of a page outside the vault."""
+    path = ctx.page_path.get(page_id)
+    if path is None:
+        return ctx.title_of(page_id) or "Untitled"
+    leaf = posixpath.basename(path)
+    return _split_ext(leaf)[0] if path in ctx.pages else leaf
+
+
+def _names(ctx, page_id) -> tuple:
+    """What a Markdown link's label says of the page when it says only what a
+    mention shows anyway (``label_alias``)."""
+    return _shown(ctx, page_id), posixpath.basename(ctx.page_path.get(page_id) or ""), ctx.title_of(page_id)
 
 
 # --- file to Gamma --------------------------------------------------------------------
 
 def _file_link(ctx: LinkContext, m):
     """``(key, Gamma's text)`` of a file's link, or None for one that names
-    nothing Gamma knows."""
+    nothing Gamma knows. A mention keeps the words its link shows, as
+    ``[[id|words]]``: a wikilink's alias, a Markdown link's label that says
+    more than the page's name (an embed's, none)."""
+    pipe = table_pipe(m.string, m.start())
     if m["wiki"]:
         bang, target, sub, alias = _wiki_parts(m.group())
+        words = None if bang else alias
         target = target.strip()
         if not target:
-            return _mention(ctx, bang, ctx.page_id, sub) if sub and ctx.page_id else None
+            return _mention(ctx, bang, ctx.page_id, sub, words, pipe) if sub and ctx.page_id else None
         path = ctx._resolve(target)
         if path is None:
             return None
         if path in ctx.pages:
-            return _mention(ctx, bang, ctx.pages[path], sub)
+            return _mention(ctx, bang, ctx.pages[path], sub, words, pipe)
         if _file_page(ctx, path, bang):
-            return _mention(ctx, "", ctx.file_pages[path], "")
+            return _mention(ctx, "", ctx.file_pages[path], "", words, pipe)
         name = ctx._upload(path)
         if not name:
             return None
@@ -424,19 +437,24 @@ def _file_link(ctx: LinkContext, m):
         return path, f"[{alias or posixpath.basename(path)}](/api/uploads/{name})"
     bang, label, href, title = _LINK_RE.fullmatch(m.group()).groups()
     href = href.strip("<>").strip()
+
+    def words(page_id):
+        return None if bang else label_alias(label, *_names(ctx, page_id))
     if href.startswith("#"):
-        return _mention(ctx, "", ctx.page_id, unquote(href)) if ctx.page_id and href[1:] else None
+        if not (ctx.page_id and href[1:]):
+            return None
+        return _mention(ctx, "", ctx.page_id, unquote(href), words(ctx.page_id), pipe)
     target = ctx._gamma_target(href)
     if target:
-        return target, f"[[{target}]]"
+        return target, ref_token(target, words(ctx.page_of(target) or target), pipe=pipe)
     path = ctx._resolve(href)
     if path is None:
         return None
     if path in ctx.pages:
         sub = unquote(href.partition("#")[2])
-        return _mention(ctx, "", ctx.pages[path], f"#{sub}" if sub else "")
+        return _mention(ctx, "", ctx.pages[path], f"#{sub}" if sub else "", words(ctx.pages[path]), pipe)
     if _file_page(ctx, path, bang):
-        return _mention(ctx, "", ctx.file_pages[path], "")
+        return _mention(ctx, "", ctx.file_pages[path], "", words(ctx.file_pages[path]), pipe)
     name = ctx._upload(path)
     return (path, f"{bang}[{label}](/api/uploads/{name}{title})") if name else None
 
@@ -450,13 +468,14 @@ def _file_page(ctx, path: str, bang) -> bool:
             and not (bang and _split_ext(path)[1] in IMAGE_MEDIA_TYPES))
 
 
-def _mention(ctx, bang, page_id, sub):
+def _mention(ctx, bang, page_id, sub, words=None, pipe="|"):
     """A link to a note, ``#Heading`` / ``#^id`` naming one of its blocks: an
     embed of one anchored block is Gamma's embed, anything else a mention
-    (``markdown_zip_links.Links.rewrite_links``'s rule)."""
+    (``markdown_zip_links.Links.rewrite_links``'s rule), with the link's
+    ``words`` (``[[id|words]]``, the ``pipe`` a table's row takes)."""
     block_id = ctx._block(page_id, sub)
     anchored = (sub or "").split("#")[-1].strip().startswith("^") and block_id != page_id
-    return block_id, (f"![[{block_id}]]" if bang and anchored else f"[[{block_id}]]")
+    return block_id, (f"![[{block_id}]]" if bang and anchored else ref_token(block_id, words, pipe=pipe))
 
 
 def _remembered(ctx, memo, found) -> bool:
@@ -466,7 +485,17 @@ def _remembered(ctx, memo, found) -> bool:
     a block outside the vault is a link). A link to a file takes what it
     resolves to: its upload's name changes with its bytes."""
     key, token = memo
-    return bool(_BLOCK_REF_RE.fullmatch(token)) and found[0] in (key, ctx.page_of(key))
+    return bool(BLOCK_REF_RE.fullmatch(token)) and found[0] in (key, ctx.page_of(key))
+
+
+def _reworded(token: str, like: str) -> str:
+    """A remembered mention ``token`` with the words the file's link gives
+    now (``like``, its reading): a memo written before the words were read
+    has none."""
+    mine, now = BLOCK_REF_RE.fullmatch(token), BLOCK_REF_RE.fullmatch(like)
+    if not (mine and now) or mine[1]:
+        return token
+    return ref_token(mine[2], ref_alias(now), pipe="\\|" if "\\|" in like else "|")
 
 
 def _links_to_gamma(text: str, remembered: dict, ctx: LinkContext) -> tuple[str, dict]:
@@ -500,7 +529,7 @@ def _links_to_gamma(text: str, remembered: dict, ctx: LinkContext) -> tuple[str,
             queue = spelled.get(spelling)
             found, memo = _file_link(ctx, m), (queue.pop(0) if len(queue) > 1 else queue[0]) if queue else None
             if memo and (found is None or _remembered(ctx, memo, found)):
-                found = memo
+                found = memo if found is None else (memo[0], _reworded(memo[1], found[1]))
             if found is not None:
                 links.setdefault(found[0], []).append([found[1], spelling, size])
             emit(spelling if found is None else found[1])
@@ -513,14 +542,17 @@ def _links_to_gamma(text: str, remembered: dict, ctx: LinkContext) -> tuple[str,
 # --- Gamma to file -----------------------------------------------------------------------
 
 class _Link:
-    """A link in Gamma's text: a mention or an embed (``ref``) of ``target``,
-    or an upload's (``file``) by its ``name``; ``key`` its vault path when the
-    vault holds it."""
+    """A link in Gamma's text: a mention or an embed (``ref``) of ``target``
+    with the words it shows (``alias``, None: its target's), or an upload's
+    (``file``) by its ``name``; ``key`` its vault path when the vault holds
+    it."""
 
     def __init__(self, m, ctx):
         self.start, self.end, self.token = m.start(), m.end(), m.group()
+        self.alias = None
         if m["ref"]:
-            self.bang, self.target = _BLOCK_REF_RE.fullmatch(self.token).groups()
+            ref = BLOCK_REF_RE.fullmatch(self.token)
+            self.bang, self.target, self.alias = ref[1], ref[2], ref_alias(ref)
             self.kind, self.key = "ref", self.target
             return
         self.bang, self.label, href, self.title = _LINK_RE.fullmatch(self.token).groups()
@@ -603,20 +635,35 @@ def _spelling(link: _Link, remembered, entries, used, ctx, in_table) -> tuple:
     like = next((spot for spot in same if spot not in used), None)
     if like:
         used.add(like)
-        return key, _respelled(link, key, remembered[key][like[1]][1])
+        return key, _respelled(link, key, remembered[key][like[1]][1], ctx, in_table)
     if link.kind == "file":
         key = key or ctx._file_path(link.name)
         return (key, _new_file_link(link, key, ctx, in_table)) if key else (None, link.token)
-    spelling = _new_mention(link, ctx)
+    spelling = _new_mention(link, ctx, in_table)
     return (None if spelling == link.token else key), spelling
 
 
-def _respelled(link: _Link, key, was: str) -> str:
+def _respelled(link: _Link, key, was: str, ctx, in_table: bool) -> str:
     """``was``, a spelling of the link's target, with the rest of the link
-    as Gamma now holds it: the target as written, the label, the size."""
+    as Gamma now holds it: the target as written, the label or a mention's
+    words, the size."""
     wiki = _WIKILINK_RE.fullmatch(was)
     if link.kind == "ref":
-        return link.bang + was.lstrip("!") if wiki else was
+        if wiki:
+            _, target, sub, _ = _wiki_parts(was)
+            words = ("\\|" if in_table else "|") + link.alias if link.alias else ""
+            return f"{link.bang}[[{target}{sub}{words}]]"
+        md = _LINK_RE.fullmatch(was)
+        if not md:
+            return was
+        page_id = ctx.page_of(link.target) or link.target
+        if link.alias:
+            label = _label(link.alias)
+        elif label_alias(md[2], *_names(ctx, page_id)):    # its words, gone in Gamma
+            label = _label(_shown(ctx, page_id))
+        else:
+            return was
+        return was[:md.start(2)] + label + was[md.end(2):]
     image = link.bang and _split_ext(key)[1] in IMAGE_MEDIA_TYPES
     if wiki:
         bang, target, sub, _ = _wiki_parts(was)
@@ -679,30 +726,30 @@ def _named(ctx, path: str, make) -> str:
     return spellings[0]
 
 
-def _new_mention(link: _Link, ctx) -> str:
+def _new_mention(link: _Link, ctx, in_table: bool = False) -> str:
     """A mention no memo knows, in the habit: of a note of the vault, of a
     block in one (``#^marker``, asked for when it has none; its page's when
     its file takes none), of a work folder's file page (by its path, the
     leaf its label), of a page outside the vault (its absolute address), or
-    as typed."""
+    as typed. Its words are a wikilink's alias, a Markdown link's label."""
     target = link.target
     page_id = ctx.page_of(target) or (target if target in ctx.page_path else None)
     if page_id is None:
         return link.token
+    shown = link.alias or _shown(ctx, page_id)
     if page_id not in ctx.page_path:
         if not ctx.address:
             return link.token
-        return f"[{_label(ctx.title_of(page_id) or 'Untitled')}]({ctx._address(target, page_id)})"
+        return f"[{_label(shown)}]({ctx._address(target, page_id)})"
     marker = ctx._anchor(target, page_id) if target != page_id else None
     sub = f"#^{marker}" if marker else ""
     path = ctx.page_path[page_id]
-    leaf = posixpath.basename(path)
-    shown = _split_ext(leaf)[0] if path in ctx.pages else leaf
+    alias = ("\\|" if in_table else "|") + link.alias if link.alias else ""
     if sub and page_id == ctx.page_id:
-        return f"[{_label(shown)}]({sub})" if ctx.habit.markdown else f"{link.bang}[[{sub}]]"
+        return f"[{_label(shown)}]({sub})" if ctx.habit.markdown else f"{link.bang}[[{sub}{alias}]]"
 
     def make(text, wiki):
-        return f"{link.bang}[[{text}{sub}]]" if wiki else f"[{_label(shown)}]({_href(text)}{sub})"
+        return f"{link.bang}[[{text}{sub}{alias}]]" if wiki else f"[{_label(shown)}]({_href(text)}{sub})"
     return _named(ctx, path, make)
 
 

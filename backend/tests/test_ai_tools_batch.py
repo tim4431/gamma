@@ -10,8 +10,11 @@ import json
 import pytest
 
 from conftest import folder_names, label_names, make_folder, make_label
-from gamma import ai_tools, ops
-from gamma.ai_tools import BATCH_CHANGED, CHANGE_LIMIT_PREFIX, approval_preview, run_agent_tool
+from gamma import ops
+from gamma.ai_tools import folders, organizing
+from gamma.ai_tools.base import CHANGE_LIMIT_PREFIX
+from gamma.ai_tools.organizing import BATCH_CHANGED
+from gamma.ai_tools.registry import approval_preview, run_agent_tool
 from gamma.blocks_store import label_by_name
 from gamma.db import connect_pages_db
 from gamma.ops import OpError, apply_ops
@@ -77,7 +80,7 @@ def _parents(ws, page_ids):
 def _break_batch(monkeypatch, at):
     """A write that breaks midway: apply_batches's call number ``at`` writes
     its batch, then fails. The list it returns counts the calls."""
-    real, calls = ai_tools.apply_batches, []
+    real, calls = ops.apply_batches, []
 
     def flaky(*args, **kw):
         calls.append(1)
@@ -86,7 +89,8 @@ def _break_batch(monkeypatch, at):
             raise OpError(413, "boom")
         return out
 
-    monkeypatch.setattr(ai_tools, "apply_batches", flaky)
+    for module in (organizing, folders):  # the page tools' writes, and label_page's
+        monkeypatch.setattr(module, "apply_batches", flaky)
     return calls
 
 
@@ -270,10 +274,10 @@ def test_the_write_frame_locks_plans_writes_commits_then_fans_out(monkeypatch):
 
     def run(scope, plan, write=write):
         log.clear()
-        return ai_tools._batch_write(Conn(), "ws", scope, {}, plan, "renamed", lambda shared, plans: "d1", write)
+        return organizing._batch_write(Conn(), "ws", scope, {}, plan, "renamed", lambda shared, plans: "d1", write)
 
-    monkeypatch.setattr(ai_tools, "write_lock", lambda conn: log.append("lock"))
-    monkeypatch.setattr(ai_tools, "after_commits", lambda ws, conn, results: log.append(results))
+    monkeypatch.setattr(organizing, "write_lock", lambda conn: log.append("lock"))
+    monkeypatch.setattr(organizing, "after_commits", lambda ws, conn, results: log.append(results))
     batch = {"asked": 2, "plans": [{"page_id": "p1"}, {"page_id": "p2"}], "same": [], "refused": []}
     assert run({}, planned((("shelf", batch), None))) == (("shelf", batch, "kept"), None)
     assert log == ["lock", "plan", "write", "commit", ["result"]]

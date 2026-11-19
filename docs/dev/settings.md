@@ -14,7 +14,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, done reminders | `users.db` `reminders_done`, a row per dismissed reminder (its key, the workspace it was last found in, when), written by `POST /api/reminders/done` and kept while the reminder exists ([mentions.md](mentions.md) "Reminders"); no pref, as there may be thousands (the `reminders-done` prefs key held them before migration step 39) | which of the account's reminders it has dismissed, in every browser |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / Tavily / SearXNG / OpenAlex settings |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), the network proxy (the `proxy` key via `/api/admin/proxy`, its password encrypted the same way, [network_proxy.md](network_proxy.md)), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), the Google Drive connection (the `gdrive` key via `/api/admin/gdrive`, its refresh token encrypted the same way), the network proxy (the `proxy` key via `/api/admin/proxy`, its password encrypted the same way, [network_proxy.md](network_proxy.md)), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
 
 Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
 if the value needs validation) plus a control in the matching settings pane;
@@ -389,7 +389,7 @@ Preferences:
   opens from this computer is read where it lies, under *Opened files*,
   until Add to library… stores it; on, every PDF opened that way is stored
   in the library at once. The shell reads it from the account's profile on
-  the server it opens the file on (`desktop/main.js` `addsToLibrary`;
+  the server it opens the file on (`desktop/lib/systemFiles.js` `addsToLibrary`;
   [synced_vaults.md](synced_vaults.md#the-desktop-app)), so the row shows
   only where `IS_DESKTOP`.
   **Replacing a PDF** (account scope, `SECTION_PREFS.reading["Replacing a
@@ -712,7 +712,9 @@ AI:
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
 - **Chat**: three sections. **Chat** holds the default reasoning effort,
-  the default speed and the snapshot-clearing switch. The effort menu
+  the default speed, the follow-up while a reply runs (`chatFollowUp`,
+  a Queue / Steer `Segmented`, [ai.md](ai.md#queue-and-steer)) and the
+  snapshot-clearing switch. The effort menu
   lists every level, since each model gets the nearest one it takes
   ([ai.md](ai.md#reasoning-effort)). A speed reaches only models whose
   provider offers that service tier ([ai.md](ai.md#speed-service-tier)).
@@ -786,8 +788,10 @@ AI:
 Library:
 
 - **Workspaces**: storage meter, personal and shared workspaces, New
-  workspace, Export all, and last the clones. Each row has Open, a Data menu (export, import)
-  and Manage. Manage opens an inline page under one breadcrumb head,
+  workspace, Export all, and last the clones. Each row has Open, a Data menu (export,
+  Duplicate…, import) and Manage; a clone's and a Zotero link's More has Duplicate… too, whose
+  dialog names the copy and says what it leaves behind ([workspaces.md](workspaces.md)
+  "Copies between workspaces"). Manage opens an inline page under one breadcrumb head,
   "Workspaces › <name>", with Open workspace at its right end: General,
   Access, Members and the Danger zone, every row saving at once, no footer.
   Rename and invite are small editor dialogs. The invite dialog's *Find
@@ -908,6 +912,34 @@ Library:
   every 3 s while it runs. `GET/PUT /api/admin/offsite`, `POST
   /api/admin/offsite/test` and `…/run`; the copies and the rounds
   themselves: [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket).
+  Below it, admins get **Google Drive**
+  ([BackupDrive.jsx](../../frontend/src/settings/BackupDrive.jsx); what
+  the pane says of either store is
+  [backupStores.js](../../frontend/src/settings/backupStores.js)): a
+  folder in a Google account's My Drive that tasks may copy their
+  snapshots to as well, beside the bucket or instead. Its one row reads
+  "Not connected" with Connect…, or the account's address with "Gamma
+  backups · backup tasks can copy their snapshots here", Test (the folder's
+  item count and the account's storage, answered beside it) and Edit….
+  Connect… opens "Connect Google Drive": the folder's name, then Get a
+  code, after which the dialog shows Google's code in a copy box, a link
+  to Google's address, and "Waiting for Google…" while it polls; a yes
+  closes it ("Google Drive connected."), and a no or an expired code shows
+  why and offers the folder step again. A connection waiting for its code
+  reads "Waiting for the code" with Enter the code…. Edit… changes the
+  folder (new copies go there) and holds Disconnect…, which asks first.
+  Without an OAuth client the row reads "Not available" and names
+  `GAMMA_GOOGLE_DRIVE_CLIENT_ID` and `_SECRET`; a connection that cannot
+  be used shows why under the row, with Connect again…. A task's editor
+  then has *Copy to Google Drive* (on for a new task while Drive is
+  connected), its row "copies to Google Drive" and its Last run "in Google
+  Drive". The listing takes Drive's copies too (`GET
+  /api/admin/offsite/snapshots?store=drive`): "in Google Drive" beside "in
+  the bucket", "only in Google Drive" on a copy only Drive holds, whose
+  Download, Restore and Delete work on Drive's copy. `GET/PUT/DELETE
+  /api/admin/gdrive`, `POST …/connect`, `…/poll`, `…/test`, `DELETE
+  …/connect`; how it works:
+  [debugging.md](debugging.md#google-drive).
 - **Maintenance** (the pane's head says Library maintenance): workspace
   storage, rebuilding the search indexes (the notes index and the
   document text index of every PDF and text file) and the per-paper

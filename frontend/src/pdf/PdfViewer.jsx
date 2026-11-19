@@ -35,7 +35,8 @@ import { MenuButton } from "../shared/ui/Menus";
 import { lastPointer } from "../shared/lib/pointer.js";
 import { composing, heldAlone, isHeldKey } from "../shared/lib/hotkeys.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
-import { citationRuns, runChars } from "./pdfCitation.js";
+import { locateCitation } from "./pdfCitation.js";
+import { runChars } from "./pageChars.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
 import { inTextLayer, nearRelease, tipAnchor, tipWaiter } from "./selectionTip.js";
 import { beginPenSelect, penSelecting } from "./penSelect.js";
@@ -901,7 +902,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           const items = tc.items;
           // Page string: runs joined by their PDF line break or a space,
           // each char tagged with its source run (-1 = synthetic filler).
-          const chars = runChars(items.map((it) => ({ text: it.str, hasEOL: it.hasEOL })), { fillSpaces: true });
+          const chars = runChars(items.map((it) => ({ text: it.str, hasEOL: it.hasEOL })));
           const { norm, src } = normalizeChars(chars);
           text = {
             items, pageStr: norm.join(""), transform: vp.transform, width: vp.width, height: vp.height,
@@ -1538,17 +1539,23 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     review.ghost(id);
   };
 
-  // Wait for this document, then mount only the cited page. Matching happens
-  // after its actual text layer has rendered, including on zoom changes.
+  // Wait for this document, scroll to the cited page and ask the server
+  // where the quote stands (pdfCitation.js): the active citation is then the
+  // place found, on the page it names (the cited one or one beside it), and
+  // only that page is mounted for it.
   const [activeCitation, setActiveCitation] = useState(null);
   useEffect(() => {
-    let cancelled = false;
     setActiveCitation(null);
-    if (citation && pdfDoc && displayedUrl === url && citation.page <= pdfDoc.numPages) {
-      Promise.resolve(scrollToPositionRef.current?.({ position: { pageNumber: citation.page }, behavior: "auto" }))
-        .then(() => { if (!cancelled) setActiveCitation(citation); });
-    }
-    return () => { cancelled = true; };
+    if (!citation || !pdfDoc || displayedUrl !== url || citation.page > pdfDoc.numPages) return;
+    const ctl = new AbortController();
+    const shown = Promise.resolve(scrollToPositionRef.current?.({ position: { pageNumber: citation.page }, behavior: "auto" }));
+    const found = citation.quote ? locateCitation(citation, { signal: ctl.signal }) : null;
+    Promise.all([shown, found]).then(([, place]) => {
+      if (ctl.signal.aborted) return;
+      const page = place?.page >= 1 && place.page <= pdfDoc.numPages ? place.page : citation.page;
+      setActiveCitation({ ...citation, page, place });
+    });
+    return () => ctl.abort();
   }, [citation, pdfDoc, displayedUrl, url]);
   useEffect(() => {
     if (!activeCitation) return;
@@ -2544,7 +2551,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
   const page = loaded?.doc === pdfDoc ? loaded.page : null;
   const [paintedPage, setPaintedPage] = useState(null); // the pdf.js page whose first pixels have landed
   const [basePaints, setBasePaints] = useState(0); // counts the whole-page bitmap's paints (pageRaster onBase)
-  const [textReady, setTextReady] = useState(null); // {page, layer, runs}: the built pdf.js text layer
+  const [textReady, setTextReady] = useState(null); // {page, layer, boxes}: the built pdf.js text layer
   const [visible, assumeVisible] = useWithin(wrapRef, RENDER_MARGIN, pageNumber); // inside the look-ahead: rendered
   const renderVisible = visible || forceRender;
   // Highlights, find marks and link boxes are drawn only inside the
@@ -2713,8 +2720,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
         await layer.render();
         if (cancelled) return;
         textScaleRef.current = measuredAt;
-        setTextReady({ page, layer, runs: citationRuns(tc.items, layer.textDivs),
-          boxes: textRuns(tc.items.filter((it) => typeof it.str === "string"), vpBase.transform) });
+        setTextReady({ page, layer, boxes: textRuns(tc.items.filter((it) => typeof it.str === "string"), vpBase.transform) });
 
         // Link annotations (in-PDF references + external URLs), stored at
         // scale 1 and placed in JSX as fractions of the box.
@@ -2739,7 +2745,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
 
   // Once a zoom settles (`rest`) the spans are re-measured at the new size,
   // which is what pdf.js's own viewer does in place of a rebuild: the
-  // selection, the spans and the citation runs all survive. Not while a zoom
+  // selection and the spans survive. Not while a zoom
   // still runs (a layer built mid-train measured at the live scale): the
   // settled value is on its way, and with it this effect.
   useEffect(() => {
@@ -2905,8 +2911,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
       <div ref={textRef} className="textLayer" data-guide="pdf.textLayer" style={{
         userSelect: readOnly || toolArmed ? "none" : "text", WebkitUserSelect: readOnly || toolArmed ? "none" : "text",
       }} />
-      <PdfCitationOverlay citation={citation} wrapRef={wrapRef}
-        ready={textReady?.page === page ? textReady : null} />
+      <PdfCitationOverlay citation={citation} wrapRef={wrapRef} />
       {overlays && shownLinks.map((l, i) => (
         <div
           key={`lnk-${i}`}

@@ -31,8 +31,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .. import (ai_settings, backups, bucket_snapshots, chatgpt_oauth, cloud_auth, email_invites, guests, hosted,
-                integrity, jobs, offsite, proxy_settings, s3, workspaces)
+from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, gdrive, gdrive_account, guests,
+                hosted, integrity, jobs, offsite, proxy_settings, snapshot_copies, workspaces)
+from ..backup_store import StoreConfigError
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
@@ -376,7 +377,7 @@ def list_workspaces(request: Request):
     return {"workspaces": workspaces.all_workspaces(), "orphans": workspaces.orphan_dirs()}
 
 
-# --- the bucket (gamma/offsite.py, gamma/bucket_snapshots.py) ----------------
+# --- the bucket (gamma/offsite.py, gamma/snapshot_copies.py) ----------------
 # Settings → Backups → Bucket. The secret key is write-only: a GET says
 # whether one is set, a PUT or a test without it keeps the saved one. While
 # GAMMA_S3_BUCKET is set the environment decides (``from_env``): a PUT is
@@ -441,36 +442,120 @@ def run_offsite(request: Request):
 
 
 def _bucket_call(fn, *args):
-    """A call to the bucket: 400 when none can be used (none set up,
-    boto3 missing), 404 for a copy that is not there, 502 when the bucket
+    """A call to the bucket or to Google Drive: 400 when none can be used
+    (none set up, boto3 missing, no OAuth client, a connection Google no
+    longer honours), 404 for a copy that is not there, 502 when the store
     refuses or cannot be reached."""
     try:
         return fn(*args)
-    except s3.S3ConfigError as e:
+    except StoreConfigError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except ValueError as e:  # a name or a workspace id no copy has
+    except ValueError as e:  # a name, a workspace id or a store no copy has
         raise HTTPException(status_code=404, detail=str(e))
-    except OSError as e:  # S3Error
+    except OSError as e:  # a StoreError
         raise HTTPException(status_code=502, detail=str(e))
 
 
-# Sync def: a listing of the bucket, network round trips.
+# Sync def: a listing of the store, network round trips.
 @router.get("/offsite/snapshots")
-def list_bucket_snapshots(request: Request):
-    """The backup tasks' copies in the bucket (``bucket_snapshots.listing``):
-    ``{groups: [{workspace, name, here, snapshots: [{name, size_bytes,
-    created_at, task}]}]}``."""
+def list_snapshot_copies(request: Request, store: str = "bucket"):
+    """The backup tasks' copies in the bucket, or with ``store=drive`` in
+    Google Drive (``snapshot_copies.listing``): ``{groups: [{workspace,
+    name, here, snapshots: [{name, size_bytes, created_at, task}]}]}``."""
     require_admin(request)
-    return {"groups": _bucket_call(bucket_snapshots.listing)}
+    return {"groups": _bucket_call(snapshot_copies.listing, store)}
 
 
 @router.delete("/offsite/snapshots/{ws}/{name}")
-def delete_bucket_snapshot(ws: str, name: str, request: Request):
+def delete_bucket_snapshot(ws: str, name: str, request: Request, store: str = "bucket"):
     require_admin(request)
-    _bucket_call(bucket_snapshots.delete, ws, name)
+    _bucket_call(snapshot_copies.delete, store, ws, name)
     return {"ok": True}
+
+
+# --- Google Drive (gamma/gdrive_account.py) ------------------------------------
+# Settings → Backups → Google Drive: the server's connection, made by
+# Google's device flow. Connect answers the code to enter; while it is
+# shown the pane posts /poll, which asks Google at most once per Google's
+# interval; the GET (``gdrive_account.status``) also answers the code while
+# one waits. The token never leaves the server.
+
+class DriveConnectRequest(BaseModel):
+    folder: str = gdrive_account.DEFAULT_FOLDER
+
+
+class DriveFolderRequest(BaseModel):
+    folder: str
+
+
+def _drive_call(fn, *args):
+    """400 with the reason for a folder that cannot be or no OAuth client
+    (a DriveConfigError is a ValueError), 502 when Google refuses or cannot
+    be reached."""
+    try:
+        return fn(*args)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except gdrive.DriveError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/gdrive")
+def get_gdrive(request: Request):
+    """``{available, connected, email, name, folder, connected_at,
+    problem, pending: {user_code, verification_url, expires_at, interval}
+    | null, error}``."""
+    require_admin(request)
+    return gdrive_account.status()
+
+
+# Sync defs from here: each may call Google.
+@router.post("/gdrive/connect")
+def connect_gdrive(payload: DriveConnectRequest, request: Request):
+    """Start connecting: the GET's answer with ``pending``, the code to
+    enter at Google's address."""
+    require_admin(request)
+    return _drive_call(gdrive_account.start, payload.folder)
+
+
+@router.post("/gdrive/poll")
+def poll_gdrive(request: Request):
+    """Whether the code was entered: the GET's answer, ``connected`` once
+    it was, ``error`` when the connection ended without it."""
+    require_admin(request)
+    return gdrive_account.poll()
+
+
+@router.delete("/gdrive/connect")
+def cancel_gdrive(request: Request):
+    """Stop waiting for the code."""
+    require_admin(request)
+    return gdrive_account.cancel()
+
+
+@router.put("/gdrive")
+def update_gdrive(payload: DriveFolderRequest, request: Request):
+    """The folder new copies go to; 400 when it cannot be."""
+    require_admin(request)
+    return _drive_call(gdrive_account.set_folder, payload.folder)
+
+
+@router.delete("/gdrive")
+def disconnect_gdrive(request: Request):
+    """Forget the connection and revoke it at Google; the copies stay in
+    Drive."""
+    require_admin(request)
+    return gdrive_account.disconnect()
+
+
+@router.post("/gdrive/test")
+def test_gdrive(request: Request):
+    """What the folder holds, tried once: ``{ok, message}``, 200 either
+    way."""
+    require_admin(request)
+    return gdrive_account.test()
 
 
 # --- the network proxy (gamma/proxy_settings.py) -----------------------------

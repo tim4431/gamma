@@ -8,7 +8,7 @@ status and Copy now, the bucket saved with the secret key encrypted (and no
 rounds of its own) and the environment's override, the admin endpoints, and
 the Litestream configuration. manage.py's ``offsite`` command is in
 test_manage_cli.py; the backup tasks' copies in the bucket are
-test_bucket_snapshots.py."""
+test_snapshot_copies.py."""
 
 import calendar
 import itertools

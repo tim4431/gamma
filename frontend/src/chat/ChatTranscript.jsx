@@ -29,6 +29,8 @@ import { areaPicturesNote, canContinueAfterLimit, continueAfterLimitPrompt, cove
 import { failureCopy } from "./chatErrors";
 import { chipNote, helperStatus, runningLabel, splitActions, stepsSummary } from "./agentSteps";
 import { sendsOnEnter } from "./enterKey.js";
+import { splitQuoted } from "./chatQuotes.js";
+import ChipPreview from "./ChipPreview.jsx";
 import { composing } from "../shared/lib/hotkeys.js";
 import { openReport } from "../support/reportContent.js";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ClockIcon, CopyIcon, FileIcon, FlagIcon, FolderIcon,
@@ -84,7 +86,7 @@ function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated,
     if (open !== i) setShown(i);
   };
   return (
-    <div className="chatCoverage">
+    <div className="chatCoverage" data-markdown-copy-ignore="">
       {notes.map((n, i) => (
         <button key={i} type="button" className="chatPill" aria-expanded={open === i}
           title={open === i ? undefined : n.long} onClick={() => unfold(i)}>
@@ -234,6 +236,20 @@ function ToolCallDetail({ action: a }) {
   );
 }
 
+// A user message's words, the passages it quoted drawn as quotes ahead of
+// or after them (chat/chatQuotes.js splitQuoted): a quote of the
+// transcript, the start of a PDF passage or note text it carried. A quote
+// shows a few lines, the whole of it in its title.
+function UserText({ text }) {
+  const parts = useMemo(() => splitQuoted(text), [text]);
+  if (!parts.some((p) => p.quote)) return <div className="chatUserText">{text}</div>;
+  return parts.map((p, i) => (p.quote ? (
+    <blockquote key={i} className="chatUserQuote" title={p.text.slice(0, 2000)}>
+      <ChipPreview text={p.text} max={1200} className="chatUserQuoteText" />
+    </blockquote>
+  ) : <div key={i} className="chatUserText">{p.text}</div>));
+}
+
 // A sent message edited in place (Gamma AI's): Send goes again from it,
 // replacing it and everything after it.
 function EditBubble({ i, editing, onEdit, onResend, replying }) {
@@ -289,7 +305,7 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
             </div>
           ) : null}
           {m.pdfs?.length || m.passages?.length ? (
-            <div className="chatMsgPdfs">
+            <div className="chatMsgPdfs" data-markdown-copy-ignore="">
               {(m.pdfs || []).map((n, j) => (
                 <span key={j} className="chatPdfChip" title={n}>
                   <FileIcon size={14} />
@@ -359,15 +375,15 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
               onShowChange={m.id ? (k) => noteReview.show(changeSteps(changes.messages, m.id, k, changes.key)) : undefined} />
           ) : null}
           {isUser && m.steered ? (
-            <div className="chatMsgSteered" title={t("Sent into the reply while it ran: the reply took it in here")}>
+            <div className="chatMsgSteered" data-markdown-copy-ignore="" title={t("Sent into the reply while it ran: the reply took it in here")}>
               <CornerDownRightIcon size={14} />{t("Steered")}
             </div>
           ) : null}
-          {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
+          {isUser && m.contextPages?.length ? <div className="chatMsgPdfs" data-markdown-copy-ignore="">
             {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={14} /><span className="linkChipText">{p.title}</span></button>)}
           </div> : null}
           {isUser
-            ? <div className="chatUserText">{m.text}</div>
+            ? <UserText text={m.text} />
             : m.text && !(m.error && m.errorKind) ? <ChatMarkdown text={m.text} copyBlocks /> : null}
           {responding && m.approval ? (
             <ApprovalCard key={m.approval.id} approval={m.approval} kindLabel={approvals.kindLabel}
@@ -402,7 +418,7 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
             <ReplyErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
           ) : null}
         </div>
-        {!responding ? <div className="chatMsgFoot">
+        {!responding ? <div className="chatMsgFoot" data-markdown-copy-ignore="">
           {!isUser && m.model ? (
             <span className="chatMsgModel" title={knobsLabel(m.speed)}>
               {[m.model, m.effort].filter(Boolean).join(" · ")}

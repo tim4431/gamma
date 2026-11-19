@@ -7,7 +7,7 @@
 // one transcript (ChatTranscript), one composer and one History draw both,
 // a computer agent's conversation read through chat/computer/.
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { API, apiJson, copyText, downloadFetched, isPdfFile, makeId, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, copyRich, copyText, downloadFetched, isPdfFile, makeId, readNdjson } from "../shared/lib/utils";
 import { DEFAULT_PICTURE_BUDGET, addPictures, historyPictures, isPictureFile, pictureAlt, pictureUrl } from "./chatPictures.js";
 import { pictureSrc } from "./pictureSrc.js";
 import { postFile } from "../transfers/FileChip";
@@ -22,7 +22,9 @@ import { refusalCopy, sendRevert } from "./AgentChanges";
 import RevertChanges from "./RevertChanges";
 import { forReplay, markReverted, revertRefusal, revertible } from "./aiRevert.js";
 import * as chatQueue from "./chatQueue.js";
-import { canSteer, quotedText, quotesOf, steerBody, steeredMessage, useChatQueue } from "./chatQueue.js";
+import { canSteer, messageText, quotedText, quotesOf, steerBody, steeredMessage, useChatQueue } from "./chatQueue.js";
+import { MAX_CHAT_QUOTES, addQuote, noteTitle, structuredNote, structurePrompt } from "./chatQuotes.js";
+import ChatSelectionTip from "./ChatSelectionTip.jsx";
 import ChatQueue from "./ChatQueue.jsx";
 import { noteReview } from "./noteReview.js";
 import { GRANTS_KEY, conversationId, grantsIn, readGrants, waitsForPapers, withGrant,
@@ -41,6 +43,7 @@ import { useAltVariant } from "../shared/ui/altVariant.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
 import { chordLabel, composing } from "../shared/lib/hotkeys.js";
+import { followUpSteers } from "./enterKey.js";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
 import { BLOCK_TOOLS, changePlace, isChange, withHelper } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
@@ -49,14 +52,13 @@ import { linesLabel } from "../shared/model/blockModel.js";
 import { CharSlider, Toggle, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from "../settings/AssistantTools";
 import { aiServiceTiles } from "../settings/providerEditor.js";
-import { renderKatex } from "../editor/LatexEditor";
 import { PathLinkContext } from "../editor/pathLinkContext.js";
 import FileKindIcon from "../shared/ui/FileIcon.jsx";
 import { formatOf } from "../documents/formats.js";
-import { chipSegments } from "./chipText";
+import ChipPreview from "./ChipPreview.jsx";
 import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
 import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, EyeIcon, FileIcon,
-  HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon,
+  HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteIcon, QuoteMarkIcon, SearchIcon,
   SettingsIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
@@ -79,11 +81,13 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 // A conversation this tab has nothing of yet (one array, never written).
 const NO_MESSAGES = Object.freeze([]);
 const NO_DIRS = Object.freeze([]);
+const NO_QUOTES = Object.freeze([]);
 
 // What a remount (an iPad turning, the dock closed and opened again) must
-// not lose: the composer's draft, with the conversation it was typed in, and
-// the id of the last ask from App already sent. One dock is mounted at a time.
-const kept = { key: "", draft: "", asked: 0 };
+// not lose: the composer's draft and the transcript's passages it quotes,
+// with the conversation they were made in, and the id of the last ask from
+// App already sent. One dock is mounted at a time.
+const kept = { key: "", draft: "", quotes: [], asked: 0 };
 
 // A conversation's display name when the user never named it: the first
 // user message's first non-quote line (mirrors derive_title in
@@ -148,21 +152,7 @@ function useModelInfo(modelId) {
 // attached — it rides along because of where the cursor is — with a dashed
 // border; `kind` is the modifier class (isCursor / isBlock / isNote /
 // isInk; none for a PDF passage).
-const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteIcon, block: OutlineIcon, ink: PenIcon };
-
-function ChipPreview({ text }) {
-  const segments = useMemo(() => chipSegments((text || "").slice(0, 600)), [text]);
-  return (
-    <span className="chatSelChipText">
-      {segments.map((seg, i) => {
-        if (seg.text) return <React.Fragment key={i}>{seg.text}</React.Fragment>;
-        const html = renderKatex(seg.math, false);
-        return html ? <span key={i} className="chatSelChipMath" dangerouslySetInnerHTML={{ __html: html }} />
-          : <code key={i}>{seg.math}</code>;
-      })}
-    </span>
-  );
-}
+const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteIcon, block: OutlineIcon, ink: PenIcon, quote: QuoteMarkIcon };
 
 export function SelChip({ kind, icon, label, note, file = "", cut, auto = false, text, title, onRemove, removeTitle }) {
   const Glyph = SEL_CHIP_ICONS[icon];
@@ -292,6 +282,9 @@ export default function ChatDock({
   // open paper, with the handwriting on it (App), when a paper is open.
   chatImages, setChatImages, chatPictureBudget = DEFAULT_PICTURE_BUDGET, onAttachView,
   chatModel, setChatModel, chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatSystem,
+  // What a message sent while a reply runs does: "queue" or "steer"
+  // (Settings → AI → Chat; chat/enterKey.js followUpSteers).
+  chatFollowUp = "queue",
   dictationModel, dictationLang,
   chatContextChars, setChatContextChars, multiContextChars,
   // openAiKeysEditor({service, entry}?) opens Settings → Connections: with
@@ -337,6 +330,11 @@ export default function ChatDock({
   // {id, text}: a message App asks the chat to send (a handwriting block's
   // "Transcribe with AI"), with whatever is attached at that moment.
   askSignal = null,
+  // onChatNote(markdown, {title, structured}) → whether it made the note:
+  // the transcript selection's Create note (App's noteFromChat: at the end
+  // of the open page's notes, else a page of its own in the folder shown);
+  // null where no note can be made here.
+  onChatNote = null,
   // The agents the chat talks to (chat/agents.js chatAgents: Gamma AI, then
   // the computer's agents the account turned on, or on a page another
   // computer keeps that computer's), which the composer's chip picks from,
@@ -387,6 +385,11 @@ export default function ChatDock({
   // in; loading another conversation empties it (below).
   const [chatInput, setChatInput] = useState(() => (kept.key === chatKey ? kept.draft : ""));
   useEffect(() => { kept.draft = chatInput; }, [chatInput]);
+  // Passages of the transcript the next message quotes (a selection's Ask
+  // about this, chat/ChatSelectionTip.jsx), a chip each, every agent's:
+  // they go ahead of what the user writes (chat/chatQuotes.js).
+  const [chatQuotes, setChatQuotes] = useState(() => (kept.key === chatKey ? kept.quotes : NO_QUOTES));
+  useEffect(() => { kept.quotes = chatQuotes; }, [chatQuotes]);
   const sessionState = useSyncExternalStore(session.subscribe, session.getSnapshot);
   // What the dock shows of the bucket: this tab's own copy (a reply sent
   // here), else what came from the server; a switch renders, from its first
@@ -507,6 +510,9 @@ export default function ChatDock({
           // leaves the card under it ("Skip, and don't wait in this chat").
           paper_wait: waitsForPapers(readGrants(), activeUser(), conversationId(prevMessages)),
           delegate_reads: delegateReads !== false,
+          // This app shows a page show_page names and downloads a file
+          // export starts (App's handleAgentEvent).
+          shows_pages: true,
           // save_paper stores a paper the way the reply's Save to library does.
           paper_save: { allow_oa: paperSave.allowOa !== false, save_copy: paperSave.saveCopy !== false,
                         fetch_metadata: paperSave.fetchMetadata !== false } }
@@ -649,7 +655,9 @@ export default function ChatDock({
   const chatScrollRef = useRef(null);
   // Ctrl+scroll over the transcript: session-only text size (useTextScale).
   const chatTextScale = useTextScale();
-  const chatScrollRefCb = useCallback((el) => { chatScrollRef.current = el; chatTextScale.ref(el); }, [chatTextScale.ref]);
+  // ... and as state, for the selection popup that listens to it
+  const [chatBox, setChatBox] = useState(null);
+  const chatScrollRefCb = useCallback((el) => { chatScrollRef.current = el; setChatBox(el); chatTextScale.ref(el); }, [chatTextScale.ref]);
   const [newChatAlt, newChatAltProps] = useAltVariant();
   // Voice dictation (ChatGPT-style): mic records (live waveform), ■ transcribes
   // into the input via /api/ai/transcribe, ↑ transcribes and sends, × discards.
@@ -771,7 +779,7 @@ export default function ChatDock({
     let cancelled = false;
     setChatDocs([]);
     setChatIncludeNotes(false);
-    if (kept.key !== chatKey) { kept.key = chatKey; setChatInput(""); }
+    if (kept.key !== chatKey) { kept.key = chatKey; setChatInput(""); setChatQuotes(NO_QUOTES); }
     setDocPicker(false);
     const reply = session.getSnapshot().replies.get(chatKey);
     const reloadSaved = session.isSaved(chatKey);
@@ -1298,11 +1306,13 @@ export default function ChatDock({
   }, [transcriptMessages, busyHere, onComputer]);
 
   // What goes with a message from the composer (Gamma AI's): its pictures,
-  // files, PDF passages, note chips and the cursor's block. A queued
-  // message keeps its own (chat/chatQueue.js).
+  // files, PDF passages, note chips, the cursor's block and the
+  // transcript's passages it quotes. A queued message keeps its own
+  // (chat/chatQueue.js).
   const composerParts = () => ({
     images: chatImages, files: chatFiles, selections: pdfSelections, notes: chatNotes || [],
     cursor: cursorChip ? { id: cursorChip.id, sel: cursorChip.sel || null } : null,
+    quotes: chatQuotes,
   });
   // ... taken off the composer, as a send or a queued message takes them.
   function takeComposer() {
@@ -1312,7 +1322,16 @@ export default function ChatDock({
     if (parts.cursor?.sel) onSelectionSent?.();
     setChatImages([]);
     setChatFiles([]);
+    setChatQuotes(NO_QUOTES);
     return parts;
+  }
+  // A passage of the transcript quoted into the next message (its
+  // selection's Ask about this), the box taking the focus for the question.
+  function quoteInComposer(md) {
+    const { quotes, full } = addQuote(chatQuotes, md);
+    if (full) setStatus(t("A chat message quotes at most {n} passages — remove one to add another.", { n: MAX_CHAT_QUOTES }));
+    else setChatQuotes(quotes);
+    composerRef.current?.querySelector("textarea, [contenteditable=true], .cm-content")?.focus({ preventScroll: true });
   }
   // What the message points at inside the notes: the chips, and the cursor
   // block's selection when it has one (first, as the server labels it S1).
@@ -1328,7 +1347,7 @@ export default function ChatDock({
     const { notes, cursorSel } = notesOf(parts);
     const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
     return {
-      prompt: text,
+      prompt: messageText(text, parts),
       page_id: focusedBlockId || "",
       // Only what the server replays: the text and the tool calls of
       // each turn, and a user message's pictures by URL (the server reads
@@ -1409,9 +1428,11 @@ export default function ChatDock({
   // Anything of the user's waiting in the composer: a fetch handoff's card
   // does not send its continuation over it (chat/FetchHandoffCards.jsx).
   const composerHasDraft = !!(chatInput.trim() || chatImages.length || chatFiles.length
-    || pdfSelections.length || chatNotes?.length);
-  // Whether the composer's message can join the queue while the reply runs.
-  const queuesInput = !!chatInput.trim() && (onComputer ? side.queues(chatInput) : !aiOff && !readOnly);
+    || pdfSelections.length || chatNotes?.length || chatQuotes.length);
+  // Whether a message (the composer's, or a dictation's) can join the queue
+  // while the reply runs.
+  const queues = (text) => !!text.trim() && (onComputer ? side.queues(text) : !aiOff && !readOnly);
+  const queuesInput = queues(chatInput);
 
   // Core chat send. baseMessages overrides the history (used when re-sending
   // an edited message: everything after the edited message is discarded,
@@ -1429,7 +1450,7 @@ export default function ChatDock({
     const taken = parts || takeComposer();
     const { images = [], files = [] } = taken;
     const prevMessages = baseMessages ?? chatMessages;
-    const shown = quotedText(text, quotesOf(taken));
+    const shown = quotedText(messageText(text, taken), quotesOf(taken));
     // Names of PDFs that ride along with THIS message (displayed in the bubble)
     const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
     const pdfPages = contextIds.flatMap((id) => {
@@ -1592,7 +1613,7 @@ export default function ChatDock({
             // read/edited (and reloads the tree for an applied edit), and the
             // note shows what an edit changed until the user keeps or
             // reverts it (chat/noteReview.js).
-            onAgentEvent?.({ type: "action", action: ev.action });
+            onAgentEvent?.({ type: "action", action: ev.action, key: sendKey });
             noteReview.landed({ action: ev.action, key: sendKey, reply: replyId, index: actions.length - 1 });
           } else if (ev.progress) {
             // The agent is still writing a note edit — the block types it in.
@@ -1664,7 +1685,10 @@ export default function ChatDock({
       // after a reply that ended on its own, and waits after Stop or a failure.
       chatQueue.ended(sendKey, ended);
       session.finish(sendKey);
-      onAgentEvent?.({ type: "done", key: sendKey });
+      // `ended`: the reply ended on its own, not stopped, failed or steered
+      // (a steer's own done above has none), so a page it asked to show
+      // opens now (App's handleAgentEvent).
+      onAgentEvent?.({ type: "done", key: sendKey, ended });
       // A card the reply left waiting (stopped, or the stream failed) goes from its note too.
       if (approval) noteReview.settle(approval.id);
       noteReview.replying(sendKey, false);
@@ -1698,32 +1722,67 @@ export default function ChatDock({
   // The composer's message, to the agent shown: a computer's agent takes
   // it with the PDF passages selected, and the draft stays until the server
   // made its turn. While a reply runs it joins the conversation's queue,
-  // with what goes with it, and `steer` (Ctrl/⌘+Shift+Enter) hands it to
-  // the reply at once.
-  async function sendChatMessage({ steer = false } = {}) {
-    const text = chatInput;
+  // with what goes with it, and is handed to the reply at once when the
+  // follow-up preference says Steer (`other`, Ctrl/⌘+Shift+Enter: when it
+  // says Queue; chat/enterKey.js followUpSteers). One that cannot steer
+  // stays queued. `text` a dictation's, sent in the composer's place.
+  async function sendChatMessage({ other = false, text = chatInput } = {}) {
     if (replying) {
-      if (!queuesInput) return;
-      const item = { id: makeId(), text, parts: onComputer ? { selections: pdfSelections } : takeComposer() };
-      if (onComputer) setPdfSelections([]);
+      if (!queues(text)) return;
+      const item = { id: makeId(), text, parts: onComputer ? { selections: pdfSelections, quotes: chatQuotes } : takeComposer() };
+      if (onComputer) { setPdfSelections([]); setChatQuotes(NO_QUOTES); }
       chatQueue.enqueue(queueKey, item);
       setChatInput("");
-      if (steer) steerQueued(item.id);
+      if (followUpSteers(chatFollowUp, other)) steerQueued(item.id);
       return;
     }
     if (onComputer) {
       chatStickRef.current = true;
-      if (await side.send(text)) setChatInput("");
+      if (await side.send(messageText(text, { quotes: chatQuotes }))) { setChatInput(""); setChatQuotes(NO_QUOTES); }
       return;
     }
     if (!text.trim() || busyHere) return;
     setChatInput("");
     sendChat(text);
   }
-  sendTextRef.current = onComputer ? side.send : sendChat;
+  sendTextRef.current = (text) => sendChatMessage({ text });
 
   function stopChat() {
     session.stop(chatKey);
+  }
+
+  // The transcript selection's Create note (chat/ChatSelectionTip.jsx), as
+  // it reads (`structured` false) or rewritten by Gamma AI first: a plain
+  // chat request of its own with the chat's model, apart from the
+  // conversation (no history, page or tools), a row in Background tasks
+  // while it runs, whose Stop gives it up. App puts the note in
+  // (onChatNote).
+  const noteWhere = focusedBlockId ? t("At the end of this page's notes")
+    : organizeFolder ? t("As a new page in “{folder}”", { folder: libraryTree.folders.get(organizeFolder)?.name || t("this folder") })
+      : t("As a new page in your library");
+  async function makeChatNote(md, structured) {
+    if (!onChatNote) return;
+    if (!structured) {
+      onChatNote(md, { title: noteTitle(md) });
+      return;
+    }
+    const ctrl = new AbortController();
+    const taskId = addTask?.({ kind: "ai", name: t("Structured note"), info: noteTitle(md).slice(0, 48), cancel: () => ctrl.abort() });
+    setStatus(t("Writing a structured note…"));
+    try {
+      const answer = await apiJson(`${API}/ai/chat`, {
+        method: "POST", headers: JSON_HEADERS, signal: ctrl.signal,
+        body: JSON.stringify({ prompt: structurePrompt(md), model: chatModel || "", effort, speed, system: chatSystem || "" }),
+      });
+      const note = structuredNote(answer?.response);
+      if (!note) throw new Error(t("the AI answered with nothing"));
+      await onChatNote(note, { title: noteTitle(note), structured: true });
+    } catch (err) {
+      setStatus(err.name === "AbortError" ? t("The structured note was stopped.")
+        : t("Couldn't write the structured note: {message}", { message: err.message }));
+    } finally {
+      if (taskId) removeTask?.(taskId);
+    }
   }
 
   // Steer: the queued message handed to the reply under way, Gamma AI's or
@@ -1758,7 +1817,7 @@ export default function ChatDock({
     }
     chatQueue.started(queueKey);
     chatStickRef.current = true;
-    if (!(await side.send(item.text, item.parts.selections || []))) {
+    if (!(await side.send(messageText(item.text, item.parts), item.parts.selections || []))) {
       chatQueue.enqueue(queueKey, item);
       chatQueue.move(queueKey, item.id, 0);
       chatQueue.ended(queueKey, false);
@@ -1854,7 +1913,8 @@ export default function ChatDock({
       const data = await apiJson(`${API}/ai/transcribe`, { method: "POST", body: form });
       const text = (data.text || "").trim();
       if (text && rec.autoSend) {
-        setChatInput("");
+        // As Send would: queued while a reply runs (it may have started or
+        // ended during the recording), sent otherwise.
         sendTextRef.current?.([rec.baseText.trim(), text].filter(Boolean).join(" "));
       } else if (text) {
         setChatInput((prev) => (prev.trim() ? `${prev.replace(/\s+$/, "")} ${text}` : text));
@@ -2224,9 +2284,9 @@ export default function ChatDock({
   // The composer's model chip (AgentChip), "Allowed in this chat" and Stop,
   // for the agent shown: Gamma AI's models, efforts and speeds, or the
   // computer agent's (useComputerSide). The chip words them (the agent
-  // first while there are several).
+  // first while there are several), the speed chosen its glyph.
   const knobs = !aiOff && headerModel;
-  const chip = onComputer ? side.chip : {
+  const chip = onComputer ? { ...side.chip, glyph: <SpeedGlyph speed={side.chip.speed} /> } : {
     label: knobsLabel(speed),
     text: knobs ? [headerModel.model, effort].filter(Boolean).join(" · ") : "",
     glyph: knobs ? <SpeedGlyph speed={speed} /> : null, speed: knobs ? speed : "",
@@ -2256,11 +2316,16 @@ export default function ChatDock({
   } : null;
   const stop = onComputer ? (side.stopId ? { onClick: () => side.chat.stop(side.stopId), label: t("Stop {agent}", { agent: side.label }) } : null)
     : busyHere ? { onClick: stopChat, label: t("Stop generating") } : null;
-  // While the reply runs, Send queues; Ctrl/⌘+Shift+Enter hands the message
-  // to the reply at once (Steer).
-  const queueLabel = onComputer
-    ? t("Queue: sent when {agent} is done ({key} steers it into its turn now)", { agent: side.label, key: chordLabel("Mod-Shift-Enter") })
-    : t("Queue: sent when the reply ends ({key} steers it into the reply now)", { key: chordLabel("Mod-Shift-Enter") });
+  // While the reply runs, Send queues the message or hands it to the reply
+  // at once (Steer), as the follow-up preference says; Ctrl/⌘+Shift+Enter
+  // does the other.
+  const steersFirst = followUpSteers(chatFollowUp);
+  const queueLabel = steersFirst ? (onComputer
+    ? t("Steer: into {agent}'s turn now ({key} queues it for when {agent} is done)", { agent: side.label, key: chordLabel("Mod-Shift-Enter") })
+    : t("Steer: into the reply now ({key} queues it for when the reply ends)", { key: chordLabel("Mod-Shift-Enter") }))
+    : onComputer
+      ? t("Queue: sent when {agent} is done ({key} steers it into its turn now)", { agent: side.label, key: chordLabel("Mod-Shift-Enter") })
+      : t("Queue: sent when the reply ends ({key} steers it into the reply now)", { key: chordLabel("Mod-Shift-Enter") });
   // Why a queued message's Steer is off while the reply runs ("" when it is
   // on): Gamma AI's reply took no steer id, a computer agent's turn has not
   // started, or the message carries what only a message of its own takes.
@@ -2389,6 +2454,14 @@ export default function ChatDock({
         {/* An earlier conversation stays readable; the card follows it. */}
         {visibleMessages.length ? setupCard : null}
       </div>
+      {/* Text selected in the transcript: Ask about this quotes it into the
+          composer, its menu copies it or makes a note of it. */}
+      {!readOnly ? (
+        <ChatSelectionTip box={chatBox} onAsk={quoteInComposer}
+          onCopy={async (md, html) => { if (!(await copyRich(html, md))) setStatus(t("Couldn't copy the selection.")); }}
+          note={onChatNote ? { where: noteWhere, make: makeChatNote,
+            structured: aiOff || !aiInfo?.enabled ? t("Needs an AI service: connect one in Settings → Connections") : "" } : null} />
+      ) : null}
       {/* A comment thread's conversation goes on in its thread: its replies
           sent to the agent are its messages. A co-author's is theirs to go
           on: its agent's owner reads it, stops its turn and answers what
@@ -2441,8 +2514,15 @@ export default function ChatDock({
         onSubmit={(e) => { e.preventDefault(); sendChatMessage(); }}
         onMouseDown={(e) => { if (e.target.closest("button")) e.preventDefault(); }}
       >
-        {pdfSelections.length || (attaches && (chatNotes?.length || cursorChip)) ? (
+        {pdfSelections.length || chatQuotes.length || (attaches && (chatNotes?.length || cursorChip)) ? (
           <div className="chatSelChips">
+            {chatQuotes.map((q, i) => (
+              <SelChip key={`q${i}`} kind="isQuote" icon="quote" text={q}
+                label={chatQuotes.length > 1 ? t("Quote {i} from the chat", { i: i + 1 }) : t("Quote from the chat")}
+                title={[t("Selected in the conversation: it goes ahead of your message, quoted"), q.slice(0, 2000)].join("\n\n")}
+                onRemove={() => setChatQuotes((prev) => prev.filter((_, j) => j !== i))}
+                removeTitle={t("Remove this quote")} />
+            ))}
             {attaches && cursorChip ? (
               cursorChip.sel ? (
                 <SelChip kind="isCursor" icon="selection" auto label={t("Selection in this note")} text={cursorChip.sel.text}
@@ -2543,7 +2623,7 @@ export default function ChatDock({
           currentPageId={focusedBlockId} selected={chatDocs}
           onAttach={(id) => setChatDocs((prev) => prev.includes(id) ? prev : [...prev, id])}
           onSend={sendChatMessage}
-          onSteer={replying ? () => sendChatMessage({ steer: true }) : null}
+          onSteer={replying ? () => sendChatMessage({ other: true }) : null}
           className="chatInput chatInputArea"
           data-guide="chat.input"
           rows={1}
@@ -2554,12 +2634,13 @@ export default function ChatDock({
           disabled={closed}
           // Until the chat knows its AI the field names nothing, so it
           // never offers to ask before it says a service is needed.
-          placeholder={replying ? t("Queue a follow-up…") : onComputer ? (side.where ? t("Message {agent} on {computer}…", { agent: side.label, computer: side.where })
+          placeholder={replying ? (steersFirst ? t("Steer the reply…") : t("Queue a follow-up…")) : onComputer ? (side.where ? t("Message {agent} on {computer}…", { agent: side.label, computer: side.where })
             : t("Message {agent} on this computer…", { agent: side.label }))
             : !aiKnown ? "" : aiOff ? t("Connect an AI service to start chatting") : (
             // Names what the message will be about, most specific attachment first.
             chatFiles.length ? tn("Ask about the attached file…", "Ask about the attached files…", chatFiles.length)
-            : chatImages.length ? t("Ask about the attached picture…") : pdfSelections.length > 1 ? t("Ask about the {n} selected passages…", { n: pdfSelections.length })
+            : chatImages.length ? t("Ask about the attached picture…") : chatQuotes.length ? t("Ask about the quote…")
+            : pdfSelections.length > 1 ? t("Ask about the {n} selected passages…", { n: pdfSelections.length })
             : pdfSelections.length ? t("Ask about the selection…") : chatNotes?.length > 1 ? t("Ask about the {n} attached notes…", { n: chatNotes.length })
             : chatNotes?.length ? (chatNotes[0].kind === "block" ? t("Ask about the attached block…")
               : chatNotes[0].kind === "ink" ? t("Ask about the selected handwriting…") : t("Ask about the selected note…"))
@@ -2653,29 +2734,31 @@ export default function ChatDock({
           {chip.models.length || agentList.length > 1 ? (
             <AgentChip guide="chat.model" agents={agentList} agent={agent} onAgent={chooseAgent} {...chip} />
           ) : null}
+          {/* The mic, while a reply runs too: its transcript is sent, or
+              queued, as a typed message would be. */}
+          {dictation === "busy" ? (
+            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title={t("Transcribing…")} aria-label={t("Transcribing")}>
+              <span className="transferSpin inline" />
+            </button>
+          ) : canDictate ? (
+            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
+              <MicIcon size={14} />
+            </button>
+          ) : null}
           {stop && !queuesInput ? (
             <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stop.onClick} title={stop.label} aria-label={stop.label}>
               <StopIcon size={14} />
             </button>
           ) : replying ? (
-            <button className="uiBtn primary chatCircleBtn" type="submit" title={queueLabel} aria-label={t("Queue the message")}
-              disabled={!queuesInput}>
+            <button className="uiBtn primary chatCircleBtn" type="submit" title={queueLabel} aria-label={steersFirst ? t("Steer the reply") : t("Queue the message")}
+              disabled={!queuesInput || dictation === "busy"}>
               <ArrowUpIcon size={14} />
             </button>
-          ) : dictation === "busy" ? (
-            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title={t("Transcribing…")} aria-label={t("Transcribing")}>
-              <span className="transferSpin inline" />
-            </button>
           ) : (
-            <>
-              {canDictate ? <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
-                <MicIcon size={14} />
-              </button> : null}
-              <button className="uiBtn primary chatCircleBtn" type="submit" title={t("Send")} aria-label={t("Send")}
-                disabled={onComputer ? !side.ready(chatInput) : aiOff || !chatInput.trim()}>
-                <ArrowUpIcon size={14} />
-              </button>
-            </>
+            <button className="uiBtn primary chatCircleBtn" type="submit" title={t("Send")} aria-label={t("Send")}
+              disabled={dictation === "busy" || (onComputer ? !side.ready(chatInput) : aiOff || !chatInput.trim())}>
+              <ArrowUpIcon size={14} />
+            </button>
           )}
         </div>
         </>

@@ -321,8 +321,8 @@ const places = new Map();
 //   steering    the turn a queued message's Steer goes to: the one whose
 //               agent works now, "" for none (computerChat.js steeringTurn)
 //   chip        the model chip's props (chat/AgentChip.jsx: label, text,
-//               models, model, onModel, sections): the agent's models and
-//               efforts, the choice the conversation's
+//               speed, models, model, onModel, sections): the agent's
+//               models, efforts and speeds, the choice the conversation's
 //   grants      the Allowed in this chat chip's props (GrantChip), null
 //               while nothing is allowed
 //   place, pickPlace   where the conversation works (workPlace), the
@@ -441,18 +441,30 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], here =
       : shown ? t("This conversation is no longer one you can read.")
         : emptyLine(info, label, where, place, page), again: false } : null;
 
-  // The composer's model chip (chat/AgentChip.jsx): the agent's models and
-  // its efforts as a section, the choice the conversation's.
+  // The composer's model chip (chat/AgentChip.jsx): the agent's models, and
+  // the model's efforts and speeds as sections (each Default naming the
+  // agent's own where it says: a Codex set up for priority runs Fast
+  // unless Standard is picked), the choice the conversation's; `speed`
+  // the one chosen, which ChatDock draws as Gamma AI's glyph.
   const efforts = choice.shown?.efforts || [];
+  const speeds = choice.shown?.speeds || [];
+  const pick = (change) => pickModel({ model: choice.model, effort: choice.effort, speed: choice.speed, ...change });
   const chip = {
-    label: t("{agent}'s model", { agent: label }), text: modelDisplay(choice),
+    label: t("{agent}'s model", { agent: label }), text: modelDisplay(choice), speed: choice.speed,
     models: models.map((m) => [m.id, m.label || m.id]), model: choice.model || choice.shown?.id || "",
-    onModel: (model) => pickModel({ model, effort: choice.effort }),
-    sections: efforts.length ? [{
-      label: t("Reasoning effort"), value: choice.effort, onChange: (effort) => pickModel({ model: choice.model, effort }),
-      options: [["", choice.shown.effort ? t("Default ({effort})", { effort: choice.shown.effort }) : t("Default")],
-        ...efforts.map((ef) => [ef, ef])],
-    }] : [],
+    onModel: (model) => pick({ model }),
+    sections: [
+      ...(efforts.length ? [{
+        label: t("Reasoning effort"), value: choice.effort, onChange: (effort) => pick({ effort }),
+        options: [["", choice.shown.effort ? t("Default ({effort})", { effort: choice.shown.effort }) : t("Default")],
+          ...efforts.map((ef) => [ef, ef])],
+      }] : []),
+      ...(speeds.length ? [{
+        label: t("Speed"), value: choice.speed, onChange: (speed) => pick({ speed }),
+        options: [["", choice.shown.speed ? t("Default ({speed})", { speed: choice.shown.speed }) : t("Default")],
+          ...speeds.map((tier) => [tier, tier])],
+      }] : []),
+    ],
   };
   // The commands allowed in this chat (Gamma AI's GrantChip), null for none.
   const allowed = (chat.computer?.grants || []).map((g) => g.command).join(", ");

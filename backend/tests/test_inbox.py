@@ -141,6 +141,10 @@ def test_an_items_snippet_names_its_links(own, edi, lab):
     _note(own, page, "ibLnk3", f"ping @ib_edi about [[{target}]]", lab)
     [item] = _items(edi, kind="mention", block_id="ibLnk3")
     assert item["snippet"] == "ping @ib_edi about Appendix tables"
+    # a [[id|words]] is written as its words
+    _note(own, page, "ibLnk4", f"ping @ib_edi about [[{target}|the tables]] and [[nowhere1|that]]", lab)
+    [item] = _items(edi, kind="mention", block_id="ibLnk4")
+    assert item["snippet"] == "ping @ib_edi about the tables and that"
 
 
 def test_a_mention_typed_elsewhere_or_by_no_account_tells_no_one(own, edi, lab):

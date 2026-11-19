@@ -40,6 +40,25 @@ export async function selectPdfText(page, pageNo, needle) {
 // edges: one that starts within Chromium's 20 px autoscroll belt scrolls
 // the viewer under it while it runs, so a span left at an edge by "nearest"
 // (the viewer scrolled to show a card) is brought to the middle.
+// Whether page `pageNo`'s first citation mark lies over the text-layer span
+// holding `text`, in the window. The server draws MuPDF's glyph boxes, which
+// match pdf.js's span across (within 3 px) and hold its middle, a little
+// taller than pdf.js's line box.
+function citationOverText(page, pageNo, text) {
+  return page.evaluate(([pageNo, text]) => {
+    const mark = document.querySelector(`[data-page="${pageNo}"] .pdfCitationMark`)?.getBoundingClientRect();
+    const span = [...document.querySelectorAll(`[data-page="${pageNo}"] .textLayer span`)].find((s) => s.textContent.includes(text));
+    if (!mark || !span) return false;
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    const box = range.getBoundingClientRect();
+    const middle = box.top + box.height / 2;
+    return Math.abs(mark.left - box.left) < 3 && Math.abs(mark.width - box.width) < 3
+      && mark.top <= middle && middle <= mark.bottom && mark.height < 2 * box.height
+      && mark.top >= 0 && mark.top < innerHeight;
+  }, [pageNo, text]);
+}
+
 export async function dragSelectPdfText(page, pageNo, needle, { highlighted = false, moveOn = true } = {}) {
   const measure = () => page.evaluate(([pageNo, needle]) => {
     const span = [...document.querySelectorAll(`[data-page="${pageNo}"] .textLayer span`)].find((s) => s.textContent.includes(needle));
@@ -896,15 +915,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await link.click();
     const mark = page.locator('[data-page="2"] .pdfCitationMark').first();
     await mark.waitFor();
-    const aligned = () => page.evaluate(() => {
-      const mark = document.querySelector('[data-page="2"] .pdfCitationMark').getBoundingClientRect();
-      const span = [...document.querySelectorAll('[data-page="2"] .textLayer span')]
-        .find(s => s.textContent.includes("Page two says hello world"));
-      const range = document.createRange(); range.selectNodeContents(span);
-      const text = range.getBoundingClientRect();
-      return Math.abs(mark.left - text.left) < 3 && Math.abs(mark.top - text.top) < 3
-        && Math.abs(mark.width - text.width) < 3 && mark.top >= 0 && mark.top < innerHeight;
-    });
+    const aligned = () => citationOverText(page, 2, "Page two says hello world");
     await until(aligned, { what: "citation rectangles align with the rendered text" });
     const box = await mark.boundingBox();
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
@@ -1278,8 +1289,10 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await page.reload();
     await page.locator("a.gammaLink-citation", { hasText: "other source" }).click();
     await page.waitForSelector('[data-page="1"] .pdfCitationMark');
-    assert((await page.textContent('[data-page="1"] .textLayer')).includes(quote), "citation resolved against the requested document");
-    for (const [text, message] of [["This passage does not exist.", "could not be located"], ["Repeated source passage.", "More than one passage"]]) {
+    // The mark is drawn from the server's answer, before the text layer is built.
+    await until(async () => (await page.textContent('[data-page="1"] .textLayer')).includes(quote), { what: "citation resolved against the requested document" });
+    await until(() => citationOverText(page, 1, quote), { what: "the mark lies over the quoted line" });
+    for (const [text, message] of [["This passage does not exist.", "could not be found"], ["Repeated source passage.", "More than one passage"]]) {
       await page.goto(`${server.base}/?page=${target.id}&pdf_page=1&quote=${encodeURIComponent(text)}&ws=${account.ws}`);
       await page.locator('.pdfCitationNotice', { hasText: message }).waitFor();
       assertEq(await page.locator('.pdfCitationMark').count(), 0, "unresolved reference does not highlight guessed text");
@@ -1291,7 +1304,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await waitForPdf(page);
   });
 
-  await step("pdf: fuzzy citations align with source glyphs and reject changed numbers or competing passages", async () => {
+  await step("pdf: approximate citations align with source glyphs, say how alike they read and refuse competing passages", async () => {
     const text = "We carefully measured 53 atoms under stable experimental conditions";
     const quote = text.replace("carefully", "carefuly");
     const pdf = makePdf([{ lines: [text], box: [900, 792] }, { lines: [text, text], box: [900, 792] }]);
@@ -1300,23 +1313,19 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     const before = await account.api(`/api/blocks/${target.id}/subtree`);
     const href = (number, value) => `${server.base}/?page=${target.id}&pdf_page=${number}&quote=${encodeURIComponent(value)}&ws=${account.ws}`;
     await page.goto(href(1, quote));
-    await page.locator('.pdfCitationNotice', { hasText: "approximate text match" }).waitFor();
-    const aligned = () => page.evaluate(text => {
-      const mark = document.querySelector('[data-page="1"] .pdfCitationMark')?.getBoundingClientRect();
-      const span = [...document.querySelectorAll('[data-page="1"] .textLayer span')].find(s => s.textContent === text);
-      if (!mark || !span) return false;
-      const range = document.createRange(); range.selectNodeContents(span);
-      const box = range.getBoundingClientRect();
-      return ['left', 'top', 'width', 'height'].every(k => Math.abs(mark[k] - box[k]) < 3);
-    }, text);
+    await page.locator('.pdfCitationNotice', { hasText: /approximate text match \(\d\d% alike\)/ }).waitFor();
+    const aligned = () => citationOverText(page, 1, text);
     await until(aligned, { what: "approximate citation covers the actual source glyphs" });
     await page.keyboard.press("Escape");
     await until(async () => await page.locator('.pdfCitationMark, .pdfCitationNotice').count() === 0, { what: "fuzzy citation and notice dismiss together" });
-    for (const [number, value, message] of [[1, quote.replace("53", "54"), "could not be located"], [2, quote, "More than one passage"]]) {
-      await page.goto(href(number, value));
-      await page.locator('.pdfCitationNotice', { hasText: message }).waitFor();
-      assertEq(await page.locator('.pdfCitationMark').count(), 0, "unsafe or ambiguous approximate citation has no highlight");
-    }
+    // A misquoted number reads almost alike: the passage the model meant is
+    // shown, its notice saying the quote is not the page's text.
+    await page.goto(href(1, quote.replace("53", "54")));
+    await page.locator('.pdfCitationNotice', { hasText: "approximate text match" }).waitFor();
+    await until(aligned, { what: "a misquoted number marks the passage it misquotes" });
+    await page.goto(href(2, quote));
+    await page.locator('.pdfCitationNotice', { hasText: "More than one passage" }).waitFor();
+    assertEq(await page.locator('.pdfCitationMark').count(), 0, "an ambiguous approximate citation has no highlight");
     const after = await account.api(`/api/blocks/${target.id}/subtree`);
     assertEq(JSON.stringify(after.block.children), JSON.stringify(before.block.children), "fuzzy citation creates no annotations or notes");
     assertNoProblems(page);

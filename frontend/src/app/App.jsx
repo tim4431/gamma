@@ -29,7 +29,7 @@ import { REOPEN_SETTINGS_KEY, resolveSettingsPane } from "../settings/settingsNa
 import { useTasks } from "../tasks/useTasks";
 import { useAppJobs } from "../tasks/useAppJobs";
 import { TaskBadge, TasksButton, TasksPanel } from "../tasks/TasksTray";
-import { progressText, relocationSummary, taskTitle } from "../tasks/taskKinds.js";
+import { byteProgress, bytesInfo, progressText, relocationSummary, taskTitle } from "../tasks/taskKinds.js";
 import { isActive } from "../tasks/taskModel.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
@@ -59,7 +59,9 @@ import { cutObject, moveObjectInTree } from "../editor/mdObjects";
 import { scanMathSpans } from "../editor/mdScan";
 import { sourceRangeOfSelection } from "../editor/clickToSource";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines } from "../transfers/FileChip";
-import { ASK_PAST_FILES, attachFile, dropFilter, promoteChip, routeFile, uploadName, uploadOneFile } from "../transfers/documentUploads.js";
+import { attachFile, dropFilter, hiddenName, itemPath, promoteChip, routeFile, uploadName, uploadOneFile } from "../transfers/documentUploads.js";
+import { uploadedPage } from "../transfers/uploadBatch.js";
+import { useUploadBatches } from "../transfers/useUploadBatches.js";
 import { uploadPdf } from "../shared/lib/uploadParts";
 import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, SelectCheck, ViewToggle } from "../library/FileBrowser";
 import { createChatSession } from "../chat/chatSession";
@@ -69,6 +71,7 @@ import { MAX_CHAT_PASSAGES, MAX_INK_SELECTIONS, MAX_INK_SELECTION_BYTES } from "
 // Agent tools whose applied action changes the open page's block tree
 // (handleAgentEvent reloads it and lights the block up).
 import { BLOCK_TOOLS } from "../chat/agentSteps.js";
+import { agentShows, landing } from "../chat/agentShows.js";
 import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
@@ -83,6 +86,7 @@ import { doneWithOpenedFile, hostOpensFiles, listOpenedFiles, onFilesOpened, ope
   readOpenedFile } from "../transfers/openedFiles.js";
 import { importSource } from "../transfers/transferFormats.js";
 import { bibliographyPreview } from "../transfers/exportApi";
+import { copyTargets } from "../transfers/workspaceCopy.js";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
@@ -93,7 +97,7 @@ import {
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UnlinkIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
   PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
-  StopIcon, GlobeIcon, ChevronRightIcon, FlagIcon,
+  StopIcon, GlobeIcon, ChevronRightIcon, FlagIcon, FoldersIcon,
 } from "../shared/ui/Icons";
 import ReportContentHost from "../support/ReportContentHost";
 import { openReport as openContentReport } from "../support/reportContent.js";
@@ -330,6 +334,7 @@ import { InboxBadge, InboxButton } from "../inbox/InboxButton";
 import { inboxJump, isUnread } from "../inbox/inboxText.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import { IconSwap, MorphText } from "../shared/ui/MotionWidgets";
+import { LinkCardContext, useLinkCardValue } from "../shared/ui/LinkCard.jsx";
 import ListMotion from "../shared/ui/ListMotion";
 
 // Surfaces fetched on first use, each mounted inside a LazyBoundary
@@ -348,6 +353,7 @@ const SharePopover = lazySurface(() => import("../sharing/SharePopover"), (m) =>
 const ImportDialog = lazySurface(() => import("../transfers/ImportExport"), (m) => m.ImportDialog);
 const ExportDialog = lazySurface(() => import("../transfers/ImportExport"), (m) => m.ExportDialog);
 const ImportReviewDialog = lazySurface(() => import("../transfers/ImportReviewDialog"));
+const UploadDialog = lazySurface(() => import("../transfers/UploadDialog"));
 // Comments (docs/dev/comments.md "In the app"): a block's thread popover,
 // fetched when the pointer or focus reaches a comment control, and the
 // Comments window, with the View menu.
@@ -661,7 +667,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const initialThreadId = params.get("thread") || "";
   const initialLabel = params.get("unlabelled") ? NO_LABEL : (params.get("label") || "");
   const initialFolder = params.get("folder") || "";
-  // The desktop app's hand-over once it made a work folder (desktop/main.js
+  // The desktop app's hand-over once it made a work folder (desktop/lib/vaults.js
   // addDirectoryVault): its vault's tracking dialog opens (vault/useVault.js);
   // `tick`, a file of its directory opened with Gamma that it does not track
   // yet, by its path there, which the dialog ticks (explorer/TrackDialog.jsx).
@@ -3397,7 +3403,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications, commentSendTo, setCommentSendTo,
     topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, highlightPresets, setHighlightPresets,
-    chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
+    chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatFollowUp, setChatFollowUp, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
     metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
@@ -3503,11 +3509,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [exportJobId, setExportJobId] = useState(null);
   // Starting, reopening and retrying jobs, and what to say when one ends
   // (tasks/useAppJobs.js); `tasks` above calls its onJobFinished.
-  const { startWorkspaceExport, runBackupImport, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask, onJobFinished } = useAppJobs({
+  const { startWorkspaceExport, runBackupImport, copyPages, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask,
+    onJobFinished } = useAppJobs({
     tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
     pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations,
     workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks, refreshSession: checkSession,
+    confirm: (box) => setConfirmBox(box), switchWorkspace, // the box's state is declared further down
     // a page's chat, or a folder's or the library's (`home`) in the library's view
     openPageChat: (id) => {
       if (id !== "home" && !libTree.folders.has(id)) return id === focusedBlockId ? showChat() : openBlock(id, { then: "ask" });
@@ -3515,7 +3523,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       openFolder(id === "home" ? "" : id);
       showChat();
     },
+    // a folder upload's dialog on its row (useUploadBatches); a page an import brought, opened
+    openUploads: (rowId) => uploads.open(rowId),
+    openPage: openImportedPage,
   });
+  // A page an import brought in (one alone, transfers/importReview.js
+  // onlyPage), opened once the library holds it.
+  async function openImportedPage(id) {
+    await fetchHomeBlocks();
+    await openBlock(id, { pushNav: true });
+  }
   const [exportOpts, setExportOpts] = usePersistedState(
     "gamma-export-opts",
     { format: "pdf", highlights: true, notes: true, bundle: true, comments: false, notesAt: "beside" },
@@ -5892,10 +5909,32 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setAiMarks((prev) => { if (!prev.has(id)) return prev; const m = new Map(prev); m.delete(id); return m; });
     }, ttl));
   }
+  // What show_page asks to show, landed on as the reply's own links land:
+  // at once on the page the chat is beside, else when the reply ends
+  // (chat/agentShows.js).
+  function landAgentShow(decided) {
+    if (decided?.kind !== "now") return;
+    const to = landing(decided.show);
+    if (to.block) openBlockLink(to.block, to.page);
+    else openPageLink(to.page, to.target);
+  }
   function handleAgentEvent(ev) {
+    // The conversation the dock shows (ChatDock's chatKey).
+    const dockKey = focusedBlockId || (!shareMode && folderFilter) || "home";
     // Replies stream per conversation: another page's finishing reply must
     // not drop the preview this page's own reply is still writing.
-    if (ev.type === "done") { if (ev.key === focusedBlockId) setAiLive(null); return; }
+    if (ev.type === "done") {
+      if (ev.key === focusedBlockId) setAiLive(null);
+      landAgentShow(agentShows.done(ev, dockKey));
+      return;
+    }
+    if (ev.action?.kind === "show") { landAgentShow(agentShows.action(ev, dockKey, focusedBlockId || "")); return; }
+    // An export the agent started is this tab's to download, as the Export
+    // dialog's is (tasks/useTasks.js adopt).
+    if (ev.action?.kind === "export" && ev.action.job && !ev.action.error) {
+      tasks.adopt(ev.action.job, { download: "auto" });
+      return;
+    }
     if (!focusedBlockId) return;
     const inTree = (id) => !!id && (id === focusedBlockId || flattenBlocks(blocksRef.current).some((b) => b.id === id));
     if (ev.type === "progress") {
@@ -5976,17 +6015,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // before any page is bound to it (a dead link must not leave an empty page
   // behind; a document already in the library stays openable even once its
   // source has gone). Returns the attachment properties plus the viewer URL.
-  async function resolvePdfSource({ file, url }, taskId) {
+  // A file's bytes go to `track` (rowTrack: the task row's; a batch's own).
+  async function resolvePdfSource({ file, url }, taskId, track = rowTrack(taskId)) {
     if (file) {
       const filename = uploadName(file, "upload.pdf");
       // One request, or in parts past PART_BYTES (shared/lib/uploadParts.js);
       // XHRs either way, so the task row gets byte progress and a stop button.
-      const data = await uploadPdf(file, filename, {
-        onProgress: (loaded, total) => updateTask(taskId, {
-          info: `${fmtBytes(loaded)} / ${fmtBytes(total)}`, fraction: total ? loaded / total : undefined,
-        }),
-        onAbortable: (abort) => updateTask(taskId, { cancel: abort }),
-      });
+      const data = await uploadPdf(file, filename, { onProgress: track.progress, onAbortable: track.abortable });
       return { doc_id: data.doc_id, source_url: data.source_url, original_filename: filename,
         viewerUrl: data.source_url, note: "" };
     }
@@ -6034,17 +6069,36 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     await collab.flush();
   }
 
-  // `folder`: the id of the folder the page is filed in ("" = none).
-  async function uploadOnePdf(file, folder = "") {
-    const transferId = addTask({ name: uploadName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) });
-    let src;
+  // A file's own row of Background tasks as the track its upload reports
+  // to: its bytes (taskKinds byteProgress, once per percent, with the time
+  // left) and the abort its Stop calls. A batch's files report to the
+  // batch instead (transfers/useUploadBatches.js).
+  const rowTrack = (id) => ({
+    progress: byteProgress((patch) => updateTask(id, patch)),
+    abortable: (abort) => updateTask(id, { cancel: abort }),
+  });
+
+  // One file's transfer `run(track)`, on a row of its own named `name` of
+  // `kind` (done with `doneInfo(result)`, its size by default, or failed),
+  // or on a batch's `track` when one is given, which keeps its own rows.
+  async function onUploadRow(file, name, kind, track, run, doneInfo = () => fmtBytes(file.size)) {
+    if (track) return run(track);
+    const id = addTask({ name, kind, info: fmtBytes(file.size) });
     try {
-      src = await resolvePdfSource({ file }, transferId);
+      const result = await run(rowTrack(id));
+      updateTask(id, { state: "done", info: doneInfo(result) });
+      return result;
     } catch (err) {
-      updateTask(transferId, { state: "failed", info: "failed" });
+      updateTask(id, { state: "failed", info: "failed" });
       throw err;
     }
-    updateTask(transferId, { state: "done", info: fmtBytes(file.size) });
+  }
+
+  // `folder`: the id of the folder the page is filed in ("" = none).
+  // `track`: a batch's, in place of a row of its own.
+  async function uploadOnePdf(file, folder = "", track = null) {
+    const src = await onUploadRow(file, uploadName(file, "upload.pdf"), "upload", track,
+      (own) => resolvePdfSource({ file }, null, own));
     const block = await getOrCreateBlockForDoc(src);
     if (folder) {
       // A PDF already in the library on a sub-page is filed where its top
@@ -6065,64 +6119,65 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return { src, block };
   }
 
-  async function importOneMarkdown(file, folder = "") {
+  async function importOneMarkdown(file, folder = "", track = null) {
     const filename = uploadName(file, "note.md");
-    const transferId = addTask({ name: filename, kind: "file", info: fmtBytes(file.size) });
     const form = new FormData();
     form.append("file", file, filename);
     form.append("folder", folder);
-    try {
-      const data = await apiJson(`${API}/import/markdown`, { method: "POST", body: form });
-      updateTask(transferId, { state: "done", info: `${data.imported || 0} notes` });
-      return { data, kind: "markdown" };
-    } catch (err) {
-      updateTask(transferId, { state: "failed", info: "failed" });
-      throw err;
-    }
+    const data = await onUploadRow(file, filename, "file", track, () => apiJson(`${API}/import/markdown`, { method: "POST", body: form }),
+      (answer) => `${answer.imported || 0} notes`);
+    return { data, kind: "markdown" };
   }
 
   // A file of any other format as a library page of its own
   // (transfers/documentUploads.js uploadOneFile: the upload, then by-file,
   // which answers the page that already owns the file when one does).
-  async function uploadOneDocument(file, folder = "") {
+  async function uploadOneDocument(file, folder = "", track = null) {
     const name = uploadName(file);
-    const transferId = addTask({ name, kind: "upload", info: fmtBytes(file.size) });
-    try {
-      const { page } = await uploadOneFile(file, {
-        folderId: folder, name,
-        onProgress: (loaded, total) => updateTask(transferId, {
-          info: `${fmtBytes(loaded)} / ${fmtBytes(total)}`, fraction: total ? loaded / total : undefined,
-        }),
-        onAbortable: (abort) => updateTask(transferId, { cancel: abort }),
-      });
-      updateTask(transferId, { state: "done", info: fmtBytes(file.size) });
-      return page;
-    } catch (err) {
-      updateTask(transferId, { state: "failed", info: "failed" });
-      throw err;
+    const { page } = await onUploadRow(file, name, "upload", track, ({ progress, abortable }) =>
+      uploadOneFile(file, { folderId: folder, name, onProgress: progress, onAbortable: abortable }));
+    return page;
+  }
+
+  // One item of an upload (uploadFiles' {file, route}) the way its route
+  // says — a PDF the PDF way, a Markdown file a note, any other a document
+  // page — into the folder `folder`. → what it made (its page:
+  // uploadBatch.js uploadedPage).
+  const uploadOne = async ({ file, route }, folder, track = null) => (route === "pdf"
+    ? { ...(await uploadOnePdf(file, folder, track)), kind: "pdf" }
+    : route === "markdown" ? await importOneMarkdown(file, folder, track)
+      : { page: await uploadOneDocument(file, folder, track), kind: "file" });
+
+  // The page one upload made, opened: a PDF in its viewer, a document or a
+  // note once the library holds it.
+  async function openUploaded(made, filename) {
+    if (made.kind === "pdf") {
+      await openBlock(made.block.id, { viewerUrl: made.src.viewerUrl });
+      setStatus(t("Uploaded {filename} ({doc_id})", { filename, doc_id: made.src.doc_id }));
+      return;
     }
+    await fetchHomeBlocks();
+    await openBlock(uploadedPage(made), { pushNav: true });
+    setStatus(made.kind === "file" ? t("Uploaded {filename}.", { filename }) : t("Imported {filename} as a note.", { filename }));
   }
 
   // A dropped or picked directory: hidden, temporary and unstorable files
-  // are left out (transfers/fileRouting.js dropFilter), and
-  // past ASK_PAST_FILES files a question comes first (the hosted page cap
-  // counts every page made).
-  function uploadFolder(found) {
+  // are left out (transfers/fileRouting.js dropFilter; `left`, the
+  // directories a drop's walk never went into, with them), and the rest
+  // goes up as a batch with its dialog (uploadFiles).
+  function uploadFolder(found, left = []) {
     const { kept, skipped } = dropFilter(found);
+    const leftOut = [...left.map(({ folder, name }) => `${[...folder, name].join("/")}/`), ...skipped.map(itemPath)];
     if (!kept.length) {
-      setStatus(skipped.length ? t("Nothing to upload: the folder holds only hidden, temporary or unstorable files.") : t("The folder is empty."));
+      setStatus(leftOut.length ? t("Nothing to upload: the folder holds only hidden, temporary or unstorable files.") : t("The folder is empty."));
       return;
     }
-    if (kept.length <= ASK_PAST_FILES) { uploadFiles(kept); return; }
-    setConfirmBox({
-      title: T("Upload a folder"),
-      message: t("Upload {n} files to the library?", { n: kept.length }),
-      confirmLabel: t("Upload"),
-      onConfirm: () => uploadFiles(kept),
-    });
+    uploadFiles(kept, undefined, { folder: true, skipped: leftOut });
   }
 
-  async function uploadFiles(fileList, base = homeMode && folderFilter && !workFolder ? folderFilter : "") {
+  // `folder`: the files are a directory's (uploadFolder), `skipped` the
+  // paths it left out.
+  async function uploadFiles(fileList, base = homeMode && folderFilter && !workFolder ? folderFilter : "", { folder = false, skipped = [] } = {}) {
     if (shareMode) return;
     // A work folder open takes no upload: its files come from its directory.
     const besideWork = homeMode && !!workFolder && !base;
@@ -6137,67 +6192,63 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const items = Array.from(fileList || [])
       .map((it) => (it instanceof File ? { file: it, folder: folderFromRelPath(it.webkitRelativePath) } : it))
       .filter((it) => it?.file && routeFile(it.file))
-      .map(({ file, folder }) => ({ file, filename: uploadName(file), path: folder, route: routeFile(file) }));
+      .map(({ file, folder: path }) => ({ file, filename: uploadName(file), path, route: routeFile(file) }));
     if (!items.length) {
       setStatus(t("Nothing to upload: files of these kinds cannot be stored."));
       return;
     }
+    // A directory, or several files: one batch with one row.
+    if (folder || items.length > 1) { uploads.start(items, { base, besideWork, folder, skipped }); return; }
+    // A single file opens its page right away.
+    const [item] = items;
     setLoading(true);
-    const done = [];
-    const failed = [];
-    const stopped = []; // stopped from the tasks popover — not a failure
     try {
-      // The directories' folders are made once, before any file lands.
       let folderOf;
       try {
-        folderOf = await ensureFolders(items.map((it) => it.path).filter((path) => path.length), base);
+        folderOf = await ensureFolders(item.path.length ? [item.path] : [], base);
       } catch (err) {
         setStatus(t("Upload failed: {failed}", { failed: err.message }));
         return;
       }
-      for (const { file, filename, path, route } of items) {
-        const folder = folderOf(path);
-        setStatus(route === "markdown" ? t("Importing {filename}…", { filename }) : t("Uploading {filename}…", { filename }));
-        try {
-          done.push(route === "pdf" ? { ...(await uploadOnePdf(file, folder)), kind: "pdf" }
-            : route === "markdown" ? await importOneMarkdown(file, folder)
-              : { page: await uploadOneDocument(file, folder), kind: "file" });
-        } catch (err) {
-          if (err.aborted) stopped.push(filename);
-          else failed.push(`${filename} (${err.message})`);
-        }
+      setStatus(item.route === "markdown" ? t("Importing {filename}…", { filename: item.filename }) : t("Uploading {filename}…", { filename: item.filename }));
+      let made;
+      try {
+        made = await uploadOne(item, folderOf(item.path));
+      } catch (err) {
+        setStatus(err.aborted ? t("Upload stopped: {stopped}", { stopped: item.filename })
+          : t("Upload failed: {failed}", { failed: `${item.filename} (${err.message})` }));
+        return;
       }
-      const pdfDone = done.filter((item) => item.kind === "pdf");
-      if (done.some((item) => item.kind !== "markdown")) refreshQuota();
-      if (items.length === 1 && done.length && done[0].kind === "pdf") {
-        // A single upload opens its page right away.
-        const { src, block } = done[0];
-        await openBlock(block.id, { viewerUrl: src.viewerUrl });
-        setStatus(t("Uploaded {filename} ({doc_id})", { filename: items[0].filename, doc_id: src.doc_id }));
-      } else if (items.length === 1 && done.length && done[0].kind === "file") {
-        await fetchHomeBlocks();
-        await openBlock(done[0].page.id, { pushNav: true });
-        setStatus(t("Uploaded {filename}.", { filename: items[0].filename }));
-      } else if (items.length === 1 && done.length) {
-        await fetchHomeBlocks();
-        await openBlock(done[0].data.block_id, { pushNav: true });
-        setStatus(t("Imported {filename} as a note.", { filename: items[0].filename }));
-      } else if (done.length) {
-        fetchHomeBlocks();
-        setStatus(failed.length
-          ? t("Imported {n} of {n2} files — failed: {failed}", { n: done.length, n2: items.length, failed: failed.join(", ") })
-          : t("Imported {n} files.", { n: done.length }));
-      } else if (failed.length) {
-        setStatus(t("Upload failed: {failed}", { failed: failed.join(", ") }));
-      } else if (stopped.length) {
-        setStatus(t("Upload stopped: {stopped}", { stopped: stopped.join(", ") }));
-      }
-      if (besideWork && done.length && !failed.length) setStatus(t("Uploaded to the library: a synced folder's files come from its directory."));
+      if (made.kind !== "markdown") refreshQuota();
+      await openUploaded(made, item.filename);
+      if (besideWork) setStatus(t("Uploaded to the library: a synced folder's files come from its directory."));
       // Runs after the upload/import UI work and never delays its completion.
-      queueMetadataForUploads(pdfDone);
+      queueMetadataForUploads(made.kind === "pdf" ? [made] : []);
     } finally {
       setLoading(false);
     }
+  }
+
+  // A directory, or several files at once, goes up as one batch
+  // (transfers/useUploadBatches.js, its dialog UploadDialog.jsx): one row of
+  // Background tasks however many files. App hands it how a file goes up and
+  // what the batch does to the library as pages land and once it ends.
+  const uploads = useUploadBatches({
+    tasks, quota: quotaInfo, makeFolders: ensureFolders, upload: uploadOne, say: setStatus,
+    place: (base) => `${t("Library")} / ${folderPath(libTreeRef.current, base) || t("All pages")}`,
+    landed: (pdfs) => { fetchHomeBlocks(); queueMetadataForUploads(pdfs); },
+    ended: async ({ made, pdfs, one }) => {
+      if (made.some((m) => m.kind !== "markdown")) refreshQuota();
+      queueMetadataForUploads(pdfs);
+      if (one) await openUploaded(one.made, one.filename);
+      else fetchHomeBlocks();
+    },
+  });
+  // The folder a batch went into, in the library.
+  function showUploads(root) {
+    uploads.close();
+    if (!homeMode) goHome();
+    openFolder(root || lib.root);
   }
 
   async function importLogseq(files) {
@@ -6501,6 +6552,63 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
+  // The chat's Create note (chat/ChatSelectionTip.jsx): a passage of its
+  // transcript, as Markdown, split into blocks as the editor's paste as
+  // blocks splits one (POST /markdown-blocks), at the end of the open
+  // page's notes; with no page open, a page of its own named `title` in the
+  // folder shown (none: the library's top), its blocks one op batch, a
+  // heading that names it left out for its own blocks. `structured`: the AI
+  // rewrote it, as the status line says. True once the note is in.
+  async function noteFromChat(markdown, { title = "", structured = false } = {}) {
+    const pageId = focusedBlockId;
+    const json = { "Content-Type": "application/json" };
+    let nodes;
+    try {
+      nodes = (await apiJson(`${API}/markdown-blocks`, { method: "POST", headers: json, body: JSON.stringify({ text: markdown }) }))?.blocks || [];
+    } catch (err) {
+      setStatus(err.status === 413 ? t("The selection is too large to make a note of.") : t("Couldn't make the note: {message}", { message: err.message }));
+      return false;
+    }
+    if (!nodes.length) return false;
+    const toBlock = (n) => makeNewBlock({ content: n.content || "", children: (n.children || []).map(toBlock) });
+    if (pageId) {
+      if (focusedBlockIdRef.current !== pageId) return false; // navigated away meanwhile
+      const created = nodes.map(toBlock);
+      setBlocks((prev) => [...prev, ...created]);
+      requestAnimationFrame(() => document.querySelector(`[data-block-id="${created[0].id}"]`)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+      triggerFlash(created[0].id);
+      setStatus(structured ? t("A structured note was added at the end of this page.") : t("The note was added at the end of this page."));
+      return true;
+    }
+    const name = title || t("Note from the chat");
+    const head = nodes[0];
+    if (/^#{1,6}\s/.test(head.content || "") && head.content.replace(/^#{1,6}\s+/, "").trim() === name) {
+      nodes = [...(head.children || []), ...nodes.slice(1)];
+    }
+    try {
+      const created = await apiJson(`${API}/pages`, { method: "POST", headers: json,
+        body: JSON.stringify({ title: name, ...(folderFilter ? { folders: [folderFilter] } : {}) }) });
+      const ops = [];
+      const put = (list, parent) => {
+        let at = null;
+        for (const b of list) {
+          at = generateKeyBetween(at, null);
+          ops.push({ op: "insert", id: b.id, parent, position: at, content: b.content, props: b.properties });
+          put(b.children, b.id);
+        }
+      };
+      put(nodes.map(toBlock), created.id);
+      if (ops.length) await apiJson(`${API}/pages/${created.id}/ops`, { method: "POST", headers: json, body: JSON.stringify({ client: "", ops }) });
+      await fetchHomeBlocks();
+      setStatus(t("The note was saved as the page “{title}”.", { title: name }));
+      return true;
+    } catch (err) {
+      setStatus(t("Couldn't make the note: {message}", { message: err.message || err }));
+      return false;
+    }
+  }
+
   // Attach a document to the open page (one that carries none), or replace
   // the one it carries: a PDF through the same ingest as opening a new PDF,
   // any other file as an upload named to the server
@@ -6549,12 +6657,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           body: JSON.stringify(src),
         });
       } else {
+        const track = rowTrack(taskId);
         bound = await attachFile(pageId, file, {
-          replace, name: uploadName(file),
-          onProgress: (loaded, total) => updateTask(taskId, {
-            info: `${fmtBytes(loaded)} / ${fmtBytes(total)}`, fraction: total ? loaded / total : undefined,
-          }),
-          onAbortable: (abort) => updateTask(taskId, { cancel: abort }),
+          replace, name: uploadName(file), onProgress: track.progress, onAbortable: track.abortable,
         });
       }
       updateTask(taskId, { state: "done", info: replace ? t("replaced") : t("attached") });
@@ -6688,7 +6793,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         const pct = total ? Math.min(99, Math.floor((loaded / total) * 100)) : 0;
         if (pct === u.lastPct) return;
         u.lastPct = pct;
-        updateTask(u.tid, { info: `${fmtBytes(loaded)} / ${fmtBytes(total)} — ${pct}%`, fraction: total ? loaded / total : undefined });
+        updateTask(u.tid, { info: `${bytesInfo(loaded, total, u.at)} — ${pct}%`, fraction: total ? loaded / total : undefined });
         if (Date.now() - u.at > 400 || total > 2 * 1024 * 1024) showPill(`Uploading ${u.name}… ${pct}%`);
       },
       done: (u, ok, detail) => {
@@ -10594,6 +10699,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     [focusedBlockId, blocks, refCache, shareMode, knownBlocks, pageTitle],
   );
 
+  // What every link card reads (shared/ui/LinkCard.jsx): one object for the
+  // app's life, its fields read through getters when a card shows, so no
+  // link renders again when the pages or the [[ref]] labels change.
+  const linkCardCtx = useLinkCardValue({ pages: pageBlocks, refCache, onCacheRef, nav: gammaNav });
+
   // What the views of pages in the tab groups (PagePane) take from App:
   // the [[ref]] labels and their fetches, the library's labels, file chips,
   // the notes' text size and keys, the PDF's looks, and what this account
@@ -12668,7 +12778,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onAttachView={!homeMode && isPdf(doc) && pdfUrl && !pdfHidden ? attachViewToChat : undefined}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
-          chatSpeed={chatSpeed} setChatSpeed={setChatSpeed}
+          chatSpeed={chatSpeed} setChatSpeed={setChatSpeed} chatFollowUp={chatFollowUp}
           dictationModel={dictationModel} dictationLang={dictationLang}
           chatSystem={chatSystem} aiInfo={aiInfo} aiInfoFailed={aiInfoFailed} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
@@ -12688,6 +12798,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           askSignal={chatAsk}
+          onChatNote={shareMode || (focusedBlockId ? readOnly || notesLocked : !canWriteWorkspace) ? null : noteFromChat}
           agents={chatAgentList} localAgents={localAgents}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
@@ -13796,6 +13907,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   return (
     <GammaNavContext.Provider value={gammaNav}>
+    <LinkCardContext.Provider value={linkCardCtx}>
     <PageToolsContext.Provider value={pageTools}>
     <ThreadPlaceContext.Provider value={placeOf}>
     <RecordingContext.Provider value={recordingCtx}>
@@ -13835,7 +13947,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           .filter(Boolean);
         if (entries.some((en) => en.isDirectory)) {
           e.preventDefault();
-          collectEntryFiles(entries).then(uploadFolder);
+          // A large tree takes a while to read: the pill counts it. Its
+          // hidden directories (a .git, node_modules) are never gone into.
+          const left = [];
+          const reading = (n) => postPill("folder-read", { msg: t("Reading the folder… {n} files", { n }), spinner: true });
+          collectEntryFiles(entries, { skip: hiddenName, left, onProgress: reading })
+            .then((found) => { postPill("folder-read", null); uploadFolder(found, left); });
           return;
         }
         const dropped = Array.from(e.dataTransfer.files || []);
@@ -14447,7 +14564,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </LazyBoundary>
       ) : null}
       {importReview ? <LazyBoundary><ImportReviewDialog {...importReview} folderPath={(id) => folderPath(libTree, id)} tasks={tasks}
+        onOpenPage={(page, summary) => {
+          setImportReview(null);
+          openImportedPage(page.id).then(() => setStatus(t("Imported “{title}”: {summary}.", { title: page.title || t("Untitled"), summary })));
+        }}
+        onShowFolder={(id) => { setImportReview(null); if (!homeMode) goHome(); openFolder(id || lib.root); }}
         onClose={() => setImportReview(null)} /></LazyBoundary> : null}
+      {uploads.dialog ? <LazyBoundary><UploadDialog {...uploads.dialog} tasks={tasks} onStart={uploads.confirm} onRetry={uploads.retry}
+        onShow={showUploads} onClose={uploads.close} /></LazyBoundary> : null}
       {trashOpen ? (
         <LazyBoundary>
         <RecentlyDeleted onClose={() => setTrashOpen(false)} confirm={setConfirmBox} setStatus={setStatus}
@@ -14852,6 +14976,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setChatEffort,
           chatSpeed,
           setChatSpeed,
+          chatFollowUp,
+          setChatFollowUp,
           aiProvider,
           setAiProvider,
           deleteAiProvider,
@@ -14937,6 +15063,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           exportWorkspace,
           exportAll,
           importWorkspace,
+          // every page of `ws` into a new personal workspace `name`; its dialog said what stays in Zotero
+          duplicateWorkspace: (ws, name) => copyPages({ ws, name, checked: true }),
           tasks,
           setStatus,
           confirm: setConfirmBox,
@@ -15119,6 +15247,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               const opened = ids.every(openedFile);
               const anyOpened = ids.some(openedFile);
               const allLabelled = (l) => acted.every((b) => b?._labels?.includes(l));
+              const targets = copyTargets(workspaces, workspace?.id);
               const close = () => setHomeMenu(null);
               // A typed name: the label of that name, else a new one.
               const commitNewLabel = async () => {
@@ -15133,8 +15262,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               };
               // Open · Rename | New page inside | Pin · Add label · Move to
               // folder · Add to library… · Remove from library · Save a copy
-              // to library… · Move into page… · Move to library · Duplicate |
-              // Copy link · Share… · Export… · Ask AI | Delete — the same rows
+              // to library… · Move into page… · Move to library · Duplicate ·
+              // Copy to workspace | Copy link · Share… · Export… · Ask AI |
+              // Delete — the same rows
               // wherever the page was right-clicked (a Pages inside row's
               // without Rename: openSubPageMenu).
               return menuGroups(
@@ -15245,6 +15375,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   ),
                   lib.organize && copied.length > 0 && (
                     <MenuItem key="duplicate" icon={CopyIcon} onClick={() => { close(); duplicatePages(copied); }}>{copied.length > 1 ? t("Duplicate {n} pages", { n: copied.length }) : t("Duplicate")}</MenuItem>
+                  ),
+                  // a copy in another workspace of this server, which anyone
+                  // who reads this one may make into one they edit
+                  // (transfers/workspaceCopy.js); a file opened from this
+                  // computer is added to the library first
+                  !shareMode && !authUser?.is_guest && !anyOpened && targets.length > 0 && (
+                    <SubMenuItem key="copyto" id="copyto" icon={FoldersIcon} label={t("Copy to workspace")}
+                      title={t("A copy in another workspace, with its notes, highlights, comments, chat and the pages inside it; it stays here too")}>
+                      {targets.map((w) => (
+                        <MenuItem key={w.id} icon={w.personal ? UserIcon : UsersIcon}
+                          onClick={() => { close(); copyPages({ ws: workspace.id, pages: ids, to: w.id }); }}>{w.name}</MenuItem>
+                      ))}
+                    </SubMenuItem>
                   ),
                 ],
                 [
@@ -15536,6 +15679,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     </RecordingContext.Provider>
     </ThreadPlaceContext.Provider>
     </PageToolsContext.Provider>
+    </LinkCardContext.Provider>
     </GammaNavContext.Provider>
   );
 }

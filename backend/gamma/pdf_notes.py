@@ -70,7 +70,7 @@ from pypdf.generic import (
 from . import pdf_cards, pdf_free_space
 from .logbuf import log
 from .pdf_cards import BAR, FONT_SIZE, LEADING, PAD_X, PAD_Y, clip, inner_width
-from .pdf_export import copy_pdf, display_size, page_frame, parse_css_color, pdf_point_to_viewer
+from .pdf_export import copy_pdf, display_size, page_frame, parse_css_color, to_display
 from .pdf_glyphs import GlyphFonts
 from .pdf_image import XObjectStore
 from .pdf_typeset import fill_rect, finalize_cid, font_resources, num
@@ -308,13 +308,6 @@ def _frame(crop, rotation):
     return size, (1, 0, 0, -1, cx0, cy1)
 
 
-def _to_display(view, rotation: int):
-    """``_frame``'s inverse: a user-space point → the display frame, in
-    points (``pdf_point_to_viewer`` scaled by the page as shown)."""
-    w, h = display_size(view, rotation)
-    return lambda x, y: tuple(c * s for c, s in zip(pdf_point_to_viewer(x, y, rotation, view), (w, h)))
-
-
 def _widen(page, view, rotation: int, extra: float):
     """Grows the page by ``extra`` on the right of the page as shown: the
     view box's side the display frame's x axis runs to (``_frame``), so the
@@ -485,7 +478,7 @@ def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", stor
     col_w = _column_width(max(w for w, _h in sizes))
     extra = COLUMN_GAP + col_w + EDGE if beside else 0.0
     spaces = pdf_free_space.occupancy(pdf_bytes, {
-        index: (frames[index][0], _to_display(*frames[index]), *sizes[index])
+        index: (frames[index][0], to_display(*frames[index]), *sizes[index])
         for index in on_page}) if on_page else {}
     images = XObjectStore(writer, stored)
     glyphs = GlyphFonts(writer)

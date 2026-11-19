@@ -958,15 +958,16 @@ def _download_pdf_from_source(ws: str, doc_id: str, name: str) -> None:
         log.warning(f"[ai_chat] download failed: {error}")
 
 
-def pdf_path(ws: str, doc_id: str):
+def pdf_path(ws: str, doc_id: str, fetch: bool = True):
     """Return a document's local PDF path (``storage.find_upload_file``),
-    downloading it from its source when it is not stored."""
+    downloading it from its source when it is not stored, unless not to
+    ``fetch``."""
     try:
         name = stored_name(safe_doc_id(doc_id), ".pdf")
     except ValueError:
         return None
     path = find_upload_file(name, ws)
-    if path is None:
+    if path is None and fetch:
         _download_pdf_from_source(ws, doc_id, name)
         path = find_upload_file(name, ws)
     return path

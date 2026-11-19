@@ -4766,8 +4766,9 @@ reach.
       count turns on the last bit of its length.
     - `tests/shared/inkshapes.json` `samples` holds both sides to the same
       cases.
-    - A server writer of shape records (the Notability import) bakes `pts`
-      with it.
+    - A server writer of shape records (the Notability import, the chat's
+      `draw`, `gamma/ai_draw.py`, which reads its shapes with the redraw's
+      `ink_ai.figure`) bakes `pts` with it.
     - Sin and cos are the platform's, and maths libraries round their last
       bit differently: the Windows CRT and V8 disagree on about 2.5 % of
       sines and cosines, sin(45°) among them.

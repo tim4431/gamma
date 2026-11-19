@@ -2,7 +2,7 @@
 agent writes on a page as its account, signed as itself (gamma/agents.py):
 a new comment thread on a place (``places``), a reply, a thread resolved
 (never reopened) and a highlight. The registry's three tools write through
-it (gamma/ai_tools.py ``comment``, ``resolve`` and ``highlight``: Gamma AI's,
+it (gamma/ai_tools/commenting.py ``comment``, ``resolve`` and ``highlight``: Gamma AI's,
 an MCP connection's at the Comment level, a computer agent's turn), and so
 does the end of a thread's turn that its agent left unanswered
 (gamma/local_agents/threads.py ``settle``).
@@ -175,15 +175,34 @@ def resolve(conn, writer: Writer, ws: str, thread_id: str) -> dict:
 
 def _at(place: Place, block_id: str, anchor: dict | None) -> bool:
     """Whether a thread on ``block_id`` opened at ``anchor`` is on
-    ``place``: the same block, or the same passage (its page and its quote)
-    or range (its lines) for a place a new highlight would give."""
+    ``place``: the same block, or the same passage (its page and its quote),
+    area (its page and its rectangle) or range (its lines) for a place a new
+    highlight would give."""
     if place.block_id:
         return block_id == place.block_id
     anchor = anchor or {}
     if place.kind == "passage":
         return (anchor.get("kind") == "passage" and anchor.get("page") == place.page
                 and anchor.get("quote") == place.props["quote"][:highlights.PREV_MAX_QUOTE])
+    if place.kind == "area":
+        rects = anchor.get("rects") or [()]
+        return anchor.get("kind") == "area" and anchor.get("page") == place.page and _same_box(rects[0], place.box)
     return anchor.get("kind") == "lines" and anchors.lines_of(anchor) == place.lines
+
+
+def _same_box(a, b) -> bool:
+    """Two rectangles as page fractions, the same to a thousandth of the
+    page (an anchor keeps four decimals, measured back from points)."""
+    return len(a) == len(b) == 4 and all(abs(x - y) < 1e-3 for x, y in zip(a, b))
+
+
+def _fractions(pos: dict) -> tuple:
+    """A stored position's bounding rectangle as fractions of its page, ()
+    when it has no frame to measure it by."""
+    size, rect = highlights._size(pos), pos.get("boundingRect")
+    if not size or not highlights.placed(rect):
+        return ()
+    return (rect["x1"] / size[0], rect["y1"] / size[1], rect["x2"] / size[0], rect["y2"] / size[1])
 
 
 def _mark(conn, writer: Writer, ws: str, page_id: str, props: dict, note: str = "") -> str:
@@ -246,12 +265,13 @@ def open_thread(conn, writer: Writer, ws: str, page_id: str, place: Place, body)
 
 def highlight(conn, writer: Writer, ws: str, page_id: str, place: Place, *, note: str = "", color: str = "",
               style: str = "") -> dict:
-    """The writer's highlight of ``place`` (a passage or a range) on the
-    page → ``{block_id, created}``: a new highlight block, ``note`` its
-    text, in ``color`` (a name of ``COLORS``, the first by default) and
-    ``style`` (one of ``STYLES``, the wash by default); ``created`` false
-    when the writer has one on that place already, which ``block_id`` is.
-    ValueError for a refusal: a viewer makes none (``may_mark``)."""
+    """The writer's highlight of ``place`` (a passage, an area or a range)
+    on the page → ``{block_id, created}``: a new highlight block, ``note``
+    its text, in ``color`` (a name of ``COLORS``, the first by default) and
+    ``style`` (one of ``STYLES``, the wash by default; an area takes the
+    wash alone, as a person's does); ``created`` false when the writer has
+    one on that place already, which ``block_id`` is. ValueError for a
+    refusal: a viewer makes none (``may_mark``)."""
     may_write(writer, ws)
     may_mark(writer, ws)
     if color and color not in COLORS:
@@ -260,6 +280,9 @@ def highlight(conn, writer: Writer, ws: str, page_id: str, place: Place, *, note
         raise ValueError(f"style is one of {', '.join(STYLES)}")
     if not isinstance(note, str) or len(note) > comments.MAX_BODY:
         raise ValueError(f"a note is text of at most {comments.MAX_BODY} characters")
+    area = place.kind == "area"
+    if area and style and style != "highlight":
+        raise ValueError("an area is drawn as a wash: it takes no other style")
     key = "pdf_position" if "pdf_position" in place.props else "text_position"
     for block_id, raw in conn.execute(
             "SELECT id, properties FROM unified_blocks WHERE page_id = ? AND kind = 'highlight' "
@@ -267,10 +290,15 @@ def highlight(conn, writer: Writer, ws: str, page_id: str, place: Place, *, note
             (page_id, writer.agent.id, writer.username)).fetchall():
         props = load_props(raw)
         pos = props.get(key)
-        if not isinstance(pos, dict) or props.get("quote") != place.props["quote"]:
+        if not isinstance(pos, dict) or props.get("quote") != place.props["quote"] or bool(pos.get("area")) != area:
             continue
-        if (pos.get("pageNumber") == place.page if key == "pdf_position"
-                else (pos.get("line"), pos.get("end")) == place.lines):
+        if area:
+            same = pos.get("pageNumber") == place.page and _same_box(_fractions(pos), place.box)
+        elif key == "pdf_position":
+            same = pos.get("pageNumber") == place.page
+        else:
+            same = (pos.get("line"), pos.get("end")) == place.lines
+        if same:
             return {"block_id": block_id, "created": False}
     props = {"color": colors.highlight_color(COLORS[color or "yellow"]), **place.props}
     if style and style != "highlight":

@@ -95,7 +95,7 @@ export function historyPictures(images) {
 }
 
 // The picture a reply's tool chip expands to: the server names it
-// (`picture` on the chip, gamma/ai_tools.py); chips saved before that
+// (`picture` on the chip, gamma/ai_tools/); chips saved before that
 // derive it from what they carry.
 export function chipPicture(action) {
   if (!action || action.error) return "";

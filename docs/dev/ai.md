@@ -6,7 +6,7 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 [ai_tools.md](ai_tools.md); how long papers reach the model is
 [ai_context.md](ai_context.md). Code: `gamma/ai_settings.py`,
 `gamma/ai_protocols/` (one adapter per wire), `gamma/ai_client.py`,
-`gamma/ai_catalog.py`, `gamma/ai_context.py`, `gamma/ai_tools.py`,
+`gamma/ai_catalog.py`, `gamma/ai_context.py`, `gamma/ai_tools/`,
 `gamma/chatgpt_oauth.py`, `gamma/routers/ai.py`. PDF translation
 (`gamma/routers/translate.py`), the handwriting selection's Redraw as
 shapes and Convert to text (`gamma/routers/ink_ai.py`) and the stored chat
@@ -626,7 +626,12 @@ drawing, with the restrictions the sanitizer enforces ([diagrams.md](diagrams.md
 and to prefer prose or a table when they say it as well. The reply view
 reads the model's `\( … \)` and `\[ … \]` as math, every pair of them
 outside code (`normalizeChatMarkdown`), by a rule apart from a note's,
-where `\[x\]` may be an escaped bracket ([latex_editing.md](latex_editing.md)).
+where `\[x\]` may be an escaped bracket ([latex_editing.md](latex_editing.md)),
+and a `$$…$$` alone on its line as display math (`remarkLoneDisplayMath`,
+[diagrams.md](diagrams.md)), so a wide formula scrolls in its own box
+instead of widening the transcript. The transcript keeps its scrollbar's
+room (`scrollbar-gutter: stable`), so a reply growing past the window does
+not rewrap it.
 
 `gather_inputs` returns the context in two parts, and `build_messages`
 places them apart on purpose. The **document part** (the pages' sections:
@@ -1017,7 +1022,8 @@ muted "offline" for another computer that is away, an amber "not ready"
 (`.agentProblem`) for one with a problem, the whole sentence its title; it
 stays pickable, and the chat then says why. The chip then reads the agent
 first, "Codex on TIM-PC · GPT-5.5 · high" or "Gamma AI · GPT-5 · high"
-(`agentChoice`, then the model and effort, the model ellipsized first),
+(`agentChoice`, then the model and effort, the model ellipsized first, the
+speed chosen its glyph after them, a computer agent's as Gamma AI's),
 named "Agent, model and reasoning effort"; with Gamma AI alone it is the
 model chip it always was ("GPT-5 · high", "Model, reasoning effort and
 speed"). It is shown in every bucket (a page, a folder, the library) and even when
@@ -1025,7 +1031,7 @@ Gamma AI is off or unset, as long as there is an agent to pick. A viewer
 of the workspace has Gamma AI alone.
 
 The bucket's pick lasts the tab's life (`chat/computer/chatSide.js`
-`useChatAgent`), as a computer agent's model and effort do; a bucket never
+`useChatAgent`), as a computer agent's model, effort and speed do; a bucket never
 picked shows Gamma AI, unless no AI service is connected and a computer's
 agent can answer (`pickAgent`; a pick is the agent's id, another
 computer's `computer:<computer>:<name>`, which History, a thread's *Open
@@ -1076,7 +1082,8 @@ dictation.
 
 The composer is one rounded box: the context chips on top, the message at
 full width, then a toolbar of [+], the PDF switch, the model chip, the
-mic, and Send (or Stop while this bucket's reply streams). The box's
+mic (there while a reply streams too), and Send (or Stop while this
+bucket's reply streams). The box's
 buttons never take the focus (the form cancels a button's `mousedown`), so
 a press keeps an on-screen keyboard up.
 
@@ -1121,8 +1128,10 @@ reply runs, Send (Enter, or the circle button, which reads Send instead of
 Stop while the box holds a message) puts the message in the
 conversation's queue (`chat/chatQueue.js`) with what goes with it: Gamma
 AI's pictures, files, PDF passages, note chips and the cursor's block, a
-computer agent's passages. The queue is drawn above the composer
-(`chat/ChatQueue.jsx`), one row a message in the order they go: its grip
+computer agent's passages. A dictation goes the same way: its ↑ (stop
+and send) queues the transcript while a reply runs, deciding when the
+transcript comes back, and its ■ puts it in the box. The queue is drawn
+above the composer (`chat/ChatQueue.jsx`), one row a message in the order they go: its grip
 (drag, or the arrow keys, through `shared/ui/useDragOrder.js`), its first
 picture, its text on one line, **Steer**, Delete, and ⋯ with Edit (in the
 row: Enter keeps, Escape leaves it) and Move up / down.
@@ -1139,8 +1148,14 @@ row: Enter keeps, Escape leaves it) and Move up / down.
   the agent). A reply that ends while the dock shows another bucket leaves
   its queue for when the dock comes back, and the next message goes then.
   A reload loses it, as Codex's.
-- **Steer** hands a queued message to the reply under way. Ctrl/⌘+Shift+Enter
-  in the box (`enterKey.js` `steersOnEnter`) queues and steers at once.
+- **Steer** hands a queued message to the reply under way. What a message
+  sent while a reply runs does is the account's **follow-up** preference
+  (`chatFollowUp`, Settings → AI → Chat, Codex's "Follow-up behavior"):
+  Queue, the default, or Steer, which queues and steers at once. Enter, the
+  send button and a dictation's ↑ do what it says, Ctrl/⌘+Shift+Enter
+  (`enterKey.js` `steersOnEnter`) the other (`followUpSteers`); the box's
+  placeholder ("Queue a follow-up…", "Steer the reply…") and the button's
+  title say which. A message that cannot steer stays queued.
   The stream's head ends with `{"steer": id}` (`gamma/ai_steer.py`: an
   inbox per streamed reply, in memory, bound to its account, closed when
   the stream ends). `POST /api/ai/chat/steer/{id}` carries the text, the
@@ -1150,12 +1165,13 @@ row: Enter keeps, Escape leaves it) and Move up / down.
   reply takes it in, and can then be neither moved nor deleted, since the
   agent has it.
 - **Where the reply takes it in**, at once, as Codex's instant interrupt
-  (its `instant_interrupt` feature, on by default) does. While a message
-  waits (`Steering.pending`), the provider turn streaming stops at its next
-  event (`AgentLoop._round`): what the model wrote so far is its turn, and
-  it called nothing. The provider's stop reason and token report are never
-  cut off, but a turn cut before them reports no tokens, as a stopped one
-  doesn't. Once the stream ended, the round's calls not started yet are
+  (its `instant_interrupt` feature, on by default) does. The message's
+  arrival ends the read of the provider turn under way (`AgentLoop._round`,
+  `ai_steer.TurnRead`), even while the model is silent as it thinks and
+  sends no event: what the model wrote so far is its turn, and it called
+  nothing. The provider's stop reason and token report are never cut off,
+  but a turn cut before them reports no tokens, as a stopped one doesn't.
+  Once the stream ended, the round's calls not started yet are
   skipped, each answered `STEERED_PAST` ("not run: the user sent a new
   message…") so the model decides again with the message; the calls
   running finish. A message that arrives after the model's whole answer
@@ -1164,11 +1180,26 @@ row: Enter keeps, Escape leaves it) and Move up / down.
   one user turn (`steered: true`, which `ai_protocols.base.attach_index`
   passes over, so the question's own pictures and PDFs stay on the
   question), the stream says `{"steered": {"ids"}}`, and the next round
-  opens. A plain chat (no tools) is cut and goes on the same way. A
-  provider silent while it thinks is cut at its next event, as Stop is. In the
+  opens. A plain chat (no tools) is cut and goes on the same way. In the
   transcript the reply's message so far ends there, the user's follows
   (`steeredMessage`, tagged "Steered") and the reply goes on in a message
   of its own, so the conversation replays as it happened.
+- **How a read ends at once.** A turn that may be cut is read in a thread
+  of its own, one event each time the reply asks for one, so nothing is
+  read ahead (`TurnRead.events`). A message steered in, or the client
+  leaving (Stop, a dropped connection: the reply's `stopped` is an
+  `ai_client.Alarm`, which wakes what watches it), ends the reply's wait
+  for the next event at once, on every system. The call is then given up
+  (`_OpenCall.interrupt`): its call slot is freed at once, so the next
+  round never waits for one, and its socket is shut down. That ends the
+  abandoned read at once on Linux and macOS, and on Windows only when the
+  provider next sends (a blocked receive there does not wake, and closing
+  the socket from another thread could hand a reused handle to the read).
+  The reading thread closes the response when its read ends; a close by
+  anyone else then frees the slot alone, since closing an `HTTPResponse`
+  that another thread is reading waits for that read. A turn whose stop
+  reason was read before the wake goes on whole: its calls are skipped as
+  above, and a token report cut after it is lost.
 - **A reply that ends before it takes one** (stopped, failed, done just
   before) leaves it queued at the front, and the steer request a reply
   that already ended answers 404: it goes as the next message, or waits in
@@ -1189,6 +1220,72 @@ while the model writes, calls not started skipped and the running one
 finished, the last round left whole, a plain chat cut; refusals) and the e2e
 `chat navigation` step "a message sent while the reply runs waits in the
 queue".
+
+### Selecting the transcript
+
+Text selected in the transcript can be asked about, copied or kept as a
+note, for Gamma AI and a computer's agent alike (`chat/ChatSelectionTip.jsx`,
+`chat/chatQuotes.js`). The selection counts when it starts in a message
+(not in an edited message's field) and ends inside the transcript.
+
+- **The popup.** A selection gets the selection popup the PDF's and the
+  code view's text get (`TipFrame`, `pdf/selectionTip.js`): a mouse's once
+  the hand moves on from the release, a finger's once its handles have been
+  still for 350 ms. It holds **Ask about this** and the ⋯ of the
+  selection's menu; its buttons act on the press, so the selection stays.
+  A press elsewhere, a scroll of the transcript or the selection going puts
+  it away. A workspace viewer's chat has none.
+- **The menu.** A right-click on the selected text, or the popup's ⋯,
+  opens a `ContextMenu`: Ask about this, Copy, and **Create note** ▸ *As it
+  is* / *Structured by AI*. A right-click elsewhere keeps the browser's
+  menu. Every row acts on the selection as it was when the popup or the
+  menu opened.
+- **What is taken.** The selection's Markdown source, what Ctrl+C puts on
+  the clipboard (`shared/ui/Widgets.jsx` `selectionMarkdown`: formulas as
+  their TeX, lists, links and emphasis as written; Copy puts the HTML
+  beside it). The row's own parts are marked `data-markdown-copy-ignore`
+  (the steps pill, the coverage pills, the chips, the Steered tag, the
+  foot), so a selection across two messages takes their words alone. A
+  heading or list item a selection only touches, as a triple click's does
+  at the next block, takes nothing.
+- **Ask about this** adds the passage to the composer as a chip, "Quote
+  from the chat" (`isQuote`, at most `MAX_CHAT_QUOTES` 6, each cut at
+  `QUOTE_MAX` 8,000 characters, one passage twice one quote), and puts the
+  focus in the box. The message goes with its quotes ahead of what the
+  user wrote, each a Markdown quote (`withChatQuotes`; `chatQueue.js`
+  `messageText`): Gamma AI's prompt and saved text, a computer agent's
+  message, a queued and a steered one alike. So the model reads it in the
+  question, the conversation replays it with the turn, and an export keeps
+  it. No request field carries it, and the server does nothing new. The
+  quotes leave with the message, and stay with the draft across a remount
+  in the conversation they were made in.
+- **A sent message** draws its quoted lines as quotes (`splitQuoted`,
+  `.chatUserQuote`: three lines at most, the whole in its title): a
+  transcript quote ahead of the words, and the start of the PDF passages
+  and note text after them, which `quotedText` now quotes on every line.
+- **Create note ▸ As it is** splits the passage into blocks as the
+  editor's paste as blocks does (`POST /api/markdown-blocks`) and App's
+  `noteFromChat` puts them in: at the end of the open page's notes (the
+  first one scrolled to and flashed), or, in a folder's or the library's
+  chat, as a page of its own in the folder shown (`POST /api/pages`, then
+  one `POST /api/pages/{id}/ops` batch), named by the note's first line
+  (`noteTitle`), a heading that names it left out for its own blocks. The
+  row's title says which. None is offered where the notes are locked, the
+  page is read-only or the workspace can't be written. The note is the
+  person's: a client's op cannot stamp an agent.
+- **Create note ▸ Structured by AI** sends the passage to Gamma AI first,
+  in a plain chat request of its own (`/api/ai/chat`, not streamed, with
+  the chat's model, effort and speed, no history, page or tools:
+  `structurePrompt` asks for a heading, subheadings and nested bullet
+  points, every fact kept and nothing added), with a row in Background
+  tasks whose Stop gives it up. The answer (a fence around the whole of it
+  taken off, `structuredNote`) is made a note as above. The conversation
+  takes no turn for it. Greyed, with the reason in its title, where no AI
+  service is connected.
+
+Tests: `tests/chatQuotes.test.mjs`, `tests/chatQueue.test.mjs` (a quote as
+it is sent, steered and shown) and the e2e `chat navigation` step "text
+selected in a reply is quoted into the next message".
 
 ### Mentioning library papers
 
@@ -1342,7 +1439,7 @@ Reasoning models burn invisible tokens — keep `max_tokens` generous (empty
 responses raise with the finish reason). `/api/ai/models` feeds the chat
 panel's model chip and the prompt editor (four editable prompts: chat system,
 metadata extraction, PPT citation — defaults in `ai.py` — and the library-agent
-base prompt, default in `ai_tools.py`).
+base prompt, default in `ai_tools/prompt.py`).
 
 ### Pictures
 
@@ -1459,7 +1556,7 @@ note's, and the saved conversation points at them, so `upload_gc.referenced`
 reads the `chats` and `chat_history` rows for `/api/uploads/` names beside
 the blocks ([user_db.md](user_db.md) "Stored files"): a picture lives while
 a chat or a note names it, and 30 days more. A written block may only name
-uploads that exist (`missing_uploads` in `ai_tools.py`); `clip_region`
+uploads that exist (`missing_uploads` in `ai_tools/notes.py`); `clip_region`
 stores a region or a handwriting view for the notes to embed
 ([ai_tools.md](ai_tools.md)).
 
@@ -1536,9 +1633,10 @@ server, `chat/chatSettings.js` in the client):
   on an approval card in the reply ([Asking before a call](#asking-before-a-call-approvals)).
 - **Off**: its tools are not offered, and a call is refused.
 
-Reading is allowed by default and changes ask: Save papers, Rename pages,
-Move pages, Restore deleted pages, Delete pages, Organize folders and
-labels, Delete folders and labels and Edit note blocks start at Ask. The
+Reading is allowed by default and changes ask: Save papers, Create pages,
+Rename pages, Move pages, Restore deleted pages, Delete pages, Organize
+folders and labels, Delete folders and labels, Edit note blocks, Comments
+and highlights and Draw on pages start at Ask. The
 server gives a permission the request leaves out the same default, so a
 changing tool added later asks until the user allows it. **Use journal
 sign-ins** is part of fetching, not a call of its own, so it is only Allow
@@ -1560,9 +1658,9 @@ sit below its description. Each column offers four presets:
 
 Individual changes show **Custom**. The stored map is account-synced. Its
 localStorage JSON is `gamma-ai-agent-perms` = `{folder, pdf, notes}` →
-`{list, read, block_read, view, search, web_search, web_read,
-publisher_cookies, save, rename, move, restore, delete, organize,
-organize_delete, block_edit}` → `"allow"` / `"ask"` / `"off"`, and a pre-kind flat map is
+`{list, read, block_read, view, search, show, web_search, web_read,
+publisher_cookies, save, create, rename, move, restore, delete, organize,
+organize_delete, block_edit, comment, draw}` → `"allow"` / `"ask"` / `"off"`, and a pre-kind flat map is
 applied to every kind on read.
 A stored boolean is the older on / off value (`normalizePerm`): `false` is
 Off, and `true` is the permission's default. So a change that was on asks,
@@ -1578,25 +1676,31 @@ request's `permissions`.
 
 One permission per capability: List pages (`list_pages`, the folder tree
 `list_folders` and Recently deleted `list_deleted`), Read pages (`read_page`, the page and folder chats
-`read_chats`, and the citation records `cite`), Read note blocks, View pages
+`read_chats`, the citation records `cite`, the notes linking to a page
+`backlinks`, and `export`, a file for the user), Read note blocks, View pages
 and handwriting (`view` → `view_pdf_page`, a rendered page picture for a
 scan or a figure, `view_ink`, the user's handwriting, and `view_image`, the
 pictures a note embeds), Search library (`search_library` — notes, PDF text and text files; the stored key is
-still `search`), Search online (`web_search` → `search_papers`,
+still `search`), Show pages (`show` → `show_page`, which acts in the app), Search online (`web_search` → `search_papers`,
 `related_papers` and, when the account has a web engine for this chat,
 `search_web`), Fetch documents (`web_read` → `fetch_paper`, `fetch_url` and,
 with the helper switch on, `read_paper`; the web tools are
 read-only and described in [ai_tools.md](ai_tools.md), the web engine in its
 "search_web" section), Save papers (`save` → `save_paper`, in every chat
-kind), Rename pages, Move pages, Restore deleted pages (`restore` →
+kind), Create pages (`create` → `create_page`, folder chats only), Rename pages, Move pages, Restore deleted pages (`restore` →
 `restore_page`, folder chats only), Delete pages (`delete` →
 `delete_page`, to Recently deleted, folder chats only), Organize folders
 and labels (`organize` → `rename_folder`, `create_label`, `rename_label`,
 `label_page`, folder chats only), Delete folders and labels
 (`organize_delete` → `delete_folder`, `delete_label`, folder chats only),
-and Edit note blocks (one permission
+Edit note blocks (one permission
 for `edit_block`, `create_block`, `move_block`, `delete_block` and
-`clip_region`, which stores a picture for the notes). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
+`clip_region`, which stores a picture for the notes), Comments and
+highlights (`comment` → `comment`, `resolve`, `highlight`) and Draw on
+pages (`draw` → `draw`, `add_text_box`, `place_picture`, `add_sheet`). A
+tool that acts in the app (`show_page`, `export`) is offered only to a
+streamed chat whose client says it shows pages (`shows_pages`, sent by
+ChatDock; `available`, [ai_tools.md](ai_tools.md#show_page-both-scopes)). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
 includes the web permissions and the page viewer. **Use journal sign-ins**
 (`publisher_cookies`, default Allow) controls whether `fetch_paper` and
 `fetch_url` may use the caller's connected publisher cookies; the browser handoff for a blocked fetch
@@ -1756,7 +1860,7 @@ A call of a tool whose permission is Ask waits for the user
    is an error chip, and the model hears that the folder or label changed
    while the card waited (`CHANGED_WHILE_ASKING`). A call naming several pages runs with
    its card's `digest` (`run_agent_tool(…, approved=)`): planned again (a
-   rename, move or label under the write lock, `ai_tools._batch_write`), it
+   rename, move or label under the write lock, `ai_tools.organizing._batch_write`), it
    writes nothing when a listed page or the target changed while the card
    waited (`ai_tools.BATCH_CHANGED`).
    Declined, or unanswered after `APPROVAL_TIMEOUT` (10 minutes), the call
@@ -1822,7 +1926,8 @@ reply takes the drawing away (`noteReview.settle`).
   browser: localStorage `gamma-ai-chat-grants`, keyed by the conversation's
   first message id, the 100 most recent conversations. It is sent as
   `granted` with every request of that conversation, and the composer shows
-  an **Allowed in this chat** chip; clicking it makes the chat ask again. A
+  an **Allowed in this chat** chip (a shield; its tooltip lists the grants);
+  clicking it makes the chat ask again. A
   new chat, or another conversation opened from history, asks again.
 - **Always allow** sets the permission to Allow for the chat's kind in the
   account preference, the same change as in Settings.

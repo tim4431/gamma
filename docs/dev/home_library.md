@@ -471,7 +471,7 @@ while any acted-on page is one, and a move into a page or out to the
 library that names one opens the dialog instead. Its dialog (`vault/FolderPickerDialog.jsx`) picks the
 workspace and the folder, and whether the file goes on pushing its new
 versions (a vault of one file). Duplicate leaves such pages out
-(`libraryUtils.duplicable`): a copy's stored file would stop answering when
+(`explorer/workFolders.js` `fileRules(…).duplicate`): a copy's stored file would stop answering when
 the file changes. The preference `openAddsToLibrary` stores every opened
 PDF at once instead ([settings.md](settings.md)).
 
@@ -739,7 +739,8 @@ files (any file, with no picker filter: a PDF and a Markdown note as
 before, any other file as a page whose document it is,
 `transfers/documentUploads.js`; a dropped folder leaves its dot entries,
 `node_modules`, temporary names and executables out, `dropFilter`, and
-asks first past 100 files), start a blank note page (`createPage`) and open
+goes up as one batch that asks first past 100 files or 500 MB,
+[import_export.md](import_export.md#uploading-a-folder-or-many-files)), start a blank note page (`createPage`) and open
 the Import dialog. A footer offers the first tour when it can start, and
 the drop tip. The panel shows only once the listing has loaded, only where the
 library can be organized (`lib.organize`: not for a workspace viewer or a
@@ -947,8 +948,11 @@ page the panel is on:
 - A page: Open (Enter) · Rename (F2) | New page inside (one page) | Pin ·
   Add label ▸ · Move to folder ▸ (a library page among them) · Move into
   page… · Move to library (a sub-page among the topmost) · Add to library…
-  (opened PDFs, in place of the two moves) · Duplicate (not an opened PDF) |
-  Copy link · Copy PDF (Copy file for another format: the desktop app, one
+  (opened PDFs, in place of the two moves) · Duplicate (not an opened PDF) ·
+  Copy to workspace ▸ (the workspaces the account edits but this one, none
+  for an opened file or a guest; it confirms first when some pages come
+  without a PDF still in Zotero, [workspaces.md](workspaces.md) "Copies
+  between workspaces") | Copy link · Copy PDF (Copy file for another format: the desktop app, one
   page whose document is a file, the shell's `copy-file` ask,
   [architecture.md](../../desktop/docs/architecture.md)) · Share… · Export… ·
   Ask AI about this page · Properties | Delete (Del). The three rows for

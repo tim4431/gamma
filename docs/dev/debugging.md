@@ -146,7 +146,7 @@ so a lost disk does not take the library with it (`gamma/s3.py`). The
 bucket is a backup target only: nothing reads from it except a restore. It
 is filled in one of two ways:
 
-- **By backup tasks** (`gamma/bucket_snapshots.py`): an admin sets up the
+- **By backup tasks** (`gamma/snapshot_copies.py`): an admin sets up the
   bucket in Settings → Backups → Bucket, and each backup task with *Copy to
   the bucket* on sends it the workspace snapshots it takes. The bucket has
   no schedule of its own.
@@ -155,6 +155,10 @@ is filled in one of two ways:
   every database and uploaded file to it every interval, with no account
   and no task. This is how an operator or a hosted container backs up the
   whole server.
+
+A folder in Google Drive can take the backup tasks' snapshots too, beside
+the bucket or in its place ([Google Drive](#google-drive) below); the
+off-site rounds go to the bucket only.
 
 The bucket needs boto3: the Docker image and the desktop app's frozen
 backend (`desktop.yml`, with `build_backend.py` collecting botocore's and
@@ -191,7 +195,7 @@ server's) uploads each snapshot it takes, whole, to
 writes `<prefix>snapshots/<workspace>/workspace.json` (`{id, name, kind}`)
 beside it, which names a workspace a new server does not have. The task's
 retention then prunes its copies in the bucket as it prunes its snapshots
-on the server (`bucket_snapshots.prune`): the newest are kept, the copies
+on the server (`snapshot_copies.prune`): the newest are kept, the copies
 of other tasks are never touched. A copy that fails (the bucket refuses,
 or no bucket is set up any more) leaves the snapshots on the server and
 fails the run with the reason (`last_error`, the `backup-failed` notice);
@@ -212,6 +216,95 @@ manifest, the admin its owner. That is the way back after a lost disk: set
 up the bucket on the new server and restore each workspace; its members
 are invited again. Deleting a task, or a workspace, leaves its copies in
 the bucket.
+
+#### Google Drive
+
+The backup tasks' snapshots can also go to a folder in a Google account's
+My Drive (`gamma/gdrive.py`, `gamma/gdrive_account.py`; why it is built so:
+[google-drive-backup.md](../research/google-drive-backup.md)). A task's
+*Copy to Google Drive* works as *Copy to the bucket* does, and a task may
+have both. Both clients are backup stores (`gamma/backup_store.py`: the
+`Store` interface of seven methods, `StoreError` for a call refused or
+unanswered, `StoreConfigError` for none that can work, the rule for a
+key), and `snapshot_copies.DESTINATIONS` names the two (`bucket`, `drive`)
+with what a message calls each, why nothing can be copied there while it
+is not set up, whether it is and its client; the scheduler, the routes and
+the jobs read a store from there, and the pane's wording of each is
+`frontend/src/settings/backupStores.js`. Each store a task copies to is
+checked when it is saved and copied to in turn when it runs. A copy
+that fails there fails the run with `last_error` naming that store, after
+the other store's copy has been tried. The off-site rounds do not go to
+Drive.
+
+**Connecting.** Only an admin connects it, in Settings → Backups → Google
+Drive, and only an admin's tasks copy to it, as with the bucket. Connect…
+asks for the folder's name (`Gamma backups`; one name, no `/`) and starts
+Google's device flow: Google answers a code and its address
+(`google.com/device`), which the dialog shows. The person enters the code
+there on any device, signed in to the account to back up to, and allows
+access. While the dialog is open it posts `/api/admin/gdrive/poll`, which
+asks Google at most once per the interval Google gave (5 s, 5 more on each
+`slow_down`). No answer or a 5xx waits for the next interval. A refusal,
+a grant without `drive.file` (the person unticked it on the consent page)
+or an expired code ends the attempt with the reason. Closing the dialog
+stops waiting. The code in progress is kept in memory only, so a restart
+forgets it.
+
+**What is saved.** Once Google says yes, the account's address is read
+(`about`) and the connection is stored in users.db under the `settings`
+key `gdrive`: the refresh token, encrypted with the data directory's key
+as the bucket's secret key is; the address and name; the folder; when it
+was made; and the OAuth client's ID. A new connection replaces the old
+one and revokes its token. Edit… changes the folder new copies go to
+(copies already in the old folder stay there) or disconnects, which
+revokes the token at Google and forgets it. The copies stay in Drive.
+
+**The OAuth client.** The scope is `drive.file` alone: Gamma sees and
+changes only the files it made, never the rest of the Drive. The client is
+of Google's "TVs and Limited Input devices" type, the one the device flow
+takes, whose secret Google does not treat as secret. It is Gamma's own
+(`config.GOOGLE_DRIVE_CLIENT`, empty until one is registered) unless
+`GAMMA_GOOGLE_DRIVE_CLIENT_ID` and `GAMMA_GOOGLE_DRIVE_CLIENT_SECRET` name
+another. Until there is one, the section reads *Not available* and names
+the two variables. A refresh token works only with the client that made
+it, so a connection made through another client reads "connected through
+another Google OAuth client" and must be made again. The client's Google
+Cloud project must be *In production*: one still in *Testing* gets
+refresh tokens that expire after 7 days. `GAMMA_GOOGLE_OAUTH_BASE` and
+`GAMMA_GOOGLE_API_BASE` point at stand-ins for a test.
+
+**The folder.** A key's path is a folder path under the folder in My
+Drive's root: `snapshots/<ws>/<name>.zip` is `Gamma backups/snapshots/<ws>/
+<name>.zip`, so the person can find and download a copy in Drive. Folders
+are made as a write needs them and their ids kept for the client's life,
+one task run or one listing. Drive names are not unique, so a write first
+looks for its name in its folder and replaces that file's content (the
+oldest of several). With `drive.file`, a folder of the same name the person
+made is not seen, and one they trashed is not used: a new one is made.
+Deleting a copy deletes it for good, not to the trash, which would still
+count against the account's storage. Because `drive.file` reaches only the
+client's own files, a new server finds the copies (the way back after a
+lost disk) only when connected through the same client.
+
+**Calls.** Plain urllib on the server's network route
+([network_proxy.md](network_proxy.md)), through `gdrive._request`, which
+the tests replace. An access token lasts an hour. It is kept in memory per
+connection and renewed when under a minute is left, or once on a 401. A
+429, a 5xx, a rate-limit 403 or no answer is tried again after an
+exponential pause with jitter, at most 5 times (Test: once). An upload is
+a resumable session sent in 8 MiB chunks; after a chunk got no answer or a
+5xx, Drive is asked how much it holds and the upload resumes there, and a
+session Drive forgot starts over once. A full Drive fails the copy with
+"the Google account's storage is full". A token Google no longer honours
+(revoked by the person, or unused for six months) fails with "connect
+Google Drive again". Each is a `DriveError` (an OSError) or a
+`DriveConfigError` (a ValueError), as the bucket's are.
+
+**Tests.** `tests/test_gdrive.py` against `tests/gdrive_fake.py`, an
+in-memory Google (the device flow, tokens and revocation, Drive's queries,
+folders, resumable uploads with their 308s, downloads and deletes, with
+injected failures and a storage cap). The transport itself is tested
+against a local HTTP server. Nothing here was run against Google itself.
 
 #### The off-site rounds
 
@@ -623,7 +716,10 @@ within the test that started it: the autouse `_jobs_end_with_their_test`
 waits for every job still running after a test, before its patches are
 undone, and fails the test whose job is still running 30 s on, since a
 job that ended during the next test recorded itself in that test's
-users.db), `at_once` / `together`
+users.db; an agent's probe a read path started in the background ends
+within its test too, `_agent_probes_end_with_their_test`, which then
+drops the kept probes, since one still running into the next test kept
+this computer's own Codex as the answer to that test's stand-in), `at_once` / `together`
 (callables in threads started on one barrier), `slowed` (widens a writer's
 window between its check and its write, so a race test fails without the
 lock) and `recv` (the next message of a kind on a page socket).
@@ -867,6 +963,25 @@ instead of fixing; the fix removes its entry.
   2026-11-14): one run ended with an uncaught file-system error (its stack
   lost) while the backend suite and the frontend tests ran beside it; 18
   runs since, under the same load, passed.
+- **test_cloud_auth: test_profile_pull_push_and_debounce**
+  (`backend/tests/test_cloud_auth.py:864`, this machine, 2026-11-18): an
+  assertion failed in the full parallel suite while five browser groups
+  ran beside it; the file alone passed 41/41. Likely the debounce: with
+  `PUSH_DELAY` at 0.2 s, three quick PATCHes that take longer than that
+  under load settle apart and send two PUTs where the test counts one.
+- **test_notion_nfm: test_long_input_reads_fast**
+  (`backend/tests/test_notion_nfm.py:879`, this machine, 2026-11-18): the
+  ten long inputs took 5.23 s against the test's 5 s bound in the full
+  parallel suite while two browser groups (notes-pdf-share, translation)
+  ran beside it; the file alone passed. A wall-clock bound on pure Python
+  that the machine's load decides.
+- **notes: images and tables are objects — a press selects…**
+  (`frontend/tests/e2e/scenarios/notes.mjs:2082`, this machine,
+  2026-11-18): the press on the table's bottom margin opened no editor.
+  The screenshot shows the table under the step's 200 px image, its
+  bounding box read before the image loaded: the image pushed the table
+  down and the press missed. Seen while the backend suite ran beside the
+  run; the group run alone passed.
 
 ### What a run leaves behind
 

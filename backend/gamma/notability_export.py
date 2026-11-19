@@ -40,7 +40,7 @@ from .documents.formats import IMAGE_EXTENSIONS
 from .documents.model import page_document, pdf_file_hash, stored_name
 from .note_markup import alt_and_width
 from .notebook import DEFAULT_PAPER, normalize_paper, sheets_of
-from .pdf_image import svg_png
+from .pdf_image import SVG_DRAW_SIDE, svg_png
 from .pdf_export import display_size, page_frame
 from .pdf_typeset import BOLD, ITALIC, LINK, MARK, MONO, STRIKE, UNDERLINE
 from .picture import (MIN_SIDE, URL_RE, caption_text, image_size, is_picture, normalize_picture, picture_page,
@@ -61,7 +61,6 @@ _QUOTE = re.compile(r"^[ \t]{0,3}>[ \t]?(?P<text>.*)$")
 _NUMBERED = re.compile(r"^(?P<n>\d{1,6})\. (?P<text>.*)$", re.S)
 _TODO = re.compile(r"^- \[(?P<box>[ x])\] (?P<text>.*)$", re.S)
 _BULLET = re.compile(r"^[-*+] (?P<text>.*)$", re.S)
-SVG_PNG_SIDE = 2048  # the longer side of the PNG an SVG picture goes into a note as
 
 # What a page loses on its way into a note, by kind, as the export's
 # warnings say it once per page (``reasons``); ``{n}`` is the count.
@@ -472,7 +471,7 @@ class _Page:
         picture whose size reads (``picture.image_size``). A GIF is its
         still frame under Images/ and itself under Assets/<id>/media.gif,
         as Notability keeps one. Notability takes no SVG, so an SVG is a PNG
-        of it, SVG_PNG_SIDE pixels on its longer side (``pdf_image.svg_png``),
+        of it, SVG_DRAW_SIDE pixels on its longer side (``pdf_image.svg_png``),
         and False, counted ("picture svg"), when it cannot be drawn. Any
         other file goes under Images/ as it is."""
         path = self.stored(url.rsplit("/", 1)[-1])
@@ -488,7 +487,7 @@ class _Page:
         n = sum(1 for m in self.draft.media if isinstance(m, nw.Picture)) + 1
         if kind == "image/svg+xml":
             try:
-                png, pw, ph = svg_png(data, SVG_PNG_SIDE)
+                png, pw, ph = svg_png(data, SVG_DRAW_SIDE)
             except ValueError:
                 self.left_out["picture svg"] += 1
                 return False
