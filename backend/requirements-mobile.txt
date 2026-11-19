@@ -10,13 +10,21 @@
 # tools/check_mobile_pins.sh resolves every pin for the four platforms the
 # apps ship (iOS device and simulator, Android arm64 and x86_64).
 #
-# Nothing is left out. The PDF reader, PyMuPDF, has iOS and Android builds
-# on Flet's index, so the server in the apps reads PDFs as every other
-# server does: page text with each glyph's box (quotes drawn under the
-# words), page and region pictures for the AI and MCP, exported notes placed
-# in a page's free space, area pictures in the Logseq export, and the
-# base-14 fonts and a CJK fallback built into the library, so a PDF whose
-# fonts are not embedded renders without system fonts.
+# The PDF reader, PyMuPDF, has iOS and Android builds on Flet's index, so
+# the server in the apps reads PDFs as every other server does: page text
+# with each glyph's box (quotes drawn under the words), page and region
+# pictures for the AI and MCP, exported notes placed in a page's free space,
+# area pictures in the Logseq export, and the base-14 fonts and a CJK
+# fallback built into the library, so a PDF whose fonts are not embedded
+# renders without system fonts.
+#
+# Two server packages are left out (test_mobile_requirements.EXCLUDED says
+# why): truststore, and tesserocr, the text recognition of scanned PDFs,
+# which has no iOS or Android wheel on PyPI or Flet's index (the apps'
+# PyMuPDF is built without its OCR too). The apps' server reports no engine
+# (gamma/ocr_engine.py ``probe``), so the Document menu offers no Recognize
+# text there; recognizing in the app's web view is the next step
+# (docs/research/ocr.md).
 
 fastapi==0.136.0
 starlette==1.9.0

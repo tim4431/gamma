@@ -20,6 +20,7 @@ import { installScrollSnap } from "./scrollSnap.js";
 import { ACROSS, FALLBACK_H, FALLBACK_W, PAGE_GAP, crossStart, pageAt, pageStartAt } from "./pageLayout.js";
 import { selectionParagraphs, textRuns } from "./pdfTranslate";
 import { knownScan, pageText } from "./pageText.js";
+import * as ocrState from "./ocrState.js";
 import * as translateState from "./translateState.js";
 import { langOfKey, sameModel } from "./translateRecall.js";
 import { TransLayer } from "./TransOverlay.jsx";
@@ -28,7 +29,7 @@ import { blockAt, blocksQuote, hasMenu, highlightOn, linksOff, marksOver, menuBl
 import { createPageScale } from "./pageScale.js";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
-import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
+import { apiJson, copyText, getCurrentWorkspace, withShare, withWorkspace } from "../shared/lib/utils";
 import { useCopied } from "../shared/ui/Widgets";
 import { Chevron, Collapse, IconSwap } from "../shared/ui/MotionWidgets";
 import { keepSelection, menuPress, tipPress } from "../shared/ui/press.js";
@@ -216,8 +217,14 @@ function showDoc(url) {
   };
 }
 // The in-document search's page texts, by parsed document (PdfViewer's
-// search effect): freed with the document when DOC_CACHE lets it go.
+// search effect): freed with the document when DOC_CACHE lets it go. Each
+// set of texts carries the revision of the document's recognized words it
+// was read under (`rev`, pdf/ocrState.js); another revision reads afresh.
 const SEARCH_TEXT = new WeakMap();
+// The words the server recognized in a document's page pictures reach its
+// pages' text through the app's fetch (the share token and the workspace go
+// with it), and the translated view hears of the pages they change.
+ocrState.connect({ json: (path) => apiJson(path), workspace: getCurrentWorkspace, textChanged: translateState.textChanged });
 
 // Whether two per-page slices of the comment anchors read the same
 // (anchorsByPage), as sameHighlights.
@@ -622,6 +629,18 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const [pdfDoc, setPdfDoc] = useState(null);
   const [numPages, setNumPages] = useState(0);
   const [docSeq, setDocSeq] = useState(0); // bumped per document — keys the page tree so swaps are atomic
+  // The stored file the document on screen is (`fileId`, else the upload
+  // its URL names), whose recognized words its pages read (pdf/ocrState.js),
+  // set as the document is. The viewer renders again when those words'
+  // revision moves on: each page's own (pageRevision) rebuilds a changed
+  // page's text layer, Ctrl+F's texts are read again, and the pages near
+  // the reader are seeded again from the kept translations (a change stops
+  // a seed under way).
+  const [ocrDoc, setOcrDoc] = useState("");
+  const ocrDocRef = useRef("");
+  const fileIdRef = useRef(fileId);
+  fileIdRef.current = fileId;
+  const ocrRev = ocrState.useOcrRevision(ocrDoc);
   // The page in view (docs/dev/handwriting.md "Copy, cut and paste"): of the
   // page boxes intersecting the scroller, the one whose centre lies nearest
   // the scroller's centre (down or across, whichever way the pages run),
@@ -890,8 +909,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     searchRef.current = pdfDoc ? async (re) => {
       const gen = ++searchGenRef.current;
       const out = [];
+      const rev = ocrState.revision(ocrDocRef.current);
       let texts = SEARCH_TEXT.get(pdfDoc);
-      if (!texts) { texts = new Map(); SEARCH_TEXT.set(pdfDoc, texts); }
+      if (texts?.rev !== rev) { texts = Object.assign(new Map(), { rev }); SEARCH_TEXT.set(pdfDoc, texts); }
       for (let p = 1; p <= pdfDoc.numPages && out.length < 200; p++) {
         let text = texts.get(p);
         if (!text) {
@@ -1105,6 +1125,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     if (displayedDocRef.current !== doc) keepLeaving();
     displayedDocRef.current = doc;
     docUrlRef.current = url;
+    // its recognized words asked for afresh on each open
+    const ocrId = fileIdRef.current || docIdOf(url) || "";
+    ocrState.register(doc, ocrId, url);
+    ocrDocRef.current = ocrId;
+    setOcrDoc(ocrId);
     commitLayout(heights, widths, exact);
     if (skeletonRef.current !== url) setDocSeq((s) => s + 1);
     skeletonRef.current = null;
@@ -1720,7 +1745,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     if (!pdfDoc || transRunning) return;
     const id = setTimeout(() => seedTrans([curPage, curPage + 1, curPage - 1]), SEED_REST_MS);
     return () => clearTimeout(id);
-  }, [pdfDoc, transUrl, translateKey, transFile, curPage, transRunning, translateRecall]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pdfDoc, transUrl, translateKey, transFile, curPage, transRunning, translateRecall, ocrRev]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A formula token's span on any page of the document: a token the model
   // moved across a page join points into the other page's block.
@@ -2388,7 +2413,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       <CommentMarginContext.Provider value={commentMargin}>
       <MarginStackContext.Provider value={marginStack}>
       {Array.from({ length: numPages }, (_, i) => (
-        <PdfPage key={`${docSeq}-${i + 1}`} pageNumber={i + 1} pdfDoc={pdfDoc} zoom={pageScale}
+        <PdfPage key={`${docSeq}-${i + 1}`} pageNumber={i + 1} pdfDoc={pdfDoc} zoom={pageScale} textRev={ocrState.pageRevision(ocrDoc, i + 1)}
           baseWidth={pageWidths[i] || 0} baseHeight={pageHeights[i] || 0} across={across}
           marginLeft={withMargin ? pageMargin(i + 1) : null} pageTop={pageTops[i] || 0} marginScale={withMargin ? scale : 0}
           activeHl={targetPage === i + 1 ? activeHl : null}
@@ -2541,7 +2566,9 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
 // zoom: the viewer's pageScale store; baseWidth × baseHeight: the page's
 // size at scale 1 as the viewer knows it, until pdf.js measures it.
 // across: the pages run across, side by side (pdf/pageLayout.js).
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom, highlights, anchors, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, baseWidth = 0, baseHeight = 0, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, onParaMenu = null, toolArmed, marks, across = false, marginLeft = null, pageTop = 0, marginScale = 0, activeHl = null }) {
+// textRev: the revision of the words the server recognized on this page
+// (pdf/ocrState.js pageRevision), under which its text layer is built.
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom, textRev = 0, highlights, anchors, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, baseWidth = 0, baseHeight = 0, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, onParaMenu = null, toolArmed, marks, across = false, marginLeft = null, pageTop = 0, marginScale = 0, activeHl = null }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -2684,7 +2711,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
   // pdf_viewer.css's rotation transforms. Until then it is pdf.js's inset 0
   // and fills the box, and 300 empty layers restyle nothing on a zoom. Only
   // a page far from the view drops it (`far`), to be built again after its
-  // next paint; nothing else writes its size or transform.
+  // next paint; nothing else writes its size or transform. A page whose
+  // text changed (`textRev`: the server recognized its words) builds it
+  // again; the old one stays until the new words are in.
   useEffect(() => {
     if (far) {
       const textL = textRef.current;
@@ -2708,11 +2737,11 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
       try {
         const vpBase = page.getViewport({ scale: 1 });
         const textL = textRef.current;
-        textL.innerHTML = "";
         // A scan's invisible OCR layer comes repaired: one band a printed
         // line, its words tiling it (pdf/pageText.js, pdf/scanText.js).
         const tc = await pageText(page);
         if (cancelled) return;
+        textL.innerHTML = "";
         // pdf.js sizes each span (scaleX) from a canvas measure in the PDF's
         // own language, but the spans would inherit <html lang> — the
         // interface language. Under zh-CN a generic `serif` then renders as
@@ -2749,7 +2778,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
       }
     });
     return () => { cancelled = true; rested(); layer?.cancel(); };
-  }, [page, paintedPage, far]);
+  }, [page, paintedPage, far, textRev]);
 
   // Once a zoom settles (`rest`) the spans are re-measured at the new size,
   // which is what pdf.js's own viewer does in place of a rebuild: the

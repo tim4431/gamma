@@ -18,40 +18,70 @@
 //   that say `ocr`; the cover's requests do not, and neither page's brief
 //   request does (the server checks a stored file's opening pages itself).
 // The translate endpoints are answered locally ("译:" + each text).
+//
+// Then the server's text recognition (docs/dev/pdf_loading.md, gamma/pdf_ocr.py,
+// pdf/ocrState.js, pdf/ocrText.js), with the real engine: a printed scan
+// whose invisible layer a poor OCR garbled (backend/tests/ocr_fixtures.py
+// printed_scan_pdf, built through the backend's Python), read through the
+// Document menu's "Recognize text in this PDF":
+// - its row is offered for the scan, and the run is a Background tasks row
+//   that ends with its summary in the status line;
+// - the text layer then holds the recognized words, the printed ones, each
+//   span over its printed word, none of the garbled layer's;
+// - Ctrl+F finds "resonance", a word only the recognition read, where it is
+//   printed;
+// - of the two highlights made on the garbled layer before the run, both keep
+//   their place; the one whose quote reads like the recognized text takes it
+//   as its quote, the one garbled past that guard keeps its own;
+// - the metadata popover's text cell says the text was recognized and when,
+//   and the Document menu no longer offers to recognize it;
+// - a scan with no layer at all: the popover's cell points to Recognize text,
+//   which the Document menu offers.
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { pageText } from "../../../src/pdf/pageText.js";
-import { fakeAiModels, wanted } from "../harness.mjs";
+import { PYTHON, ROOT, fakeAiModels, live, wanted } from "../harness.mjs";
 import { COVER, COVER_TITLE, PAGE_H, PAGE_W, PARAGRAPH, printedWidth, scanPaper } from "../scanPdf.mjs";
 import { movePast, selectPdfText, waitForPdf } from "./pdf.mjs";
 
-export async function scanLayerScenarios({ server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage }) {
+// What `sel` matches on page `pn` of the viewer shown, in pt from the page's
+// top-left corner (y down), with its text. Both papers here are 612 pt wide.
+const boxesOn = (page, pn, sel) => page.evaluate(([pn, sel, W]) => {
+  const wrap = [...document.querySelectorAll(`.pdfPageWrap[data-page="${pn}"]`)].find((el) => el.offsetParent !== null);
+  if (!wrap) return [];
+  const at = wrap.getBoundingClientRect(), k = W / at.width;
+  return [...wrap.querySelectorAll(sel)].map((el) => {
+    const r = el.getBoundingClientRect();
+    return { text: el.textContent, x0: (r.left - at.left) * k, x1: (r.right - at.left) * k, top: (r.top - at.top) * k, bottom: (r.bottom - at.top) * k };
+  });
+}, [pn, sel, PAGE_W]);
+
+// The text layer's spans of page `pn`, once two readings agree (a layer is
+// built when the scroller rests) and `ready(spans)` says they are the ones
+// awaited.
+const restingSpans = (page, until, pn, ready = () => true, timeout = 8000) => {
+  let last = "";
+  return until(async () => {
+    const now = (await boxesOn(page, pn, ".textLayer span")).filter((s) => s.text);
+    const same = now.length && JSON.stringify(now) === last;
+    last = JSON.stringify(now);
+    return same && ready(now) && now;
+  }, { what: `page ${pn}'s text layer at rest`, every: 150, timeout });
+};
+
+export async function scanLayerScenarios(env) {
   if (!wanted("scan layer")) return;
+  await repairedLayerSteps(env);
+  await recognitionSteps(env);
+}
+
+async function repairedLayerSteps({ server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage }) {
   const { bytes, words, lines } = scanPaper();
   const wordsOf = (k) => words.filter((w) => w.line === k);
   let ctx = null, page = null, pageId = "", cover = [];
   const requests = [], briefs = [];
-
-  // What `sel` matches on page `pn` of the viewer shown, in pt from the page's
-  // top-left corner (y down), with its text.
-  const boxesOn = (pn, sel) => page.evaluate(([pn, sel, W]) => {
-    const wrap = [...document.querySelectorAll(`.pdfPageWrap[data-page="${pn}"]`)].find((el) => el.offsetParent !== null);
-    if (!wrap) return [];
-    const at = wrap.getBoundingClientRect(), k = W / at.width;
-    return [...wrap.querySelectorAll(sel)].map((el) => {
-      const r = el.getBoundingClientRect();
-      return { text: el.textContent, x0: (r.left - at.left) * k, x1: (r.right - at.left) * k, top: (r.top - at.top) * k, bottom: (r.bottom - at.top) * k };
-    });
-  }, [pn, sel, PAGE_W]);
-  // The text layer's spans of page `pn`, once two readings agree (a layer is
-  // built when the scroller rests).
-  const spansOf = async (pn) => {
-    let last = "";
-    return until(async () => {
-      const now = (await boxesOn(pn, ".textLayer span")).filter((s) => s.text);
-      const same = now.length && JSON.stringify(now) === last;
-      last = JSON.stringify(now);
-      return same && now;
-    }, { what: `page ${pn}'s text layer at rest`, every: 150 });
-  };
+  const spansOf = (pn) => restingSpans(page, until, pn);
   // A point on page `pn` (pt, y down) in the window's pixels.
   const toScreen = (pn, x, y) => page.evaluate(([pn, x, y, W]) => {
     const wrap = [...document.querySelectorAll(`.pdfPageWrap[data-page="${pn}"]`)].find((el) => el.offsetParent !== null);
@@ -223,7 +253,7 @@ export async function scanLayerScenarios({ server, browser, alice, step, until, 
       lies(box(rects), "the stored rects");
       // and as drawn
       await page.locator(`.pdfPageWrap[data-page="2"] [data-hl-id="${hl.id}"]`).first().waitFor();
-      lies(box(await boxesOn(2, `[data-hl-id="${hl.id}"]`)), "the highlight drawn");
+      lies(box(await boxesOn(page, 2, `[data-hl-id="${hl.id}"]`)), "the highlight drawn");
       await page.locator(".plainTip").waitFor({ state: "detached" });
 
       // The cover's selection sends no ocr.
@@ -250,7 +280,7 @@ export async function scanLayerScenarios({ server, browser, alice, step, until, 
       await input.fill(word.text);
       await until(async () => (await page.textContent(".searchPopover .searchFindCount").catch(() => "")) === "1/1", { what: "find count 1/1" });
       const marks = await until(async () => {
-        const now = await boxesOn(2, ".pdfFindMark");
+        const now = await boxesOn(page, 2, ".pdfFindMark");
         return now.length && now;
       }, { what: "the find mark on the scan page" });
       assertEq(marks.length, 1, "one mark");
@@ -300,7 +330,7 @@ export async function scanLayerScenarios({ server, browser, alice, step, until, 
       assertEq(scanBriefs[0].page_id, pageId);
       // One block, over the printed paragraph.
       assertEq(await paras.count(), 1, "one translated block");
-      const [block] = await boxesOn(2, ".pdfTransPara");
+      const [block] = await boxesOn(page, 2, ".pdfTransPara");
       assert(block.x0 <= lines[0].x0 + 3 && block.x1 >= Math.max(...lines.map((l) => l.x1)) - 3
         && block.top <= lines[0].top + 1.5 && block.top >= lines[0].top - 4 && block.bottom >= lines[3].bottom - 1.5 && block.bottom <= lines[3].bottom + 4,
       `the block ${pt(block.x0)}..${pt(block.x1)} × ${pt(block.top)}..${pt(block.bottom)} lies over the paragraph ${pt(lines[0].x0)}..${pt(Math.max(...lines.map((l) => l.x1)))} × ${pt(lines[0].top)}..${pt(lines[3].bottom)}`);
@@ -324,6 +354,301 @@ export async function scanLayerScenarios({ server, browser, alice, step, until, 
       assert(plainBriefs.length === 1 && !("ocr" in plainBriefs[0]), `nor does its brief: ${JSON.stringify(plainBriefs)}`);
       assertNoProblems(page);
       return `scan: ${scan.length} request(s), 1 text; cover: ${plain.length} request(s), ${plain.flatMap((r) => r.texts).length} texts`;
+    });
+  } finally {
+    await ctx?.close();
+  }
+}
+
+// The printed scan of backend/tests/ocr_fixtures.py (printed_scan_pdf) under
+// the layer argv[3] names ("garbled", or "none" for none), written to
+// argv[2], and where its words are printed (Helvetica's advances, as
+// insert_text sets them): {lines: [{text, garbled, base, size, words: [{text,
+// x0, x1}]}]}, in pt from the page's top-left corner. PyMuPDF alone, no gamma.
+const PRINTED_SCAN_PY = `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import pymupdf
+from ocr_fixtures import GARBLE, PRINTED, printed_scan_pdf
+with open(sys.argv[2], "wb") as f:
+    f.write(printed_scan_pdf(layer=None if sys.argv[3] == "none" else sys.argv[3]))
+lines = []
+for x, base, size, text in PRINTED:
+    words, at = [], x
+    for word in text.split(" "):
+        width = pymupdf.get_text_length(word, fontname="helv", fontsize=size)
+        words.append({"text": word, "x0": at, "x1": at + width})
+        at += width + pymupdf.get_text_length(" ", fontname="helv", fontsize=size)
+    lines.append({"text": text, "garbled": text.translate(GARBLE), "base": base, "size": size, "words": words})
+print(json.dumps({"lines": lines}))
+`;
+
+function printedScan(dir, layer) {
+  const file = path.join(dir, `printed-scan-${layer}.pdf`);
+  const out = execFileSync(PYTHON, ["-I", "-c", PRINTED_SCAN_PY, path.join(ROOT, "backend", "tests"), file, layer], { encoding: "utf8" });
+  return { bytes: fs.readFileSync(file), ...JSON.parse(out) };
+}
+
+// JSON with its keys in order: the same position however a write re-serialized it.
+const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x)
+  ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
+
+async function recognitionSteps({ server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage }) {
+  let ctx = null, page = null, pageId = "", docId = "", title = "", lines = [];
+  // the highlights made on the garbled layer, by printed line
+  const made = {};
+  const children = async () => (await alice.api(`/api/blocks/${pageId}/subtree`)).block.children || [];
+  const spansOf = (ready, timeout) => restingSpans(page, until, 1, ready, timeout);
+  const pt = (v) => v.toFixed(2);
+  // The middle of a printed line's letters, pt from the page's top: half
+  // Helvetica's x-height over the baseline.
+  const middleOf = (line) => line.base - 0.27 * line.size;
+  const documentMenu = async () => {
+    await page.click("button[aria-label='Document']");
+    await page.locator(".attachPopover").waitFor();
+  };
+  const recognizeRow = () => page.locator('.attachPopover [data-ocr="recognize"]');
+
+  // Select `phrase` on page 1's text layer, across its spans, and let go: the
+  // selection popup opens, as after a drag.
+  const selectPhrase = async (phrase) => {
+    const ok = await page.evaluate((phrase) => {
+      const wrap = [...document.querySelectorAll('.pdfPageWrap[data-page="1"]')].find((el) => el.offsetParent !== null);
+      const nodes = [...(wrap?.querySelectorAll(".textLayer span") || [])].map((s) => s.firstChild).filter((n) => n?.nodeType === Node.TEXT_NODE);
+      const starts = [];
+      let text = "";
+      for (const n of nodes) { starts.push(text.length); text += n.data; }
+      const i = text.indexOf(phrase);
+      if (i < 0) return false;
+      // the text node holding character k, or for an end the one it ends
+      const at = (k, end) => {
+        let j = 0;
+        while (j + 1 < nodes.length && (end ? starts[j + 1] < k : starts[j + 1] <= k)) j++;
+        return [nodes[j], k - starts[j]];
+      };
+      const range = document.createRange();
+      range.setStart(...at(i, false));
+      range.setEnd(...at(i + phrase.length, true));
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      return true;
+    }, phrase);
+    if (!ok) throw new Error(`"${phrase}" is not on page 1's text layer`);
+  };
+  // `phrase` highlighted from the selection popup's first swatch: the block saved.
+  const highlight = async (phrase) => {
+    const had = new Set((await children()).map((b) => b.id));
+    await selectPhrase(phrase);
+    const tip = page.locator(".plainTip");
+    await tip.waitFor();
+    await tip.locator(".colorBtn").first().click();
+    const hl = await until(async () => (await children()).find((b) => !had.has(b.id) && b.properties?.pdf_position),
+      { what: `the highlight of "${phrase}" saved` });
+    await tip.waitFor({ state: "detached" });
+    await page.evaluate(() => getSelection().removeAllRanges());
+    return hl;
+  };
+  // Ctrl+F for `word`: one match, and its marks on page 1.
+  const findOne = async (word) => {
+    await page.keyboard.press("ControlOrMeta+f");
+    const input = page.locator(".searchPopover .searchInput");
+    await input.waitFor();
+    await input.fill(word);
+    await until(async () => (await page.locator(".searchPopover .searchFindCount").textContent({ timeout: 500 }).catch(() => "")) === "1/1",
+      { what: `find count 1/1 for "${word}"` });
+    const marks = await until(async () => {
+      const now = await boxesOn(page, 1, ".pdfFindMark");
+      return now.length && now;
+    }, { what: `the find mark of "${word}"` });
+    await page.keyboard.press("Escape");
+    return marks;
+  };
+  // The metadata popover's text cell, once its check is in (its title says what it found).
+  const textCell = async (ready) => {
+    await page.click("button[aria-label='Paper metadata']");
+    const cell = page.locator(".metaPopover .metaStatus .metaCell").first();
+    const title = await until(async () => {
+      const now = await cell.getAttribute("title", { timeout: 500 }).catch(() => "");
+      return ready(now || "") && now;
+    }, { what: "the text cell's check" });
+    const text = (await cell.innerText()).trim();
+    await page.click("button[aria-label='Paper metadata']");
+    return { title, text };
+  };
+
+  try {
+    await step("scan layer: recognition setup, a printed scan under a garbled invisible layer, uploaded to a server whose engine runs", async () => {
+      const scan = printedScan(server.dir, "garbled");
+      lines = scan.lines;
+      // What pdf.js and pdf/pageText.js read of it before any recognition:
+      // the garbled layer, a scan's.
+      const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(scan.bytes), verbosity: 0 }).promise;
+      try {
+        const tc = await pageText(await doc.getPage(1));
+        assertEq(tc.repaired, true, "pdf/pageText.js calls the page a scan");
+        const read = tc.items.map((it) => `${it.str}${it.hasEOL ? "\n" : ""}`).join("").split("\n").map((s) => s.trim()).filter(Boolean);
+        assertEq(JSON.stringify(read), JSON.stringify(lines.map((l) => l.garbled)), "its layer reads the garbled lines");
+      } finally {
+        await doc.destroy();
+      }
+      const config = await alice.api("/api/server-config");
+      assert(config.ocr?.engine === "tesseract", `the server recognizes text: ${JSON.stringify(config.ocr)}`);
+
+      const up = await alice.upload("/api/uploads", scan.bytes, "printed-scan.pdf", "application/pdf");
+      docId = up.doc_id;
+      const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Printed scan", source_url: up.source_url } });
+      pageId = created.id;
+      title = (await alice.api(`/api/blocks/${pageId}`)).content || "Printed scan";
+      ctx = await alice.context(browser);
+      page = await openPage(ctx, `${server.base}/?page=${pageId}&ws=${alice.ws}`);
+      await waitForPdf(page, 1);
+      const words = (await spansOf()).map((s) => s.text.trim());
+      assert(words.includes("rc50m4mcc") && !words.includes("resonance"), `the text layer spells "resonance" as the layer does: ${JSON.stringify(words)}`);
+      assertNoProblems(page);
+      return `"${title}", ${lines.length} printed lines`;
+    });
+
+    await step("scan layer: on the garbled layer, two lines are highlighted with its spelling, and Ctrl+F finds its misspelling", async () => {
+      for (const k of [2, 4]) {
+        const hl = await highlight(lines[k].garbled);
+        assertEq(hl.properties.quote, lines[k].garbled, `line ${k + 1}'s highlight quotes the layer`);
+        made[k] = hl;
+      }
+      const [mark, ...more] = await findOne("rc50m4mcc");
+      assertEq(more.length, 0, "one mark");
+      const mid = middleOf(lines[4]);
+      assert(mark.top <= mid && mid <= mark.bottom, `the mark ${pt(mark.top)}..${pt(mark.bottom)} is on line 5 (its letters' middle ${pt(mid)})`);
+      assertNoProblems(page);
+    });
+
+    await step("scan layer: the Document menu's Recognize text in this PDF runs as a Background tasks row that ends with its summary", async () => {
+      await documentMenu();
+      const row = recognizeRow();
+      // offered once the viewer met the scan: the server has not read the file yet
+      await row.waitFor();
+      assertEq((await row.innerText()).trim(), "Recognize text in this PDF");
+      assertEq(await row.getAttribute("title"), "Read the words of this PDF's scanned pages from their pictures: selection, search, the AI and translation read them, and each highlight there keeps its place and takes the new text. The PDF file itself is unchanged.");
+      assert(await row.isEnabled(), "the row can be chosen");
+      await row.click();
+      const said = await until(async () => {
+        const now = (await page.locator(".statusPill").textContent({ timeout: 500 }).catch(() => "")) || "";
+        return /Text recognized on|Could not start|failed/.test(now) && now.trim();
+      }, { what: "the run's summary in the status line", timeout: 120000, every: 250 });
+      assertEq(said, `Text recognized on 1 page of “${title}”. 1 highlight took the new text.`, "the summary");
+      await page.click("button[aria-label='Background tasks']");
+      const task = page.locator(live(".tasksPopover .taskRow"), { hasText: `Recognizing the text of “${title}”` });
+      await task.waitFor();
+      assert(await task.evaluate((el) => el.classList.contains("done")), `the row ended done: ${await task.getAttribute("class")}`);
+      await page.keyboard.press("Escape");
+      // what the job did
+      const job = (await alice.api("/api/jobs")).jobs.find((j) => j.kind === "ocr" && j.params?.doc_id === docId);
+      const { result } = await alice.api(`/api/jobs/${job.id}`);
+      assertEq(JSON.stringify(["scanned", "recognized", "kept", "empty", "failed", "good_layer", "highlights_respelled", "highlights_kept"].map((k) => result[k])),
+        JSON.stringify([1, 1, 0, 0, 0, false, 1, 1]), `its result: ${JSON.stringify(result)}`);
+      assert(result.shared < 0.93, `the layer shares under 93% of its words with the recognition: ${result.shared}`);
+      assertNoProblems(page);
+      return `${said} (the layer shared ${Math.round(result.shared * 100)}% of its words)`;
+    });
+
+    await step("scan layer: the text layer then holds the recognized words, the printed ones, each span over its printed word", async () => {
+      const spans = await spansOf((now) => now.some((s) => s.text.trim() === "resonance"), 15000);
+      const got = await alice.api(`/api/ocr/${docId}/pages?first=1&last=1`);
+      const read = got.pages["1"].lines.map((line) => line.map((w) => w[0]));
+      assertEq(JSON.stringify(read), JSON.stringify(lines.map((l) => l.text.split(" "))), "the engine read the printed words");
+      assertEq(JSON.stringify(spans.map((s) => s.text)), JSON.stringify(read.flatMap((ws) => ws.map((w, i) => (i < ws.length - 1 ? `${w} ` : w)))),
+        "a span a recognized word, the space folded in");
+      const misplaced = [];
+      let n = 0;
+      lines.forEach((line, k) => {
+        const mid = middleOf(line);
+        for (const w of line.words) {
+          const s = spans[n++];
+          const at = `line ${k + 1}, "${w.text}" printed ${pt(w.x0)}..${pt(w.x1)} (letters' middle ${pt(mid)}), its span ${pt(s.x0)}..${pt(s.x1)} × ${pt(s.top)}..${pt(s.bottom)}`;
+          const centre = (w.x0 + w.x1) / 2;
+          if (!(s.x0 <= centre && centre <= s.x1)) misplaced.push(`${at}: the printed word's middle is outside its span`);
+          if (!(s.top <= mid && mid <= s.bottom)) misplaced.push(`${at}: off its printed line`);
+          const other = lines.find((o, j) => j !== k && s.top <= middleOf(o) && middleOf(o) <= s.bottom);
+          if (other) misplaced.push(`${at}: reaches the line "${other.text}"`);
+        }
+      });
+      assertEq(misplaced.join("\n          "), "", "every recognized word's span over its printed word");
+      assertNoProblems(page);
+      return `${spans.length} spans, the stamp ${got.stamp}`;
+    });
+
+    await step("scan layer: Ctrl+F finds a word only the recognition read, where it is printed", async () => {
+      const line = lines[4], word = line.words.find((w) => w.text === "resonance");
+      const [m, ...more] = await findOne("resonance");
+      assertEq(more.length, 0, "one mark");
+      const centre = (word.x0 + word.x1) / 2, mid = middleOf(line);
+      assert(m.x0 <= centre && centre <= m.x1, `the mark ${pt(m.x0)}..${pt(m.x1)} is over "resonance" printed ${pt(word.x0)}..${pt(word.x1)}`);
+      const cover = (Math.min(m.x1, word.x1) - Math.max(m.x0, word.x0)) / (word.x1 - word.x0);
+      assert(cover >= 0.8, `the mark covers ${cover.toFixed(2)} of the printed word`);
+      assert(m.top <= mid && mid <= m.bottom, `the mark ${pt(m.top)}..${pt(m.bottom)} is on its line (letters' middle ${pt(mid)})`);
+      assertNoProblems(page);
+      return `mark ${pt(m.x0)}..${pt(m.x1)} × ${pt(m.top)}..${pt(m.bottom)} over "resonance" ${pt(word.x0)}..${pt(word.x1)}`;
+    });
+
+    // The respell's guard (highlight_relocate.respell_quotes): a quote takes
+    // the recognized text only where that reads like the layer's text under
+    // its rectangles, or a rectangle drawn off its line would take the line
+    // next to it. Line 3's layer misreads 19 of its 42 letters and still
+    // reads alike enough (difflib's likeness 0.61; the guard's QUOTE_AGREES
+    // is 0.6); line 5's misreads 23 of 39 (0.50) and keeps its quote. Both
+    // keep their place: the picture did not change.
+    await step("scan layer: the highlights made before keep their place; the one reading like the recognized line takes it as its quote, one garbled past that keeps its own", async () => {
+      const now = Object.fromEntries((await children()).map((b) => [b.id, b.properties]));
+      const [respelled, kept] = [made[2], made[4]];
+      assertEq(now[respelled.id].quote, lines[2].text, "line 3's highlight quotes the recognized line");
+      assertEq(now[kept.id].quote, lines[4].garbled, "line 5's keeps the layer's spelling");
+      for (const hl of [respelled, kept]) {
+        assertEq(canon(now[hl.id].pdf_position), canon(hl.properties.pdf_position), `"${hl.properties.quote}" keeps its place`);
+      }
+      // as the page shows them: the notes' quotes, the highlights on their lines
+      await until(async () => (await page.locator(".blockQuote").allInnerTexts()).map((s) => s.trim()).includes(lines[2].text),
+        { what: "the notes show the new quote" });
+      assert((await page.locator(".blockQuote").allInnerTexts()).map((s) => s.trim()).includes(lines[4].garbled), "and the kept one");
+      for (const [k, hl] of [[2, respelled], [4, kept]]) {
+        const drawn = await boxesOn(page, 1, `[data-hl-id="${hl.id}"]`);
+        const mid = middleOf(lines[k]);
+        assert(drawn.length && Math.min(...drawn.map((r) => r.top)) <= mid && mid <= Math.max(...drawn.map((r) => r.bottom)),
+          `line ${k + 1}'s highlight is drawn on it: ${JSON.stringify(drawn.map((r) => [pt(r.top), pt(r.bottom)]))}, letters' middle ${pt(mid)}`);
+      }
+      assertNoProblems(page);
+    });
+
+    await step("scan layer: the metadata popover says the text was recognized and when, and the Document menu offers no more recognition", async () => {
+      const state = await alice.api(`/api/ocr/${docId}`);
+      assertEq(JSON.stringify([state.recognized, state.scanned, state.pending]), JSON.stringify([[1], 1, false]), `the file's recognition: ${JSON.stringify(state)}`);
+      const date = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(state.at));
+      const cell = await textCell((title) => title.startsWith("Text recognized"));
+      assertEq(cell.title, `Text recognized from the page pictures on ${date}: the AI and search read it; the PDF file itself is unchanged.`);
+      assertEq(cell.text, "text");
+      await documentMenu();
+      await page.locator(".attachPopover .ctxMenuItem", { hasText: "Find highlights in this PDF" }).waitFor();
+      assertEq(await recognizeRow().count(), 0, "every scanned page is recognized: no Recognize text in this PDF");
+      await page.keyboard.press("Escape");
+      assertNoProblems(page);
+      return cell.title;
+    });
+
+    await step("scan layer: a scan with no layer: the metadata popover's text cell points to Recognize text in this PDF, which the Document menu offers", async () => {
+      const bare = printedScan(server.dir, "none");
+      const up = await alice.upload("/api/uploads", bare.bytes, "picture-scan.pdf", "application/pdf");
+      const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Picture scan", source_url: up.source_url } });
+      await page.goto(`${server.base}/?page=${created.id}&ws=${alice.ws}`);
+      await page.locator('.pdfPageWrap[data-page="1"] canvas').first().waitFor();
+      await documentMenu();
+      // offered once the viewer read the page and found no text on it
+      await recognizeRow().waitFor({ timeout: 15000 });
+      assert(await recognizeRow().isEnabled(), "the row can be chosen");
+      await page.keyboard.press("Escape");
+      const cell = await textCell((title) => title.startsWith("No text layer"));
+      assertEq(cell.title, "No text layer — a scan? Choose Recognize text in this PDF in the Document menu so the AI and search can read it.");
+      assertEq(cell.text, "no text");
+      assertNoProblems(page);
     });
   } finally {
     await ctx?.close();

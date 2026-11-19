@@ -6,8 +6,8 @@ of work meet there:
 
 - **Server jobs**: exports, workspace exports, snapshots, restores, library
   imports and their reviews, batch metadata lookups, deletes of a workspace or an account,
-  the admin's server snapshots and database checks, and the search
-  indexer. A job lives
+  the admin's server snapshots and database checks, a scanned PDF's text
+  recognized, and the search indexer. A job lives
   on the server (`gamma/jobs.py`), so it goes on when the tab or the dialog
   that started it closes, and every tab and device of the account sees it.
 - **This tab's own work**: a PDF loading in the viewer, a file uploading
@@ -59,9 +59,14 @@ in the worker thread and returns the result. It reports through
   `unpacking`, `checking`, `saving`, `copying`, `restoring`, `annotations`,
   `databases`, `files`, the paper-handoff row's `browser` and `connector`,
   the transcription's `transcribing`, the highlight run's `reading` and
-  `matching`, a delete's `keeping` and `deleting`; `PHASES` in
+  `matching`, the text recognition's `reading`, `recognizing` and
+  `updating`, a delete's `keeping` and `deleting`; `PHASES` in
   `tasks/taskKinds.js`).
 - `item` is the thing at hand, a page title or a workspace name.
+- Any other keyword goes into the progress as it is, a JSON number or
+  string the kind's row reads: the text recognition's `since` (when its
+  phase began, in ms) and `from` (its count then), from which the row
+  tells the time left.
 - A new phase or unit starts its own counts; a field left out is kept.
 
 Every report is also where a job stops: once the job was asked to stop,
@@ -92,13 +97,23 @@ and `keep_final_copies`, `integrity.check_all`, the export driver
 
 **Limits.** An account runs two jobs at once and the server four; the rest
 wait queued, oldest first. A workspace's own jobs (the indexer) run outside
-those limits. An account may have 20 queued or running jobs (429 past
-that). A `key` makes two jobs of one owner and kind the same work: while
+those limits. A kind that keeps a core busy for hours runs in a lane of
+its own instead (`KIND_LIMITS`, a function per kind read as the queue is
+pumped): the text recognition, `ocr`, at most `GAMMA_OCR_WORKERS` (1 by
+default) at once on the server, whoever starts them, the others queued,
+and a queued one stops at once. A lane's jobs hold no place of the
+server's four or an account's two, so a book's recognition never holds up
+an export. An account may have 20 queued or running jobs (429 past
+that), its lane jobs among them. A `key` makes two jobs of one owner and kind the same work: while
 one is queued or running, starting another raises `jobs.Busy` with it (the
 indexer, one per workspace; an import and a review's reading, one each
 per review; a highlight run, one
 per page and file; a delete, one per workspace or account; the database
-check, one per admin).
+check, one per admin). Work done once whoever asks for it (a text
+recognition, one per workspace and file) starts with `exclusive=True`:
+`Busy` then comes for any owner's job of that kind and key, found in the
+same turn of the lock as the job is added, so two starts at the same
+moment get one run. `jobs.live(kind, key)` reads such a job of any owner.
 
 **Files.** A job's file is `<data dir>/jobs/<id>/artifact`; an upload a job
 reads (a restore's zip) waits in `jobs/incoming/` and the job removes it
@@ -198,6 +213,7 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `workspace-delete` | `workspace-delete` (`routers/workspaces.py`, one per workspace) | Settings → Workspaces → Manage → Delete…, for an owner or an admin | `{warning, final_copy}`; phases `keeping` (the final copy's bytes) and `deleting`, past which it no longer stops ([workspaces.md](workspaces.md) "Deleting a workspace") |
 | `account-delete` | `account-delete` (`routers/admin.py`, one per account; `workspaces.start_account_delete`) | Settings → Users → an account → Delete… (admins); on a share host also the server's own, owner `jobs.WORKSPACE`, for an account whose Gamma Cloud account was deleted ([cloud_accounts.md](cloud_accounts.md) "A deleted account on the share host") | `{deleted_workspaces}`; the same phases, a final copy per workspace that goes |
 | `db-check` | `db-check` (`routers/admin.py`) | Settings → Server → Databases → Check now (admins) | what `/admin/check-databases` answers; progress in files |
+| `ocr` | `ocr` (`routers/ocr.py`, one per workspace and file, whoever starts it; its own lane) | the Document menu → Recognize text in this PDF | `{scanned, recognized, kept, empty, failed, good_layer, shared, highlights_respelled, highlights_kept, highlights_changed}`: the scan and picture pages, those reading recognized words, keeping their own text and recognized without words (the whole file's), this run's pages without a result, whether the file's own text reads well, the median share of a layer's words the recognition read too (0 to 1, null with no layer), what the quotes' respell did; params `{page_id, doc_id, title}`; phases `reading`, `recognizing` and `updating`, past which it no longer stops ([documents.md](documents.md#recognized-text)) |
 | `relocate-highlights` | `relocate-highlights` (`routers/pages.py`, one per page and file; `PUT /pages/{id}/attachment` starts it by itself) | a replaced PDF (the Document menu → Replace the PDF…, a build script's `PUT`, a Zotero link bringing Zotero's new file, which starts it for the link's owner, [zotero_sync.md](zotero_sync.md#pdfs)); a replaced text file over 512 KiB (a smaller one's ranges are placed in the replacement itself, no task, [highlight_relocation.md](highlight_relocation.md#text-files)); the Document menu → Find highlights in this PDF (a text file's: Find highlights in this file) | `{highlights, moved, kept, lost, approx, changed, min_match, exact_chars}` (a text file's with `format: "text"`): the counts, then the owner's thresholds the run went by, which its params `{page_id, title, doc_id, format, min_match, exact_chars}` record as it starts, `format` naming which run places it, `pdf` or `text` ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) |
 
 The off-site copies' Copy now (Settings → Backups, `POST
@@ -276,6 +292,22 @@ itself unstoppable and writes. When the replacement's run cannot start
 stopping, or the new PDF is shown from a URL alone and not stored), the
 replacement stands and its answer says why (`relocation_error`).
 
+A text recognition (`ocr`) is keyed by the workspace and the file
+(`<ws>:<doc_id>`): one run at a time for a file, whoever starts it. A start
+while the same account's run is queued or running answers it (409 while
+it is still stopping), and another account's gets 409 "Someone else is
+recognizing this PDF's text right now." Before that the route refuses a
+guest (403) and a viewer, needs a PDF stored on the server (400), and sets
+the engine up once (`ocr_engine.check`, 503 with its sentence when it
+cannot). The job writes, so a
+delete of the workspace stops it. A stop lands between two pages, and the
+pages read so far wait, unseen, for the next run, which goes on from
+there. Its `recognizing` phase counts the pages done by earlier runs too
+and carries `since` and `from`. A failure in the finishing steps after
+the text went live is logged and the job still ends done, the file left
+pending for the next run to finish
+([documents.md](documents.md#recognized-text)).
+
 ## The web app (`frontend/src/tasks/`)
 
 `useTasks.js` is the store, one instance in App.jsx:
@@ -301,7 +333,9 @@ replacement stands and its answer says why (`relocation_error`).
 `tests/tasks.test.mjs`. `taskModel.js` holds the states, the order (what
 runs first, oldest on top; then what ended, newest on top) and the tray
 badge. `taskKinds.js` gives each kind its icon, title, detail line and row
-actions, where a click opens it (`open`) and how to start it again
+actions, how long a kind that can tell still takes (`left(task, now)`,
+after the counts: the `ocr` row's, at the pace of this run's pages since
+`since`), where a click opens it (`open`) and how to start it again
 (`retry`: the same route and body; an export that carried the viewer's
 translation, or a folder's that carried its papers', names its job as
 `translation_of`, since its params cannot hold the layout and the server
@@ -370,6 +404,16 @@ window does not show:
   were not found, and were left as someone moved them meanwhile. A run stopped or refused because the PDF was replaced
   again says nothing (`relocationSuperseded`): the newer run reports. The
   positions themselves reach every tab over the page socket.
+- A text recognition, however it ended, makes every tab of the workspace
+  that heard it end read the file's recognition again (`ocrState.refresh`,
+  [pdf_loading.md](pdf_loading.md#recognized-words)). The tab that started
+  it says how it went (`ocrSummary`): the pages recognized and the
+  highlights that took the new text, the pages that could not be read, the
+  file's own text kept because it reads well (and its picture pages
+  recognized, when there were some), no scanned pages, or where a stop left
+  it: how many pages were done when it stopped while recognizing, and only
+  "was stopped" during the other phases, since the reading phase counts
+  pages classified, not recognized.
 - A job started from a menu shows its progress in the pill while it runs
   (`meta.pill`).
 
@@ -476,7 +520,11 @@ page or folder by link").
   snapshots, restores and server backups. The import job and the
   review's (kept for its dialog, in parts, stopped, refused, a Gamma
   export unpacking no PDF) are tested in `test_import_review.py`, the metadata batch in `test_metadata_batch.py`
-  and the indexer in `test_search.py`. `test_delete_jobs.py` covers the
+  and the indexer in `test_search.py`. `test_jobs_lanes.py` covers the
+  lane (one recognition running and one queued while an export starts,
+  `GAMMA_OCR_WORKERS`, a queued one stopped), `jobs.live`, the exclusive
+  start and the extra progress fields; `test_ocr_api.py` the recognition's
+  start, a second member's start between a look and a start included. `test_delete_jobs.py` covers the
   delete kinds (a stop during the final copy and just after it deletes
   nothing, none after it, the refusals, a second start of either kind, the
   check at the point of no return, two admins deleting each other, the
@@ -484,7 +532,7 @@ page or folder by link").
   a share, the AI's tools and the jobs that change it), the database
   check and the streamed snapshot download; `test_backup_safety.py` the
   final copy itself and the delete holds.
-- Frontend: `tests/tasks.test.mjs` covers the model and kinds (the share view's follow rounds too, the time left),
+- Frontend: `tests/tasks.test.mjs` covers the model and kinds (the share view's follow rounds too, the time left, the text recognition's row and summary),
   `tests/uploadBatch.test.mjs` the upload batch (its plan, question, pool, Stop and closing line),
   `tests/transferFormats.test.mjs` the export job's body and
   `tests/pageBatch.test.mjs` the library's page batches; `test_bulk_pages.py` their

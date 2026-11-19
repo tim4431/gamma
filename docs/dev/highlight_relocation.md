@@ -29,9 +29,14 @@ A text file's ranges (a `.tex`, a script, a log) are found again the same
 way when the file changes, by their own quote and context, with the same
 flags, thresholds and write ([Text files](#text-files)).
 
+A scanned PDF whose text is recognized from its pictures is not replaced:
+its highlights keep their places and take the new words as their quotes
+([A page whose text was recognized](#a-page-whose-text-was-recognized)).
+
 Code:
 
-- `gamma/highlight_relocate.py`: the search and the write.
+- `gamma/highlight_relocate.py`: the search and the write, and the quotes'
+  respell after a text recognition (`respell_quotes`).
 - `gamma/documents/text_anchors.py`: a text file's ladder and run.
 - `gamma/highlights.py`: the position's flags, `prev` and `closest`
   (`previous_place`, `valid_prev`, `valid_closest`, `from_scaled`).
@@ -655,6 +660,72 @@ reads "File replaced." and the run's counts (`relocationSummary`'s text
 branch, "Highlights placed in the file: …"), or, when it refused, "File
 replaced. Its highlights were not placed (…): choose Find highlights in
 this file in the Document menu to place them."
+
+## A page whose text was recognized
+
+A text recognition ([documents.md](documents.md#recognized-text)) changes
+a scanned page's text while its picture stays. A highlight's rectangles
+still lie over the words they were drawn on; only its quote, read from the
+old layer, is stale. Moving the highlights by their passage, as after a
+replacement, would lose the ones made on garbled words ("Rksum4"), so
+they stay where they are and take the recognized words as their quote.
+
+`respell_quotes(ws, doc_hash, pages, *, actor)` is the last finishing
+step of a run's apply. It goes through every live page showing the file
+(its `doc_id`, or a copy's `doc.hash`) and takes the text highlights and
+link regions with rectangles on one of the recognized `pages`, neither an
+area nor lost, measured on this file (no `doc_id`, or this one). For each
+it reads the passage under its rectangles twice, as `_old_passage` spells
+it: `was` from the file's own layer (`Doc(src, ocr=False)`) and `now` from
+the recognized words (`Doc(src, ocr=True)`). The quote becomes `now` only
+when:
+
+- `now` is not empty and reads otherwise than the quote;
+- the quote is what the layer reads there (their letters equal, folded and
+  without spaces and hyphens), so a quote corrected by hand or in Zotero
+  stays;
+- `now` reads like `was` (`_agrees`), so a rectangle drawn off its text,
+  over a layer a line off the print, does not take a neighbouring line.
+
+Nothing else of the highlight is written: its position and flags stay.
+The writes go page by page through `_write` as client `ocr`
+(`RESPELL_CLIENT`); a page deleted or showing another file meanwhile
+writes nothing and its highlights count as `changed`. The counts are
+`{respelled, kept, changed}`, `kept` the quotes a guard left; a quote
+already reading `now` counts in none, so a second run writes nothing. A
+respelled quote reaches Zotero (`annotationText`) and a synced vault's
+callout as any changed quote does.
+
+**A replacement of a recognized file.** A passage read from one file's
+recognized words is not in another file's layer, so `relocate` reads the
+two sides of each highlight's comparison alike, chosen per highlight by
+the file it was measured on (`_measured_on`). It is matched in the new
+file's recognized words when the new file has some (`pdf_ocr.view_of`)
+and that file is the new file itself, has recognized words too, or is no
+longer stored (placed by its quote). Otherwise both files are read from
+their own layers, as before any recognition. A highlight measured on the
+new file itself whose quote agrees (`_agrees`) with what the layer reads
+under its rectangles, and not with what the recognition reads there,
+stays with the layer (`keeps_layer`): the respell left its quote, a
+heavily garbled one or one someone corrected, and in the recognized words
+it would be found nowhere. A new file whose own layer reads no text at
+all (a picture-only scan that was recognized) is read in its recognized
+words throughout. Each reading is its own `place_all` run, and their ops
+and counts go into the one `_write`.
+
+So a scan replaced by a re-saved copy of itself keeps every highlight,
+whichever of the two was recognized, and Find highlights in this PDF after
+a recognition leaves the highlights where they are. After the write,
+`relocate` reads the new file's recognition again and respells the quotes
+on its recognized pages (`respell_quotes`). That also covers a recognition
+that went live while the relocation ran, whose own respell skipped these
+highlights because their positions still named the outgoing file. The
+respell can run twice without harm; a failure there is logged and the
+placements stand. When the outgoing file's text was recognized and the
+new one's is not, the replacement's answer says so
+(`text_not_recognized`, [api.md](api.md) "Pages"), and the web app's
+status line asks to choose Recognize text in this PDF where the Document
+menu offers it.
 
 ## The thresholds
 
@@ -1420,6 +1491,16 @@ The other backend tests:
   in their form (`closest`'s quote clipped, up to 200 rectangles).
 - `test_restore_consistency.py`: a restore keeping `doc_id`, `lost`,
   `closest`, `approx`, `match` and `prev`.
+- `test_ocr_respell.py`: a matching quote respelled; a corrected quote, a
+  rectangle off its text, an area, a lost one and another file's left
+  alone; a second run writing nothing; a heavily garbled quote kept, and
+  left where it is by Find highlights in this PDF; a page whose write is
+  refused counted `changed`; a recognized scan replaced by a re-saved copy
+  keeping every highlight solid, with `text_not_recognized`, and an
+  unrecognized one replaced by a recognized copy keeping them too, quotes
+  respelled; a highlight on recognized words matched in them beside one
+  from an unrecognized file; a recognition that goes live while a
+  relocation runs still respelling its quotes.
 - `test_text_anchors.py`: a text file's fold and ladder (exact near its old
   line, word by word, lost with or without `closest`, a pending one from
   its `prev`), and `-m perf`: 50,000 lines with 100 ranges under a second.

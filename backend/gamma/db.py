@@ -708,6 +708,9 @@ VAULTS_SCHEMA = [
         PRIMARY KEY (ws, name, path)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_linked_files_page ON linked_files(ws, page_id)",
+    # A path's workspace and name, for the PDF reader's recognized text
+    # (gamma/pdf_ocr.py ``view_of``), which is handed a path alone.
+    "CREATE INDEX IF NOT EXISTS idx_linked_files_path ON linked_files(path)",
     """CREATE TABLE IF NOT EXISTS vault_files (
         link_id TEXT NOT NULL,
         path TEXT NOT NULL,
@@ -1437,13 +1440,15 @@ PAGES_SCHEMA = [
 
 # data.db = what the workspace can lose and rebuild: the file may be
 # deleted, and everything in it comes back on demand: the cover
-# thumbnails, the viewer's PDF manifests and the kept translations below
-# (made again by a model, so the one thing here that costs tokens to come
-# back), and the document text index (text_fts, extracted again by the
-# next search), whose tables gamma/search/index.py applies itself
-# (index.SCHEMA), since that is where an index of an older layout is
-# dropped and made again. Nothing a person wrote lives here: the chats, the
-# notes index and the translation glossary are in pages.db.
+# thumbnails, the viewer's PDF manifests, the kept translations below
+# (made again by a model, so they cost tokens to come back), the text
+# recognized from scanned pages (recognized again by Recognize text, so it
+# costs hours of CPU on a long book) and the document text index
+# (text_fts, extracted again by the next search), whose tables
+# gamma/search/index.py applies itself (index.SCHEMA), since that is where
+# an index of an older layout is dropped and made again. Nothing a person
+# wrote lives here: the chats, the notes index and the translation
+# glossary are in pages.db.
 DATA_SCHEMA = [
     # page_snaps = the recents-card cover thumbnails (small JPEG data URLs
     # captured client-side from the rendered viewer), shared by the
@@ -1476,6 +1481,28 @@ DATA_SCHEMA = [
     "CREATE TABLE IF NOT EXISTS annotation_pictures (key TEXT PRIMARY KEY, data BLOB NOT NULL, "
     "bytes INTEGER NOT NULL, at TEXT NOT NULL)",
     "DROP TABLE IF EXISTS feedback_pictures",
+    # The text recognized from a stored PDF's scanned pages
+    # (gamma/pdf_ocr.py), which every PDF text reader reads in place of
+    # the file's own layer on the pages it was applied to. pdf_ocr = one
+    # row a file (its doc_id): the engine and languages of the last apply,
+    # pdf_ocr.VERSION then, the file's page count, how many of its pages
+    # are scans or pictures (NULL: not classified yet), a counter for
+    # display, the stamp the readers' caches key on (new at every applied
+    # change, "" before the first), whether an apply's finishing steps
+    # (re-index, briefs, quotes) are still to run, when. pdf_ocr_pages =
+    # one row a page (1-based): the VERSION and languages it was recognized
+    # with, whether a run staged it (0, read by nobody) or it is applied
+    # (1, live), whether the page keeps its own text (kept: no words; a scan
+    # page's layer, a picture page's own words), the share of the layer's
+    # words the recognition read too (NULL: no layer), and its words, gzip
+    # of {"lines": [[[text, x0, y0, x1, y1],
+    # ...], ...]} in 1/10000 of the page as shown, top-left origin.
+    "CREATE TABLE IF NOT EXISTS pdf_ocr (doc_id TEXT PRIMARY KEY, engine TEXT NOT NULL, langs TEXT NOT NULL, "
+    "ver INTEGER NOT NULL, pages INTEGER NOT NULL, scanned INTEGER, rev INTEGER NOT NULL, stamp TEXT NOT NULL, "
+    "pending INTEGER NOT NULL DEFAULT 0, at TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS pdf_ocr_pages (doc_id TEXT NOT NULL, page INTEGER NOT NULL, ver INTEGER NOT NULL, "
+    "langs TEXT NOT NULL, applied INTEGER NOT NULL DEFAULT 0, kept INTEGER NOT NULL DEFAULT 0, shared REAL, "
+    "words BLOB NOT NULL, PRIMARY KEY (doc_id, page))",
 ]
 
 # Snapshots exist only to cover the (24-entry) recents queue; keep a few

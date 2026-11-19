@@ -7,11 +7,14 @@ search and the translated view were so poor on scans, and what to build. The
 note records what was measured, the three repairs tried and why one was
 picked. A second stage, real OCR, was then measured against a transcribed
 truth: which engine, what it costs on each platform, when it beats a scan's
-own layer, and a design that follows. A third, a vision model for scanned
-equations, is left open. The mechanics as built are in
-[dev/pdf_loading.md](../dev/pdf_loading.md) (the text layer),
-[dev/documents.md](../dev/documents.md#text-extraction) (the server's text)
-and [dev/translation.md](../dev/translation.md) (the OCR flag). The code is
+own layer, and a design that follows, whose server part is built. A
+third, a vision model for scanned equations, is left open. The mechanics
+as built are in [dev/pdf_loading.md](../dev/pdf_loading.md) (the text
+layer, and the recognized words in the viewer),
+[dev/documents.md](../dev/documents.md#text-extraction) (the server's text,
+and [Recognized text](../dev/documents.md#recognized-text): the engine, the
+run, the store) and [dev/translation.md](../dev/translation.md) (the OCR
+flag). The code of Stage 1 is
 [scanDetect.js](../../frontend/src/pdf/scanDetect.js),
 [scanText.js](../../frontend/src/pdf/scanText.js),
 [pageText.js](../../frontend/src/pdf/pageText.js) and
@@ -546,7 +549,7 @@ engine, and 56.6% wrong in the existing layers.
 | Platform | Tesseract with its layout | Other options |
 |---|---|---|
 | Docker, amd64 and arm64 | The tesserocr 2.13.0 wheel (MIT; 5.6 and 5.3 MB, Tesseract 5.5.4 and Leptonica inside) plus the models: fast eng 4.1 MB, fra 1.1, deu 1.5. No apt package is needed. Debian's `tesseract-ocr` would add 69 packages, about 100 MiB. | MuPDF's Tesseract, already in PyMuPDF 1.28.2: only the models are needed, but the layout is lost. |
-| Desktop, Windows and macOS | tesserocr wheels: 23 MB on Windows, 3.6–4.1 MB on macOS. A PyInstaller freeze was not tried. | Windows.Media.Ocr reads only the languages Windows has installed. With no French pack, "garçon déjà prêt" came back as "garcon déjå prét". |
+| Desktop, Windows and macOS | tesserocr wheels: 23 MB on Windows, 3.6–4.1 MB on macOS. PyInstaller 6.22 freezes it with no extra flag: the Windows bundle grew by 65 MB (57.7 MB of native libraries, 33 MB of that ICU's data, and the 6.8 MB of models); a minimal Linux freeze took 29 MB of libraries. macOS was not tried. | Windows.Media.Ocr reads only the languages Windows has installed. With no French pack, "garçon déjà prêt" came back as "garcon déjå prét". |
 | Android, iPad | None. The PyMuPDF the apps ship (Flet's 1.27.2.3) is built without OCR ("No OCR support in this build"), and tesserocr has no mobile wheels on PyPI or Flet's index. | tesseract.js in the app's web view. Apple Vision from Swift on the iPad (0 MB). ML Kit on Android: about 4 MB bundled, or 260 KB through Play services; it needs a Kotlin bridge and sends usage metrics to Google. RapidOCR's dependencies exist on Flet's index (about 60 MB with models), but it read worst here. |
 | Any browser | tesseract.js: about 4.5 MB on first use (the 1.46 MB LSTM core and 2.95 MB of English best_int), both servable from Gamma's own files. | – |
 
@@ -565,6 +568,10 @@ equations, and they are a Stage 3 question:
   CPU time per page has been published for them.
 
 ### A design that follows
+
+Its server part is built, started from the Document menu
+([dev/documents.md](../dev/documents.md#recognized-text)); what is left is
+under [Still open](#still-open).
 
 - **Engine.** Tesseract 5.5 everywhere, with the fast models and English,
   French and German loaded by default:
@@ -606,18 +613,34 @@ equations, and they are a Stage 3 question:
 ### Not measured
 
 - A NAS, a phone, or tesseract.js in a browser rather than Node.
-- tesserocr frozen by PyInstaller, and MuPDF's Tesseract on Linux and
-  macOS (seen only as strings in the wheels).
+- tesserocr frozen by PyInstaller on macOS, and MuPDF's Tesseract on Linux
+  and macOS (seen only as strings in the wheels).
 - Apple Vision and ML Kit accuracy.
 - Fraktur: the Annalen page is set in Antiqua.
 - A render above 300 dpi, or at the scan's own resolution.
 
 ## Still open
 
-### Stage 2: building it
+### Stage 2: what is left to build
 
-The design above, from the engine to the highlights. Its threshold for
-replacing a layer rests on 12 pages and should be checked on more.
+The server's engine, run from the Document menu, is built: the words kept
+per stored file, every reader taking them, highlights keeping their place
+and taking the new text. Left:
+
+- **In the browser**: tesseract.js in the web view for a server without
+  the engine (the Android and iPad apps, macOS before 15).
+- **Automatic runs**: on upload, or for a scan the viewer meets, by the
+  rule above (always for a page with no text; a sample first for a layer).
+- **Dropping recognized text**: a way back to the PDF's own text ("Use the
+  PDF's own text").
+- **More languages** than English, French and German.
+- **Copies elsewhere**: carrying recognized text to mirrors, clones and
+  publishing.
+- **Other tabs**: a socket nudge, so another member's open tab reads the
+  new text without opening the PDF again.
+
+The threshold for replacing a layer rests on 12 pages and should be
+checked on more.
 
 ### Stage 3: a vision model for scanned math
 
@@ -642,11 +665,12 @@ Not designed or measured.
 
 ### Smaller items
 
-- `title_guess` on scans: it reads `get_text("dict")` sizes, which on the
-  Lounis layer are ink heights, and picks the words with capitals and
-  ascenders. That paper only works because its first page is HAL's
-  born-digital cover. Feeding it the regrouped rows with one size per line
-  would fix it.
+- `title_guess` on scans read from their own layer: it reads
+  `get_text("dict")` sizes, which on the Lounis layer are ink heights, and
+  picks the words with capitals and ascenders. That paper only works
+  because its first page is HAL's born-digital cover. Feeding it the
+  regrouped rows with one size per line would fix it. A recognized first
+  page is read from its recognized lines instead.
 - Layers that neither detector sees, identically and by design: an OCR
   layer drawn visibly and then painted over by the image, and text hidden by
   fill alpha 0 (`ca=0`).

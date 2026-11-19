@@ -459,7 +459,8 @@ read as a line number to the highlight relocation, and a word ending in a
 hyphen joined the next word as if the hyphen ended a line.
 
 `gamma/pdf_scan.py` holds two rules, and `pdf_text` applies them to every
-page it reads.
+page it reads. A third, which only text recognition asks, picks the scans
+with no layer at all ([Recognized text](#recognized-text)).
 
 **Is the page a scan?** `is_scan_page(page)` is true when at least one
 glyph is shown, at least `INVISIBLE_SHARE` (0.9) of the non-space glyphs
@@ -480,9 +481,11 @@ only when the one before says "maybe":
    it reads one anyway (`_text`'s, `_glyphs`'s rawdict), built only now.
    MuPDF reports render modes 3 and 7 as a span of alpha 0.
 3. The images' boxes (`get_image_info`), their union measured on a 100 x
-   100 grid of cell centres, in the unrotated page's space that MuPDF gives
-   them in: a turned page is measured against its crop box, not its
-   turned rect.
+   100 grid of cell centres, in the unrotated page space MuPDF gives them
+   in: the page as shown (`page.rect`, the crop box clipped to the media
+   box, /UserUnit folded in) with its sides swapped back on a quarter turn.
+   The crop box as written would be the wrong size under a /UserUnit and
+   for a crop box reaching past the media box.
 
 The invisible share alone does not tell a scan: LaTeXiT draws its
 equations' source as invisible size-0 text, up to 0.97 of a page's
@@ -544,6 +547,192 @@ Hansch scans. A bump would re-extract every PDF of every workspace. The
 page-text cache lives in memory, so a restart reads the new text. Tests:
 `tests/test_pdf_scan.py`, with the synthetic scan of
 `tests/ocr_fixtures.py`.
+
+### Recognized text
+
+A layer that misreads its words ("Rksum4") and a scan with no layer at all
+need the words read from the picture. The Document menu's **Recognize text
+in this PDF** starts the `ocr` job ([tasks.md](tasks.md#the-kinds)): it
+reads the words of a stored PDF's scanned pages with Tesseract and keeps
+them in the workspace's data.db. From then on every reader of the file
+reads those words on the pages they apply to. The PDF file does not
+change. The engine and the thresholds were measured in
+[research/ocr.md](../research/ocr.md#stage-2-what-real-ocr-adds).
+
+Code: `gamma/ocr_engine.py` (the engine), `gamma/pdf_ocr.py` (the store,
+the view the readers take, the run), `routers/ocr.py` (the job's start and
+the reads, [api.md](api.md#text-recognition-routersocrpy-gammapdf_ocrpy)),
+`pdf_text` (the readers) and `pdf_scan.is_picture_page`. The viewer's side
+is [pdf_loading.md](pdf_loading.md#recognized-words).
+
+**The engine** (`ocr_engine`). Tesseract 5.5.4 through `tesserocr`
+2.13.0, whose wheels carry libtesseract and Leptonica, imported on first
+use. The fast models for English, French and German are loaded together
+(`eng+fra+deu`) from `backend/tessdata` (`config.tessdata_dir`).
+
+- `probe()` is what `/api/server-config` reports as `ocr`: `{engine,
+  langs}`, or null when recognition is off, in the mobile apps, on macOS
+  before 15 (the wheels are tagged 15), without the module or the models,
+  or after a failed `check`. It never imports the engine.
+- `check()` sets one engine up and ends it, on a worker thread before a
+  job starts. It answers None, or a plain sentence without paths, which
+  the start route returns as 503.
+- `recognize(raster)` gives a page's lines of words in Tesseract's reading
+  order (`PSM.AUTO`), each word with its pixel box and confidence: `[]`
+  for a page with no words; None for one that failed, ran past 120 s, or
+  read more than 20,000 words or a word longer than 200 characters. The
+  engines come from a pool of at most `config.ocr_workers()`, each lent to
+  one page at a time, about 50 MB each. Recognition releases the GIL.
+- On Windows a models folder whose path is not ASCII (a user name with an
+  accent) opens only with the C runtime reading file names as UTF-8, so
+  that locale is set while an engine is set up, then put back.
+  `OMP_THREAD_LIMIT` is set to 1 unless the environment sets it.
+
+**Which pages** (`pdf_text.page_kinds`, one page a turn of the lock):
+`scan` for `is_scan_page` (above), `picture` for `is_picture_page`, and
+nothing for the rest, which are never read. A picture page has no
+invisible glyph, shows at most `PICTURE_STAMP_CHARS` (300) non-space
+characters (a "Downloaded from" line, a page number; annotations do not
+count) and is at least 70% covered by images. Known miss: an OCR layer
+drawn visibly under its picture counts as shown text, so that page is
+neither kind and keeps its text.
+
+**The page rules** (`pdf_ocr._page_rule`). A page is drawn grey, without
+its annotations, at 300 dpi, or less past an A4 page's pixels or a side of
+10,000 pixels (`ocr_engine.render_zoom`).
+
+- A scan page's recognition replaces its layer when they share under 93%
+  of the layer's words (`KEEP_SHARED`) and the recognition read at least
+  half as many words (`MIN_WORDS_READ`). Otherwise the page keeps its
+  layer. Words are compared as the study scored them
+  (`pdf_ocr.shared_words`): NFKC, quotes and dashes folded, punctuation at
+  a word's ends dropped, case kept, each word counted as often as it
+  comes.
+- A picture page, or a scan page whose layer has no word, takes its
+  recognition when it read at least 10 words of confidence 60 or more
+  (`PICTURE_WORDS`, `PICTURE_CONF`). Otherwise it keeps the text it shows
+  of its own, such as a cover's title, a plate's caption or a stamp line
+  (stored `kept`, with no share). Only a page that shows no text either,
+  such as a plate or a photo, is stored with no words and reads as no
+  text.
+- A page with no result stores nothing, and the next run reads it again.
+
+**The run** (`pdf_ocr.run`, the job's body):
+
+1. A file that an earlier run left `pending` (cut short, or failed in its
+   finishing steps) is finished first.
+2. Phase `reading`: every page classified, and the count of scan and
+   picture pages recorded (`scanned`). Over `MAX_PAGES` (2,000) the run
+   fails; with none it ends.
+3. Phase `recognizing`: first the sample, the first `SAMPLE` (3) scan pages
+   with a layer, then every other scan and picture page not yet done at
+   this `VERSION` and these languages. Each page is compared with its own
+   text, read in the same walk of the file as its picture
+   (`pdf_text.layer_texts`: the file opened once, one page held at a time).
+   When each sampled page keeps its layer by sharing at least 93% of its
+   words, the file's own text reads well (`reads_well`, where a picture
+   page that kept its own text counts neither way) and its other layered
+   pages are skipped; its picture pages are still read. Each page is
+   stored *staged* as it is read, and no reader sees a staged page. A stop
+   lands between two pages; the staged pages wait for the next run, which
+   goes on from them.
+4. Phase `updating`, no longer stoppable: one transaction makes every
+   staged page live (`apply`), gives the file a new `stamp`, moves its
+   `rev` on, marks it `pending` and marks its search-index row stale. Then
+   the finishing steps run under the file's lock: the document indexed
+   again in the job's thread (a failure is left to the lazy indexer; a
+   workspace `indexing` job that read the text before the apply does not
+   store it over this one, `ocr_stamp` in [user_db.md](user_db.md)), its
+   kept briefs dropped ([translation.md](translation.md#kept-translations)),
+   the quotes of its highlights respelled
+   ([highlight_relocation.md](highlight_relocation.md#a-page-whose-text-was-recognized)),
+   and `pending` off. Each step can run twice without harm. A failure in
+   them is logged and the run still ends done, since its text is live; the
+   file stays `pending`, and the next run finishes it first (step 1).
+
+So the file's text changes at once, never page by page. A run that stops,
+fails or is cut short by a restart before `updating` changes nothing
+anyone sees. A failure or a restart during the finishing steps leaves the
+new text applied and the file pending for the next run. A failure in
+step 1 fails the run before it reads anything, the earlier run's text
+staying live and pending. The result's counts are in
+[tasks.md](tasks.md#the-kinds).
+
+**What is kept** (`pdf_ocr_pages`, [user_db.md](user_db.md)). A page's
+words are gzip JSON, lines of `[text, x0, y0, x1, y1]`, the box in whole
+1/10000ths of the page as shown (x of its width, y of its height, top-left
+origin): the frame of highlight rectangles and of pdf.js's viewport at
+scale 1, so rotation, a crop box and /UserUnit need nothing more. About
+7 KB a page. A page's text (`page_text`) is each line's words joined by a
+space, every line ending in `\n`, the last one too, which is how the
+viewer's text layer spells the same words. Readers read only live rows
+(applied, not kept) of `pdf_ocr.VERSION` and the engine's languages. A new
+`VERSION` needs a reader for the old rows or a plan for them: rows of
+another version are read by nobody, while the index and the respelled
+quotes still hold their words.
+
+**The readers.** `pdf_ocr.view_of(src)` gives a path's recognized text,
+which pdf_text asks for through `_ocr_view` (imported lazily, never under
+its lock). A path is placed by its parts alone,
+`<workspace>/uploads/<doc_id>.pdf` of the data directory, or on the
+desktop app's server through vaults.db's `linked_files`: one workspace and
+name recorded for the path, and the file's size and time as recorded.
+Bytes, any other path and a file with no live page read their own layer,
+and data.db is opened only when it exists. A resolve costs 0.15 to 0.4 ms.
+The view holds the stamp, the live pages and the page count the run read;
+words are read 32 pages at a time.
+
+- `iter_page_texts`, and through it `extract_pages`, `extract_text` and
+  `extract_text_pages` (the search index, the chat's excerpts, MCP,
+  `/pdf-text-status`): a live page gives its recognized text and MuPDF
+  never reads it; a file recognized on every page is never opened. The
+  page-text cache keys on the stamp too (`_text_key`), so text recognized
+  later is read at once, and a new stamp drops the file's entries of older
+  ones.
+- `GlyphPages` (a quote under a highlight, the annotation import, the
+  highlight relocation, Zotero's quotes and sort index): a live page's
+  glyphs are built in the page as shown, a word's box shared evenly among
+  its characters and every glyph standing on its line's band (the median
+  top and bottom of its words), then each character's corners are taken to
+  user space through the page's frame (`pdf_export.viewer_point_to_pdf`).
+  A boxless `" "` parts two words and a boxless `"\n"` ends each line. The
+  view is read only while it counts the file's pages as the file does.
+- `opening_is_scan`: a live page counts as a scan's text, so the
+  translation brief keeps its OCR rule (Tesseract still misreads about one
+  character in a hundred).
+- `title_guess`: a live first page's lines go through the largest-type
+  rule, a line's size its tallest word box with a letter. Tesseract's boxes
+  hug the ink, and a word without ascender or descender is short: by the
+  median, a three-line title's lines sat 10% apart.
+- Each reader's `ocr=False` reads the file's own layer: the run's
+  comparison does, a highlight's respell reads both, and a relocation
+  reads both files that way for a highlight measured on a file whose text
+  was not recognized.
+
+**Settings** ([debugging.md](debugging.md#text-recognition)). `GAMMA_OCR`
+turns recognition on or off; unset, it is off on a hosted container and in
+demo mode, where a book's hours of CPU would take what every account
+shares. `GAMMA_OCR_WORKERS` (default 1) is how many files are recognized
+at once on the server, and `GAMMA_TESSDATA_DIR` where the models are.
+
+**Purge.** `search.index.purge_unused` drops the rows of a file that no
+block carries and the workspace no longer stores. It asks the store
+(`storage.exists`) only about the recognized files no block carries, so
+its cost follows them, not the library. A replacement's `purge_doc` keeps
+the rows, since a highlight may still name the old file, and
+`upload_gc`'s purge of the file drops them (`pdf_ocr.drop`).
+
+**Limits.** Another member's open tab keeps the old text until it opens
+the PDF again.
+
+Tests: `test_ocr_engine.py` (the engine, with the real one where tesserocr
+is installed), `test_pdf_ocr_store.py`, `test_pdf_ocr_reading.py` (every
+reader through the view, rotations and a crop box), `test_pdf_ocr_run.py`
+(with the fake engine of `tests/ocr_fake.py`), `test_ocr_api.py`,
+`test_ocr_respell.py`, `test_jobs_lanes.py`, a purged file's text in
+`test_upload_gc.py` and the picture rule in
+`test_pdf_scan.py`; `tests/ocr_fixtures.py` draws a printed scan with or
+without a garbled layer (`printed_scan_pdf`).
 
 ## In SQL
 

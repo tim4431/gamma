@@ -138,6 +138,36 @@ with the ngx_brotli module). It then also owns the backend's other static
 rules: `index.html` for any path that is no file, `/assets/*` cached
 `public, max-age=31536000, immutable`, everything else `no-cache`.
 
+### Text recognition
+
+Recognize text in this PDF ([documents.md](documents.md#recognized-text))
+needs nothing beyond `requirements.txt`: the `tesserocr` wheel carries
+Tesseract and Leptonica, and the models are in `backend/tessdata`. The
+wheels exist for Linux (amd64, arm64), Windows and macOS 15 or later. On
+an older macOS the requirement's marker (`sys_platform != "darwin" or
+platform_release >= "24"`, Darwin 24 being macOS 15) skips tesserocr, so
+`pip install -r requirements.txt` still succeeds there and the server
+runs without the engine. The apps' server has none either
+(`requirements-mobile.txt` leaves it out). A server without the engine
+reports no `ocr` in `/api/server-config` and offers no Recognize text.
+Read when asked:
+
+- `GAMMA_OCR`: `on` or `off` (also 1/0, true/false, yes/no). Unset, it is
+  on, except on a hosted container and in demo mode.
+- `GAMMA_OCR_WORKERS`: how many files are recognized at once on the
+  server, and engines kept loaded (about 50 MB each); 1 unless set. A page
+  keeps one core busy for seconds.
+- `GAMMA_TESSDATA_DIR`: another models folder (the Docker image's
+  `/app/tessdata`, the desktop bundle's).
+- `OMP_THREAD_LIMIT`: set to 1 unless the environment sets it (the Docker
+  image and the desktop app do): a Tesseract built with OpenMP starts a
+  thread per core otherwise, which measured slower.
+
+The backend's real-engine tests skip without tesserocr; the others use the
+fake engine of `tests/ocr_fake.py`. The desktop bundle's own check is
+`gamma-server --check-ocr`
+([desktop/docs/architecture.md](../../desktop/docs/architecture.md)).
+
 ### Snapshots and copies in a bucket
 
 Gamma always works on the files in its data directory. An S3-compatible
@@ -1670,7 +1700,17 @@ The scenarios live in `tests/e2e/scenarios/`:
   pdf.js's own; the scan's sit on the print, a band a line, tiling it; a drag
   across a line selects it and its highlight lies on it; Ctrl+F marks a word
   where it is printed; the scan's translation sends the paragraph as one
-  text with `ocr`, the cover's without.
+  text with `ocr`, the cover's without. Then the server's text recognition
+  with the real engine ([documents.md](documents.md#recognized-text)), on
+  a printed scan under a garbled layer (`printed_scan_pdf` of
+  `backend/tests/ocr_fixtures.py`, built through the backend Python): the
+  Document menu's Recognize text in this PDF, its Background tasks row and
+  summary, and the job's result; the text layer of recognized words, each
+  over its printed word; Ctrl+F finding a word only the recognition read;
+  a highlight made before the run taking the recognized line as its quote
+  and a heavily garbled one keeping its own, both in place; the metadata
+  popover's text cell after the run, the menu row gone then, and the row
+  and the popover's prompt for a scan with no layer.
 - `translation.mjs`: a two-column page whose paragraph runs over the column
   break: the request carries one text with `{br}`, the formulas and the
   citation marker as tokens, the page and the section; the reply fills both

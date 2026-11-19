@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { addLocalRow, afterFollow, followed, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished,
   progressFraction, remainingMs, sortTasks, trayBadge, waitsForYou } from "../src/tasks/taskModel.js";
-import { byteProgress, bytesInfo, canOpen, exportAgain, fmtRemaining, kindOf, progressCounts, progressText, quietKinds,
+import { byteProgress, bytesInfo, canOpen, exportAgain, fmtRemaining, kindOf, ocrSummary, progressCounts, progressText, quietKinds,
   relocationSummary, relocationSuperseded, retryOf, stopPath, taskActions, taskInfo, taskTime, taskTitle, turnShown }
   from "../src/tasks/taskKinds.js";
 
@@ -216,6 +216,47 @@ test("a text file's run is worded for the file: a dashed range is checked from i
     "A hollow tag marks a highlight whose text is gone: right-click it and choose Move to a selection or Use the closest match.",
   ].join(" "));
   assert.doesNotMatch(relocationSummary(result({ approx: 1 })), /PDF|Document menu|Hover/);
+});
+
+test("a recognition's row: its paper, the phases, the time left at this run's pace, and Try again on the page", () => {
+  const params = { page_id: "p1", doc_id: "d1", title: "Lounis 1992" };
+  const ocr = (fields) => job({ kind: "ocr", params, ...fields });
+  assert.equal(taskTitle(ocr({})), "Recognizing the text of “Lounis 1992”");
+  assert.equal(kindOf(ocr({})).icon, "scanText");
+  assert.deepEqual(retryOf(ocr({ state: "failed" })), ["ocr", { page_id: "p1" }], "the route startJob puts under /api/jobs/");
+  assert.equal(taskInfo(ocr({ state: "queued" })), "Waiting for its turn…", "one recognition runs at a time");
+  assert.equal(progressText(ocr({ progress: { phase: "reading", done: 3, total: 15, unit: "pages" } })), "Reading the PDF · 3 of 15 pages");
+  // A run that goes on from 40 pages an earlier one recognized: 10 more in
+  // 50 s leaves 50 pages, about 4 minutes; counted from 0, under a minute.
+  const since = Date.parse(at(0));
+  const running = ocr({ progress: { phase: "recognizing", done: 50, total: 100, unit: "pages", since, from: 40 } });
+  assert.equal(progressText(running, since + 50000), "Recognizing text · 50 of 100 pages · about 4 minutes left");
+  assert.equal(progressText(running, since + 1000), "Recognizing text · 50 of 100 pages", "too soon to tell");
+  const updating = ocr({ stoppable: false, progress: { phase: "updating" } });
+  assert.equal(progressText(updating), "Updating search and highlights — can no longer be stopped");
+  assert.deepEqual(taskActions(updating), []);
+});
+
+test("a recognition's end says what it changed, that the PDF's text already reads well, or how far it got", () => {
+  const ocr = (fields) => job({ kind: "ocr", state: "done", params: { page_id: "p1", doc_id: "d1", title: "Lounis 1992" }, ...fields });
+  const result = (fields) => ({ scanned: 12, recognized: 0, kept: 0, empty: 0, failed: 0, good_layer: false, shared: null,
+    highlights_respelled: 0, highlights_kept: 0, ...fields });
+  assert.equal(ocrSummary(ocr({}), result({ recognized: 11, empty: 1, highlights_respelled: 3 })),
+    "Text recognized on 11 pages of “Lounis 1992”. 3 highlights took the new text.");
+  assert.equal(ocrSummary(ocr({}), result({ recognized: 1, failed: 2 })),
+    "Text recognized on 1 page of “Lounis 1992”. 2 pages could not be read; recognizing again tries them once more.");
+  assert.equal(ocrSummary(ocr({}), result({ good_layer: true, kept: 3, shared: 0.976 })),
+    "“Lounis 1992”'s own text already reads well (98% of its words match a fresh recognition), so it was kept.");
+  assert.equal(ocrSummary(ocr({}), result({ good_layer: true, kept: 3, shared: 0.976, recognized: 2 })),
+    "“Lounis 1992”'s own text already reads well (98% of its words match a fresh recognition), so it was kept. Text recognized on its 2 picture pages.",
+    "its picture pages are recognized all the same");
+  assert.equal(ocrSummary(ocr({}), result({ scanned: 0 })), "“Lounis 1992” has no scanned pages, so its text was left as it is.");
+  assert.equal(ocrSummary(ocr({ state: "cancelled", progress: { phase: "recognizing", done: 7, total: 12, unit: "pages" } })),
+    "Text recognition of “Lounis 1992” stopped after 7 of 12 pages; recognizing again goes on from there.");
+  // Stopped while the PDF's pages were read (counted over all of them, as
+  // the server reports it): nothing was recognized yet.
+  assert.equal(ocrSummary(ocr({ state: "cancelled", progress: { phase: "reading", done: 3, total: 15, unit: "pages" } })),
+    "Text recognition of “Lounis 1992” was stopped.");
 });
 
 test("a click opens the export and import dialogs again, or where the work is managed", () => {

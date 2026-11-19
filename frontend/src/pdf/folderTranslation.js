@@ -5,9 +5,11 @@
 // translations (translateState.seedDetached, no model call) and laid out as
 // the viewer's export lays it out (translateExport.exportLayout). The
 // layouts go with the job as `translations`, one per paper by its page.
-// Pure but for what is handed in, so the tests run it in Node.
+// Pure but for what is handed in and the store of recognized words
+// (pdf/ocrState.js), so the tests run it in Node.
 import { pdfFileHash } from "../documents/pageDocument.js";
 import { folderSubtree } from "../library/libraryUtils.js";
+import * as ocrState from "./ocrState.js";
 import { exportLayout } from "./translateExport.js";
 import { seedDetached } from "./translateState.js";
 import { langOfKey } from "./translateRecall.js";
@@ -85,10 +87,15 @@ export async function folderTranslations(papers, { layoutOf, signal = null, boun
 // translateRecall.openKey): its PDF at `url` opened (`open(url)`, a pdf.js
 // document; PdfViewer's openPdfDocument), every page seeded through
 // `lookup({pageId, texts}, signal)` (POST /api/translations/lookup under the
-// key's language and model) and laid out. {lang, pages}, or null when no
-// page holds a translation under the key. The document is destroyed after.
-export async function paperLayout({ url, pageId, key, open, lookup, signal = null }) {
+// key's language and model) and laid out. Its pages read the words the
+// server recognized in the stored file `docId` where it has them
+// (pdf/ocrState.js), as the viewer's do, so a recognized scan finds the
+// translations made of those words. {lang, pages}, or null when no page
+// holds a translation under the key. The document is destroyed after.
+export async function paperLayout({ url, docId = "", pageId, key, open, lookup, signal = null }) {
   const doc = await open(url);
+  // no URL: no translated view to tell when its recognized words change
+  if (docId) ocrState.register(doc, docId);
   try {
     const { view, span } = await seedDetached({ doc, key, signal,
       lookup: (texts, sig) => lookup({ pageId, texts }, sig) });

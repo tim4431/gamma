@@ -9,6 +9,7 @@ import { OPS, getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { ScanMemo, confirm, prescreen } from "../src/pdf/scanDetect.js";
 import { repairTextContent } from "../src/pdf/scanText.js";
 import { knownScan, pageText } from "../src/pdf/pageText.js";
+import * as ocrState from "../src/pdf/ocrState.js";
 import { segmentPage, textRuns } from "../src/pdf/pdfTranslate.js";
 
 const W = 510, H = 708;
@@ -270,6 +271,38 @@ test("pageText repairs a scan's page, leaves a typeset one as it is, and asks th
   // An operator list that fails leaves the text as pdf.js gave it.
   const broken = { ...mockPage(flippedLayer(PARAGRAPH), { scan: true, commonObjs: {}, lists }), getOperatorList: async () => { throw new Error("destroyed"); } };
   assert.equal((await pageText(broken)).repaired, undefined);
+});
+
+test("a recognized page reads the server's words with no operator list; another page of the scan notes a scan for the menu", async () => {
+  const lines = [[["Recognized", 1000, 1000, 2400, 1150], ["words", 2500, 1000, 3300, 1150]]];
+  const asked = [];
+  ocrState.reset();
+  ocrState.connect({
+    workspace: () => "w1",
+    json: async (path) => {
+      asked.push(path);
+      return path.includes("/pages?") ? { stamp: "s1", pages: { 1: { lines } } } : { stamp: "s1", recognized: [1], kept: [] };
+    },
+  });
+  const lists = { n: 0 };
+  const commonObjs = {};
+  ocrState.register({ numPages: 2, _transport: { commonObjs } }, "scanned", "/api/uploads/scanned.pdf");
+  let read = 0;
+  const page = (pn) => ({ ...mockPage(flippedLayer(PARAGRAPH), { scan: true, commonObjs, lists }), pageNumber: pn,
+    getTextContent: async () => { read += 1; return flippedLayer(PARAGRAPH); } });
+  const recognized = page(1);
+  const tc = await pageText(recognized);
+  assert.equal(tc.ocr && tc.repaired, true, "the translation reads it as text read from a picture");
+  assert.equal(selected(tc), "Recognized words\n");
+  assert.equal(lists.n + read, 0, "neither the layer nor the operator list is read");
+  assert.equal(knownScan(recognized), true, "a selection's translation says so too");
+  assert.equal(ocrState.menuRow({ docId: "scanned", offered: true }), null, "the server has not said what is left");
+  const layered = await pageText(page(2));
+  assert.equal(layered.repaired && !layered.ocr, true, "a page not recognized has its layer repaired");
+  assert.equal(lists.n, 1);
+  assert.equal(ocrState.menuRow({ docId: "scanned", offered: true })?.busy, false, "a scan met: the menu offers recognition");
+  ocrState.connect({ json: null });
+  ocrState.reset();
 });
 
 // A one-page scan as the study's worst producer writes it: a picture over the

@@ -214,16 +214,16 @@ function lineBand(ws, tight) {
   return [Math.min(...bottoms), Math.max(...tops)];
 }
 
-// The repaired TextContent of a page pdf/scanDetect.js called a scan. `view`
-// is the page's box in PDF space (`page.view`, [x1, y1, x2, y2]), which a
-// line's ends do not cross; without it the page's outermost boxes stand in.
-export function repairTextContent(tc, { view = null } = {}) {
-  const items = tc.items || [];
-  const sourceStyles = tc.styles || {};
-  const seq = words(items, sourceStyles);
-  const lns = lines(seq);
-  const tight = inkTight(lns);
-
+// Steps 4 and 5 share their measures with pdf/ocrText.js, which lays out a
+// recognized page's lines as these lines are laid out, so both select,
+// search and translate alike.
+//
+// Each line of words ({ws}, boxes y up with `h` their height; a passthrough
+// has none) gets its band (b0 to b1, height H) and the gaps between its
+// words (`gaps`); a line of boxes with no height takes the page's median
+// line height. Answers the page's median gap in line heights, which a
+// one-word line reaches out by.
+export function bandLines(lns, tight) {
   const gapsH = [];
   for (const l of lns) {
     if (!l.ws) continue;
@@ -233,11 +233,39 @@ export function repairTextContent(tc, { view = null } = {}) {
     for (let k = 1; k < l.ws.length; k++) l.gaps.push(l.ws[k].x0 - l.ws[k - 1].x1);
     if (l.gaps.length && l.H > 0) gapsH.push(median(l.gaps) / l.H);
   }
-  // A one-word line reaches out by the page's median gap; a line of boxes
-  // with no height takes the page's median line height.
-  const pageGap = gapsH.length ? median(gapsH) : 0.4;
   const pageH = median(lns.filter((l) => l.H > 0).map((l) => l.H)) || 1;
   for (const l of lns) if (l.ws && !(l.H > 0)) { l.b0 -= DESC * pageH; l.H = pageH; }
+  return gapsH.length ? median(gapsH) : 0.4;
+}
+
+// Where the words of a banded line tile it: n + 1 cuts, word k's span
+// running from cuts[k] to cuts[k + 1]. `pageGap` is bandLines' answer,
+// `tight` whether the boxes hug the ink, and [left, right] the page, which
+// the line's ends do not cross.
+export function tileCuts({ ws, H, gaps }, { pageGap, tight, left = -Infinity, right = Infinity }) {
+  const gap = gaps.length ? median(gaps) : pageGap * H;
+  const reach = Math.min(Math.max(gap, 0) / 2, END_CAP * H);
+  const n = ws.length;
+  const cuts = [Math.max(ws[0].x0 - reach, Math.min(ws[0].x0, left))];
+  // never backwards (a box inside its neighbour), so no width is negative
+  for (let k = 1; k < n; k++) {
+    const middle = (ws[k - 1].x1 + ws[k].x0) / 2;
+    cuts[k] = Math.max(cuts[k - 1], tight ? middle : Math.max(middle, ws[k].x0 - CUT_MARGIN * H));
+  }
+  cuts[n] = Math.max(cuts[n - 1], Math.min(ws[n - 1].x1 + reach, Math.max(ws[n - 1].x1, right)));
+  return cuts;
+}
+
+// The repaired TextContent of a page pdf/scanDetect.js called a scan. `view`
+// is the page's box in PDF space (`page.view`, [x1, y1, x2, y2]), which a
+// line's ends do not cross; without it the page's outermost boxes stand in.
+export function repairTextContent(tc, { view = null } = {}) {
+  const items = tc.items || [];
+  const sourceStyles = tc.styles || {};
+  const seq = words(items, sourceStyles);
+  const lns = lines(seq);
+  const tight = inkTight(lns);
+  const pageGap = bandLines(lns, tight);
   // A line's ends stay on the page: its box, or the outermost boxes.
   let left = Infinity, right = -Infinity;
   if (view?.length === 4) [left, right] = [Math.min(view[0], view[2]), Math.max(view[0], view[2])];
@@ -258,16 +286,8 @@ export function repairTextContent(tc, { view = null } = {}) {
       return;
     }
     const { ws, b0, H } = l;
-    const gap = l.gaps.length ? median(l.gaps) : pageGap * H;
-    const reach = Math.min(Math.max(gap, 0) / 2, END_CAP * H);
     const n = ws.length;
-    const cuts = [Math.max(ws[0].x0 - reach, Math.min(ws[0].x0, left))];
-    // never backwards (a box inside its neighbour), so no width is negative
-    for (let k = 1; k < n; k++) {
-      const middle = (ws[k - 1].x1 + ws[k].x0) / 2;
-      cuts[k] = Math.max(cuts[k - 1], tight ? middle : Math.max(middle, ws[k].x0 - CUT_MARGIN * H));
-    }
-    cuts[n] = Math.max(cuts[n - 1], Math.min(ws[n - 1].x1 + reach, Math.max(ws[n - 1].x1, right)));
+    const cuts = tileCuts(l, { pageGap, tight, left, right });
     ws.forEach((w, k) => {
       const last = k === n - 1;
       const str = last ? w.t : `${w.t} `;

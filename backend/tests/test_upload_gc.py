@@ -329,6 +329,26 @@ def test_purge_deletes_only_what_is_still_unreferenced_after_30_days(ann):
     assert young in orphans and again in orphans
 
 
+def test_a_purged_pdf_takes_its_recognized_text_with_it(ann):
+    from gamma import pdf_ocr
+
+    c, ws = ann
+    page = _page(c, "recognized")
+    _ops(c, page, [{"op": "insert", "id": "gcO", "parent": page, "content": "keeper"}])
+    gone, young = "0c" * 12, "0d" * 12  # two recognized PDFs no block carries, kept while they are stored
+    for doc_id in (gone, young):
+        storage.put(ws, f"{doc_id}.pdf", PDF + doc_id.encode())
+        pdf_ocr.set_scanned(ws, doc_id, 1, 1)
+        pdf_ocr.stage_page(ws, doc_id, 1, [[["word", 0, 0, 10, 10]]])
+        pdf_ocr.apply(ws, doc_id, "tesseract 5.5.4")
+    _age(ws, f"{gone}.pdf", 31)
+    _age(ws, f"{young}.pdf", 29)
+    purged = upload_gc.reconcile(ws)["purged"]
+    assert f"{gone}.pdf" in purged and f"{young}.pdf" not in purged
+    assert pdf_ocr.state(ws, gone) is None, "the file is gone: so is the text recognized on it"
+    assert pdf_ocr.state(ws, young)["recognized"] == [1]
+
+
 def test_purge_refuses_a_database_without_pages(gc):
     make_user("gc_empty", "pw")
     c, ws = login("gc_empty", "pw"), workspace_of("gc_empty")

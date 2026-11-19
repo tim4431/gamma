@@ -3,7 +3,7 @@
 ## Package locally
 
 ```bash
-python desktop/build_backend.py   # freeze backend (venv python, given the pinned PyInstaller; ~50 MB onedir)
+python desktop/build_backend.py   # freeze backend (venv python, given the pinned PyInstaller; ~225 MB onedir on Windows)
 cd desktop && npm run pack        # unpacked app in dist/{win,linux}-unpacked or dist/mac* (fast test)
 npm run e2e:packaged              # the suite against the frozen bundle
 npm run dist                      # real installer (NSIS .exe / .dmg + .zip / .deb)
@@ -43,6 +43,15 @@ macOS 13 or later, as Electron does: Electron's `Info.plist` carries that
 as `LSMinimumSystemVersion`, so an older macOS refuses to open the app.
 The update notice on macOS only links to the release page and does not
 know the floor, so the release notes name it.
+
+Recognizing the text of scanned PDFs (*Recognize text in this PDF*,
+`gamma/ocr_engine.py`) needs macOS 15: the tesserocr wheels the frozen
+server carries are built for it (`macosx_15_0`). On macOS 13 and 14 the
+server reports no `ocr` in `/api/server-config`, the Document menu leaves
+the item out, and everything else runs. Tesseract and its models add about
+65 MB to the Windows bundle (the wheel's libraries are 56 MB, 33 MB of them
+ICU's data) and about 16 MB to the Mac one (9 MB of libraries, 7 MB of
+models).
 
 The Mac App Store's `.pkg` is a build of its own, made by hand on a Mac
 that holds the App Store team's certificates: *Mac App Store* below.
@@ -94,7 +103,7 @@ has no push trigger. The `release` skill dispatches it against whatever is
 on `main` (`gh workflow run desktop.yml --ref main`); a merge to `main`
 releases no app. Every run builds the web app once, then Windows + macOS +
 Linux (pin the version → take the built web app → backend freeze →
-frozen-server health check → electron-builder → signature verification →
+frozen-server health and OCR check → electron-builder → signature verification →
 packaged `--smoke`; the Linux job additionally `apt install`s the `.deb` on
 the runner and runs the `--smoke` self-test from `/opt/Gamma/gamma`,
 sandbox on, under Xvfb), the Android app, the AI plugins and the browser
@@ -442,8 +451,10 @@ so they are set per build: `GAMMA_MAS_VERSION` (e.g. `1.1`) and
 the launcher and the server's dashboard report, as on the iPad. The config
 refuses to load without them.
 
-**Build**, on a Mac (the architecture is the build machine's, since the
-frozen server is; arm64 on Apple silicon):
+**Build**, on a Mac running macOS 15 or later (the architecture is the
+build machine's, since the frozen server is, arm64 on Apple silicon; on an
+older macOS requirements.txt's marker skips tesserocr, which has no wheel
+there, and the app is built without text recognition):
 
 ```bash
 (cd frontend && npm ci && npm run build)

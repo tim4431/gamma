@@ -515,6 +515,62 @@ test("forgetting a document's translation drops its entries and status but keeps
   assert.ok(translateState.entries(busy).size > 0);
 });
 
+// Four pages, the fixture's two twice over, whose text can change in place
+// (the server recognized it from the page pictures): `change(pn)` writes
+// the page's words in capitals.
+function changingDoc() {
+  const pages = structuredClone([...PAPER.pages, ...PAPER.pages.map((p) => ({ ...p, pn: p.pn + 2 }))]);
+  const doc = pdfDoc(pages);
+  doc.change = (pn) => { for (const r of pages[pn - 1].runs) r.str = r.str.toUpperCase(); };
+  return doc;
+}
+
+test("a page whose text changed loses its blocks and entries, and so do the pages beside it; the others stay", async () => {
+  const url = "/uploads/recognized.pdf";
+  const doc = changingDoc();
+  await job(url, { doc, pages: [1, 2, 3, 4], translate: server().translate });
+  const four = translateState.entries(url).get(4);
+  const blocks4 = translateState.blocks(url, 4);
+  doc.change(2);
+  translateState.textChanged(url, [2]);
+  assert.deepEqual([...translateState.entries(url).keys()], [4]);
+  assert.equal(translateState.entries(url).get(4), four);
+  assert.deepEqual([1, 2, 3].map((pn) => translateState.blocks(url, pn)), [null, null, null]);
+  assert.equal(translateState.blocks(url, 4), blocks4);
+  const again = server();
+  await job(url, { doc, pages: [1, 2, 3, 4], translate: again.translate });
+  assert.ok(translateState.blocks(url, 2).every((b) => b.text === b.text.toUpperCase()), "segmented afresh from the new text");
+  assert.ok(again.texts().some((t) => /[A-Z]{4} [A-Z]{4}/.test(t)), "and the new text is asked for");
+  assert.equal(translateState.blocks(url, 4), blocks4, "the page the change did not reach keeps its blocks");
+  assert.ok([1, 2, 3, 4].every((pn) => translateState.entries(url).get(pn)?.done));
+});
+
+test("a change while a job runs halts it, and lands once the job has unwound", async () => {
+  const url = "/uploads/recognized-busy.pdf";
+  const s = heldServer();
+  const running = job(url, { doc: changingDoc(), pages: [1, 2, 3, 4], parallel: 1, translate: s.translate });
+  await until(() => s.asked.length > 0, "the first request");
+  await until(() => translateState.blocks(url, 4), "the last page segmented");
+  translateState.textChanged(url, [4]);
+  assert.ok(translateState.blocks(url, 4), "nothing goes while the job unwinds");
+  await running;
+  assert.equal(s.asked.length, 1, "halted: no request went after the change");
+  assert.equal(translateState.snapshot(url).status.running, false);
+  assert.deepEqual([3, 4].map((pn) => [translateState.blocks(url, pn), translateState.entries(url).has(pn)]), [[null, false], [null, false]]);
+  assert.ok(translateState.blocks(url, 1) && translateState.blocks(url, 2), "the pages the change did not reach stay segmented");
+});
+
+test("a recognized page's words segment with no font face to wait for", async () => {
+  const url = "/uploads/recognized-face.pdf";
+  // No font of that id ever comes into commonObjs.
+  const base = pdfDoc([{ pn: 1, runs: PAPER.pages[0].runs.map((r) => ({ ...r, font: "gamma_ocr" })) }]);
+  const doc = { ...base, getPage: async (pn) => ({ ...(await base.getPage(pn)), commonObjs: { has: () => false, get: () => {} } }) };
+  const started = Date.now();
+  await job(url, { doc, pages: [1], translate: server().translate });
+  assert.ok(Date.now() - started < 2000, "pdf/pdfFonts.js would wait 3 s for a face that never comes");
+  assert.ok(translateState.entries(url).get(1)?.done);
+});
+
 test("a paragraph is shown in the original as a whole, under its key, and asked for again alone, afresh", async () => {
   const url = "/uploads/paragraph.pdf";
   await job(url, { translate: server().translate });

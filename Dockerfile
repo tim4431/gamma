@@ -24,6 +24,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends fonts-droid-fal
 COPY backend/requirements.txt backend/requirements-s3.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-s3.txt
 
+# The models Tesseract recognizes scanned pages with (gamma/ocr_engine.py;
+# the engine itself is the tesserocr wheel above, which needs no apt
+# package), with their licence and notices. A layer of their own before the
+# code's, so a new commit does not push and pull these 7 MB again.
+COPY backend/tessdata/ ./tessdata/
+
 COPY backend/app.py backend/manage.py ./
 COPY backend/gamma/ ./gamma/
 COPY --from=frontend /build/dist ./static/
@@ -36,8 +42,14 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ARG GAMMA_VERSION=""
 ARG GAMMA_BRANCH=""
 ARG GAMMA_COMMIT=""
+# OMP_THREAD_LIMIT: one thread per recognized page; the OCR lane
+# (GAMMA_OCR_WORKERS) decides how many pages are read at once, and a
+# Tesseract built with OpenMP would otherwise start a thread a core, which
+# measured slower (docs/research/ocr.md).
 ENV GAMMA_DATA_DIR=/data \
     GAMMA_STATIC_DIR=/app/static \
+    GAMMA_TESSDATA_DIR=/app/tessdata \
+    OMP_THREAD_LIMIT=1 \
     GAMMA_VERSION=$GAMMA_VERSION \
     GAMMA_BRANCH=$GAMMA_BRANCH \
     GAMMA_COMMIT=$GAMMA_COMMIT \

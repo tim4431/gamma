@@ -26,8 +26,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import (comments, config, folder_links, highlight_relocate, jobs, linked_files, pdf_meta, publish, storage,
-               upload_gc)
+from .. import (comments, config, folder_links, highlight_relocate, jobs, linked_files, pdf_meta, pdf_ocr, publish,
+               storage, upload_gc)
 from ..auth import (DISK_CLIENT, actor_of, link_ratelimit, require_user_id, require_ws, require_ws_writer, resolve_ws,
                     share_scope, writer_client)
 from ..blocks_store import (
@@ -618,7 +618,10 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     tasks are full (the Document menu's Find highlights in this PDF places
     the highlights later), the new PDF is shown from a URL alone
     (``NOT_STORED``: no file to read), or the text run's own (the file
-    changed while it was read, it is no text). The replacement stands
+    changed while it was read, it is no text); and
+    ``text_not_recognized: true`` when the outgoing PDF's text was
+    recognized from its pictures and the new one's is not (the Document
+    menu's Recognize text in this PDF does it). The replacement stands
     either way."""
     ws = require_ws(request, write=True)
     client = writer_client(request)
@@ -639,8 +642,10 @@ def replaced_answer(done: dict) -> dict:
     """What ``PUT /pages/{id}/attachment`` answers for ``replace_attachment``'s
     result: the updated block, with the relocation run as ``job``, a text
     file's run made at once as ``relocation`` (its counts), or why none
-    started or the run refused as ``relocation_error``; the page as it was
-    when nothing changed. The desktop app's own server answers a PDF sent
+    started or the run refused as ``relocation_error``, and
+    ``text_not_recognized: true`` when the outgoing PDF's text was
+    recognized and the new one's is not; the page as it was when nothing
+    changed. The desktop app's own server answers a PDF sent
     from disk the same way (gamma/folder_links.py ``LocalSink``)."""
     if not done["results"]:
         return done["page"]
@@ -652,6 +657,8 @@ def replaced_answer(done: dict) -> dict:
         answer["relocation"] = done["relocation"]
     elif done["relocation_error"]:
         answer["relocation_error"] = done["relocation_error"]
+    if done.get("text_not_recognized"):
+        answer["text_not_recognized"] = True
     return answer
 
 
@@ -731,7 +738,11 @@ def replace_attachment(ws: str, page_id: str, hash: str, url: str = "", name: st
     the highlights stamped), incoming, outgoing (the stored files' hashes,
     "" for none), job (the run, or None), relocation (the counts of a text
     run made at once, or None), relocation_error (why no run started or the
-    run made at once refused; "" when one did or none was needed)}``."""
+    run made at once refused; "" when one did or none was needed),
+    text_not_recognized (a PDF replaced by another whose text, unlike the
+    outgoing one's, was not recognized from its pictures, gamma/pdf_ocr.py:
+    the page reads the new file's own layer until it is,
+    ``_recognition_left``)}``."""
     with connect_pages_db(ws) as conn:
         write_lock(conn)  # the checks and the write as one step
         try:
@@ -771,7 +782,7 @@ def replace_attachment(ws: str, page_id: str, hash: str, url: str = "", name: st
                     conn.rollback()  # nothing to write: let go of the lock
                 return {"page": page, "content": page["content"], "props": page["properties"], "results": [],
                         "placed": [], "incoming": incoming, "outgoing": outgoing, "job": None,
-                        "relocation": None, "relocation_error": ""}
+                        "relocation": None, "relocation_error": "", "text_not_recognized": False}
             marks = originals_gone(conn, page_id) if had and moved else []
             swapped = had and moved and not (outgoing and outgoing == incoming)  # another file, not another address
             pdfs = is_pdf(old_doc) and format == "pdf"  # the highlights' file is a PDF before and after
@@ -820,7 +831,21 @@ def replace_attachment(ws: str, page_id: str, hash: str, url: str = "", name: st
             relocation, reason = _relocate_text(owner, ws, page["id"], incoming)
     return {"page": page, "content": content, "props": after, "results": results, "placed": placed,
             "incoming": incoming, "outgoing": outgoing, "job": job, "relocation": relocation,
-            "relocation_error": "" if job or relocation else reason}
+            "relocation_error": "" if job or relocation else reason,
+            "text_not_recognized": bool(swapped and pdfs and outgoing) and _recognition_left(ws, outgoing, incoming)}
+
+
+def _recognition_left(ws: str, outgoing: str, incoming: str) -> bool:
+    """Whether a PDF replaced by another leaves recognized text behind: the
+    outgoing file's text was recognized on some page (gamma/pdf_ocr.py) and
+    the incoming one's on none, so the page reads the new file's own layer
+    (and its highlights are placed layer against layer, highlight_relocate
+    ``relocate``) until its text is recognized too. Two reads of data.db."""
+    before = pdf_ocr.state(ws, outgoing)
+    if not before or not before["recognized"]:
+        return False
+    after = pdf_ocr.state(ws, incoming) if incoming else None
+    return not (after and after["recognized"])
 
 
 def _relocate_text(owner: str, ws: str, page_id: str, new_doc: str) -> tuple[dict | None, str]:

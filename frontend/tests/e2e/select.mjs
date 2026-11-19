@@ -60,7 +60,7 @@ export const GROUPS = [
   { id: "auth", files: ["auth.mjs"], s: 28 },
   { id: "block-properties", files: ["blockProperties.mjs"], s: 28 },
   { id: "text-search", files: ["textSearch.mjs"], s: 28 },
-  { id: "scan-layer", files: ["scanLayer.mjs"], s: 28 },
+  { id: "scan-layer", files: ["scanLayer.mjs"], s: 38 },
   { id: "notebooks", files: ["notebooks.mjs"], s: 27 },
   { id: "recording", files: ["recording.mjs"], s: 27 },
   { id: "pen", files: ["pen.mjs"], s: 25 },
@@ -304,6 +304,9 @@ export const RULES = [
   // the fake Google the settings group's Google Drive step talks to
   ["backend/tests/gdrive_fake.py", ["settings"]],
   ["backend/tests/zotero_fixtures.py", ["zotero-link"]],
+  // the printed scan the scan-layer scenario has recognized, and the models that read it
+  ["backend/tests/ocr_fixtures.py", ["scan-layer"]],
+  ["backend/tessdata/**", ["scan-layer"]],
   // the 20,000 files the explorer group's quick open searches
   ["backend/tests/seed_work_folder.py", ["explorer"]],
   // the stand-ins for Codex and Claude Code the local agents scenario's server starts

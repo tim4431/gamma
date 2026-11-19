@@ -987,7 +987,13 @@ and two extension modules), pydantic-core, cryptography (with cffi),
 orjson, bcrypt, Pillow, and rpds-py (jsonschema's, through mcp); the rest
 is pure Python. `backend/tests/test_mobile_requirements.py` fails when the
 server gains a dependency the mobile file neither lists nor excludes with
-a reason, so each new one gets a decision for both apps.
+a reason, so each new one gets a decision for both apps. Two are excluded
+(its `EXCLUDED`): truststore, which does not run on iOS or Android (the
+apps verify HTTPS with certifi's bundle), and tesserocr, the text
+recognition of scanned PDFs, which has no iOS or Android wheel (the apps'
+PyMuPDF has no OCR either). The apps' server reports no engine, so the
+Document menu offers no Recognize text there
+([documents.md](documents.md#recognized-text)).
 `tools/check_mobile_pins.sh` resolves every pin, installing nothing, for
 the four platforms the apps ship: the iPad's device and simulator and
 Android's arm64 and x86_64 ([Tests](#tests)).

@@ -86,6 +86,19 @@ def main():
         # models and endpoint rules from package data, boto3 its resource models.
         "--collect-data", "botocore",
         "--collect-data", "boto3",
+        # Tesseract, which recognizes the text of scanned pages
+        # (gamma/ocr_engine.py imports it lazily, so it is named here).
+        # Its native libraries sit outside the extension module, beside the
+        # package on Windows and Linux (tesserocr.libs/) and inside it on
+        # macOS (tesserocr/.dylibs/); PyInstaller's binary analysis follows
+        # the module's links to them and keeps that layout. The metadata
+        # carries the wheel's licence files, on Windows those of Tesseract,
+        # Leptonica and every library it bundles.
+        "--hidden-import", "tesserocr",
+        "--copy-metadata", "tesserocr",
+        # The OCR models with their licence and notices (backend/tessdata);
+        # backend_entry points GAMMA_TESSDATA_DIR here.
+        "--add-data", f"{REPO / 'backend' / 'tessdata'}{sep}tessdata",
         str(DESKTOP / "backend_entry.py"),
     ]
     env = os.environ.copy()

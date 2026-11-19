@@ -1,11 +1,12 @@
 """Scanned pages under an invisible OCR layer (gamma/pdf_scan.py) and what
 pdf_text makes of them: the page text puts the words of one visual row back
 on one line, the glyph walk parts them with a boxless space, and a
-born-digital page reads exactly as before."""
+born-digital page reads exactly as before. Then the picture pages, scans
+without a layer, and the image coverage both rules measure."""
 
 import pymupdf
 import pytest
-from ocr_fixtures import ROW_TEXT, ROWS, WORD_TEXT, H, W, mupdf_glyphs, scan_pdf
+from ocr_fixtures import ROW_TEXT, ROWS, WORD_TEXT, H, W, mupdf_glyphs, picture_pdf, scan_pdf
 
 from gamma import pdf_scan, pdf_text
 from gamma.pdf_text import GlyphPages, has_box
@@ -170,6 +171,88 @@ def test_a_scan_page_glyphs_part_a_row_with_a_boxless_space():
     assert [g for g in glyphs if has_box(g[1])] == [g for g in before if has_box(g[1])]
     assert "".join(ch for ch, _box in glyphs) == ROW_TEXT
     assert all(not has_box(box) for ch, box in glyphs if ch.isspace())
+
+
+PICTURE = picture_pdf()
+
+
+def test_the_picture_fixture_is_a_bare_picture():
+    page = _page(PICTURE)
+    assert page.get_text("text").strip() == "" and len(page.get_images()) == 1
+    assert pdf_scan._image_coverage(page) == 1.0
+
+
+@pytest.mark.parametrize("pdf_bytes", [
+    PICTURE,
+    picture_pdf(footer="Downloaded from https://archive.example.org on 3 May 2024. Terms of use apply."),
+    picture_pdf(note="a reader's long note " * 30),           # annotation text does not count
+    picture_pdf(image=(30, 30, W - 30, H - 30)),              # a scan with margins
+    scan_pdf(invisible=False),                                # a picture under a few drawn words (a stamp's worth)
+], ids=["bare", "footer-line", "annotated", "margins", "few-drawn-words"])
+def test_a_picture_without_a_layer_is_a_picture_page(pdf_bytes):
+    page = _page(pdf_bytes)
+    assert pdf_scan.is_picture_page(page)
+    assert not pdf_scan.is_scan_page(page), "no layer: no scan to the layer rule"
+
+
+@pytest.mark.parametrize("pdf_bytes", [
+    SCAN,                                                     # a scan with a layer: is_scan_page's
+    BORN_DIGITAL,                                             # text, no picture
+    picture_pdf(text="A born-digital page of text over a full-page figure. " * 12),
+    picture_pdf(image=(50, 300, 250, 400)),                   # a small picture
+], ids=["scan-with-layer", "born-digital", "text-over-figure", "small-picture"])
+def test_pages_that_are_not_picture_pages(pdf_bytes):
+    assert not pdf_scan.is_picture_page(_page(pdf_bytes))
+
+
+def test_the_picture_rule_uses_the_callers_dictionary():
+    page = _page(PICTURE)
+    built = []
+
+    def blocks():
+        built.append(1)
+        return page.get_text("dict", flags=pdf_text._TEXT_FLAGS)["blocks"]
+
+    assert pdf_scan.is_picture_page(page, blocks) and built == [1]
+
+
+def test_a_mixed_files_pages_are_told_apart_a_page_a_turn():
+    doc = pymupdf.open()
+    for part in (BORN_DIGITAL, SCAN, PICTURE, picture_pdf(footer="Downloaded from the archive")):
+        doc.insert_pdf(pymupdf.open(stream=part, filetype="pdf"))
+    assert list(pdf_text.page_kinds(doc.tobytes())) == [(1, ""), (2, "scan"), (3, "picture"), (4, "picture")]
+    assert list(pdf_text.page_kinds(doc.tobytes(), max_pages=2)) == [(1, ""), (2, "scan")]
+    with pytest.raises(ValueError):
+        list(pdf_text.page_kinds(b"not a pdf at all"))
+
+
+def _with_keys(pdf_bytes, **keys) -> bytes:
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    for key, value in keys.items():
+        doc.xref_set_key(doc[0].xref, key, value)
+    return doc.tobytes()
+
+
+@pytest.mark.parametrize("unit", ["2", "0.5"])
+def test_coverage_is_measured_in_the_page_as_mupdf_draws_it_under_a_user_unit(unit):
+    # MuPDF folds /UserUnit into the image boxes and page.rect alike: a
+    # quarter-page picture stays a quarter, a full-page scan stays full.
+    quarter = _page(_with_keys(picture_pdf(image=(0, 0, W / 2, H / 2)), UserUnit=unit))
+    full = _page(_with_keys(PICTURE, UserUnit=unit))
+    assert pdf_scan._image_coverage(quarter) == pytest.approx(0.25, abs=0.02)
+    assert pdf_scan._image_coverage(full) == 1.0
+    assert pdf_scan.is_picture_page(full) and not pdf_scan.is_picture_page(quarter)
+    assert pdf_scan.is_scan_page(_page(_with_keys(SCAN, UserUnit=unit)))
+
+
+def test_coverage_under_a_crop_box_half_outside_the_media_box():
+    # The crop box reaches 306 pt past the media box's right edge: the page
+    # shown is the overlap, the left half of the crop box, which the
+    # picture over the media box's right half fills.
+    cropped = _page(_with_keys(picture_pdf(image=(W / 2, 0, W, H)), CropBox=f"[{W / 2} 0 {W * 1.5} {H}]"))
+    assert cropped.rect.width == pytest.approx(W / 2)
+    assert pdf_scan._image_coverage(cropped) == 1.0
+    assert pdf_scan.is_picture_page(cropped)
 
 
 def test_extract_pages_reads_the_rows_through_the_cache(tmp_path):

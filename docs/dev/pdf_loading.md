@@ -547,7 +547,9 @@ Every reader of a page's text goes through `pdf/pageText.js` (`pageText`):
 the text layer and Ctrl+F in `PdfViewer.jsx`, the translation's
 segmentation (`translateState.segmentNow`), the translation bench and the
 figure tests. It reads the TextContent as before and, when the page is a
-scan with an OCR layer, hands it back repaired (`repaired: true`). So what
+scan with an OCR layer, hands it back repaired (`repaired: true`); a page
+the server recognized is built from its recognized words instead
+([Recognized words](#recognized-words)). So what
 a reader selects, what a search marks and what a translation sends are the
 same words in the same places.
 
@@ -618,7 +620,95 @@ same words in the same places.
   rows of words too ([documents.md](documents.md)).
 - **What it cannot fix**, pixel-free: wrong letters ("Rksum4"), a layer
   drifting against its picture, a producer's baseline offset, scans with no
-  layer at all. Those need OCR of the picture, the study's next stage.
+  layer at all. Those need the words read from the picture: Recognize text
+  in this PDF (below).
+
+### Recognized words
+
+Once the server has recognized a stored PDF's scanned pages
+([documents.md](documents.md#recognized-text)), those pages read the
+recognized words in place of their own layer, here as on the server.
+
+- **The state** (`pdf/ocrState.js`, module state like `translateState`).
+  `PdfViewer.jsx` registers each document as it commits it, under the
+  stored file it is (`fileId` from App and PagePane, else the upload its
+  URL names), and asks `GET /api/ocr/<doc>` afresh on every open. A
+  folder's annotated-PDF export registers each paper it opens too, under
+  its `doc_id` and with no URL (`folderTranslation.paperLayout`). The
+  entry is per workspace and file. A page waits at most 3 s for that first
+  answer, then reads its own layer until it comes. A failed answer reads as
+  no recognized text, unless a state is already known.
+- **The words.** `pageText` asks `ocrState.lines(page)` first. A recognized
+  page's words come from `GET /api/ocr/<doc>/pages`, the page asked for and
+  the recognized pages nearest it, at most 16 a request. They are held by
+  the state's `stamp` in one store for all of the tab's documents, 800
+  pages in all, the pages read longest ago going first, whichever document
+  they are of. A new state drops its document's words of another stamp,
+  and an answer of another stamp makes the tab read the state again.
+- **The layout** (`pdf/ocrText.js`, pure). Each stored line is one band,
+  never chained again by `scanText`'s rule, so the page's text is the
+  server's: a line's words joined by a space, every line ending in
+  `hasEOL`. The words tile their line through `scanText`'s own tiling
+  (`bandLines`, `tileCuts`), the cut in the middle of each gap since the
+  boxes hug the ink. Items are laid out upright in the page as shown, then
+  each matrix is taken to user space through the inverse of the scale-1
+  viewport's transform, so a rotated or cropped page reads its words where
+  they are drawn. A one-character word is stretched `[2h, …]` as in the
+  repair, except on a quarter-turned page, where `TextLayer` reads the
+  stretch off terms the turn has zeroed. The font id is `gamma_ocr`, with
+  ascent 0.8 and descent -0.2. The TextContent carries `repaired: true`
+  and `ocr: true`, no operator list is built for the page, and
+  `knownScan` is true for it.
+- **A change.** The state's local revision only grows. The first answer
+  changes only the pages a reader read from its own layer because the 3 s
+  wait ran out (`ocrState.lines` records them); every other reader waited
+  for it, so a translation seed or job that waited is neither stopped nor
+  halted. After that, the revision moves on when the recognized pages or
+  their stamp differ from what was announced. Each changed page records
+  the revision it changed at (`pageRevision`). A page's text layer is
+  built again when its own revision moves on (`PdfPage`'s `textRev`), the
+  old layer staying until the new words are in. Ctrl+F's page texts are
+  read again under a new revision, and the viewer's translation seed runs
+  again. App's `docNonce` is `pdfDocNonce` plus
+  `ocrState.useOcrNonce(fileHash(doc) || docIdOf(pdfUrl))`, a count of the
+  changes of the on-screen document's revision that never goes back, so a
+  pinned search runs again for that document alone. The translated view
+  hears which pages changed
+  ([translation.md](translation.md#outliving-the-viewer)).
+- **When it changes.** A recognition that ends, done, stopped or failed,
+  makes every tab of the workspace that heard it end read the state again
+  (`tasks/useAppJobs.js`). Another member's tab reads it at its next open
+  of the PDF. A session's end clears every document's state
+  (`ocrState.reset`, beside `endTranslations`).
+- **The Document menu row** (`ocrState.useOcrMenu`). Recognize text in
+  this PDF shows for a writer with an account (never a guest), outside
+  share views, on a server whose `/api/server-config` has `ocr`, for a
+  stored PDF, while the server counts more scanned pages than it
+  recognized or kept, or, before it has read the file, once `pageText` met
+  a scan's layer or a page with no text (`noteScan`). It is hidden once
+  `GET /api/ocr` says `good_layer`. While a recognition of the file runs
+  it is shown disabled, its title "This PDF's text is being recognized —
+  see Background tasks". A run of 50 pages or fewer follows in the status
+  pill.
+- **The metadata popover** (`ocrState.textStatusTitle`): its text cell says
+  when the text was recognized from the page pictures (`/api/pdf-text-status`'s
+  `ocr`). With `ocr` there and too little text (`ok` false) it says "The
+  scanned pages were recognized from their pictures on {date}, but they
+  hold little or no readable text." On a PDF without text it points to
+  Recognize text only while the Document menu shows the row.
+- **A replaced PDF** whose answer has `text_not_recognized`
+  (`ocrState.replacedNote`): the status line adds "The new file's text is
+  not recognized: choose Recognize text in this PDF in the Document menu."
+  where the row would be offered (a writer with an account, a server with
+  the engine).
+
+Tests: `tests/ocrText.test.mjs` (the shape, the tiling, a one-character
+word, rotations and a crop box through real pdf.js viewports),
+`tests/ocrState.test.mjs` (the chunks, revisions, the first answer, a
+seed that waited for it, a late state rebuilding a page, failures, a stale
+stamp, the bound on the words held, the menu row and `good_layer`, the
+popover, the replaced-file note, a folder's export and App's search nonce)
+and `tests/scanText.test.mjs` (`pageText` with a fake state).
 
 ## Load phases
 

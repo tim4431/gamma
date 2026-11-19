@@ -15,7 +15,8 @@ const named = (value) => value || t("Untitled");
 // `icon`: a key of TasksTray.jsx's icon table. `open`: what a click on the
 // row opens — "export" / "import" (the dialog, on this job), "settings:<pane>",
 // "computer" (the page's chat on the computer side). `phase`: the words of
-// a phase of its own, before the shared ones (PHASES).
+// a phase of its own, before the shared ones (PHASES). `left(task, now)`:
+// how long it still takes, after its counts ("" while it cannot tell).
 // `quiet`: a failure that does not dot the tray button (a paper without
 // findable metadata is routine).
 export const TASK_KINDS = {
@@ -118,6 +119,19 @@ export const TASK_KINDS = {
     icon: "search",
     title: ({ params }) => t("Placing the highlights of “{name}”", { name: named(params.title) }),
     retry: ({ params }) => ["relocate-highlights", { page_id: params.page_id }],
+  },
+  // A stored PDF's scanned pages read from their pictures (the Document
+  // menu's "Recognize text in this PDF", gamma/pdf_ocr.py), one run at a
+  // time on the server: one waiting its turn reads so. While it recognizes,
+  // the line says how long it still takes, at the pace of this run's pages
+  // (`since`, ms, when the phase began, at `from` pages done: a run goes on
+  // from the pages an earlier one recognized).
+  ocr: {
+    icon: "scanText",
+    title: ({ params }) => t("Recognizing the text of “{title}”", { title: named(params.title) }),
+    retry: ({ params }) => ["ocr", { page_id: params.page_id }],
+    left: ({ progress: p }, now) => (p?.phase === "recognizing" && Number.isFinite(p.since)
+      ? fmtRemaining(remainingMs((p.done || 0) - (p.from || 0), (p.total || 0) - (p.from || 0), p.since, now)) : ""),
   },
   // Settings → Maintenance's batch lookup and the one after an upload of
   // several PDFs. A start while it runs adds papers to it, so the count is
@@ -242,6 +256,8 @@ const PHASES = {
   connector: t("Gamma Connector is on it"),
   transcribing: t("Transcribing"),
   reading: t("Reading the PDF"),
+  recognizing: t("Recognizing text"),
+  updating: t("Updating search and highlights — can no longer be stopped"),
   matching: t("Finding each highlight's text"),
   keeping: t("Keeping a final copy"),
   deleting: t("Deleting — can no longer be stopped"),
@@ -296,11 +312,14 @@ export function byteProgress(patch, now = Date.now) {
   };
 }
 
-// What a running job is doing: its phase, how far it got, the item at hand.
-export function progressText(task) {
+// What a running job is doing: its phase, how far it got, how long it still
+// takes (for a kind that can tell), the item at hand.
+export function progressText(task, now = Date.now()) {
   if (task.stopping) return t("Stopping…");
   const p = task.progress || {};
-  return [kindOf(task).phase?.(task) || PHASES[p.phase] || "", progressCounts(p), p.item || ""].filter(Boolean).join(" · ") || t("Working…");
+  const kind = kindOf(task);
+  return [kind.phase?.(task) || PHASES[p.phase] || "", progressCounts(p), kind.left?.(task, now) || "", p.item || ""]
+    .filter(Boolean).join(" · ") || t("Working…");
 }
 
 const sameDay = (a, b) => a.toDateString() === b.toDateString();
@@ -393,6 +412,44 @@ export function relocationSummary(r) {
     r.changed ? tn("{n} that someone moved meanwhile was left as it is.",
       "{n} that someone moved meanwhile were left as they are.", r.changed) : "",
     r.lost ? t("A hollow highlight's text is gone: right-click it and choose Move to a selection.") : "",
+  ].filter(Boolean).join(" ");
+}
+
+// What the tab that started a recognition (kind `ocr`) says when it ends,
+// from the job and, once done, its result (gamma/pdf_ocr.py run): the pages
+// whose text it recognized and the highlights there that took the new text
+// as their quote; or that the PDF's own text already reads well (its first
+// scanned pages' words match a fresh recognition, `shared` of them), so it
+// was kept, with the picture pages it recognized all the same; or that it
+// has no scanned pages. A run stopped while it recognized says how far it
+// got: what it recognized waits for the next run, which goes on from there.
+// Stopped before (while it read the PDF's pages), it recognized nothing.
+export function ocrSummary(job, result) {
+  const title = named(job.params?.title);
+  if (job.state === "cancelled") {
+    const { phase, done, total } = job.progress || {};
+    return phase === "recognizing" && total > 0
+      ? t("Text recognition of “{title}” stopped after {done} of {total} pages; recognizing again goes on from there.", { title, done: done || 0, total })
+      : t("Text recognition of “{title}” was stopped.", { title });
+  }
+  const r = result || {};
+  const after = [
+    r.highlights_respelled ? tn("{n} highlight took the new text.", "{n} highlights took the new text.", r.highlights_respelled) : "",
+    r.failed ? tn("{n} page could not be read; recognizing again tries it once more.", "{n} pages could not be read; recognizing again tries them once more.", r.failed) : "",
+  ];
+  if (r.good_layer) {
+    const share = Number(r.shared) || 0;
+    return [
+      t("“{title}”'s own text already reads well ({p}% of its words match a fresh recognition), so it was kept.",
+        { title, p: Math.round(share <= 1 ? share * 100 : share) }),
+      r.recognized ? tn("Text recognized on its {n} picture page.", "Text recognized on its {n} picture pages.", r.recognized) : "",
+      ...after,
+    ].filter(Boolean).join(" ");
+  }
+  if (!r.scanned) return t("“{title}” has no scanned pages, so its text was left as it is.", { title });
+  return [
+    tn("Text recognized on {n} page of “{title}”.", "Text recognized on {n} pages of “{title}”.", r.recognized || 0, { title }),
+    ...after,
   ].filter(Boolean).join(" ");
 }
 

@@ -646,6 +646,11 @@ export const SquareCheckIcon = (p) => (
 export const TextSearchIcon = (p) => (
   <Icon {...p}><path d="M21 5H3" /><path d="M10 12H3" /><path d="M10 19H3" /><circle cx="17" cy="15" r="3" /><path d="m21 19-1.9-1.9" /></Icon>
 );
+// Lines of text inside a scanner's corners (lucide's scan-text): the words
+// of a scanned page read from its picture.
+export const ScanTextIcon = (p) => (
+  <Icon {...p}><path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" /><path d="M21 17v2a2 2 0 0 1-2 2h-2" /><path d="M7 21H5a2 2 0 0 1-2-2v-2" /><path d="M7 8h8" /><path d="M7 12h10" /><path d="M7 16h6" /></Icon>
+);
 export const BackspaceIcon = (p) => (
   <Icon {...p}><path d="M10 5a2 2 0 0 0-1.34.52l-6.33 5.74a1 1 0 0 0 0 1.48l6.33 5.74A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z" /><path d="m12 9 6 6" /><path d="m18 9-6 6" /></Icon>
 );

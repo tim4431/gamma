@@ -240,6 +240,22 @@ through `useSyncExternalStore` and starts its jobs; it only draws.
   screen.
 - **At most `MAX_DOCS` (8) documents are kept**, the least recently used
   going first, never one whose job runs.
+- **A page's text can change under the same URL**: the server recognized
+  its words from the picture, and `pdf/ocrState.js` announces which pages
+  changed (`translateState.textChanged(url, pages)`,
+  [pdf_loading.md](pdf_loading.md#recognized-words)). Those pages' segmented
+  blocks, segmentations under way and page entries go, with the pages
+  either side of them, since a paragraph joins across a page break. The
+  epoch moves on, a seed under way stops and every page may be seeded
+  again; a segmentation that began before keeps nothing it read. While a
+  job runs, it is halted and the change applies once it has unwound, so no
+  entry made of the old text lands after it. The next job or seed segments
+  those pages from the recognized words, and the viewer seeds again at
+  once when the document's revision moves on. A document's first state
+  announces only the pages read from their own layer because the 3 s wait
+  for it ran out, so a seed or a job that waited for it goes on. The font map of every document
+  starts with the recognized words' font id (`gamma_ocr`), which has no
+  face, so `pageFaces` never waits for one.
 - **App's side** is `app/translateClient.js` (the chunk and brief requests,
   forgetting a document, ending the jobs) and `app/translateFollow.js`
   (what the app says, free of React). It follows the jobs of every
@@ -933,7 +949,9 @@ Geometry never leaves the client. `pdf/pdfTranslate.js` segments a page's
 pdf.js text runs into blocks. The runs are those of `pdf/pageText.js`, the
 text layer's: a scan's invisible OCR layer comes repaired, one band and
 baseline a printed line ([pdf_loading.md](pdf_loading.md#a-scans-text-layer)),
-so its lines and paragraphs read as a typeset page's do.
+and a page the server recognized comes laid out from its recognized words
+in the same shape ([pdf_loading.md](pdf_loading.md#recognized-words)), so
+their lines and paragraphs read as a typeset page's do.
 
 - `textRuns` maps TextContent items through the scale-1 viewport, with each
   run's real font name (`pdf/pdfFonts.js`, below) and glyph ascent and
@@ -1207,8 +1225,10 @@ order: no joined paragraph touched one of these blocks.
   translations").
 - `before`, `after` and `section`.
 - `ocr`: sent only true, when a unit of the chunk was read from a scan's
-  OCR layer. `segmentNow` marks a page's blocks `ocr` when `pdf/pageText.js`
-  repaired its text ([pdf_loading.md](pdf_loading.md#a-scans-text-layer)); a
+  OCR layer or from the words the server recognized on a page.
+  `segmentNow` marks a page's blocks `ocr` when `pdf/pageText.js`
+  repaired its text or built it from recognized words (`repaired`,
+  [pdf_loading.md](pdf_loading.md#a-scans-text-layer)); a
   unit with such a block carries it, and so does its chunk's context, so a
   paper with a born-digital cover (HAL's) sends it from its scanned pages
   only. A selection translated from such a page sends it too
@@ -1349,10 +1369,11 @@ translation request never makes it.
   recurring terms with their renderings, and names that stay as written.
   When the opening text was read from a scan's OCR layer, a rule is added to
   spell every term as the author did, not as misread: for a stored file when
-  a page `material` reads is a scan (`Paper.scanned`,
-  `pdf_text.opening_is_scan`), for a `head` when the request says `ocr` (the
-  viewer read it from such pages). So the brief kept for a paper does not
-  depend on which page its first job started on.
+  a page `material` reads is a scan, or reads words the server recognized
+  (`Paper.scanned`, `pdf_text.opening_is_scan`: Tesseract still misreads
+  about one character in a hundred), for a `head` when the request says
+  `ocr` (the viewer read it from such pages). So the brief kept for a paper
+  does not depend on which page its first job started on.
   `render_brief` turns it into the system prompt's closing section (at most
   4,000 characters). It runs at the translation's effort and speed. Its
   output cap is 3,000 tokens (`_BRIEF_TOKENS`), plus 8,000 for thinking when
@@ -1643,7 +1664,8 @@ translation without asking a model, after a restart too.
   document, language and model: past it, new rows are skipped, with one
   warning per document per process.
 - **Generations**: a document's generation is how often it was forgotten
-  plus how often its workspace was cleared, both counted in memory and only
+  or recognized (below) plus how often its workspace was cleared, counted
+  in memory and only
   growing. The memory keys of its translations and its brief carry it, so a
   forgotten or cleared document misses memory too and its next job
   translates afresh; the old entries age out of their LRUs. A request reads
@@ -1651,6 +1673,15 @@ translation without asking a model, after a restart too.
   generation moved on meanwhile. A forget and a write of the same document
   take turns (32 lock stripes by document; a clear takes them all, in
   order), so no write whose check passed lands after the delete.
+- **A recognition** of the paper's scanned pages
+  ([documents.md](documents.md#recognized-text)) changes its text, so the
+  run's finishing steps drop its kept briefs, in every language and model,
+  and move its generation on (`translate.forget_brief`, under the
+  document's turn): a brief made from the old opening text no longer steers
+  a translation, and the memory brief goes too. Its kept paragraphs stay,
+  paid for and found by their source text: a paragraph whose text did not
+  change still finds its row, one whose text changed misses and is
+  translated afresh when the paper is next translated.
 - **Purge**: `search.index.purge_unused` calls `translate_store.purge` beside
   `pdf_meta.purge`, so a PDF that leaves the workspace takes its kept
   translations and brief along. The sweep is one transaction that takes
@@ -2074,7 +2105,10 @@ viewer's own code and no viewer:
   (`exportTranslation`, so Show original there exports its original).
 - **Each paper** (`paperLayout`): its PDF opened with pdf.js and no viewer
   (`PdfViewer.openPdfDocument`: the viewer's byte caches, else one GET, the
-  shared worker), every page seeded from the kept translations through the
+  shared worker) and registered with `pdf/ocrState.js` under the paper's
+  `doc_id`, with no URL, so a recognized scan's pages read the recognized
+  words and find the translations kept of them, as the viewer's do; every
+  page seeded from the kept translations through the
   lookup under that key, with no model call (`translateState.seedDetached`:
   `seedPages`' work on a state of its own, which the store does not keep and
   no one is told of, so the documents the reader has open stay in it), and

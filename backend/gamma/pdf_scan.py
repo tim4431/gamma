@@ -1,4 +1,5 @@
-"""Scanned pages with an invisible OCR text layer, and their visual rows.
+"""Scanned pages, with an invisible OCR text layer or without one, and the
+visual rows of the first kind.
 
 A scanned paper is a picture of each page with the OCR engine's words drawn
 over it in an invisible render mode, so the page can be searched and
@@ -18,6 +19,11 @@ frontend/src/pdf/scanDetect.js applies the same scan rule to pdf.js's
 operator list, and frontend/src/pdf/scanText.js the same row rule to its
 words, so the viewer and the server agree on which pages are scans and how
 their words make lines. Change a threshold in both.
+
+A third rule picks the pages text recognition reads with no layer to
+compare against (gamma/pdf_ocr.py): ``is_picture_page(page)``, a scan
+nobody ran OCR on. Only the server applies it; the viewer notes a page
+without text instead.
 
 Callers hold pdf_text's lock, as for every PyMuPDF call. This module never
 imports pymupdf: it calls methods of the page it is given, and pdf_text
@@ -40,6 +46,11 @@ IMAGE_COVERAGE = 0.7
 # The coverage is measured on a grid of this many cells a side: a cell
 # counts when its centre lies in an image's box.
 GRID = 100
+# A page with no invisible text is a picture page when its images cover
+# IMAGE_COVERAGE of it and it shows at most this many non-space characters:
+# room for a library's "Downloaded from ..." line, a publisher's stamp or a
+# page number beside the picture, not for a page of text.
+PICTURE_STAMP_CHARS = 300
 
 # Two MuPDF lines in a row share a visual row when they overlap vertically
 # by at least this share of the smaller one's height...
@@ -74,6 +85,35 @@ def is_scan_page(page, blocks=None) -> bool:
         invisible, visible = _glyph_counts(page, blocks() if blocks else page.get_text("dict", flags=0)["blocks"])
         total = invisible + visible
         if not total or invisible / total < INVISIBLE_SHARE:
+            return False
+        return _image_coverage(page) >= IMAGE_COVERAGE
+    except Exception:  # noqa: BLE001 — an unreadable page keeps its plain text
+        return False
+
+
+def is_picture_page(page, blocks=None) -> bool:
+    """Whether ``page`` (a PyMuPDF page) is a scanned picture with no text
+    layer: no invisible glyph, at most ``PICTURE_STAMP_CHARS`` shown
+    non-space characters (annotations do not count, as for
+    ``is_scan_page``), and images covering most of the page
+    (``IMAGE_COVERAGE``). Text recognition reads such a page from its
+    picture alone; a cover, a plate or a photo is one too, and the
+    recognition finds no text there.
+
+    The glyph count first, from ``blocks`` (as for ``is_scan_page``, a
+    function returning a text dictionary's blocks the caller has anyway)
+    or a dictionary of its own; the images' boxes only for a page that
+    passes it. A run asks ``is_scan_page`` first: a scan with a layer has
+    invisible glyphs, and this rule says no to it. A page that cannot be
+    read is no picture page.
+
+    Known miss: a scan whose OCR text is drawn visibly but under the
+    picture (render mode 0, hidden by the drawing order rather than by its
+    render mode) has its words counted as shown text, so it is neither a
+    scan to ``is_scan_page`` nor a picture page here, and keeps its text."""
+    try:
+        invisible, visible = _glyph_counts(page, blocks() if blocks else page.get_text("dict", flags=0)["blocks"])
+        if invisible or visible > PICTURE_STAMP_CHARS:
             return False
         return _image_coverage(page) >= IMAGE_COVERAGE
     except Exception:  # noqa: BLE001 — an unreadable page keeps its plain text
@@ -173,14 +213,20 @@ def _glyph_counts(page, blocks) -> tuple:
 def _image_coverage(page) -> float:
     """Step 3: the share of the page under the union of the boxes of the
     images it paints, measured on a ``GRID`` x ``GRID`` grid of cell
-    centres. MuPDF gives the boxes in the unrotated page's space, whose
-    size is the crop box's, whatever /Rotate says."""
-    box = page.cropbox
+    centres. MuPDF gives the boxes in its page space unrotated: the page
+    as shown (page.rect, the crop box clipped to the media box, its corner
+    the origin, /UserUnit folded in) with its sides swapped back on a
+    quarter turn. Measured against that, not the crop box as written,
+    whose size is the page's neither under a /UserUnit nor for a crop box
+    reaching past the media box."""
+    rect = page.rect
+    w, h = (rect.height, rect.width) if page.rotation % 180 else (rect.width, rect.height)
+    if w <= 0 or h <= 0:
+        return 0.0
     infos = page.get_image_info()
-    if not infos or box.is_empty:
+    if not infos:
         return 0.0
     cells = bytearray(GRID * GRID)
-    w, h = box.width, box.height
     for info in infos:
         x0, y0, x1, y1 = info["bbox"]
         # the first and last cell whose centre lies in the box, each way

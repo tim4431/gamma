@@ -156,7 +156,9 @@ later still needs it.
 The `desktop` matrix runs on `windows-latest`, `macos-latest` and
 `ubuntu-latest` (named `windows`, `macos`, `linux`); every leg: pin the
 version, take the built web app, freeze the backend with PyInstaller,
-health-check the frozen server, electron-builder, verify the signature,
+check the frozen server (`--check-ocr` reads a printed line back with the
+bundled Tesseract, then the server answers `/api/health` and its
+`/api/server-config` reports `ocr`), electron-builder, verify the signature,
 run the packaged app's `--smoke` self-test (under Xvfb on Linux), and
 upload `desktop-<name>`. Each platform's signing secrets reach only its
 own build step, and the signature check sees only whether they exist, so

@@ -206,16 +206,25 @@ jobs:
       - name: Freeze backend
         run: python desktop/build_backend.py
 
+      # Besides health: the bundled Tesseract reads a printed line back
+      # (--check-ocr loads its native libraries, which a freeze can leave
+      # out while the module and the models are there), and server-config
+      # reports ocr, without which the web app offers no Recognize text.
       - name: Smoke-test frozen backend
         shell: bash
         run: |
           BIN=desktop/dist-backend/gamma-server/gamma-server
           [ "$RUNNER_OS" = "Windows" ] && BIN="$BIN.exe"
+          "$BIN" --check-ocr
           "$BIN" --port 9317 --data-dir "$RUNNER_TEMP/gamma-smoke" &
           SERVER_PID=$!
           for _ in $(seq 1 120); do
             if curl -fsS http://127.0.0.1:9317/api/health >/dev/null 2>&1; then
-              echo "healthy"; kill $SERVER_PID; exit 0
+              echo "healthy"
+              CONFIG=$(curl -fsS http://127.0.0.1:9317/api/server-config || echo '{}')
+              kill $SERVER_PID
+              python -c "import json, sys; ocr = json.loads(sys.argv[1]).get('ocr'); print('ocr:', ocr); sys.exit(0 if ocr else 'server-config reports no ocr')" "$CONFIG"
+              exit 0
             fi
             sleep 1
           done

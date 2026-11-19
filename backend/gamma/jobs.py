@@ -29,7 +29,11 @@ One server process runs the jobs (the app is one uvicorn process, like the
 page sockets). An account runs at most ``MAX_RUNNING_PER_ACCOUNT`` jobs at
 once and the server ``MAX_RUNNING``; the rest wait queued, oldest first. A
 workspace's own work (owner ``WORKSPACE``, the indexer) runs outside those
-limits. A share view's exports are owned by the share (``share_owner``),
+limits. A kind that takes a core for hours (``ocr``, a scanned book's text
+recognized) runs in a lane of its own instead (``KIND_LIMITS``): so many of
+it at once on the server, whoever starts them, the others of it queued, and
+none of them holds a place of those limits, so it never holds up an export.
+A share view's exports are owned by the share (``share_owner``),
 which stands for an account in every limit. A finished job is kept
 ``RETENTION_S``, then ``sweep`` removes it with its file, and the files of
 one account are capped together (``ARTIFACT_CAP``). At startup, the jobs a
@@ -59,6 +63,14 @@ SHARE_OWNER = "share:"           # + a share token: the owner of the exports a s
 MAX_RUNNING = 4                  # account jobs running at once on the server
 MAX_RUNNING_PER_ACCOUNT = 2      # one account's; the others wait queued
 MAX_ACTIVE_PER_ACCOUNT = 20      # queued + running: past it, starting another is refused
+# The kinds that run in a lane of their own, each to the limit its function
+# reads when asked: a text recognition (gamma/pdf_ocr.py) keeps a core busy
+# for seconds a page, hours for a book, so the server runs as many at once
+# as GAMMA_OCR_WORKERS says, whoever starts them. A lane's jobs count toward
+# neither MAX_RUNNING nor an account's running jobs (a long one would hold
+# up its owner's exports, or every account's), but toward its
+# MAX_ACTIVE_PER_ACCOUNT like any.
+KIND_LIMITS = {"ocr": config.ocr_workers}
 RETENTION_S = 24 * 3600          # a finished job, and its file, is kept this long
 ARTIFACT_CAP = 10 << 30          # the finished files of one account, all together
 MIN_FREE_BYTES = 1 << 30         # a job that writes a file does not start on a fuller disk
@@ -98,7 +110,8 @@ class Refused(Cancelled):
 
 class Busy(Exception):
     """``start`` found the same work already queued or running — the same
-    owner, kind and key. ``job`` is that job."""
+    owner, kind and key (any owner's, for a start ``exclusive``). ``job``
+    is that job: its ``owner`` says whose."""
 
     def __init__(self, job: dict):
         super().__init__(f"{job['kind']} job {job['id']} is already {job['state']}")
@@ -197,14 +210,17 @@ class Job:
         """Name the download of the file at ``artifact_path``."""
         self._live.artifact = (name, media_type)
 
-    def progress(self, done=None, total=None, unit=None, phase=None, item=None, stoppable=None) -> None:
+    def progress(self, done=None, total=None, unit=None, phase=None, item=None, stoppable=None, **extra) -> None:
         """Report how far the job got: ``done`` of ``total`` ``unit``s
         (pages, bytes, files, items, papers, workspaces), the ``phase`` it is
         in (a short key the interface words: packing, checking, restoring…)
-        and the ``item`` at hand (a page title). A new phase or unit starts
-        its own counts; what is not given is kept. ``stoppable=False``: from
-        here on the job can no longer be stopped. Raises ``Cancelled`` when
-        the job was stopped (and still may be)."""
+        and the ``item`` at hand (a page title). ``extra``: what a kind
+        says of its phase besides, JSON numbers or strings its row reads
+        (the ``ocr`` job's ``since``, when its phase began in ms, and
+        ``from``, its count then: the time it still takes). A new phase or
+        unit starts its own counts; what is not given is kept.
+        ``stoppable=False``: from here on the job can no longer be stopped.
+        Raises ``Cancelled`` when the job was stopped (and still may be)."""
         live = self._live
         current = live.progress
         if phase is not None and phase != current.get("phase"):
@@ -212,7 +228,7 @@ class Job:
         if unit is not None and unit != current.get("unit"):
             current = {k: current[k] for k in ("phase",) if k in current}
         update = {"done": done, "total": total, "unit": unit,
-                  "item": item[:200] if isinstance(item, str) else item}
+                  "item": item[:200] if isinstance(item, str) else item, **extra}
         live.progress = {**current, **{k: v for k, v in update.items() if v is not None}}
         if stoppable is False:
             # cancel() decides under the lock too: a stop lands before this
@@ -326,6 +342,23 @@ def latest(owner: str, kind: str, key: str) -> dict | None:
     return _public(_row(found), live.get(found[0])) if found else None
 
 
+def live(kind: str, key: str) -> dict | None:
+    """The job of ``kind`` and ``key`` queued or running in this process,
+    whoever owns it, as the API shows it; None when there is none: a read
+    of work done once at a time whoever asks for it (a workspace file's
+    text recognition, keyed by the workspace and the file). A start that
+    must not run beside it asks ``start`` for ``exclusive``, which looks in
+    the same turn of the lock as it adds the job; a look here first leaves
+    a moment for another start between the two."""
+    with _lock:
+        found = next((job for job in _live.values() if job.kind == kind and job.key == key), None)
+        view = _snapshot(found) if found is not None else None
+    if found is None:
+        return None
+    row = _read(found.id)
+    return _public(row, view) if row else None
+
+
 def for_account(owner: str, ws: str = "") -> list[dict]:
     """The account's jobs, newest first, plus the own jobs of workspace
     ``ws`` (the caller passes a workspace the account is a member of, or
@@ -342,11 +375,15 @@ def for_account(owner: str, ws: str = "") -> list[dict]:
 
 def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: dict | None = None,
           key: str = "", artifact: bool = False, ended=None, kept: dict[str, bytes] | None = None,
-          writes: bool = False) -> dict:
+          writes: bool = False, exclusive: bool = False) -> dict:
     """Queue ``run(job)`` as a job of ``kind`` for ``owner`` (an account's
     id, or ``WORKSPACE`` for a workspace's own work) and return it. ``key``: work
     already queued or running for the same owner, kind and key raises
-    ``Busy``. ``artifact``: the job writes a file, so it needs room — 507
+    ``Busy``; ``exclusive``, for any owner's of that kind and key (work
+    done once at a time whoever asks for it: a workspace file's text
+    recognition), told in the same turn of the lock as the job is added,
+    so two starts at once never both get one. ``artifact``: the job writes
+    a file, so it needs room — 507
     when the disk or the account's share of finished files is full. 429
     when the account already has ``MAX_ACTIVE_PER_ACCOUNT`` jobs going.
     ``ended(state)``: called once a run that started has ended, however it
@@ -362,7 +399,7 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
     with _lock:
         if key:
             for other in _live.values():
-                if (other.owner, other.kind, other.key) == (owner, kind, key):
+                if (other.kind, other.key) == (kind, key) and (exclusive or other.owner == owner):
                     view = _snapshot(other)
                     raise Busy(_public(_read(other.id), view))
         if owner != WORKSPACE and sum(1 for other in _live.values() if other.owner == owner) >= MAX_ACTIVE_PER_ACCOUNT:
@@ -423,14 +460,26 @@ def _check_room(owner: str, adding: int = 0) -> None:
 
 
 def _pump() -> None:
-    """Start the queued jobs the limits allow, oldest first (``_lock`` held)."""
-    running = [live for live in _live.values() if live.state == "running" and live.owner != WORKSPACE]
-    per_owner = Counter(live.owner for live in running)
-    total = len(running)
+    """Start the queued jobs the limits allow, oldest first (``_lock`` held):
+    a kind with a lane of its own (``KIND_LIMITS``) while fewer than its
+    limit of it run, an account's other jobs within ``MAX_RUNNING`` and
+    ``MAX_RUNNING_PER_ACCOUNT``, a workspace's own at once."""
+    running = [live for live in _live.values() if live.state == "running"]
+    lanes = Counter(live.kind for live in running if live.kind in KIND_LIMITS)
+    shared = [live for live in running if live.owner != WORKSPACE and live.kind not in KIND_LIMITS]
+    per_owner = Counter(live.owner for live in shared)
+    total = len(shared)
+    limits: dict = {}  # a lane's limit, read once a pass when a job of it waits
     for live in sorted(_live.values(), key=lambda live: live.created_at):
         if live.state != "queued":
             continue
-        if live.owner != WORKSPACE:
+        if live.kind in KIND_LIMITS:
+            if live.kind not in limits:
+                limits[live.kind] = KIND_LIMITS[live.kind]()
+            if lanes[live.kind] >= limits[live.kind]:
+                continue
+            lanes[live.kind] += 1
+        elif live.owner != WORKSPACE:
             if total >= MAX_RUNNING or per_owner[live.owner] >= MAX_RUNNING_PER_ACCOUNT:
                 continue
             total += 1

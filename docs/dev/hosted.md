@@ -186,7 +186,10 @@ fleet's (`settings.fleet_env`, a JSON object in the `settings` row
 fleet sets itself: `GAMMA_HOSTED`, `GAMMA_PUBLIC_URL`, `GAMMA_GUEST_MAX`,
 `FORWARDED_ALLOW_IPS`, and any `GAMMA_CLOUD_*` or `GAMMA_S3_*` name are a
 400. A value is text of at most 4000 characters with no line break or
-NUL; 100 names at most. Values are secrets: the audit log
+NUL; 100 names at most. A hosted container recognizes no text of scanned
+PDFs unless such a variable sets `GAMMA_OCR=on`
+([debugging.md](debugging.md#text-recognition)): a book's run takes hours
+of a host's CPU. Values are secrets: the audit log
 (`settings.fleet_env`, `hosted.env`: `<label> set A,B unset C`) and every
 admin answer carry the names only.
 

@@ -98,6 +98,15 @@ meanwhile; it reports progress once per page it searches, so a stop
 lands within a page. A page's text is kept compactly (``PageText``): a
 run reads every page of the new file, a book's included.
 
+A file whose scanned pages' text is recognized from their pictures
+(gamma/pdf_ocr.py) is not replaced: its pictures, so its highlights'
+places, stay, and only their quotes, read from the old layer, go stale.
+``respell_quotes`` gives each the recognized words under its rectangles,
+when its quote is what the layer read there. A relocation reads the two
+sides of each comparison alike, the recognized words of both or the layers
+of both, and respells the quotes on the new file's recognized pages after
+its write.
+
 Pure parts first (``PageText``, ``normalize_quote``, ``find_passage``,
 ``rects_for_span``, ``place_all``: tests/test_highlight_relocate.py), the
 file reading and the writes under ``relocate``.
@@ -118,7 +127,7 @@ from statistics import median
 from typing import NamedTuple
 
 from . import highlights as shape
-from . import upload_gc
+from . import pdf_ocr, upload_gc
 from .blocks_store import load_json, write_lock
 from .db import connect_pages_db, safe_doc_id
 from .documents.model import file_hash, page_document, stored_name
@@ -180,6 +189,7 @@ NAP = 0.002               # ...and how long one lasts
 INF = float("inf")
 
 CLIENT = "relocate"       # the writer named on the batches
+RESPELL_CLIENT = "ocr"    # ...and on the quotes a text recognition respells (respell_quotes)
 
 _DASHES = "‐‑‒–—―−"
 _QUOTES = {"‘": "'", "’": "'", "‚": "'", "′": "'",
@@ -1040,11 +1050,13 @@ class Doc:
     takes; a file that can't be opened has no pages, and the pages past
     pdf_text's ``MAX_PAGES`` are not read, so a highlight there is a
     passage not found. A page's glyphs are kept only as its ``PageText``.
-    A context manager: closing it lets go of the file and of what was
-    read from it."""
+    ``ocr``: a page whose text was recognized from its picture
+    (gamma/pdf_ocr.py) reads the recognized words, as every reader of the
+    file does; False reads the file's own layer on every page. A context
+    manager: closing it lets go of the file and of what was read from it."""
 
-    def __init__(self, src):
-        self.glyphs = GlyphPages(src)
+    def __init__(self, src, ocr: bool = True):
+        self.glyphs = GlyphPages(src, ocr=ocr)
         pages = self.glyphs.page_count()
         self.count = min(pages, MAX_PAGES)
         if pages > self.count:
@@ -1880,6 +1892,19 @@ def thresholds(profile) -> dict:
             "exact_chars": ROUGH_MIN_CHARS if chars is None else chars}
 
 
+def _measured_on(pos: dict):
+    """The file a highlight's reference was measured on, as ``place_all``
+    reads it (``seen``): a pending one's ``prev`` with rectangles names its
+    file, any other position its own ``doc_id``; "" for the page's file
+    itself, and for a ``prev`` without rectangles (placed by its quote).
+    A ``doc_id`` is data any client writes: what it names is the caller's
+    to check."""
+    prev = shape.valid_prev(pos.get("prev")) if pos.get("approx") else None
+    if prev is None:
+        return pos.get("doc_id") or ""
+    return prev["doc_id"] if prev["rects"] else ""
+
+
 def relocate(ws: str, page_id: str, new_doc: str, *, actor: str, progress=None, min_match: float | None = None,
              exact_chars: int | None = None) -> dict:
     """Place the page's highlights in its PDF ``new_doc`` and write the ones
@@ -1893,12 +1918,35 @@ def relocate(ws: str, page_id: str, new_doc: str, *, actor: str, progress=None, 
     workspace's uploads only, never fetched; each file opened once), else
     the new file; a highlight whose file is gone is placed by its quote.
     The new file is the stored ``<new_doc>.pdf``, or a URL-opened PDF
-    fetched as the indexer fetches it. The files, and all that was read
-    from them, are let go of before the write.
+    fetched as the indexer fetches it.
+
+    The two sides of a comparison are read alike (gamma/pdf_ocr.py), since
+    a passage read from one file's recognized words is not in another's
+    layer: a highlight is matched in the new file's recognized words when
+    the new file has some and the file it was measured on is the new file
+    itself, has recognized words too, or is gone (its quote is looked
+    for); otherwise in the new file's own layer, read from its file's own
+    layer, as before any recognition. One measured on the new file itself
+    whose quote the layer reads under its rectangles and the recognition
+    does not (the respell kept it) is matched in the layer too
+    (``keeps_layer``), so Find highlights in this PDF after a recognition
+    leaves it where it is. So a scan replaced by a copy of
+    itself saved again keeps every highlight, whichever of the two was
+    recognized, and the highlights made on the recognized words keep
+    reading them. A new file whose own layer reads nothing (a picture-only
+    scan whose text was recognized) is read in its recognized words
+    throughout. Each reading of the new file is ``place_all``'s run of its
+    own highlights. The files, and all that was read from them, are let go
+    of before the write.
 
     The write is one compare-and-set (``_write``): nothing is written when
     the page is no longer a live page carrying ``new_doc``, and a highlight
-    changed or deleted since the run read it is left as it is. The result:
+    changed or deleted since the run read it is left as it is. Then the
+    quotes of the highlights on the new file's recognized pages, as
+    recognized now, are respelled (``respell_quotes``): the ones read from
+    a layer, and the ones the recognition skipped when it went live while
+    the run went on, their positions naming the outgoing file until the
+    write; a failure there is logged, the placements stand. The result:
     ``{highlights, moved, kept, lost, approx, changed, min_match,
     exact_chars}``, the five after the first adding up to it: ``moved``
     found exactly in a new place, ``kept`` found exactly where it was,
@@ -1918,54 +1966,122 @@ def relocate(ws: str, page_id: str, new_doc: str, *, actor: str, progress=None, 
     new_path = pdf_path(ws, new_doc)
     if new_path is None:
         raise ValueError("the new PDF is not stored on the server")
+    recognized = pdf_ocr.view_of(new_path) is not None
     with ExitStack() as files:
-        new = files.enter_context(Doc(new_path))
-        if new.count == 0:
-            raise ValueError("the new PDF cannot be read")
-        opened = {}
+        news = {}    # ocr → the new file read that way
+        paths = {}   # doc_id → its stored file, None when it is no longer stored
+        opened = {}  # (doc_id, ocr) → that file read that way
 
-        def read_from(doc_id):
-            """The stored file ``doc_id`` as a ``Doc``, or None when it is no
+        def new_file(ocr: bool) -> Doc:
+            if ocr not in news:
+                news[ocr] = files.enter_context(Doc(new_path, ocr=ocr))
+                if news[ocr].count == 0:
+                    raise ValueError("the new PDF cannot be read")
+            return news[ocr]
+
+        def stored(doc_id):
+            """The path of the stored file ``doc_id``, or None when it is no
             longer stored; a position's ``doc_id`` is data any client
             writes, so one that is no file name names no file."""
-            if doc_id == new_doc:
-                return new
             try:
                 name = stored_name(safe_doc_id(doc_id), ".pdf")
             except ValueError:
                 return None
-            if doc_id not in opened:
-                path = find_upload_file(name, ws)
-                if path is None:
+            if doc_id not in paths:
+                paths[doc_id] = find_upload_file(name, ws)
+                if paths[doc_id] is None:
                     log.info(f"[relocate] {page_id}: the file {doc_id} is no longer stored; "
                              "its highlights are placed by their quotes")
-                opened[doc_id] = files.enter_context(Doc(path)) if path else None
-            return opened[doc_id]
+            return paths[doc_id]
 
-        placed = place_all(new, items, progress, read_from=read_from, new_doc=new_doc, **limits)
-    ops = [{"op": "set", "id": bid, "props": patch} for bid, patch in placed.pop("ops").items()]
-    kinds = placed.pop("kinds")
+        def reads_recognized(doc_id) -> bool:
+            """Whether a highlight measured on ``doc_id`` is matched in the
+            new file's recognized words (the docstring above)."""
+            if not recognized:
+                return False
+            if not doc_id or doc_id == new_doc:
+                return True
+            path = stored(doc_id)
+            return path is None or pdf_ocr.view_of(path) is not None
+
+        def keeps_layer(props: dict) -> bool:
+            """Whether a highlight measured on the new file itself is over
+            the file's own layer rather than its recognized words: its
+            quote is what the layer reads under its rectangles and not what
+            the recognition reads there. The respell left it so (a quote
+            someone corrected, or rectangles off the recognized words), and
+            matched in the recognized words its quote would be found
+            nowhere and the highlight lost; in the layer it is where it
+            is."""
+            pos, quote = props["pdf_position"], props.get("quote")
+            if (pos.get("approx") or pos.get("lost") or pos.get("area") or not pos.get("rects")
+                    or not isinstance(quote, str) or not quote.strip()):
+                return False
+            quote = normalize_quote(quote)
+            read = _old_passage(new_file(True), pos, "")
+            if read and _agrees(read[0], quote):
+                return False
+            read = _old_passage(new_file(False), pos, "")
+            return bool(read and _agrees(read[0], quote))
+
+        groups = {}  # ocr → the highlights matched in the new file read that way
+        for item in items:
+            measured_on = _measured_on(item[1]["pdf_position"])
+            ocr = reads_recognized(measured_on)
+            if ocr and measured_on in ("", new_doc) and keeps_layer(item[1]):
+                ocr = False
+            groups.setdefault(ocr, []).append(item)
+        if recognized and False in groups:
+            layer = new_file(False).all_texts(progress)
+            if not any(page.text for page in layer.values()):
+                groups.setdefault(True, []).extend(groups.pop(False))  # its recognized words are all it reads
+        runs = []
+        for ocr, group in groups.items():
+            def read_from(doc_id, ocr=ocr):
+                """The stored file ``doc_id`` as a ``Doc`` read as the new
+                file is (``ocr``), or None when it is no longer stored."""
+                if doc_id == new_doc:
+                    return new_file(ocr)
+                path = stored(doc_id)
+                if path is None:
+                    return None
+                if (doc_id, ocr) not in opened:
+                    opened[(doc_id, ocr)] = files.enter_context(Doc(path, ocr=ocr))
+                return opened[(doc_id, ocr)]
+
+            runs.append(place_all(new_file(ocr), group, progress, read_from=read_from, new_doc=new_doc, **limits))
+    ops = [{"op": "set", "id": bid, "props": patch} for run in runs for bid, patch in run.pop("ops").items()]
+    kinds = {bid: kind for run in runs for bid, kind in run.pop("kinds").items()}
+    placed = {key: sum(run[key] for run in runs) for key in ("highlights", "moved", "kept", "lost", "approx")}
     placed["changed"] = 0
     if progress:
         progress(done=placed["highlights"], total=placed["highlights"], unit="highlights", phase="matching")
         progress(stoppable=False)  # the write follows: from here on the run finishes
     if ops:
         _write(ws, page_id, new_doc, items, ops, kinds, placed, actor=actor)
+    # Read again, not the reading chosen above: a recognition that went live meanwhile respelled none of these.
+    found = pdf_ocr.state(ws, new_doc)
+    if found and found["recognized"]:
+        try:
+            respell_quotes(ws, new_doc, found["recognized"], actor=actor)
+        except Exception as e:  # noqa: BLE001 — the placements are written; the quotes stay as they were read
+            log.warning(f"[relocate] {page_id}: the quotes were not respelled as the recognized text reads: {e}")
     return {**placed, **limits}
 
 
 def _write(ws: str, page_id: str, new_doc: str, items: list[tuple[str, dict]], ops: list[dict], kinds: dict,
-           counts: dict, *, actor: str, key: str = "pdf_position") -> None:
+           counts: dict, *, actor: str, key: str = "pdf_position", client: str = CLIENT) -> None:
     """``relocate``'s write, in one transaction under the page's write lock;
     also the text run's (documents/text_anchors.relocate), whose position
-    ``key`` is ``text_position``. The page must still be a live page (not
-    deleted, not in Recently deleted) and still show ``new_doc``
-    (``file_hash``: its ``doc.hash``, a duplicated page's included), else
-    ValueError and nothing is written. An op for a highlight deleted, or
-    whose position or quote changed since ``items`` were read (a person
-    moved it meanwhile), is left out and its count in ``counts`` moves to
-    ``changed``. The rest go as batches of at most ``MAX_OPS`` on the page,
-    client ``relocate``, committed together, then each batch's
+    ``key`` is ``text_position``, and ``respell_quotes``'s. The page must
+    still be a live page (not deleted, not in Recently deleted) and still
+    show ``new_doc`` (``file_hash``: its ``doc.hash``, a duplicated page's
+    included), else ValueError and nothing is written. An op for a
+    highlight deleted, or whose position or quote changed since ``items``
+    were read (a person moved it meanwhile), is left out and its count in
+    ``counts`` moves to ``changed``. The rest go as batches of at most
+    ``MAX_OPS`` on the page under ``client`` (``CLIENT``; the respell's
+    ``RESPELL_CLIENT``), committed together, then each batch's
     ``after_commit``. The files the written PDF positions name (a
     ``prev``'s, a lost or unplaced one's ``doc_id``: references) are
     claimed in the same transaction (``upload_gc.claim``), so a build a
@@ -2003,7 +2119,7 @@ def _write(ws: str, page_id: str, new_doc: str, items: list[tuple[str, dict]], o
                     counts[kinds[op["id"]]] -= 1
                     counts["changed"] += 1
             batches = [(page_id, unchanged[i:i + MAX_OPS]) for i in range(0, len(unchanged), MAX_OPS)]
-            results = apply_batches(conn, batches, actor=actor, client=CLIENT) if batches else []
+            results = apply_batches(conn, batches, actor=actor, client=client) if batches else []
             # The files the written positions name are their references now (a prev's, a lost one's): kept as
             # any file is once let go, not for the shorter life a sync gave the outgoing build
             if pdf:
@@ -2014,3 +2130,95 @@ def _write(ws: str, page_id: str, new_doc: str, items: list[tuple[str, dict]], o
             conn.rollback()
             raise
         after_commits(ws, conn, results)
+
+
+_NOT_LETTERS_RE = re.compile(r"[\s\-]")
+
+
+def _letters(text: str) -> str:
+    """A quote folded (``normalize_quote``) without its spaces and hyphens:
+    what two readings of the same glyphs share however each joined its
+    lines (the viewer's selection, MuPDF's quote_under that keeps a line's
+    end hyphen and joins with a space, PageText's word joined whole)."""
+    return _NOT_LETTERS_RE.sub("", normalize_quote(text))
+
+
+def _pages_showing(conn, doc_hash: str) -> list[str]:
+    """The live pages of the library showing the stored PDF ``doc_hash``:
+    the one owning it (the ``doc_id`` column) and every duplicate showing it
+    as a copy, which the column leaves out."""
+    return [r[0] for r in conn.execute(
+        "SELECT id FROM unified_blocks WHERE parent_id = 'root' AND json_extract(properties, '$.doc.format') = 'pdf' "
+        "AND (doc_id = :h OR (json_extract(properties, '$.doc.copy') IS NOT NULL "
+        "AND json_extract(properties, '$.doc.hash') = :h)) ORDER BY id", {"h": doc_hash})]
+
+
+def respell_quotes(ws: str, doc_hash: str, pages, *, actor: str) -> dict:
+    """The quotes of the highlights on the PDF ``doc_hash``'s pages
+    ``pages`` (1-based) respelled as the text recognized there reads
+    (gamma/pdf_ocr.py), once that text went live: the picture did not
+    change, so each highlight keeps its place, and only its quote, read
+    from the old layer, is stale. Moving them by their passage instead
+    would lose the ones made on garbled words.
+
+    On every live page showing the file (``_pages_showing``), the text
+    highlights and link regions placed on one of ``pages`` by rectangles
+    measured on this file (no ``doc_id``, or this one), neither an area nor
+    lost, are read twice under their rectangles (``_old_passage``, as the
+    file spells it): ``was`` from the file's own layer, ``now`` from the
+    recognized words. A quote becomes ``now`` only when ``now`` reads
+    something else than it, the quote is what the layer reads there (its
+    letters, ``_letters``: a quote corrected by hand or in Zotero stays),
+    and ``now`` reads like ``was`` (``_agrees``: a rectangle drawn off its
+    text, over a layer a line off the print, would take a neighbouring
+    line). Nothing else of a highlight is written: its position and flags
+    stay. Run again, it writes nothing, and the layer stays to read the old
+    quote from.
+
+    The writes go page by page (``_write`` as ``RESPELL_CLIENT``, under
+    ``actor``); a page deleted or showing another file meanwhile writes
+    nothing. → ``{respelled, kept, changed}``: the quotes written, the
+    ones left because the guard said no, and the ones a person changed
+    meanwhile (or on a page that changed). A quote already reading ``now``
+    counts in none. No stored file, no pages: all 0."""
+    counts = {"respelled": 0, "kept": 0, "changed": 0}
+    wanted = {int(n) for n in pages}
+    path = find_upload_file(stored_name(safe_doc_id(doc_hash), ".pdf"), ws) if wanted else None
+    if path is None:
+        return counts
+    with connect_pages_db(ws) as conn:
+        shown = {page_id: page_highlights(conn, page_id) for page_id in _pages_showing(conn, doc_hash)}
+    plans = []
+    with Doc(path, ocr=False) as layer, Doc(path, ocr=True) as recognized:
+        for page_id, items in shown.items():
+            ops = []
+            for bid, props in items:
+                pos = props["pdf_position"]
+                if pos.get("area") or pos.get("lost") or pos.get("doc_id") not in (None, "", doc_hash):
+                    continue
+                if shape.page_of(props) not in wanted:
+                    continue
+                quote = props.get("quote") if isinstance(props.get("quote"), str) else ""
+                read = _old_passage(recognized, pos, "", spell=True)
+                now = read[0] if read else ""
+                if not now or now == quote or _letters(now) == _letters(quote):
+                    continue
+                read = _old_passage(layer, pos, "", spell=True)
+                was = read[0] if read else ""
+                if _letters(quote) == _letters(was) and _agrees(normalize_quote(now), normalize_quote(was)):
+                    ops.append({"op": "set", "id": bid, "props": {"quote": now}})
+                else:
+                    counts["kept"] += 1
+            if ops:
+                plans.append((page_id, items, ops))
+    for page_id, items, ops in plans:
+        done = {"respelled": len(ops), "changed": 0}
+        try:
+            _write(ws, page_id, doc_hash, items, ops, {op["id"]: "respelled" for op in ops}, done, actor=actor,
+                   client=RESPELL_CLIENT)
+        except ValueError as e:
+            log.info(f"[ocr] {page_id}: its quotes were not respelled: {e}")
+            done = {"respelled": 0, "changed": len(ops)}
+        counts["respelled"] += done["respelled"]
+        counts["changed"] += done["changed"]
+    return counts

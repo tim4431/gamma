@@ -13,8 +13,9 @@ import { copyBody, copySummary, zoteroPdfsNote } from "../transfers/workspaceCop
 import { copyPreview } from "../transfers/exportApi";
 import { guideEvents } from "../guide/events.js";
 import { showInChat } from "../chat/computer/chatSide.js";
-import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle, turnShown } from "./taskKinds.js";
+import { kindOf, ocrSummary, relocationSummary, relocationSuperseded, retryOf, taskTitle, turnShown } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
+import * as ocrState from "../pdf/ocrState.js";
 
 export function useAppJobs({
   tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
@@ -335,6 +336,25 @@ export function useAppJobs({
         }).catch(() => {});
       } else if (job.state === "cancelled") {
         setStatus(t("{name} was stopped.", { name: title }));
+      } else {
+        setStatus(t("{name} failed: {message}", { name: title, message: t(job.error) }));
+      }
+      return;
+    }
+    if (job.kind === "ocr") {
+      // However it ended, every tab that heard it end reads the document's
+      // recognition again (pdf/ocrState.js): the pages a done run changed
+      // build their text again from the recognized words, and a stopped or
+      // failed one leaves the counts the Document menu goes by (what it
+      // recognized waits, unseen, for the next run). The tab that started
+      // it says how it went. Another member's open tab keeps the old text
+      // until the PDF is opened again.
+      if (here) ocrState.refresh(job.params?.doc_id);
+      if (!started) return;
+      if (job.state === "done") {
+        tasks.fetchJob(job.id).then((full) => { if (full?.result) setStatus(ocrSummary(job, full.result)); }).catch(() => {});
+      } else if (job.state === "cancelled") {
+        setStatus(ocrSummary(job));
       } else {
         setStatus(t("{name} failed: {message}", { name: title, message: t(job.error) }));
       }

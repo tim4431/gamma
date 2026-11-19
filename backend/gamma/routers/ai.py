@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import (agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_steer, ai_usage,
-                chatgpt_oauth, net_proxy, search_services, translate_engines)
+                chatgpt_oauth, net_proxy, pdf_ocr, search_services, translate_engines)
 from ..ai_client import (
     Alarm,
     CallRefused,
@@ -316,17 +316,36 @@ def _search_index_status(ws: str, doc_id: str) -> dict:
             "index_stale": bool(info and info["ver"] != INDEX_VERSION)}
 
 
+def _ocr_status(ws: str, doc_id: str) -> dict:
+    """``{"ocr": {recognized, scanned, at}}`` when some page of the doc
+    reads words recognized from its picture (gamma/pdf_ocr.py): how many
+    pages do (a page the recognition found no real text on, read as no
+    text, not among them: ``pdf_ocr.live_counts``), how many are scans or
+    pictures, when it was last applied; ``{}`` when none does."""
+    found = pdf_ocr.state(ws, doc_id)
+    if not found or not found["recognized"]:
+        return {}
+    words, _empty = pdf_ocr.live_counts(ws, doc_id, found["recognized"])
+    if not words:
+        return {}
+    return {"ocr": {"recognized": words, "scanned": found["scanned"], "at": found["at"]}}
+
+
 # Sync def: extraction runs in the threadpool (PyMuPDF stops at the sample cap).
 @router.get("/pdf-text-status")
 def pdf_text_status(doc_id: str, request: Request, preview: int = 0):
     """Whether a doc's PDF yields extractable text and whether the search
     index covers it. Feeds the metadata popover's health rows — a
     scanned/image-only PDF is why AI answers blind and metadata lookups come
-    up empty. `preview` > 0 additionally returns that many characters of the
-    text itself (capped)."""
+    up empty. The text is what every reader reads, the words recognized
+    from a scanned page's picture included, and ``ocr``, present when some
+    page reads such words (a page recognized without any does not count),
+    says so (``_ocr_status``: the PDF file itself does not hold them).
+    `preview` > 0 additionally returns that many
+    characters of the text itself (capped)."""
     ws = require_ws(request)
     preview = min(max(preview, 0), 20000)
-    index = _search_index_status(ws, doc_id)
+    index = {**_search_index_status(ws, doc_id), **_ocr_status(ws, doc_id)}
     pdf_path = _pdf_path(ws, doc_id)
     if not pdf_path:
         return {"found": False, "ok": False, "chars": 0, **index}

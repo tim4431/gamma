@@ -179,7 +179,7 @@ export default function PagePane({ pageId, title, dock = false, overlay, scroll,
   else if (!page.id) body = <div className="pagePaneHint" aria-busy="true" />;
   else if (view.shown && view.spec?.host) {
     body = <DocumentPane view={view} render={{
-      pdf: () => <PdfView pageId={pageId} url={url} children_={page.children} marks={marks} zoomIn={zoomIn} scroll={scroll} startPage={startPage}
+      pdf: () => <PdfView pageId={pageId} url={url} fileId={fileHash(doc)} children_={page.children} marks={marks} zoomIn={zoomIn} scroll={scroll} startPage={startPage}
         shared={shared} onScroll={onScroll} onZoom={onZoom} reportRef={reportRef} zoomRef={zoomRef} />,
       notebook: () => <BookView pageId={pageId} sheets={sheets} marks={marks} zoomIn={zoomIn} place={scroll?.place}
         onScroll={onScroll} onZoom={onZoom} reportRef={reportRef} zoomRef={zoomRef} />,
@@ -205,8 +205,9 @@ export default function PagePane({ pageId, title, dock = false, overlay, scroll,
 // the page at (`zoomIn`: the page's own, else the one on screen), and at
 // its place: the exact one it was left at this session (`scroll`), else
 // the top of the page it was last read at (`startPage`), as App's coarse
-// restore would land it.
-function PdfView({ pageId, url, children_, marks, zoomIn, scroll, startPage, shared, onScroll, onZoom, reportRef, zoomRef }) {
+// restore would land it. `fileId`: the page's stored file, whose recognized
+// words its pages read (pdf/ocrState.js).
+function PdfView({ pageId, url, fileId, children_, marks, zoomIn, scroll, startPage, shared, onScroll, onZoom, reportRef, zoomRef }) {
   const wrapRef = useRef(null);
   const [zoom, setZoom] = useState(zoomIn);
   // The page opens at the zoom the view shows (a press hands it over), and
@@ -251,7 +252,7 @@ function PdfView({ pageId, url, children_, marks, zoomIn, scroll, startPage, sha
     <div className="viewerWrap pagePaneViewer" ref={wrapRef}>
       <PdfViewer url={url} highlights={highlights} marks={marks} pdfScaleValue={zoom}
         onEffectiveScale={(s) => { effRef.current = s; }} onZoomTo={zoomTo} onLoadState={onLoadState}
-        darkPage={shared?.darkPage} hideEmbeddedAnnots={shared?.hideEmbeddedAnnots} pageFlow={shared?.pageFlow} pageId={pageId} />
+        darkPage={shared?.darkPage} hideEmbeddedAnnots={shared?.hideEmbeddedAnnots} pageFlow={shared?.pageFlow} pageId={pageId} fileId={fileId} />
     </div>
   );
 }

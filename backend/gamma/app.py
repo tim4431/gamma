@@ -53,6 +53,7 @@ from .routers import (
     metadata,
     mirrors,
     notices,
+    ocr as ocr_router,
     pages,
     pdf,
     prefs,
@@ -483,6 +484,7 @@ def create_app() -> FastAPI:
     app.include_router(recordings.router)
     app.include_router(blocks.router)
     app.include_router(pages.router)
+    app.include_router(ocr_router.router)
     app.include_router(trash_router.router)
     app.include_router(imports.router)
     app.include_router(export.router)

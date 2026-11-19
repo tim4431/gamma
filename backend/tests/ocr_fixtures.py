@@ -1,4 +1,5 @@
-"""Synthetic scanned pages for the OCR-layer tests (gamma/pdf_scan.py).
+"""Synthetic scanned pages for the OCR-layer tests (gamma/pdf_scan.py) and
+for text recognition (gamma/ocr_engine.py, gamma/pdf_ocr.py).
 
 No real scan can be committed, so ``scan_pdf`` draws one: a picture over
 the whole page and, over it, an invisible OCR layer written the way the APS
@@ -8,7 +9,12 @@ baseline of its own. The words stand wide apart, as an OCR font's narrow
 boxes do over the printed words, so MuPDF reads every word as a line of
 its own. The layout has a header row that crosses the column gutter, then
 two columns of three rows; the stream gives the left column before the
-right one, as the scans do."""
+right one, as the scans do. Its picture is blank: nothing to recognize.
+
+``printed_scan_pdf`` is a scan a recognition can read: ``PRINTED`` drawn
+visibly, the page drawn as a picture at 300 dpi, and that picture the only
+content of a fresh page, with no layer, the printed words as an invisible
+layer, or a garbled one (``GARBLED``) as a poor OCR leaves."""
 
 import pymupdf
 
@@ -59,6 +65,63 @@ def scan_pdf(*, invisible: bool = True, image=(0, 0, W, H), size=None) -> bytes:
                              render_mode=3 if invisible else 0)
             x += pymupdf.get_text_length(word, fontname="tiro", fontsize=s) + WORD_GAP
     return doc.tobytes()
+
+
+def picture_pdf(*, image=(0, 0, W, H), footer: str = "", text: str = "", note: str = "") -> bytes:
+    """A one-page PDF painting the blank picture over ``image`` and no
+    text layer: with ``footer`` a line drawn visibly under it (a library's
+    stamp), ``text`` drawn in a column over it, ``note`` a FreeText
+    annotation."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=W, height=H)
+    page.insert_image(pymupdf.Rect(*image), stream=_picture())
+    if footer:
+        page.insert_text((40, H - 20), footer, fontsize=7)
+    if text:
+        page.insert_textbox(pymupdf.Rect(60, 60, W - 60, H - 60), text, fontsize=10)
+    if note:
+        page.add_freetext_annot(pymupdf.Rect(30, 30, 500, 300), note, fontsize=9)
+    return doc.tobytes()
+
+
+# (x, baseline, size, text) of the printed page, y down: a title in large
+# type over two lines, then body text. "resonance" is a word only a
+# recognition reads: the garbled layer spells it otherwise.
+PRINTED = (
+    (72, 110, 24, "Quantum Zeno dynamics"),
+    (72, 142, 24, "of entangled atoms"),
+    (72, 200, 12, "Recognized text replaces a garbled layer on every"),
+    (72, 218, 12, "scanned page, and each highlight keeps its place."),
+    (72, 236, 12, "Lounis and Cohen measured the resonance twice."),
+)
+PRINTED_TEXT = "".join(text + "\n" for _x, _y, _size, text in PRINTED)
+# How the garbled layer spells the printed letters (a poor OCR's misreadings).
+GARBLE = str.maketrans("aeiosn", "4c105m")
+GARBLED = "".join(text.translate(GARBLE) + "\n" for _x, _y, _size, text in PRINTED)
+
+
+def printed_scan_pdf(*, layer: str | None = None, dpi: int = 300, rotate: int = 0) -> bytes:
+    """A one-page scan of ``PRINTED``: the printed page drawn grey at
+    ``dpi`` and placed as the only content of a fresh page of the same
+    size; with ``layer`` "true" the printed words over it in an invisible
+    layer (render mode 3, where they are printed), with "garbled" the same
+    words as a poor OCR spelled them (``GARBLED``), with None no layer. The
+    page turned by ``rotate`` (/Rotate) when given."""
+    printed = pymupdf.open()
+    page = printed.new_page(width=W, height=H)
+    for x, y, size, text in PRINTED:
+        page.insert_text((x, y), text, fontname="helv", fontsize=size)
+    pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
+    doc = pymupdf.open()
+    scan = doc.new_page(width=W, height=H)
+    scan.insert_image(scan.rect, stream=pix.tobytes("png"))
+    if layer:
+        for x, y, size, text in PRINTED:
+            scan.insert_text((x, y), text if layer == "true" else text.translate(GARBLE), fontname="helv",
+                             fontsize=size, render_mode=3)
+    if rotate:
+        scan.set_rotation(rotate)
+    return doc.tobytes(deflate=True)
 
 
 def mupdf_glyphs(page, flags) -> list:
