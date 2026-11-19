@@ -131,7 +131,8 @@ export async function explorerScenarios(env) {
       write(path.join(paperDir, "notes.md"), NOTES);
       await user.api(`/api/folder-links/${link.id}/sync?wait=1`, { method: "POST" });
       ids.notes = await page(W, "notes.md");
-      const said = await until(async () => (await texts(ids.notes)).find((s) => s.includes(`[[${ids.method}]]`)),
+      // (its label, saying more than the file's name, the mention's words)
+      const said = await until(async () => (await texts(ids.notes)).find((s) => s.includes(`[[${ids.method}|the method]]`)),
         { timeout: 20000, what: "the note's link to method.tex as its page's mention" });
       assert(said.includes(`[[${ids.mainPdf}]]`), `[[main.pdf]] is main.pdf's mention: ${said}`);
     });
@@ -350,9 +351,9 @@ export async function explorerScenarios(env) {
       try {
         await unfoldNotes(page);
         const chips = page.locator(".blockRow a.blockRefChip");
-        await until(async () => { const all = (await chips.allInnerTexts()).map((s) => s.trim()); return all.includes("method.tex") && all.includes("main"); },
-          { timeout: 15000, what: "the mentions read method.tex and main (the PDF's stem)" });
-        await chips.filter({ hasText: "method.tex" }).click();
+        await until(async () => { const all = (await chips.allInnerTexts()).map((s) => s.trim()); return all.includes("the method") && all.includes("main"); },
+          { timeout: 15000, what: "the mentions read the method (the link's words) and main (the PDF's stem)" });
+        await chips.filter({ hasText: "the method" }).click();
         await until(() => opened(page) === ids.method, { timeout: 15000, what: "the mention opens method.tex" });
         assertNoProblems(page);
 
