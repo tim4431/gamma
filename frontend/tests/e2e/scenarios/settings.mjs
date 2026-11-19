@@ -1625,7 +1625,7 @@ export async function settingsScenarios(env) {
       const results = page.locator(".settingsSearchResult");
       await results.first().waitFor();
       // the section first, then Server backups' Off-site copies, which points at it
-      assertEq(JSON.stringify(await results.locator(".settingLabel").allInnerTexts()), JSON.stringify(["Bucket", "Off-site copies"]),
+      assertEq(JSON.stringify(await results.locator(".settingLabel").allInnerTexts()), JSON.stringify(["Bucket", "Cloud copies", "Off-site copies"]),
         "an admin's matches");
       assertEq(await results.first().locator("small").innerText(), "Backups", "the match names its pane");
       await results.first().click();
@@ -1818,7 +1818,10 @@ export async function settingsScenarios(env) {
       // Browse…: every copy by workspace, found by name.
       await cloud.getByRole("button", { name: "Browse…", exact: true }).click();
       const browser = page.getByRole("dialog", { name: "Cloud copies", exact: true });
-      await until(async () => (await browser.locator(".cloudCopiesGroup").count()) === 3, { what: "the three workspaces with copies" });
+      await until(async () => {
+        const names = await browser.locator(".cloudCopiesHead .settingLabel").allInnerTexts();
+        return ["Bucket e2e", "Gone e2e", "Gone two"].every((name) => names.includes(name));
+      }, { what: "the workspaces with copies, here and not" });
       await browser.getByRole("searchbox", { name: "Find a workspace", exact: true }).fill("two");
       await until(async () => (await browser.locator(".cloudCopiesGroup").count()) === 1, { what: "the one workspace found by name" });
       assert((await browser.locator(".cloudCopiesGroup").innerText()).includes("not on this server"), "it says the server lacks it");
@@ -1834,8 +1837,9 @@ export async function settingsScenarios(env) {
         const ids = (await user.api("/api/workspaces/mine")).workspaces.filter((w) => w.role === "owner").map((w) => w.id);
         return ids.includes(gone) && ids.includes(gone2);
       }, { timeout: 60000, what: "both copies to come back as workspaces of their own ids" });
-      const restored = (await user.api("/api/jobs")).jobs.find((j) => j.kind === "copies-restore");
-      assertEq(restored?.result?.restored?.length, 2, "one job brought both back");
+      const listed = (await user.api("/api/jobs")).jobs.find((j) => j.kind === "copies-restore");
+      const restored = await user.api(`/api/jobs/${listed.id}`);
+      assertEq(restored.result?.restored?.length, 2, "one job brought both back");
       await row(page, "2 workspaces are only in the cloud").waitFor({ state: "detached" });
       // Deleted from the bucket, a copy is gone from there and from the list.
       await until(async () => (await only.count()) === 3, { what: "the three copies, each under its workspace now" });
