@@ -920,6 +920,10 @@ What releasing 0.4.0 met, and what each needs:
   one. A test that orders two threads makes the order (wraps the call that
   marks the point, as `test_zotero_sync_pdfs`'s relocation race does), not
   a sleep.
+- **A time bound on the wall clock.** The suite's other workers stretch the
+  wall clock on a loaded runner. A test that bounds how long pure code
+  takes measures the thread's CPU time (`time.thread_time()`), as
+  `test_notion_nfm`'s long inputs do.
 
 `GAMMA_TEST_SHUFFLE=<seed>` puts the files in another order (conftest's
 `pytest_collection_modifyitems`; each file's tests stay in theirs):
@@ -982,12 +986,6 @@ instead of fixing; the fix removes its entry.
   ran beside it; the file alone passed 41/41. Likely the debounce: with
   `PUSH_DELAY` at 0.2 s, three quick PATCHes that take longer than that
   under load settle apart and send two PUTs where the test counts one.
-- **test_notion_nfm: test_long_input_reads_fast**
-  (`backend/tests/test_notion_nfm.py:879`, this machine, 2026-11-18): the
-  ten long inputs took 5.23 s against the test's 5 s bound in the full
-  parallel suite while two browser groups (notes-pdf-share, translation)
-  ran beside it; the file alone passed. A wall-clock bound on pure Python
-  that the machine's load decides.
 - **notes: images and tables are objects — a press selects…**
   (`frontend/tests/e2e/scenarios/notes.mjs:2082`, this machine,
   2026-11-18): the press on the table's bottom margin opened no editor.
