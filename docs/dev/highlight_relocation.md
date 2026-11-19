@@ -31,7 +31,9 @@ flags, thresholds and write ([Text files](#text-files)).
 
 Code:
 
-- `gamma/highlight_relocate.py`: the search and the write.
+- `gamma/highlight_relocate.py`: the search and the write; the same search
+  finds an agent's quote (`place_quote`) and a chat citation's (`cite`),
+  both over `find_quote` ([pdf_citations.md](pdf_citations.md#finding-the-quote)).
 - `gamma/documents/text_anchors.py`: a text file's ladder and run.
 - `gamma/highlights.py`: the position's flags, `prev` and `closest`
   (`previous_place`, `valid_prev`, `valid_closest`, `from_scaled`).
@@ -323,7 +325,20 @@ file, for a needle of at least three characters (`MIN_NEEDLE`):
 
 - Every exact copy on word edges, so "ion" in "motion" or "fig. 1" in "fig.
   12" is none. The context lifts the rule on a side where the old passage
-  began or ended inside a word.
+  began or ended inside a word. A hyphen inside one of the needle's words
+  may be missing from the copy (`_hyphens_optional`): the page joins a word
+  hyphenated at a line's end whole and cannot tell a compound's own hyphen
+  there ("Carr-Purcell-" + "Meiboom") from typesetting. A hyphen between
+  two single letters ("x-y") or beside a digit ("53-70") must stand.
+- On a page with no exact copy, the copies its text has once its reference
+  marks are left out (`_exact_copies`, `PageText.without_marks`): a quote
+  may leave out "159,160" in "sequence¹⁵⁹˒¹⁶⁰.", as a model's or a new
+  version's added citation does. A mark is several digits, a list or a
+  range after a word of three letters and before its punctuation, each
+  glyph 0.45 to 0.82 of the letter's height and raised by 0.18 to 0.65 of
+  it (`_raised`); a single raised digit is as often a power. Such a copy
+  covers the marks inside it, and one at its end only when the needle runs
+  on to the punctuation after it.
 - The rough search's places (`_rough_on_page`), for a needle of
   `exact_chars` characters or more ([The thresholds](#the-thresholds)),
   whatever its word count.
@@ -390,7 +405,8 @@ though a lowered one could have taken it
 
 **The confidence.** A candidate's confidence is difflib's `SequenceMatcher`
 ratio of the folded needle and the text found, without its junk heuristic
-(`_similar`). Only an exact copy reaches 1.0. Across a break the parts are
+(`_similar`). Only an exact copy (above: its missing hyphens and reference
+marks included) reaches 1.0. Across a break the parts are
 joined with a space. Piece by piece, both sides' pieces are, the text
 between left out. The alignment's cost only finds the places.
 
@@ -406,7 +422,10 @@ reference's page wins ([The reference](#the-reference)), then the place
 nearest it. Nearness runs centre to centre, from the reference's
 `boundingRect` to the candidate's glyph boxes, each in fractions of its
 page. Punctuation at a match's edges that the needle lacks ("cooled." for
-"cooled") stays outside (`_trimmed`).
+"cooled") stays outside (`_trimmed`). The best is marked `twin` when another
+candidate of its page, apart from it, scores as high: two copies nothing
+tells apart, which a chat citation refuses ([pdf_citations.md](pdf_citations.md#finding-the-quote))
+and a relocation, with its context, rarely meets.
 
 **The answer.** The best-ranked candidate is the new place when its
 confidence reaches the run's `min_match` (0.8 by default). A needle under
@@ -1317,6 +1336,8 @@ title is "This page's highlights are being placed — see Background tasks".
 ## Tests
 
 `backend/tests/test_highlight_relocate.py` covers what follows.
+`backend/tests/test_pdf_citations.py` covers the hyphen inside a word, the
+reference marks and `twin`, through the citation's lookup.
 
 **The page text**: the folding, hyphenated words, the file's spelling of a
 passage, the compact glyph store, number-only lines left out.

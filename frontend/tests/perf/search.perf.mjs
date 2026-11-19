@@ -5,14 +5,14 @@
 // inline in the component and not timed here.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runChars } from "../../src/pdf/pdfCitation.js";
+import { runChars } from "../../src/pdf/pageChars.js";
 import { normalizeChars } from "../../src/shared/lib/textnorm.js";
 import { pageRuns, rng } from "./fixtures.mjs";
 import { budget, measure } from "./measure.mjs";
 
 const rnd = rng(3);
 const pages = Array.from({ length: 20 }, () => pageRuns(rnd));
-const searchText = (runs) => normalizeChars(runChars(runs, { fillSpaces: true }));
+const searchText = (runs) => normalizeChars(runChars(runs));
 
 test("search text x20 pages: runChars + normalizeChars over 60 runs each", async (t) => {
   const { norm, src } = searchText(pages[0]);

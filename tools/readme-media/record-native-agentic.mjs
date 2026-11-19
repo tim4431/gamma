@@ -42,7 +42,6 @@ import { REFS, ASKS_REFS } from './models/ai-reading.mjs';
 
 const lib = (p) => import(pathToFileURL(path.join(ROOT, p)).href);
 const { getDocument } = await lib('frontend/node_modules/pdfjs-dist/legacy/build/pdf.mjs');
-const { citationRuns, matchCitation } = await lib('frontend/src/pdf/pdfCitation.js');
 const { parseGammaLink } = await lib('frontend/src/shared/model/gammaLinks.js');
 
 const NAME = 'native-agentic';
@@ -50,8 +49,8 @@ const DIR = scratch(NAME);
 const Q1 = 'What do panels c and d show?';
 const Q2 = 'Read refs 3–5 and compare what each one showed.';
 if (!ASKS_REFS.test(Q2) || ASKS_REFS.test(Q1)) throw new Error('The scripted model would not tell the two questions apart');
-// The curated PDF's own words the answers cite (pdf.js text; checked below
-// with Gamma's matcher before anything is recorded).
+// The curated PDF's own words the answers cite (checked below with Gamma's
+// citation finder before anything is recorded).
 const QUOTES = {
   fig: { page: 2, text: 'movement does not observably affect entanglement or coherence' },
   ref3: { page: 6, text: 'Jaksch, D. et al. Fast quantum gates for neutral atoms' },
@@ -154,23 +153,26 @@ try {
   await account.api(`/api/chats/${pageId}`, { method: 'DELETE' }).catch(() => {});
   await account.api('/api/prefs/open-tabs', { method: 'PUT', body: { value: [] } }).catch(() => {});
 
-  // The PDF's text as the viewer's pdf.js reads it, for Gamma's citation matcher.
+  // Page 6's reference list as the viewer's pdf.js reads it.
   const block = await account.api(`/api/blocks/${pageId}`);
   const doc = block.properties.doc;
   const pdfUrl = doc.at === 'url' ? doc.url : `/api/uploads/${doc.hash}${doc.ext}`;
   const pdf = await getDocument({ data: new Uint8Array(await (await account.api(pdfUrl, { raw: true })).arrayBuffer()), verbosity: 0 }).promise;
-  const runs = [];
-  for (let n = 1; n <= pdf.numPages; n++) runs[n] = citationRuns((await (await pdf.getPage(n)).getTextContent()).items);
   const refList = (await (await pdf.getPage(6)).getTextContent()).items.map((i) => i.str + (i.hasEOL ? ' ' : '')).join('').replace(/\s+/g, ' ');
   await pdf.destroy();
-  const exact = (n, quote) => { const m = runs[n] && matchCitation(runs[n], quote); return !!m && m.status === 'matched' && !m.approximate; };
-  for (const [k, q] of Object.entries(QUOTES)) if (!exact(q.page, q.text)) throw new Error(`Quote ${k} is not verbatim on p. ${q.page}: ${q.text}`);
+  // A quote found exactly on its page, as a citation's click finds it
+  // (GET /api/pages/{id}/citation, docs/dev/pdf_citations.md).
+  const exact = async (n, quote) => {
+    const m = await account.api(`/api/pages/${pageId}/citation?${new URLSearchParams({ pdf_page: String(n), quote })}`).catch(() => null);
+    return m?.status === 'matched' && m.match === 1 && m.page === n;
+  };
+  for (const [k, q] of Object.entries(QUOTES)) if (!(await exact(q.page, q.text))) throw new Error(`Quote ${k} is not verbatim on p. ${q.page}: ${q.text}`);
   // Refs 3–5 are the papers the model compares.
   for (const r of REFS) if (!refList.includes(`${r.n}. ${r.who}`) || !refList.toLowerCase().includes(r.title.toLowerCase()) || !refList.includes(`(${r.year})`)) throw new Error(`Ref. ${r.n} is not ${r.who} ${r.year} on p. 6`);
-  const citationsIn = (md) => [...String(md || '').matchAll(/\]\((\/\?page=[^)\s]+)\)/g)].map((m) => {
+  const citationsIn = async (md) => (await Promise.all([...String(md || '').matchAll(/\]\((\/\?page=[^)\s]+)\)/g)].map(async (m) => {
     const p = parseGammaLink(m[1], server.base);
-    return p?.kind === 'citation' ? { pageId: p.pageId, page: p.page, quote: p.quote, exact: p.pageId === pageId && !!p.quote && exact(p.page, p.quote) } : null;
-  }).filter(Boolean);
+    return p?.kind === 'citation' ? { pageId: p.pageId, page: p.page, quote: p.quote, exact: p.pageId === pageId && !!p.quote && await exact(p.page, p.quote) } : null;
+  }))).filter(Boolean);
 
   model = await demoModel(account, 'ai-reading', { quotes: QUOTES });
   // Warm the arXiv mirror once from here (Gamma keeps nothing of it).
@@ -494,9 +496,9 @@ try {
     && take.marks.fetchingGone <= take.marks.a2Resp, pills.map((k) => take.marks[k]));
   take.check('figure attached to question 1', requests[0]?.images.length === 1 && requests[0].images[0].kind === 'area' && requests[0].images[0].page === 2
     && (users[0]?.images?.length || 0) === 1 && log[0]?.images === 1, requests[0]?.images);
-  const c1s = citationsIn(ais[0]?.text);
+  const c1s = await citationsIn(ais[0]?.text);
   const shown1 = parseGammaLink(href1, server.base);
-  take.check('answer 1 cites p. 2 exactly', c1s.length >= 1 && c1s.every((c) => c.exact && c.page === 2) && shown1?.page === 2 && exact(2, shown1.quote), c1s);
+  take.check('answer 1 cites p. 2 exactly', c1s.length >= 1 && c1s.every((c) => c.exact && c.page === 2) && shown1?.page === 2 && await exact(2, shown1.quote), c1s);
   take.check('citation click marks the passage without a notice', take.details.cite1Marks > 0 && !take.details.cite1Notice.length, { marks: take.details.cite1Marks, notice: take.details.cite1Notice });
   take.check('passage chip sent with question 2', requests[1]?.selections.length === 1 && CLAUSE_RE.test(requests[1].selections[0].text.replace(/\s+/g, ' ').trim()) && requests[1].selections[0].page === 1, requests[1]?.selections);
   take.check('question 2 is a page agent chat without the read helper', requests[1]?.agent_scope === 'page' && requests[1]?.delegate_reads === false && requests[1]?.page_id === pageId);
@@ -506,7 +508,7 @@ try {
   take.check('3 searches and 3 fetches ran without error', searches.length === 3 && fetches.length === 3 && actions.length === 6
     && actions.every((a) => !a.error) && searches.every((a) => !/— 0 results|no results/i.test(a.summary || '')), take.details.actions);
   take.check('every fact grounded in its paper', log.at(-1)?.grounded === true, log.at(-1)?.grounding);
-  const c2s = citationsIn(ais[1]?.text);
+  const c2s = await citationsIn(ais[1]?.text);
   take.check('p. 6 citations exact', c2s.length === 3 && c2s.every((c) => c.exact && c.page === 6), c2s);
   // A busy machine drops screencast frames and slows the pointer: the
   // pointer's moves (a repaint every 16 ms while it travels) then stutter in
