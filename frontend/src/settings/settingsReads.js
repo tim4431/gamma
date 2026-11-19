@@ -38,7 +38,7 @@ export const PANE_READS = {
   workspaces: ({ signedIn }) => ["/workspaces/mine", signedIn && LINK_BASES.mirror, signedIn && LINK_BASES.zotero, { path: "/accounts", later: true },
     { path: "/server-config", later: true }],
   backups: ({ admin }) => [{ path: "/workspaces/mine", then: (d) => (d?.workspaces || []).map((w) => backupsOf(w.id)) },
-    "/backup-tasks", admin && "/admin/offsite"],
+    "/backup-tasks", admin && "/admin/offsite", admin && "/admin/gdrive"],
   server: () => ["/admin/server-info", "/admin/settings", "/admin/ai-providers",
     "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
   proxy: () => ["/admin/proxy"],
