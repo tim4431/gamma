@@ -658,10 +658,12 @@ function PopoverAnchor({ name, children, className = "" }) {
 // docs/dev/strip_groups.md) has its chip before it: a click collapses the
 // group (`onGroupChange`, opening first the nearest tab outside it when the
 // strip's page is in it), a right-click opens its editor (`onGroupMenu`,
-// with the chip), and a drag carries the whole group. A collapsed run's tabs
-// leave the strip but for the active one. A dragged tab hands `onReorder`
-// the tab it is over, `{group}` for a chip, or null for the strip's empty
-// end, past the last item.
+// with the chip), a drag or Ctrl+←/→ carries the whole group. An open group
+// is underlined from its chip to its last tab, the line rising round its
+// active tab as Chrome draws it (each item draws its stretch). A collapsed
+// run's tabs leave the strip but for the active one. A dragged tab hands
+// `onReorder` the tab it is over, `{group}` for a chip, or null for the
+// strip's empty end, past the last item.
 const TAB_FADE = 40; // the right-edge fade the active tab keeps clear of
 // Until the person has pressed or typed anything in this window, what
 // changes the strip is the window loading (its tabs read back, the page it
@@ -780,11 +782,13 @@ function OpenTabs({
     if (heir !== undefined) onOpen(heir);
   };
   // What the strip draws, in order: each group's chip before its run (with
-  // the index of the run's first tab, where a drop before the chip lands),
-  // and the tabs, a collapsed run's left out but for the active one.
+  // the indexes of the run's first and last tabs: a drop before the chip
+  // lands at the first, Ctrl+←/→ passes the tab before or after the run),
+  // and the tabs, a collapsed run's left out but for the active one, the
+  // run's last marked where its underline ends.
   const drawn = stripRuns(tabs).flatMap((run) => (run.group ? [
-    { group: run.group, first: tabs.indexOf(run.tabs[0]) },
-    ...run.tabs.filter((tab) => !run.group.collapsed || tab.id === activeId).map((tab) => ({ tab })),
+    { group: run.group, first: tabs.indexOf(run.tabs[0]), last: tabs.indexOf(run.tabs[run.tabs.length - 1]) },
+    ...run.tabs.filter((tab) => !run.group.collapsed || tab.id === activeId).map((tab) => ({ tab, end: tab === run.tabs[run.tabs.length - 1] })),
   ] : [run]));
   // This strip's own drag over a tab, a chip ({group}) or the strip's end (null).
   const ownDragOver = (event, target) => {
@@ -797,13 +801,23 @@ function OpenTabs({
     if (event.currentTarget.hasAttribute("data-moving")) return;
     onReorder(dragged, target);
   };
-  const chip = ({ group, first }) => {
+  // The chip: an item as tall as a tab (a drop or a drag takes it like one,
+  // and its stretch of the underline stands where the tabs' do) holding the
+  // group's pill.
+  const chip = ({ group, first, last }) => {
     const key = `group:${group.id}`;
     const name = group.title.trim();
+    // Ctrl+←/→ (⌘ on a Mac) carries the group past the tab beside it, as Chrome's header does
+    const shift = (event) => {
+      const beside = event.key === "ArrowLeft" ? tabs[first - 1] : event.key === "ArrowRight" ? tabs[last + 1] : null;
+      if (!beside || !(event.ctrlKey || event.metaKey)) return false;
+      onReorder({ group: group.id }, beside.id);
+      return true;
+    };
     return (
       <div key={key} data-motion-key={key} data-strip-group={group.id} role="button" tabIndex={0} aria-expanded={!group.collapsed}
         aria-label={name || t("Unnamed group")}
-        className={`stripGroupChip${name ? "" : " unnamed"}${draggingId === key ? " dragging" : ""}${foreign && hint === first ? " dropBefore" : ""}`}
+        className={`stripGroupChip${draggingId === key ? " dragging" : ""}${foreign && hint === first ? " dropBefore" : ""}`}
         style={groupTint(group.color)}
         title={group.collapsed ? t("{name}: click to show its tabs, right-click for more", { name: name || t("Unnamed group") })
           : t("{name}: click to hide its tabs, right-click for more", { name: name || t("Unnamed group") })}
@@ -823,18 +837,22 @@ function OpenTabs({
         }}
         onDrop={(event) => dropForeign(event, hint ?? first)}
         onClick={() => toggleGroup(group)}
-        onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleGroup(group); } }}
+        onKeyDown={(event) => {
+          if (shift(event)) event.preventDefault();
+          else if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleGroup(group); }
+        }}
         {...menuPress((event) => {
           event.preventDefault();
           onGroupMenu?.(group.id, event.currentTarget);
         })}
       >
-        {name ? <span className="stripGroupName">{name}</span> : null}
+        <span className={`stripGroupPill${name ? "" : " unnamed"}`}>{name}</span>
+        {group.collapsed ? null : <span className="stripGroupLine" aria-hidden="true" />}
       </div>
     );
   };
 
-  const tabEl = (tab) => {
+  const tabEl = (tab, end) => {
     const i = tabs.indexOf(tab);
     // the drop bar before a group's first tab stands before its chip
     const lead = !!tab.group && tabs[i - 1]?.group?.id !== tab.group.id;
@@ -848,7 +866,7 @@ function OpenTabs({
           if (element) tabElements.current.set(tab.id, element);
           else tabElements.current.delete(tab.id);
         }}
-        className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}${tab.group ? " grouped" : ""}${foreign && hint === i && !lead ? " dropBefore" : ""}${foreign && hint === i + 1 && i === tabs.length - 1 ? " dropAfter" : ""}`}
+        className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}${tab.group ? " grouped" : ""}${end ? " groupEnd" : ""}${foreign && hint === i && !lead ? " dropBefore" : ""}${foreign && hint === i + 1 && i === tabs.length - 1 ? " dropAfter" : ""}`}
         style={tab.group ? groupTint(tab.group.color) : undefined}
         title={tab.title}
         draggable
@@ -880,7 +898,7 @@ function OpenTabs({
           onContext(tab, event.clientX, event.clientY);
         })}
       >
-        {tab.group ? <span className="stripGroupLine" aria-hidden="true" /> : null}
+        {tab.group && !tab.group.collapsed ? <span className="stripGroupLine" aria-hidden="true" /> : null}
         <span className="tabKind">{kindIcon(tab, 14)}</span>
         <span className="tabTitle">{tab.title}</span>
         {tab.pinned ? (
@@ -938,7 +956,7 @@ function OpenTabs({
             glide over its place from the left. */}
         <ListMotion keys={drawn.map((item) => (item.group ? `group:${item.group.id}` : item.tab.id))} still={still || !acted}
           enter="rise" leave="tab" strip={["role", "aria-selected", "data-strip-group"]}>
-          {drawn.map((item) => (item.group ? chip(item) : tabEl(item.tab)))}
+          {drawn.map((item) => (item.group ? chip(item) : tabEl(item.tab, item.end)))}
         </ListMotion>
       </div>
       {overflow.over ? (
