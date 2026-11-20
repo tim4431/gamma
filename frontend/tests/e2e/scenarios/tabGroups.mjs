@@ -547,6 +547,12 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
       // the chip dragged carries its group past a tab
       await (await dragOver(page, chip, tabIn(topbar, "Reading list"), { x: 0.5, y: 0.5 })).drop();
       await shows(strip, "Reading list [Reading] Lecture notes* Split paper*");
+      // and Ctrl+← / → from the keyboard, as Chrome's header
+      await chip.focus();
+      await page.keyboard.press("ControlOrMeta+ArrowLeft");
+      await shows(strip, "[Reading] Lecture notes* Split paper* Reading list");
+      await page.keyboard.press("ControlOrMeta+ArrowRight");
+      await shows(strip, "Reading list [Reading] Lecture notes* Split paper*");
       // a tab dragged past a tab outside the group leaves it; the tab menu puts it back, at the group's end
       await (await dragOver(page, tabIn(topbar, "Split paper"), tabIn(topbar, "Reading list"), { x: 0.5, y: 0.5 })).drop();
       await shows(strip, "Split paper Reading list [Reading] Lecture notes*");

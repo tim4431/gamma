@@ -4,7 +4,9 @@ Chrome's tab groups: a named, coloured run of tabs in a strip, behind a
 chip that a click collapses. They are not the panes side by side, which
 the code calls groups too ([tab_groups.md](tab_groups.md)); in the code
 these are **strip groups**, and the interface uses Chrome's words for them
-and "pane" for the panes (*Join panes*, *Close this pane*).
+and "pane" for the panes (*Join panes*, *Close this pane*). Chrome's own
+measures and rules, read from Chromium's source, are in
+[the research note](../research/chrome-strip-groups.md).
 
 ## What the user sees
 
@@ -19,11 +21,15 @@ and "pane" for the panes (*Join panes*, *Close this pane*).
   tab added to a group goes to the end of the group, and a collapsed group
   opens to show it. *Remove from group*
   takes a tab out, to just after the group, so the group stays one run.
-- **In the strip.** A group's chip stands before its tabs: a tint of its
-  colour around its name, or a dot of the colour when it has none. Each of
-  its tabs has a line of the colour along its foot, and the active one
-  wears the colour as its outline. The *All open tabs* list shows a
-  grouped tab's dot.
+- **In the strip.** A group's chip stands before its tabs: a pill of its
+  colour with its name in black or white, whichever reads on the colour,
+  or a square of the colour when it has none. While the group is open a
+  line of its colour runs along the strip's foot, where the active tab
+  meets the page, from under the chip to its last tab, and rises round the
+  group's active tab as its outline, flaring back into the line at the
+  tab's feet as Chrome's does (in a pane's strip, which stands on the
+  head's border, it meets the outline square). A collapsed group is its
+  chip alone. The *All open tabs* list shows a grouped tab's dot.
 - **Collapse.** A click on the chip (Enter or Space on it) hides the
   group's tabs; the chip stays. Collapsing the group the strip's page is
   in opens first the nearest tab outside the group, after it first, then
@@ -47,8 +53,9 @@ and "pane" for the panes (*Join panes*, *Close this pane*).
   tab never vanishes under the drag. Over a chip it stands just before that
   group, and past the strip's last item at the end, out of any group (the
   strip's gaps and padding are no end). A chip dragged carries its whole
-  group past a tab, or past another group whole, never into it. Pinned and
-  unpinned tabs never trade places.
+  group past a tab, or past another group whole, never into it; so does
+  Ctrl+← / → (⌘ on a Mac) on a chip that has the keyboard's focus, as on
+  Chrome's header. Pinned and unpinned tabs never trade places.
 - **Panes.** A group lives in a pane's strip. A tab dropped into the
   other pane's strip joins the group it lands inside (both neighbours in
   it); *Move to the other pane*, a drop on the other pane's page and
@@ -165,10 +172,28 @@ pick still opening.
 ## Look
 
 `tokens.css` names the nine colours as scheme constants,
-`--strip-group-<name>`: light tones on the dark scheme's chrome, deeper
-ones on the light scheme's. A chip, a tab and a dot set `--strip-group` to
-their group's token; the chip is a tint of it around the name in
-`--text-primary`, so the name reads alike in every theme.
+`--strip-group-<name>`, Chrome's classic tab group palette: its Google 300
+tones on the dark scheme's chrome, its deeper ones on the light scheme's.
+The chip's name is `--on-strip-group`, Chrome's darkest grey on the dark
+scheme and white on the light one, but on the light yellow and orange
+(`--on-strip-group-yellow`, `-orange`), where the grey reads better: the
+choice Chrome's `GetColorWithMaxContrast` makes. `groupTint(color)` sets
+`--strip-group` and `--strip-group-ink` on a chip, a tab, a dot and a swatch.
+
+In app.css the chip is an item as tall as a tab (a drop and a drag take it
+as one, and its stretch of the line stands where the tabs' do) holding the
+20 px pill with Chrome's 6 px corners; the keyboard's ring goes round the
+pill. The line is 2 px with round ends, at the foot of the strip's band
+(`--tab-band`, the room under the tabs the active tab fills to join the
+page: the topbar's padding and border, or a pane head's border alone).
+Each item draws its stretch (`.stripGroupLine`), reaching over the gap
+(`--tab-gap`) to the next; the chip's starts under its pill, the last
+tab's (`.groupEnd`) stops short of its end. The open group's active tab
+wears the colour as its border and an inset shadow (2 px, nothing moves),
+its band narrowed inside them, and its stretch becomes two feet: the
+corners of boxes `--tab-foot` square whose stroke comes down beside the
+band and turns out into the line. A pane's strip has a 1 px band and a
+2 px foot, a square joint.
 
 ## Tests
 
@@ -184,8 +209,8 @@ a group from a tab's menu, names and colours it in the editor, drags a tab
 into it, finds it in a second browser of the account, drags over the
 strip's padding and finds nothing moved, reloads, collapses the group of
 the page on screen and finds the tab outside it opened, opens a grouped
-page with quick open and finds the group shown, drags the chip past a tab,
-drags a tab out and puts it back through the submenu, and closes the
+page with quick open and finds the group shown, drags the chip past a tab
+and back with Ctrl+← / →, drags a tab out and puts it back through the submenu, and closes the
 group of two tabs, the page on screen among them, to the page viewed
 before. The second moves a group to the other pane and finds the page on
 screen still on screen there, joins the panes, and collapses a group that

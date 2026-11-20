@@ -173,7 +173,7 @@ Keep the tabs of one project together, as in Chrome: a group is a run of tabs be
 - **Make one**: right-click a tab → **Add tab to new group**. The group's chip appears before the tab with its name ready to type and a colour to pick. Once there are groups, the same menu has **Add tab to group** with **New group** and each group; **Remove from group** takes a tab out. A pinned tab is in no group.
 - **Click the chip** to collapse the group into it, and again to open it. Collapsing the group of the page you are on opens the nearest tab outside it. Opening one of its pages from anywhere else (Ctrl+P, a link) opens the group again.
 - **Right-click the chip** to rename it, change its colour, **Ungroup** (the tabs stay), **Close group** (closes its tabs) or, with two panes, **Move group to the other pane**.
-- **Drag** a tab onto a group's tab to put it in that group, or past a tab outside the group to take it out; drag the chip to move the whole group.
+- **Drag** a tab onto a group's tab to put it in that group, or past a tab outside the group to take it out; drag the chip to move the whole group, or press Tab to reach it and Ctrl+← / → (⌘ on a Mac).
 - Groups follow your tabs: every browser signed in to your account on this server shows them, collapsed or not.
 
 ## Pages side by side
