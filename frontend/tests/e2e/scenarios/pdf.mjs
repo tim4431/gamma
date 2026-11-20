@@ -4,7 +4,7 @@
 // PDF text on another page.
 import { execFileSync } from "node:child_process";
 import { blockSearchQuery, closeEditor, tree, same, partialBlockSearch } from "./notes.mjs";
-import { PYTHON, arrived, assert, assertEq, fakeAiModels, settingsPane, until } from "../harness.mjs";
+import { PYTHON, arrived, assert, assertEq, atRest, fakeAiModels, settingsPane, until } from "../harness.mjs";
 import { DEFAULT_PALETTE, darkPageColor, darkPageLine } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
@@ -131,15 +131,7 @@ export function reviewCardHelpers(p) {
   const pressed = async (c, key) => (await stepOf(c, key).getAttribute("aria-pressed")) === "true";
   const pictureLoaded = (c) => until(() => c.locator(".hlReviewShot img").evaluate((img) => img.complete && img.naturalWidth > 0,
     null, { timeout: 1000 }), { what: "the before picture loaded", timeout: 15000 });
-  const atRest = (c) => {
-    let last = "";
-    return until(async () => {
-      const now = JSON.stringify(await c.boundingBox());
-      const same = now === last;
-      last = now;
-      return same;
-    }, { what: "the card at rest", every: 200 });
-  };
+  const cardAtRest = (c) => atRest(c, "the card at rest");
   const look = (c, relative = false) => c.evaluate((el, relative) => {
     const at = el.getBoundingClientRect();
     const box = (r) => [r.left - (relative ? at.left : 0), r.top - (relative ? at.top : 0), r.width, r.height];
@@ -199,7 +191,7 @@ export function reviewCardHelpers(p) {
     return r.height > 0 && r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
   }, id);
   const focusInCard = (c) => c.evaluate((el) => el.contains(document.activeElement)).catch(() => false);
-  return { cardOf, headOf, stepOf, navOf, countOf, pressed, pictureLoaded, atRest, look, sameLook, rowOf, rowBoxes, sameRow, notesOn, focusInCard };
+  return { cardOf, headOf, stepOf, navOf, countOf, pressed, pictureLoaded, atRest: cardAtRest, look, sameLook, rowOf, rowBoxes, sameRow, notesOn, focusInCard };
 }
 
 export async function pdfScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage, flags }, { alice2, second }) {
@@ -993,7 +985,10 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await mark.waitFor();
     const aligned = () => citationOverText(page, 2, "Page two says hello world");
     await until(aligned, { what: "citation rectangles align with the rendered text" });
-    const box = await mark.boundingBox();
+    // The mark takes no pointer, so the press goes by its box: read once the
+    // jump to page 2 has stopped (read while it still scrolled, the press
+    // landed beside the passage and dismissed it, on CI).
+    const box = await atRest(mark, "the citation at rest");
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     assertEq(await mark.count(), 1, "clicking the highlighted passage keeps it visible");
     const paper = await page.locator('[data-page="2"]').boundingBox();

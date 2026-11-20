@@ -516,6 +516,23 @@ export async function arrived(locator) {
   });
 }
 
+// The box of `locator` once it stays put between two reads 200 ms apart:
+// a page still scrolling to it (a jump to a PDF page) or a card still
+// settling has it elsewhere a moment later, and a press placed by a box
+// read then lands beside it. For a press by coordinates where the locator's
+// own click cannot go (an overlay that takes no pointer).
+export async function atRest(locator, what = "the box at rest") {
+  let last = "", box = null;
+  await until(async () => {
+    box = await locator.boundingBox();
+    const now = JSON.stringify(box);
+    const same = !!box && now === last;
+    last = now;
+    return same;
+  }, { what, every: 200 });
+  return box;
+}
+
 // A press of the mouse's back button over the middle of `over` (a
 // locator), else of the page, which Playwright's mouse has no name for:
 // through the DevTools protocol, as the hardware's reaches Chromium. Unless

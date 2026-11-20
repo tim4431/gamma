@@ -989,7 +989,10 @@ What releasing 0.4.0 and the merges after it met, and what each needs:
 - **A press on a box read earlier, or on a block's middle.** A picture
   that loads after a box is read moves what is under it, so a press goes
   through the locator (`locator.click({ position })`, measured at the
-  press) once the page's pictures are in. A block's middle is the gap
+  press) once the page's pictures are in. Where the locator's own click
+  cannot go (an overlay that takes no pointer, a citation's mark), the
+  press goes by the box `atRest` (harness) reads once it stays put: read
+  during the jump to the mark's page, it was beside the mark on CI. A block's middle is the gap
   between two of its rendered pieces when it has two (a paragraph and a
   list), and a press there, once the gap's line has drawn, opens a new line
   instead of the editor where the caret was: the notes helpers press level
