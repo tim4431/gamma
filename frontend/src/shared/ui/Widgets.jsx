@@ -25,6 +25,7 @@ import { Popover } from "./Surfaces";
 import { Chevron, IconSwap, MorphText } from "./MotionWidgets";
 import ListMotion from "./ListMotion";
 import { composing } from "../lib/hotkeys.js";
+import { collapseHeir, groupTint, stripRuns } from "../../workspace/stripGroups.js";
 
 // Shared chrome for every dockable window: one grip (drag to move or
 // reorder, double press to fold), the close button right beside it, then
@@ -653,6 +654,14 @@ function PopoverAnchor({ name, children, className = "" }) {
 // in, one closed sinks back out where it stood, and the others glide to
 // their places; tabs read from elsewhere (this browser's cache, the server's
 // copy) come `still`.
+// A run of tabs in a group (Chrome's tab groups, workspace/stripGroups.js,
+// docs/dev/strip_groups.md) has its chip before it: a click collapses the
+// group (`onGroupChange`, opening first the nearest tab outside it when the
+// strip's page is in it), a right-click opens its editor (`onGroupMenu`,
+// with the chip), and a drag carries the whole group. A collapsed run's tabs
+// leave the strip but for the active one. A dragged tab hands `onReorder`
+// the tab it is over, `{group}` for a chip, or null for the strip's empty
+// end, past the last item.
 const TAB_FADE = 40; // the right-edge fade the active tab keeps clear of
 // Until the person has pressed or typed anything in this window, what
 // changes the strip is the window loading (its tabs read back, the page it
@@ -681,9 +690,12 @@ function OpenTabs({
   onContext,
   groupId = null,
   onDropTab,
+  onGroupChange,
+  onGroupMenu,
 }) {
-  // Drag-reorder bookkeeping is private to the strip: the dragged tab id as a
-  // ref (read during dragover) with a state twin for the .dragging style.
+  // Drag-reorder bookkeeping is private to the strip: the dragged tab's id,
+  // or {group} for a chip, as a ref (read during dragover) with a state twin
+  // for the .dragging style (a chip's as "group:<id>").
   const dragTab = useRef(null);
   const [draggingId, setDraggingId] = useState(null);
   // A tab dragged from another group's strip (workspace/TabGroups.jsx,
@@ -759,6 +771,146 @@ function OpenTabs({
     const kind = kindOf?.(tab.id);
     return <FileIcon path={kind?.file} format={kind?.format || ""} size={size} />;
   };
+  // A press on a chip: its group collapses or opens. Collapsing the group the
+  // strip's page is in opens the nearest tab outside it first (null: the
+  // library), as Chrome does.
+  const toggleGroup = (group) => {
+    const heir = group.collapsed ? undefined : collapseHeir(tabs, group.id, activeId);
+    onGroupChange?.(group.id, { collapsed: !group.collapsed });
+    if (heir !== undefined) onOpen(heir);
+  };
+  // What the strip draws, in order: each group's chip before its run (with
+  // the index of the run's first tab, where a drop before the chip lands),
+  // and the tabs, a collapsed run's left out but for the active one.
+  const drawn = stripRuns(tabs).flatMap((run) => (run.group ? [
+    { group: run.group, first: tabs.indexOf(run.tabs[0]) },
+    ...run.tabs.filter((tab) => !run.group.collapsed || tab.id === activeId).map((tab) => ({ tab })),
+  ] : [run]));
+  // This strip's own drag over a tab, a chip ({group}) or the strip's end (null).
+  const ownDragOver = (event, target) => {
+    const dragged = dragTab.current;
+    if (!dragged || dragged === target || (dragged.group && dragged.group === target?.group)) return;
+    event.preventDefault();
+    // A tab still gliding to the place a swap gave it passes under the
+    // pointer on its way: it is not where it stands, and swapping with it
+    // would only swap back.
+    if (event.currentTarget.hasAttribute("data-moving")) return;
+    onReorder(dragged, target);
+  };
+  const chip = ({ group, first }) => {
+    const key = `group:${group.id}`;
+    const name = group.title.trim();
+    return (
+      <div key={key} data-motion-key={key} data-strip-group={group.id} role="button" tabIndex={0} aria-expanded={!group.collapsed}
+        aria-label={name || t("Unnamed group")}
+        className={`stripGroupChip${name ? "" : " unnamed"}${draggingId === key ? " dragging" : ""}${foreign && hint === first ? " dropBefore" : ""}`}
+        style={groupTint(group.color)}
+        title={group.collapsed ? t("{name}: click to show its tabs, right-click for more", { name: name || t("Unnamed group") })
+          : t("{name}: click to hide its tabs, right-click for more", { name: name || t("Unnamed group") })}
+        draggable
+        onDragStart={(event) => {
+          dragTab.current = { group: group.id };
+          setDraggingId(key);
+          event.dataTransfer.effectAllowed = "move";
+          try { event.dataTransfer.setData("application/x-gamma-tab-group", group.id); } catch {}
+        }}
+        onDragEnd={() => { dragTab.current = null; setDraggingId(null); }}
+        onDragOver={(event) => {
+          if (!foreign) { ownDragOver(event, { group: group.id }); return; }
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          setHint(first);
+        }}
+        onDrop={(event) => dropForeign(event, hint ?? first)}
+        onClick={() => toggleGroup(group)}
+        onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleGroup(group); } }}
+        {...menuPress((event) => {
+          event.preventDefault();
+          onGroupMenu?.(group.id, event.currentTarget);
+        })}
+      >
+        {name ? <span className="stripGroupName">{name}</span> : null}
+      </div>
+    );
+  };
+
+  const tabEl = (tab) => {
+    const i = tabs.indexOf(tab);
+    // the drop bar before a group's first tab stands before its chip
+    const lead = !!tab.group && tabs[i - 1]?.group?.id !== tab.group.id;
+    return (
+      <div
+        key={tab.id}
+        data-motion-key={tab.id}
+        role="tab"
+        aria-selected={tab.id === activeId}
+        ref={(element) => {
+          if (element) tabElements.current.set(tab.id, element);
+          else tabElements.current.delete(tab.id);
+        }}
+        className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}${tab.group ? " grouped" : ""}${foreign && hint === i && !lead ? " dropBefore" : ""}${foreign && hint === i + 1 && i === tabs.length - 1 ? " dropAfter" : ""}`}
+        style={tab.group ? groupTint(tab.group.color) : undefined}
+        title={tab.title}
+        draggable
+        onDragStart={(event) => {
+          dragTab.current = tab.id;
+          setDraggingId(tab.id);
+          event.dataTransfer.effectAllowed = "move";
+          try { event.dataTransfer.setData("application/x-gamma-tab", tab.id); } catch {}
+          tabDrag.begin(tab.id, groupId);
+        }}
+        onDragEnd={() => {
+          dragTab.current = null;
+          setDraggingId(null);
+          tabDrag.end();
+        }}
+        onDragOver={(event) => {
+          if (!foreign) { ownDragOver(event, tab.id); return; }
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          const box = event.currentTarget.getBoundingClientRect();
+          setHint(event.clientX < box.left + box.width / 2 ? i : i + 1);
+        }}
+        onDrop={(event) => dropForeign(event, hint ?? tabs.length)}
+        onClick={() => {
+          if (tab.id !== activeId) onOpen(tab.id);
+        }}
+        {...menuPress((event) => {
+          event.preventDefault();
+          onContext(tab, event.clientX, event.clientY);
+        })}
+      >
+        {tab.group ? <span className="stripGroupLine" aria-hidden="true" /> : null}
+        <span className="tabKind">{kindIcon(tab, 14)}</span>
+        <span className="tabTitle">{tab.title}</span>
+        {tab.pinned ? (
+          <button
+            className="uiClose tabClose tabPin"
+            onClick={(event) => {
+              event.stopPropagation();
+              onTogglePin?.(tab.id);
+            }}
+            title={t("Unpin tab")}
+            aria-label={t("Unpin tab")}
+          >
+            <PinIcon filled size={14} />
+          </button>
+        ) : (
+          <button
+            className="uiClose tabClose"
+            onClick={(event) => {
+              event.stopPropagation();
+              onClose(tab.id);
+            }}
+            title={t("Close tab")}
+            aria-label={t("Close {title}", { title: tab.title })}
+          >
+            <XIcon size={14} />
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -766,7 +918,15 @@ function OpenTabs({
         className={`tabStrip${overflow.over && !overflow.atEnd ? " fadeEnd" : ""}${foreign && hint === tabs.length ? " dropEnd" : ""}`}
         onDragOver={(event) => {
           // the strip's own room, past the last tab
-          if (!foreign || event.target !== event.currentTarget) return;
+          if (event.target !== event.currentTarget) return;
+          if (!foreign) {
+            // its gaps and padding are the strip too: only past the last
+            // item is its end
+            const items = event.currentTarget.querySelectorAll("[data-motion-key]");
+            const last = items[items.length - 1];
+            if (last && event.clientX > last.getBoundingClientRect().right) ownDragOver(event, null);
+            return;
+          }
           event.preventDefault();
           event.dataTransfer.dropEffect = "move";
           setHint(tabs.length);
@@ -776,88 +936,9 @@ function OpenTabs({
         {/* Measured in the window: a close that narrows a strip scrolled to
             its end scrolls it back, and the tabs before the one closed
             glide over its place from the left. */}
-        <ListMotion keys={tabs.map((tab) => tab.id)} still={still || !acted} enter="rise" leave="tab"
-          strip={["role", "aria-selected"]}>
-          {tabs.map((tab, i) => (
-            <div
-              key={tab.id}
-              data-motion-key={tab.id}
-              role="tab"
-              aria-selected={tab.id === activeId}
-              ref={(element) => {
-                if (element) tabElements.current.set(tab.id, element);
-                else tabElements.current.delete(tab.id);
-              }}
-              className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}${foreign && hint === i ? " dropBefore" : ""}${foreign && hint === i + 1 && i === tabs.length - 1 ? " dropAfter" : ""}`}
-              title={tab.title}
-              draggable
-              onDragStart={(event) => {
-                dragTab.current = tab.id;
-                setDraggingId(tab.id);
-                event.dataTransfer.effectAllowed = "move";
-                try { event.dataTransfer.setData("application/x-gamma-tab", tab.id); } catch {}
-                tabDrag.begin(tab.id, groupId);
-              }}
-              onDragEnd={() => {
-                dragTab.current = null;
-                setDraggingId(null);
-                tabDrag.end();
-              }}
-              onDragOver={(event) => {
-                if (foreign) {
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = "move";
-                  const box = event.currentTarget.getBoundingClientRect();
-                  setHint(event.clientX < box.left + box.width / 2 ? i : i + 1);
-                  return;
-                }
-                const draggedId = dragTab.current;
-                if (!draggedId || draggedId === tab.id) return;
-                event.preventDefault();
-                // A tab still gliding to the place a swap gave it passes under
-                // the pointer on its way: it is not where it stands, and
-                // swapping with it would only swap back.
-                if (event.currentTarget.hasAttribute("data-moving")) return;
-                onReorder(draggedId, tab.id);
-              }}
-              onDrop={(event) => dropForeign(event, hint ?? tabs.length)}
-              onClick={() => {
-                if (tab.id !== activeId) onOpen(tab.id);
-              }}
-              {...menuPress((event) => {
-                event.preventDefault();
-                onContext(tab, event.clientX, event.clientY);
-              })}
-            >
-              <span className="tabKind">{kindIcon(tab, 14)}</span>
-              <span className="tabTitle">{tab.title}</span>
-              {tab.pinned ? (
-                <button
-                  className="uiClose tabClose tabPin"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onTogglePin?.(tab.id);
-                  }}
-                  title={t("Unpin tab")}
-                  aria-label={t("Unpin tab")}
-                >
-                  <PinIcon filled size={14} />
-                </button>
-              ) : (
-                <button
-                  className="uiClose tabClose"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onClose(tab.id);
-                  }}
-                  title={t("Close tab")}
-                  aria-label={t("Close {title}", { title: tab.title })}
-                >
-                  <XIcon size={14} />
-                </button>
-              )}
-            </div>
-          ))}
+        <ListMotion keys={drawn.map((item) => (item.group ? `group:${item.group.id}` : item.tab.id))} still={still || !acted}
+          enter="rise" leave="tab" strip={["role", "aria-selected", "data-strip-group"]}>
+          {drawn.map((item) => (item.group ? chip(item) : tabEl(item.tab)))}
         </ListMotion>
       </div>
       {overflow.over ? (
@@ -909,6 +990,7 @@ function OpenTabs({
                   >
                     {kindIcon(tab, 14)}
                     <span className="tabsMenuTitle">{tab.title}</span>
+                    {tab.group ? <span className="stripGroupDot" style={groupTint(tab.group.color)} title={tab.group.title || t("Unnamed group")} /> : null}
                     {tab.pinned ? <span className="tabsMenuPin"><PinIcon filled size={14} /></span> : (
                       <button
                         className="uiClose uiCloseSm"

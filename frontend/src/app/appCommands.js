@@ -129,11 +129,11 @@ export const APP_COMMANDS = [
   cmd("app.togglePdf", t("Show or hide the PDF"), GROUP_VIEW, null, (c) => { c.togglePdf(); }, { when: (c) => c.hasPdf }),
   cmd("app.toggleNotes", t("Show or hide the notes"), GROUP_VIEW, null, (c) => { c.toggleNotes(); }, { when: (c) => c.hasPdf }),
   cmd("app.toggleFiles", t("Show or hide the Files window"), GROUP_VIEW, null, (c) => { c.toggleFiles(); }, { when: (c) => !c.shareMode }),
-  // Tab groups (docs/dev/tab_groups.md): the page's place splits once, the
-  // open page's tab into a pane of its own on the right, and every tab back
-  // in one group. A phone has one view at a time, so no groups.
+  // Panes (docs/dev/tab_groups.md): the page's place splits once, the open
+  // page's tab into a pane of its own on the right, and every tab back in
+  // one pane. A phone has one view at a time, so no panes.
   cmd("app.splitRight", t("Split right"), GROUP_VIEW, null, (c) => { c.splitTab("right"); }, { when: (c) => !c.shareMode && !c.phone && c.hasPage && c.groups < 2 }),
-  cmd("app.joinGroups", t("Join tab groups"), GROUP_VIEW, null, (c) => { c.joinGroups(); }, { when: (c) => c.groups > 1 }),
+  cmd("app.joinGroups", t("Join panes"), GROUP_VIEW, null, (c) => { c.joinGroups(); }, { when: (c) => c.groups > 1 }),
 
   cmd("app.newPage", t("New page"), GROUP_LIBRARY, null, (c) => { c.newPage(); }, { when: (c) => !c.shareMode }),
   // The file manager's Delete: the pages selected on the home library, after

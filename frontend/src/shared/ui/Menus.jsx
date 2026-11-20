@@ -15,6 +15,7 @@ import { useMenuAim } from "./menuAim";
 import { useLeave } from "./leave.js";
 import { flyoutPlace, growFrom, menuAnchor, placeFloating, surfaceSize, useFloatingPosition } from "./placement.js";
 import { pressAt, triggerPress } from "./press.js";
+import { composing } from "../lib/hotkeys.js";
 import { t } from "../../shared/i18n/i18n.js";
 
 // Every ContextMenu publishes its submenu state so the rows inside it — at
@@ -80,8 +81,9 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
       for (const el of nested.current) if (el.contains(e.target)) return;
       onClose();
     }
-    // A menu opened from this one takes Escape first.
-    function onKey(e) { if (e.key === "Escape" && !nested.current.size) { e.stopPropagation(); onClose(); } }
+    // A menu opened from this one takes Escape first, and a field in the
+    // menu composing text (an input method's candidates) before either.
+    function onKey(e) { if (e.key === "Escape" && !nested.current.size && !composing(e)) { e.stopPropagation(); onClose(); } }
     // Capture phase so we see the click before it lands on other handlers,
     // and Escape before a dialog or popover around the menu does: it closes
     // only the menu.

@@ -49,8 +49,9 @@
 .tabLiveBar .popover { top: 100%; max-width: calc(var(--bar-right, 100vw) - 16px); }
 .tabGroupHead .tabStrip.dropEnd { box-shadow: inset -2px 0 0 var(--accent-fill); }
 /* Where a tab dragged from another group would go: a bar at the edge of the
-   tab it would stand before (or after the last). */
-.tab.dropBefore { box-shadow: inset 2px 0 0 var(--accent-fill); }
+   tab it would stand before (or after the last), or before a strip group's
+   chip. */
+:is(.tab, .stripGroupChip).dropBefore { box-shadow: inset 2px 0 0 var(--accent-fill); }
 .tab.dropAfter { box-shadow: inset -2px 0 0 var(--accent-fill); }
 /* A group that is not live: its active tab reads quieter, as the page in
    it is a view and not the one being worked on. */

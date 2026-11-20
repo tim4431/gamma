@@ -3,6 +3,8 @@
 Pages side by side. The open tabs are arranged into groups, each group a
 frame with its own tab strip over its page, as VS Code's editor groups
 and SiYuan's panes are ([the survey](../research/tab-groups.md)). The
+interface calls them panes; Chrome's tab groups, a named run of tabs
+inside a strip, are [strip groups](strip_groups.md). The
 page's place splits once, into two panes left and right, each with its
 own tabs and its own page buttons ([the design](../research/split-panes.md)).
 A reader keeps a PDF in one pane and a notes page of their own in the
@@ -21,7 +23,7 @@ the page fills the work area as it always did.
   instead, a tab dragged onto the other pane's page lights the whole pane
   and moves into it, and one dragged onto its strip joins it where the bar
   between its tabs shows. The command palette has *Split right* while
-  there is one group, and *Join tab groups* (both unbound until the
+  there is one group, and *Join panes* (both unbound until the
   account gives them keys). A tab that is alone in its group splits off an
   empty pane instead, which shows the library to pick its page. A layout
   kept in another shape (stacked, or more than two groups) is drawn as it
@@ -58,7 +60,7 @@ the page fills the work area as it always did.
   right-click (or a held finger) on it offers *Show on the top bar* and
   *Show in each pane*, and Settings → Toolbars › Top bar has the same
   choice per row ([settings.md](settings.md#bars-order-and-modes)). A
-  right-click on a pane's strip offers *Join tab groups*.
+  right-click on a pane's strip offers *Join panes*.
 - **The Notes window.** It shows the notes of the page on screen when that
   page has a PDF (or a notebook). While the page on screen has its notes
   in its own group (a page without a PDF, or the library), it keeps the
@@ -69,8 +71,8 @@ the page fills the work area as it always did.
 - **Closing.** A tab closed in a group shows the group's latest-viewed
   tab still open, else the neighbour. The last tab closed takes its group
   away, and its room goes to the group beside it. An empty group that is
-  not live says so and offers *Open a page here* and *Close this group*.
-  *Join tab groups* puts every tab back in one group, the open page still
+  not live says so and offers *Open a page here* and *Close this pane*.
+  *Join panes* puts every tab back in one group, the open page still
   open.
 - **Where it is kept.** The tabs themselves are the account's, synced as
   before (`open-tabs`, [settings.md](settings.md)). Their arrangement is
@@ -108,6 +110,10 @@ itself when nothing changed, so a caller compares identities.
   names it; across groups the tab becomes the target's active tab, the
   live role follows the live page, and a group emptied goes.
   `reorderGroup(layout, groupId, ids)` is a strip's reorder as a whole.
+  `moveTabs(layout, ids, toGroupId)` moves several to a group's end (a
+  strip group moved to the other pane, [strip_groups.md](strip_groups.md)):
+  the live page keeps showing, its role following it when it is among
+  them, and the target keeps the page it showed.
 - `splitGroup(layout, groupId, side, tabId?)`: a new group on the side
   (`left`, `right`, `top`, `bottom`), as one more child of a parent split
   of the same direction (the split group's room halved between them),
@@ -339,8 +345,8 @@ phone), else an empty strip for the actions to stand right of; each
 framed group's strip is `TabGroups`'s. A strip's *All open tabs* menu is
 `openPopover` `"tabs"` in the topbar and `"tabs:<groupId>"` in a frame.
 The tab menu's *Split right* (one group), *Move to the other pane* and
-*Join tab groups* (split) rows, the bar menu's *Split right* and *Join
-tab groups*, and the `app.splitRight` (fewer than two groups) and
+*Join panes* (split) rows, the bar menu's *Split right* and *Join
+panes*, and the `app.splitRight` (fewer than two groups) and
 `app.joinGroups` commands (`app/appCommands.js`, group View; the
 context's `phone`, `groups`, `splitTab(side)`, `joinGroups()`) call
 `splitTab`, `moveTabToGroup` and `joinTabGroups`.
