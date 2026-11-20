@@ -114,6 +114,10 @@ export async function mentionScenarios(env) {
   await step("mentions: dismissal, empty results sending as typed, duplicate references, and six-page limit", async () => {
     // What it sends would leave its six references on the conversation for the steps after.
     const before = (await user.api(`/api/chats/${papers[2].id}`)).messages || [];
+    // From an empty conversation: the step before left a reply of the same
+    // words, which the wait for this message's reply found instead (or, its
+    // reply drawn already, found beside it).
+    await user.api(`/api/chats/${papers[2].id}`, { method: "PUT", body: { messages: [] } });
     const { ctx, page, input, requests } = await setup();
     try {
       await input.fill("@cavity");
@@ -130,6 +134,7 @@ export async function mentionScenarios(env) {
       await until(() => requests.length === 1);
       assertEq(requests[0].prompt, "@no-such-paper-xyz", "a picker with no row sends the text as typed");
       await page.locator(".chatBubble.ai", { hasText: "References received." }).waitFor();
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()), { what: "the reply ends" });
       for (const paper of papers.slice(0, 6)) {
         await input.fill(`@${paper.content}`);
         await page.getByRole("option", { name: new RegExp(paper.content) }).click();
