@@ -488,7 +488,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
   // Chrome's tab groups in the strip (workspace/stripGroups.js, docs/dev/strip_groups.md).
   // A strip as drawn: a chip as [name], a tab by its title with * when grouped.
   const drawn = (strip) => strip.locator(live(".stripGroupChip, .tab")).evaluateAll((els) => els.map((el) => (el.classList.contains("tab")
-    ? `${el.querySelector(".tabTitle").textContent}${el.classList.contains("grouped") ? "*" : ""}` : `[${el.getAttribute("aria-label")}]`)).join(" "));
+    ? `${el.querySelector(".tabTitle").textContent}${el.classList.contains("grouped") ? "*" : ""}` : `[${el.querySelector("[role=button]").getAttribute("aria-label")}]`)).join(" "));
   // …and at rest: a tab still gliding to its place takes no drag (OpenTabs), and
   // the helper's drag sends one dragover where a hand sends many
   const shows = (strip, want) => until(async () => (await drawn(strip)) === want
@@ -540,7 +540,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
       await chip.click();
       await until(() => blockOf(page) === reading.id, { what: "the tab outside the group opens" });
       await shows(strip, "[Reading] Reading list");
-      assertEq(await chip.getAttribute("aria-expanded"), "false");
+      assertEq(await chip.getByRole("button").getAttribute("aria-expanded"), "false");
       // a grouped page opened from elsewhere opens its group again
       await openNotes(page);
       await shows(strip, "[Reading] Lecture notes* Split paper* Reading list");
@@ -548,7 +548,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
       await (await dragOver(page, chip, tabIn(topbar, "Reading list"), { x: 0.5, y: 0.5 })).drop();
       await shows(strip, "Reading list [Reading] Lecture notes* Split paper*");
       // and Ctrl+← / → from the keyboard, as Chrome's header
-      await chip.focus();
+      await chip.getByRole("button").focus();
       await page.keyboard.press("ControlOrMeta+ArrowLeft");
       await shows(strip, "[Reading] Lecture notes* Split paper* Reading list");
       await page.keyboard.press("ControlOrMeta+ArrowRight");

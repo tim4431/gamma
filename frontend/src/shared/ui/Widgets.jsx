@@ -659,11 +659,12 @@ function PopoverAnchor({ name, children, className = "" }) {
 // group (`onGroupChange`, opening first the nearest tab outside it when the
 // strip's page is in it), a right-click opens its editor (`onGroupMenu`,
 // with the chip), a drag or Ctrl+←/→ carries the whole group. An open group
-// is underlined from its chip to its last tab, the line rising round its
-// active tab as Chrome draws it (each item draws its stretch). A collapsed
-// run's tabs leave the strip but for the active one. A dragged tab hands
-// `onReorder` the tab it is over, `{group}` for a chip, or null for the
-// strip's empty end, past the last item.
+// is underlined from its chip to its last tab, each item drawing its
+// stretch (.stripGroupLine), and its active tab is outlined in the colour,
+// the outline flaring into the line as Chrome draws it (.stripGroupOutline).
+// A collapsed run's tabs leave the strip but for the active one. A dragged
+// tab hands `onReorder` the tab it is over, `{group}` for a chip, or null
+// for the strip's empty end, past the last item.
 const TAB_FADE = 40; // the right-edge fade the active tab keeps clear of
 // Until the person has pressed or typed anything in this window, what
 // changes the strip is the window loading (its tabs read back, the page it
@@ -803,7 +804,8 @@ function OpenTabs({
   };
   // The chip: an item as tall as a tab (a drop or a drag takes it like one,
   // and its stretch of the underline stands where the tabs' do) holding the
-  // group's pill.
+  // group's pill, the button: the control the keyboard reaches, zoomed with
+  // the Interface size as every control is, while the item is not.
   const chip = ({ group, first, last }) => {
     const key = `group:${group.id}`;
     const name = group.title.trim();
@@ -815,8 +817,7 @@ function OpenTabs({
       return true;
     };
     return (
-      <div key={key} data-motion-key={key} data-strip-group={group.id} role="button" tabIndex={0} aria-expanded={!group.collapsed}
-        aria-label={name || t("Unnamed group")}
+      <div key={key} data-motion-key={key} data-strip-group={group.id}
         className={`stripGroupChip${draggingId === key ? " dragging" : ""}${foreign && hint === first ? " dropBefore" : ""}`}
         style={groupTint(group.color)}
         title={group.collapsed ? t("{name}: click to show its tabs, right-click for more", { name: name || t("Unnamed group") })
@@ -846,7 +847,8 @@ function OpenTabs({
           onGroupMenu?.(group.id, event.currentTarget);
         })}
       >
-        <span className={`stripGroupPill${name ? "" : " unnamed"}`}>{name}</span>
+        <span role="button" tabIndex={0} aria-expanded={!group.collapsed} aria-label={name || t("Unnamed group")}
+          className={`stripGroupPill${name ? "" : " unnamed"}`}>{name}</span>
         {group.collapsed ? null : <span className="stripGroupLine" aria-hidden="true" />}
       </div>
     );
@@ -898,7 +900,7 @@ function OpenTabs({
           onContext(tab, event.clientX, event.clientY);
         })}
       >
-        {tab.group && !tab.group.collapsed ? <span className="stripGroupLine" aria-hidden="true" /> : null}
+        {tab.group && !tab.group.collapsed ? <span className={tab.id === activeId ? "stripGroupOutline" : "stripGroupLine"} aria-hidden="true" /> : null}
         <span className="tabKind">{kindIcon(tab, 14)}</span>
         <span className="tabTitle">{tab.title}</span>
         {tab.pinned ? (
