@@ -2042,6 +2042,12 @@ The scenarios live in `tests/e2e/scenarios/`:
   open on what they had; a theme change draws every colour in one frame;
   and under reduced motion each of them moves nothing and leaves no copy.
   `npm run e2e -- --only motion`.
+- `standby.mjs` ([migrations.md](migrations.md) "When the server cannot
+  open the library"): the iPad app's own server on a library a newer Gamma
+  stamped opens on the update page, not the app; its button opens
+  TestFlight, and its admin, signed in, saves every personal workspace
+  with Export all, followed until it downloads by itself. The server's second start skips `manage.py setup`
+  (`Server.start({setup: false})`), as the Docker entrypoint does. `--group standby`.
 - `i18n.mjs`: Settings → Language & translation → Interface language
   switches the interface to Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,

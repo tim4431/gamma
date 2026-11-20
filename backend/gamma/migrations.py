@@ -58,7 +58,6 @@ import json
 import re
 import shutil
 import sqlite3
-import sys
 import threading
 import time
 from contextlib import closing, contextmanager, nullcontext
@@ -241,31 +240,20 @@ def _refusal(kind, version: int, message: str) -> MigrationError:
     return error
 
 
-# How Gamma is updated where this server runs (``surface``): the one step
-# the page for a library a newer Gamma wrote leads with. The desktop's and
-# Android's page adds a button to the releases page (gamma/standby.py).
+# How Gamma is updated, by the install's channel (``version.channel``): the
+# one step of the guidance for a library a newer Gamma wrote, as the log,
+# the CLI and the 503 JSON say it. The page words it itself, with a button
+# to where the update is (frontend shared/lib/updates.js).
 UPDATE_STEPS = {
-    "ipad": "Open TestFlight or the App Store on this iPad, update Gamma, then open it again.",
-    "android": "Update Gamma from Google Play, or install the newest version from the releases page, then "
-               "open it again.",
-    "desktop": "Download and install the latest Gamma, then open it again.",
+    "ipad": "Open TestFlight on this iPad, update Gamma, then open it again.",
+    "android": "Install the newest Gamma APK from the releases page, then open it again.",
+    "desktop": "Update Gamma: its top bar offers the update when it is ready, and Help → Check for Updates… "
+               "asks now; or install the latest release from the releases page.",
     "store": "Update Gamma from the Microsoft Store, then open it again.",
     "mas": "Update Gamma from the Mac App Store, then open it again.",
-    "server": "Update this Gamma server to the latest release, then reload this page. "
-              "If someone else runs it, ask them to.",
+    "docker": "Pull the newest image (`docker compose pull && docker compose up -d`), then reload this page.",
+    "checkout": "Update this checkout to the newest commit and start the server again.",
 }
-
-
-def surface() -> str:
-    """Where this server runs, for the words of its guidance: ``ipad`` or
-    ``android`` (the server inside the mobile apps, ``version.UPDATES``
-    ``app``), ``desktop``, ``store`` (the Microsoft Store's desktop app) or
-    ``mas`` (the Mac App Store's), else ``server`` (Docker, a checkout:
-    whoever runs it updates it). The first five are a device's own server,
-    one person's library."""
-    if version.UPDATES == "app":
-        return "android" if sys.platform == "android" or hasattr(sys, "getandroidapilevel") else "ipad"
-    return version.UPDATES if version.UPDATES in ("desktop", "store", "mas") else "server"
 
 
 def guidance(error: MigrationError) -> dict:
@@ -277,8 +265,8 @@ def guidance(error: MigrationError) -> dict:
     is ``newer``, ``too_old``, ``workspace`` or ``failed``; ``status`` is
     the one calm line that comes first (the data is intact, the other
     workspaces are served); ``steps`` is the way forward, which for data a
-    newer Gamma wrote is to update this one, in the words of the device it
-    runs on (``surface``); ``fallback`` is the other way (going back),
+    newer Gamma wrote is to update this one, in the words of how it was
+    installed (``version.channel``); ``fallback`` is the other way (going back),
     folded away on the page and empty when there is none; ``details`` are
     the technical lines the page folds away too. Nothing below changes the
     data directory."""
@@ -286,12 +274,11 @@ def guidance(error: MigrationError) -> dict:
     intact = "Your data is intact. Nothing has been changed."
     none = {"lead": "", "steps": []}
     if isinstance(error, NewerDataError):
-        where = surface()
+        where = version.channel()
         details = [f"This library is at schema version {error.version}; this Gamma reads up to version "
                    f"{SCHEMA_VERSION}, so it opens nothing rather than guess at the newer layout."]
-        if where == "server":
+        if where in ("docker", "checkout"):
             details += [
-                "Docker: `docker compose pull && docker compose up -d`, or the image tag that wrote the data.",
                 "Several Gammas sharing one data directory: update them all, or give each its own directory.",
                 f"To stay on this release instead: the newer Gamma took a snapshot before it upgraded, in "
                 f"{backups_dir}. With the server stopped, `manage.py backups` lists them and `manage.py backups "

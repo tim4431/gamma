@@ -81,6 +81,7 @@ import { vaultScenarios } from "./scenarios/vaults.mjs";
 import { workFolderScenarios } from "./scenarios/workFolders.mjs";
 import { localAgentScenarios } from "./scenarios/localAgents.mjs";
 import { computerScenarios } from "./scenarios/computers.mjs";
+import { standbyScenarios } from "./scenarios/standby.mjs";
 import { httpsScenarios } from "./scenarios/https.mjs";
 import { remoteWorkScenarios } from "./scenarios/remoteWork.mjs";
 import { remoteChatScenarios } from "./scenarios/remoteChat.mjs";
@@ -127,6 +128,7 @@ const RUNNERS = {
   "work-folders": workFolderScenarios,
   "local-agents": localAgentScenarios,
   "computers": computerScenarios,
+  "standby": standbyScenarios,
   "https": httpsScenarios,
   "remote-work": remoteWorkScenarios,
   "remote-chat": remoteChatScenarios,

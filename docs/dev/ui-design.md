@@ -1023,9 +1023,12 @@ load the library." and a Try again button.
 
 `AuthShell` in `auth/LoginPage.jsx` frames every page shown before or
 instead of the app: the login (also a share link's sign-in gate), an
-unavailable workspace, a session conflict, a blocked share link and an
+unavailable workspace, a session conflict, a blocked share link, an
 assistant's consent (wider, with the settings' `Section` and `Toggle`
-inside, [mcp.md](mcp.md) "Asking first"). It
+inside, [mcp.md](mcp.md) "Asking first") and the page of a server that
+cannot open its library (`auth/StandbyPage.jsx`, wider for a row per
+workspace, [migrations.md](migrations.md) "When the server cannot open the
+library"). It
 shows the brand mark (`shared/ui/BrandMark.jsx`, the favicon artwork) over the name, or over the
 situation's headline on a status page. The card hangs at a fixed height near
 the optical centre instead of being centred, so an error that appears

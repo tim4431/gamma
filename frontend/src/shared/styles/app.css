@@ -5318,6 +5318,37 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: 1.5;
   margin-top: 12px;
 }
+/* The page a server shows while it cannot open its library
+   (auth/StandbyPage.jsx): the sign-in card, wider for the settings'
+   Section and workspace rows inside (as an assistant's consent has them),
+   a line under each action, and the server's own words (steps, technical
+   details) in the small sizes. Layout only. */
+.loginCard.standbyCard { max-width: 460px; }
+.standbyCard a.uiBtn { text-decoration: none; } /* the update button is a link */
+.standbyCard .setRow { padding-left: 0; padding-right: 0; }
+.standbyHint {
+  margin: 0 0 20px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  text-align: center;
+}
+.standbyText {
+  margin: 0 0 14px;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-ui);
+}
+.standbySteps, .standbyDetails {
+  margin: 0 0 14px;
+  padding-left: 1.3em;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-ui);
+}
+.standbySteps li, .standbyDetails li { margin: 0 0 6px; overflow-wrap: anywhere; }
+.standbyDetails { margin: 8px 0 0; color: var(--text-muted); font-size: var(--fs-xs); }
+.standbyDisclosure { margin-top: 4px; }
 
 /* --- page header: title with category chips below, buttons at the right --- */
 .pageTitleMain {

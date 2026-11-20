@@ -35,9 +35,14 @@ export function takeBootRead(name) {
   return read;
 }
 
+// A refusal carries its `status` and its JSON body as `data`, as apiJson's
+// do: a server that cannot open its library answers the config with its
+// guidance (auth/StandbyPage.jsx).
 function getJson(url) {
-  const read = fetch(url, { credentials: "same-origin" })
-    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${url} answered ${r.status}`))));
+  const read = fetch(url, { credentials: "same-origin" }).then(async (r) => {
+    if (r.ok) return r.json();
+    throw Object.assign(new Error(`${url} answered ${r.status}`), { status: r.status, data: await r.json().catch(() => null) });
+  });
   read.catch(() => {}); // its taker sees a failure; one nobody takes is no error
   return read;
 }

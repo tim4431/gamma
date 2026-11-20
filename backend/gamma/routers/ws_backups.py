@@ -27,7 +27,6 @@ with the guest (docs/dev/guests.md).
 
 import shutil
 import tempfile
-import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -107,7 +106,7 @@ def _name_of(ws: str) -> str:
 
 
 def _slug(ws: str) -> str:
-    return "".join(c if c.isalnum() else "-" for c in _name_of(ws)).strip("-")[:40] or ws
+    return ws_backup.slug(_name_of(ws), ws)
 
 
 def _backup_filename(ws: str, name: str) -> str:
@@ -117,27 +116,21 @@ def _backup_filename(ws: str, name: str) -> str:
 
 
 def _export_name(ws: str, uploads: bool) -> str:
-    return f"gamma-export{'' if uploads else '-db'}-{_slug(ws)}-{page_now()[:10]}.zip"
+    return ws_backup.export_name(_name_of(ws), ws, uploads)
 
 
 def _export_all_name(username: str, uploads: bool) -> str:
-    return f"gamma-export-all{'' if uploads else '-db'}-{username}-{page_now()[:10]}.zip"
+    return ws_backup.export_all_name(username, uploads)
 
 
 def _write_all(targets: list[str], dest: Path, uploads: bool, by: str, progress=jobs.no_progress) -> None:
     """Every workspace of ``targets`` as its own export zip inside one zip
-    (``<name>-<id>.zip``; each restores on its own through /import-data).
-    ``progress``: a job's report, per workspace."""
-    with zipfile.ZipFile(dest, "w", zipfile.ZIP_STORED) as bundle:  # the inner zips are compressed
-        for n, target in enumerate(targets):
-            progress(done=n, total=len(targets), unit="workspaces", item=_name_of(target))
-            inner = Path(f"{dest}.{target}.zip")
-            try:
-                ws_backup.write_zip(target, inner, uploads=uploads, by=by, progress=lambda **_: progress())
-                bundle.write(inner, f"{_slug(target)}-{target}.zip")
-            finally:
-                inner.unlink(missing_ok=True)
-    progress(done=len(targets), total=len(targets), unit="workspaces", item="")
+    (``ws_backup.write_bundle``). ``progress``: a job's report, per
+    workspace."""
+    ws_backup.write_bundle(dest, [
+        (target, _name_of(target),
+         lambda path, beat, target=target: ws_backup.write_zip(target, path, uploads=uploads, by=by, progress=beat))
+        for target in targets], progress)
 
 
 # --- the work in the request (scripts) ----------------------------------------------

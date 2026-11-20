@@ -203,6 +203,41 @@ def zip_files(ws: str, dest: Path, named: dict, *, uploads: bool = True, label: 
     return manifest
 
 
+def slug(name: str, ws: str) -> str:
+    """A workspace's name as a file name's part (``ws`` for one with none)."""
+    return "".join(c if c.isalnum() else "-" for c in name).strip("-")[:40] or ws
+
+
+def export_name(name: str, ws: str, uploads: bool) -> str:
+    """What a workspace's export zip is saved as."""
+    return f"gamma-export{'' if uploads else '-db'}-{slug(name, ws)}-{page_now()[:10]}.zip"
+
+
+def export_all_name(username: str, uploads: bool) -> str:
+    """What Export all's zip is saved as."""
+    return f"gamma-export-all{'' if uploads else '-db'}-{username}-{page_now()[:10]}.zip"
+
+
+def write_bundle(dest: Path, parts: list[tuple[str, str, object]], progress=None) -> None:
+    """Several workspaces' export zips in one, each as ``<name>-<id>.zip``
+    (stored: they are compressed), each restoring on its own through
+    /api/import-data: Export all's zip. ``parts`` is ``[(ws, name,
+    write)]``, ``write(path, progress)`` writing that workspace's zip
+    (``write_zip``, or ``zip_files`` on the standby page). ``progress``
+    hears each workspace."""
+    progress = progress or jobs.no_progress
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_STORED) as bundle:
+        for n, (ws, name, write) in enumerate(parts):
+            progress(done=n, total=len(parts), unit="workspaces", item=name)
+            inner = Path(f"{dest}.{ws}.zip")
+            try:
+                write(inner, lambda **_: progress())
+                bundle.write(inner, f"{slug(name, ws)}-{ws}.zip")
+            finally:
+                inner.unlink(missing_ok=True)
+    progress(done=len(parts), total=len(parts), unit="workspaces", item="")
+
+
 def _strip_private(copy: Path) -> None:
     """Empty the ``PRIVATE_TABLES`` of a pages.db copy before it is zipped
     (a copy without them, of a workspace not upgraded to step 34 yet, keeps

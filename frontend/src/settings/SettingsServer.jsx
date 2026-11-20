@@ -32,6 +32,7 @@ import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, CloudIcon, DatabaseIc
   UsersIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { nativeHost } from "../shared/lib/host.js";
+import { STORE_UPDATES_URL, updateHowTo } from "../shared/lib/updates.js";
 import { TaskBlock } from "../tasks/TasksTray";
 import { isActive } from "../tasks/taskModel.js";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
@@ -111,17 +112,17 @@ function updateHint(info) {
 }
 
 // GET /api/admin/server-info: the build, uptime, log counts by level and the
-// GitHub release check (cached server-side; "Check now" refreshes). A
-// Docker server cannot update itself, so an available update is a hint
-// to pull the image. The desktop app's server says who installs it
-// (`updates`): the app itself, or in a Microsoft Store install the Store,
-// which has a release only once Microsoft certifies it — no warning
-// tone there, and Open Store leads to the Store's updates page. A Mac App
-// Store install may point at no other way to update, so its server asks
-// GitHub nothing (GAMMA_UPDATE_CHECK off) and the row only says so. The
-// server inside the iPad or Android app (`app`) updates with the app, from
-// its store: it asks nothing either, and the row says so.
-const STORE_UPDATES_URL = "ms-windows-store://downloadsandupdates";
+// GitHub release check (cached server-side; "Check now" refreshes). How the
+// install updates is its `channel` (shared/lib/updates.js, which the page of
+// a server that cannot open its library words its advice from too): a
+// Docker server cannot update itself, so an available update is a hint to
+// pull the image. The desktop app updates itself, or in a Microsoft Store
+// install the Store does, which has a release only once Microsoft
+// certifies it — no warning tone there, and Open Store leads to the
+// Store's updates page. A Mac App Store install may point at no other way
+// to update, so its server asks GitHub nothing (GAMMA_UPDATE_CHECK off) and
+// the row only says so. The server inside the iPad or Android app (`app`)
+// updates with the app: it asks nothing either, and the row says so.
 
 function ServerDashboard() {
   const { data: info, error: readError, set: setInfo } = useSettingsRead("/admin/server-info", { poll: 30000 });
@@ -181,22 +182,7 @@ function ServerDashboard() {
         )}
       </span>
     </Row>
-    {bundled ? null : info.update?.kind === "release" ? (
-      <div className="settingsPaneHint">
-        {fromStore
-          ? t("Installed from the Microsoft Store: the Store has a release once Microsoft certifies it, one to three days after it is out, and Windows then installs it. To get it sooner, Open Store → Get updates.")
-          : info.updates === "desktop"
-            ? t("The desktop app updates itself: its top bar offers the update when it is ready, and Help → Check for Updates… asks now.")
-            : t("A server in Docker does not update itself: pull {latest} (or {version}) and restart the container.", {
-              latest: <code>{info.image}:latest</code>, version: <code>:{info.update.version}</code> })}
-      </div>
-    ) : info.update?.kind === "build" ? (
-      <div className="settingsPaneHint">
-        {info.branch === "main"
-          ? t("A server in Docker does not update itself: pull {latest} and restart the container.", { latest: <code>{info.image}:latest</code> })
-          : t("Newer commits are on {branch}: build that branch's image and restart the container.", { branch: <code>{info.branch}</code> })}
-      </div>
-    ) : null}
+    {!bundled && info.update ? <div className="settingsPaneHint">{updateHowTo(info, info.update)}</div> : null}
   </>;
 }
 

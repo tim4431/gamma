@@ -74,6 +74,7 @@ export const GROUPS = [
   { id: "note-mentions", files: ["noteMentions.mjs"], s: 17 },
   { id: "mirror", files: ["mirror.mjs"], s: 15 },
   { id: "trash", files: ["trash.mjs"], s: 14 },
+  { id: "standby", files: ["standby.mjs"], s: 8 },
   { id: "i18n", files: ["i18n.mjs"], s: 7 },
 ];
 
@@ -288,7 +289,8 @@ export const RULES = [
   ["frontend/src/transfers/**", EXPORTS],
   ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad", "android", "remote-chat", "remote-asks"]], // the Background tasks tray and its store; android: a job's file saved through the app; remote-chat: a turn on another computer; remote-asks: one that waits there for an answer
   ["frontend/src/support/**", ["settings"]],
-  ["frontend/src/auth/**", ["auth", "cloud-sign-in", "publish", "ipad"]], // ipad: the sign-in page's Server link
+  ["frontend/src/auth/StandbyPage.jsx", ["standby"]], // the page a server shows while it cannot open its library
+  ["frontend/src/auth/**", ["auth", "cloud-sign-in", "publish", "ipad", "standby"]], // ipad: the sign-in page's Server link
   ["frontend/public/**", ["ipad"]],
   ["frontend/index.html", ALL],
   ["frontend/vite.config.js", ALL],
@@ -519,6 +521,7 @@ export const RULES = [
   ["backend/gamma/host_scope.py", ["https"]],
   ["backend/gamma/remote_servers.py", ["https", "computers", "remote-work", "remote-asks", "mirror"]],
   ["backend/gamma/routers/remote_servers.py", ["https"]],
+  ["backend/gamma/standby.py", ["standby"]],
   ["backend/gamma/**", ALL],
   ["backend/app.py", ALL],
   ["backend/manage.py", ALL],
