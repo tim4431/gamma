@@ -55,7 +55,7 @@ with open(os.path.join(sys.argv[1], "key.pem"), "wb") as f:
 
 // A new certificate in its own directory under `dir`: {cert, key} (the
 // paths) and what the shell pins of it, its digest as the sidecar computes it.
-async function certificate(dir, name) {
+export async function certificate(dir, name) {
   const at = path.join(dir, name);
   fs.mkdirSync(at);
   await execFileAsync(PYTHON, ["-c", MAKE_CERT, at]);

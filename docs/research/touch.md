@@ -378,7 +378,7 @@ Measured on a five-sheet notebook, zoomed in, at page 4:
   recorder needs focus, which Safari does not give a tapped button.
 
 **Chat.**
-- **Return always sends** (`PaperMentionInput.jsx`), so a message has one
+- **Return always sends** (`ChatComposerInput.jsx`), so a message has one
   line. In Edit & re-send, Return re-sends and drops what followed, and
   that handler has no composition guard.
 - **Send and Stop sit under the keyboard.** The composer's toolbar is

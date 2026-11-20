@@ -3,7 +3,10 @@ import { guideEvents } from "../guide/events.js";
 import { API, apiJson } from "../shared/lib/utils";
 import { CopyField, Empty, FormNotice, PaneHead, Section, Row, Segmented, Step, Toggle } from "./SettingsKit";
 import { MorphText } from "../shared/ui/MotionWidgets";
-import { LinkIcon, KeyIcon, MonitorIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon } from "../shared/ui/Icons";
+import { LinkIcon, KeyIcon, MonitorIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon, HistoryIcon, TrashIcon,
+  UndoIcon } from "../shared/ui/Icons";
+import { refusalCopy } from "../chat/AgentChanges.jsx";
+import { revertRefusal } from "../chat/aiRevert.js";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
   claudeRemoveCommands, codexRemoveCommands, dshRemoveCommand } from "./assistantSetup";
 import { WorkspacePicker } from "./WorkspacePicker";
@@ -24,7 +27,7 @@ const PLATFORMS = [["windows", t("Windows PowerShell")], ["unix", t("macOS / Lin
 // desktop app mints it as "Gamma desktop: <its name>" to show this server
 // which of its synced vaults keep pages of the workspace, and it opens
 // nothing else; revoking it stops showing that computer here.
-function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
+function ConnectionRow({ item, names, busy, onEdit, onChanges, onRevoke }) {
   const oauth = /\s\(OAuth\)$/.test(item.name);
   const computer = item.scope === "computer";
   const name = computer ? t("Computer: {name}", { name: item.name.replace(/^Gamma desktop:\s*/, "") })
@@ -45,13 +48,18 @@ function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
   const parts = (computer ? [spaces.length ? t("Shows its synced folders and files of {workspaces}", { workspaces: spaces.join(", ") }) : t("Shows its synced folders and files"),
     connected, expiry]
     : [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : reads, comments, edits,
-      edits && item.asks === false ? t("changes without asking") : null, connected, expiry]).filter(Boolean);
+      edits && item.deletes ? t("may delete notes") : null, edits && item.asks === false ? t("changes without asking") : null,
+      connected, expiry]).filter(Boolean);
   return <Row icon={computer ? MonitorIcon : oauth ? LinkIcon : KeyIcon} label={name}
     hint={<>{parts.join(" · ")}{daysLeft <= 0 ? <span className="uiTag warn">{t("Expired")}</span> : null}</>}>
     <div className="integrationActions">
       {item.scope !== "write" && !computer ? <button type="button" className="uiBtn sm iconSq" disabled={busy} aria-label={t("Choose workspaces")}
         title={t("Choose what {name} may read and edit", { name })} onClick={() => onEdit(item)}>
         <FoldersIcon size={16} />
+      </button> : null}
+      {edits ? <button type="button" className="uiBtn sm iconSq" disabled={busy} aria-label={t("Changes")}
+        title={t("What {name} changed, to undo", { name })} onClick={() => onChanges(item)}>
+        <HistoryIcon size={16} />
       </button> : null}
       <button type="button" className="uiBtn sm iconSq danger" disabled={busy} aria-label={t("Disconnect")}
         title={computer ? t("Disconnect {name}: this server stops showing it", { name })
@@ -60,6 +68,46 @@ function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
       </button>
     </div>
   </Row>;
+}
+
+// What a connection changed in the notes through MCP (gamma/mcp_changes.py),
+// newest first, each with Undo: the chat's revert (gamma/ai_revert.py), as
+// the person. Someone's work since stops it, worded as the chat's row words
+// it (chat/AgentChanges.jsx refusalCopy), with the button that undoes anyway.
+function ConnectionChanges({ item }) {
+  const url = `${API}/integrations/tokens/${item.id}/changes`;
+  const [changes, setChanges] = React.useState(null);
+  const [failed, setFailed] = React.useState(null);  // {id, refusal}: the last undo's refusal; id "" for the list's
+  const [doing, setDoing] = React.useState("");
+  const load = React.useCallback(() => apiJson(url).then((d) => setChanges(d.changes || []))
+    .catch((err) => setFailed({ id: "", refusal: revertRefusal(err) })), [url]);
+  React.useEffect(() => { load(); }, [load]);
+  const undo = async (change, force = false) => {
+    setDoing(change.id); setFailed(null);
+    try {
+      await apiJson(`${url}/${change.id}/undo`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_id: change.workspace_id, force }) });
+      await load();
+    } catch (err) { setFailed({ id: change.id, refusal: revertRefusal(err) }); } finally { setDoing(""); }
+  };
+  if (!changes) return failed ? <FormNotice>{failed.refusal.detail}</FormNotice> : <p className="setNotice loadingHint">{t("Loading…")}</p>;
+  if (!changes.length) return <Empty icon={HistoryIcon}>{t("It has changed nothing yet.")}</Empty>;
+  return changes.map((change) => {
+    const copy = failed?.id === change.id ? refusalCopy(failed.refusal, false) : null;
+    const when = new Date(change.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    return <React.Fragment key={change.id}>
+      <Row icon={change.tool === "delete_block" ? TrashIcon : UndoIcon} label={change.summary}
+        hint={[when, change.workspace, change.page_title].filter(Boolean).join(" · ")}>
+        {change.undone ? <span className="uiTag">{t("Undone")}</span>
+          : <button type="button" className="uiBtn sm" disabled={!!doing} onClick={() => undo(change)}>
+            <MorphText>{doing === change.id ? t("Undoing…") : t("Undo")}</MorphText>
+          </button>}
+      </Row>
+      {copy ? <FormNotice>{copy.text}{copy.force ? <>{" "}
+        <button type="button" className="uiBtn sm" disabled={!!doing} onClick={() => undo(change, true)}>{copy.force}</button>
+      </> : null}</FormNotice> : null}
+    </React.Fragment>;
+  });
 }
 
 export function IntegrationSettings({ workspaceId, setStatus }) {
@@ -72,7 +120,8 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
   const [platform, setPlatform] = React.useState(() => /Windows/i.test(navigator.userAgent) ? "windows" : "unix");
   // What a new token may read; the open workspace to start.
   const [access, setAccess] = React.useState({ all: false, ids: [workspaceId] });
-  const [editing, setEditing] = React.useState(null);  // {id, access, asks}: a connection's workspaces, being changed
+  const [editing, setEditing] = React.useState(null);  // {id, access, asks, deletes}: a connection's workspaces, being changed
+  const [watching, setWatching] = React.useState("");  // the connection whose changes are shown
   const [name, setName] = React.useState(t("Script"));
   const [scope, setScope] = React.useState("read");
   const [secret, setSecret] = React.useState(null);
@@ -120,7 +169,8 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
   });
   const saveAccess = () => run("edit", async () => {
     await apiJson(`${endpoint}/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...accessBody(editing.access), asks: editing.asks }) });
+      body: JSON.stringify({ ...accessBody(editing.access), asks: editing.asks,
+        deletes: editsIn(editing.access) && editing.deletes }) });
     setEditing(null);
     await refresh();
   });
@@ -243,13 +293,19 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
       </button>}>
       {data ? data.tokens.length ? data.tokens.map((item) => <React.Fragment key={item.id}>
         <ConnectionRow item={item} names={names} busy={busy} onRevoke={revoke}
-          onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: accessOf(row, spaces), asks: row.asks !== false })} />
+          onChanges={(row) => setWatching(watching === row.id ? "" : row.id)}
+          onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: accessOf(row, spaces), asks: row.asks !== false,
+            deletes: !!row.deletes })} />
+        {watching === item.id ? <div className="integrationDetails integrationEdit"><ConnectionChanges item={item} /></div> : null}
         {editing?.id === item.id ? <div className="integrationDetails integrationEdit">
           <WorkspacePicker workspaces={spaces} value={editing.access} disabled={busy} roles={item.scope !== "write"}
             label={t("Workspaces {name} may read", { name: item.name })} onChange={(value) => setEditing({ ...editing, access: value })} />
           {editsIn(editing.access) ? <Toggle icon={ShieldIcon} label={t("Ask me before each change it makes")} checked={editing.asks}
             disabled={busy} onChange={(asks) => setEditing({ ...editing, asks })}
             hint={t("The assistant shows Gamma's question in its own window. One that cannot show it changes nothing while this is on.")} /> : null}
+          {editsIn(editing.access) ? <Toggle icon={TrashIcon} label={t("May delete notes")} checked={editing.deletes}
+            disabled={busy} onChange={(deletes) => setEditing({ ...editing, deletes })}
+            hint={t("Where it edits. Each deletion can be undone, by the assistant or under its changes here.")} /> : null}
           {failure("edit")}
           <div className="integrationActions">
             <button className="uiBtn primary" disabled={busy || !(editing.access.all || editing.access.ids.length)} onClick={saveAccess}>

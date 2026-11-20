@@ -519,7 +519,12 @@ set — some models reject it; see "Reasoning effort" below), optional `speed`
 (the provider's service tier; see "Speed" below), optional `system` override, the message's
 `images` and their budget `max_pictures` ("Pictures" below), and the context PAGES: `pages`
 (several — a report across pages) or, when empty, the one page of `page_id`
-(the open page). A page's PDF attachment, or its text file, is derived
+(the open page). A message that began with `/name` carries `skill: {id,
+name, args}`, and a history item may carry one too: the server renders
+the skill's instructions ahead of the turn's text from the account's
+catalog, by id, on every request, and answers a skill it no longer holds
+with 400 kind `skill` ([skills.md](skills.md#what-the-model-reads)).
+A page's PDF attachment, or its text file, is derived
 server-side from its document (`documents.model.page_document`): the stored
 file it shows (`file_hash`), so a duplicated page reads the original's PDF; a
 text file's numbered lines, head and outline, are built from the page alone
@@ -1120,6 +1125,9 @@ a press keeps an on-screen keyboard up.
   open, attaches the visible part of each page in view, with the
   handwriting on it, as a region the server draws. Both show in the row
   under the chips with a remove button ("Pictures" below).
+- **Skills.** "/" as the message's first character opens the skill
+  picker, and a message that begins with a skill's `/name` runs it
+  ("Running a skill" below).
 - The draft and App's last ask survive the dock remounting
   ([chat_history.md](chat_history.md)).
 
@@ -1298,7 +1306,7 @@ selected in a reply is quoted into the next message".
 
 ### Mentioning library papers
 
-`chat/PaperMentionInput.jsx` owns the picker. `chat/paperMentions.js` owns mention text edits
+`chat/ChatComposerInput.jsx` owns the picker. `chat/paperMentions.js` owns mention text edits
 and `MAX_CHAT_REFERENCES`, shared with `chat/ChatDock.jsx`. The six-reference UI limit
 mirrors the API's seven-page limit (`pages`, de-duplicated server-side),
 leaving one slot for the current page.
@@ -1336,6 +1344,18 @@ each under its own permission. PDF and file search hits identify their
 Gamma page IDs so the assistant can read further or cite the matching paper
 or line, including when titles are identical. References are resolved server-side;
 missing pages and non-page blocks are ignored.
+
+### Running a skill
+
+Type "/" at the start of the composer to pick one of the account's skills
+or a built-in one; a message that begins with `/name` sends its
+instructions ahead of the text after the name. The picker shares the "@"
+picker's shell and key rules (`chat/ComposerPicker.jsx`). The message
+carries `skill: {id, name, args}`, its user bubble a `/name` chip, and it
+never steers: it waits in the queue as a turn of its own. Gamma AI and a
+computer's agent both run skills; the library agent can also load one
+itself with `load_skill`. [skills.md](skills.md) has the format, the
+catalog, the turn the model reads and the Settings sections (Settings → AI → Chat).
 
 ### Pointing the chat at notes
 
@@ -1607,6 +1627,10 @@ document in context the system prompt also carries the citation rule
 (`ai_tools.CITATION_PROMPT`): a PDF passage as `[p. N](/?page=…&pdf_page=N&quote=…)`,
 a text file's line as `[<file name>:N](/?page=…&line=N&quote=<the line's
 verbatim text>)` ([pdf_citations.md](pdf_citations.md) "Line links").
+With `load_skill` armed, the prompt ends with the skills the model may
+load, one `- name: description` line each, sorted by name so the block
+reads the same while the account's skills stand
+([skills.md](skills.md#load_skill-the-agent-loads-a-skill-itself)).
 
 The changing tools (rename, move, folders and labels, the note editors) are
 armed only when `auth.can_write` lets the request write: an editor or
@@ -1670,7 +1694,7 @@ sit below its description. Each column offers four presets:
 
 Individual changes show **Custom**. The stored map is account-synced. Its
 localStorage JSON is `gamma-ai-agent-perms` = `{folder, pdf, notes}` →
-`{list, read, block_read, view, search, show, web_search, web_read,
+`{list, read, block_read, view, search, show, skills, web_search, web_read,
 publisher_cookies, save, create, rename, move, restore, delete, organize,
 organize_delete, block_edit, comment, draw}` → `"allow"` / `"ask"` / `"off"`, and a pre-kind flat map is
 applied to every kind on read.
@@ -1720,7 +1744,10 @@ needs no permission of its own. The backend excludes that identity when
 the permission is Off, including from the authenticated text cache. This
 choice requires **Fetch documents**; turning fetching off preserves its stored
 choice. Turning cookie use off does not disconnect publishers or affect
-interactive PDF saves. Plus:
+interactive PDF saves. **Use skills on its own** (`skills`, Allow or Off,
+default Allow) arms `load_skill`, where the account has a skill the
+assistant may load; Off leaves "/" working
+([skills.md](skills.md#load_skill-the-agent-loads-a-skill-itself)). Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
   user-tunable 1–100) — provider round-trips one message may use.
@@ -2062,7 +2089,8 @@ same event. So after Stop the turn streaming ends at its next event, no
 further turn opens, the loop's or a helper's, and only the calls
 already running finish: the round's reads (up to 4, a helper's read in
 flight included) or the one change. A waiting card or paper wait
-returns at once.
+returns at once, and the paper requests the reply asked for go with it
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
 
 Every tool call is announced by a `{"step": {id, tool, args}}` line before
 it runs; a batch sends one step with `batch: n` (and `tools` when they are
@@ -2253,7 +2281,11 @@ window too. `_messages` in `ai_protocols/anthropic.py` folds a plain user turn i
 preceding tool_result turn to keep roles alternating. The client sends
 only what is replayed — each turn's `role`, `text` and `actions`, never
 the pictures, coverage and counts saved with it, nor the texts an action
-keeps for reverting (`revert`), nor a batch's per-page `items`. Plain chats never replay
+keeps for reverting (`revert`), nor a batch's per-page `items`; a user
+turn that ran a skill sends its `skill`, whose instructions are rendered
+again from the requester's catalog by id, and a `load_skill` call replays
+its instructions the same way, outside `TOOL_REPLAY_BUDGET` and without
+the replay note ([skills.md](skills.md#replay-across-turns)). Plain chats never replay
 (providers reject tool blocks without tool defs). Renamed tools replay under
 their current name (`ai_context.DEPRECATED_TOOLS`, e.g. the saved
 `search_pdfs` chips of old chats become `search_library` calls), and a model

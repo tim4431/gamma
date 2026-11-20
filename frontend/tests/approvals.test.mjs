@@ -14,6 +14,7 @@ test("the card's headline says what the call would do", () => {
   assert.equal(card("edit_block", { title: "N", mode: "selection" }), "Edit your selection in “N”");
   assert.equal(card("edit_block", { title: "N", mode: "replace" }), "Edit a note in “N”");
   assert.equal(card("create_block", { title: "N", parent: "Methods" }), "Add a note under “Methods” in “N”");
+  assert.equal(card("create_block", { title: "N", count: 7 }), "Add 7 notes to “N”");  // a paste of several blocks
   assert.equal(card("move_block", { title: "N", src_title: "M" }), "Move a note from “M” to “N”");
   assert.equal(card("save_paper", { title: "Attention", to: "refs" }), "Save “Attention” to refs");
   assert.equal(card("save_paper", { title: "arXiv:1706.03762", to: "" }), "Save “arXiv:1706.03762” to the library root");

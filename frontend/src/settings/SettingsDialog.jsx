@@ -25,6 +25,7 @@ import { SearchServicesForEveryone } from "./SettingsServerOptions";
 import { KeyboardSettings } from "./SettingsKeyboard";
 import { AiSettings, gammaAiConnection } from "./SettingsAi";
 import { SettingsAgents } from "./SettingsAgents";
+import { SkillsSettings } from "./SettingsSkills";
 import { IntegrationSettings } from "./SettingsIntegrations";
 import { UsersSettings } from "./SettingsUsers";
 import { WorkspacesSettings } from "./SettingsWorkspace";
@@ -1447,6 +1448,7 @@ export default function SettingsDialog({
                   <PaneHead icon={MessageSquareIcon} title={t("Chat")} />
                   <ChatDefaults value={context} ai={aiValue} />
                   <PromptsSettings value={prompts} />
+                  <SkillsSettings canEdit={who.signedIn} confirm={workspace?.confirm} setStatus={workspace?.setStatus} />
                   <ContextSize value={context} />
                 </> : null}
                 {pane === "tools" ? <>

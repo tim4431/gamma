@@ -79,6 +79,34 @@ def build_info() -> dict:
             "frozen": bool(getattr(sys, "frozen", False))}
 
 
+def system() -> str:
+    """The operating system, as ``platform`` names it: ``iOS`` or ``iPadOS``
+    in the iPad app, ``Android`` in the Android app (Python 3.13's names)."""
+    return platform.system()
+
+
+def channel() -> str:
+    """How this install is updated: ``ipad`` and ``android`` (the server
+    inside the mobile apps, ``UPDATES`` ``app``, which TestFlight and the
+    release's APK update), ``desktop`` (the desktop app's own updater),
+    ``store`` (the Microsoft Store), ``mas`` (the Mac App Store), ``docker``
+    (a stamped image, which its admin pulls) or ``checkout`` (run by hand).
+    Settings → Server's Updates row and the standby page word their advice
+    by it (frontend shared/lib/updates.js)."""
+    if UPDATES == "app":
+        return "android" if system() == "Android" else "ipad"
+    if UPDATES in ("desktop", "store", "mas"):
+        return UPDATES
+    return "docker" if VERSION else "checkout"
+
+
+def install_info() -> dict:
+    """The build and how it is updated, without asking GitHub: what the
+    admin dashboard (``server_info``) and the standby page show of it."""
+    return {**build_info(), "branch": BRANCH, "updates": UPDATES, "channel": channel(),
+            "platform": f"{system()} {platform.machine()}".strip(), "image": IMAGE, "releases_url": RELEASES_PAGE}
+
+
 def parse_version(text) -> tuple | None:
     """``v1.2.3`` / ``1.2.3`` → ``(1, 2, 3, 0)``; ``1.2.3-dev.7`` →
     ``(1, 2, 3, 7)``, seven commits after v1.2.3, so newer than it and older
@@ -163,12 +191,11 @@ def server_info(refresh: bool = False) -> dict:
     """Everything the admin dashboard shows: the build, uptime, log counts
     and the update check (``check``)."""
     return {
-        **build_info(), "branch": BRANCH, "updates": UPDATES,
+        **install_info(),
         "started_at": STARTED_AT.isoformat().replace("+00:00", "Z"),
         "uptime_seconds": int((datetime.now(timezone.utc) - STARTED_AT).total_seconds()),
-        "python": platform.python_version(), "platform": f"{platform.system()} {platform.machine()}".strip(),
+        "python": platform.python_version(),
         "schema_version": db.SCHEMA_VERSION,
         "log_counts": log_counts(),
         **check(refresh=refresh),
-        "image": IMAGE, "releases_url": RELEASES_PAGE,
     }

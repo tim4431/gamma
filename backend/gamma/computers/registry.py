@@ -98,6 +98,7 @@ class _Live:
         self.written = 0.0         # time.monotonic() when ``seen_at`` was last written
         self.shown = False         # whether the account's windows were last told it is online
         self.sessions = False      # whether its last announce says it answers the asks of its sessions
+        self.skills = False        # whether it says it runs a turn's skill (the instructions with the claim)
 
 
 _live: dict[str, _Live] = {}
@@ -196,7 +197,9 @@ def normalise(body) -> dict:
     directories it offers them (``dirs``, ``_dirs_of``; none while no
     agent is on), and whether it answers what this server asks of its
     agents' sessions (``sessions``: gamma/computers/sessions.py; false from
-    an app before that). An older app's announce, whose assistants carry no
+    an app before that) and whether it runs a turn's skill (``skills``:
+    the instructions the claim carries, ``far_turns.claim``; false from an
+    app before that, which would run the arguments alone). An older app's announce, whose assistants carry no
     ``enabled``, has on the agent its folder vaults name. ValueError for a
     body of another shape, and for this server's own computer id (a far
     turn's token would then write as this computer's agent)."""
@@ -250,7 +253,8 @@ def normalise(body) -> dict:
     return {"computer": {"id": computer_id, "name": name.strip()}, "app": _text(body.get("app"), "app"),
             "vaults": kept, "assistants": there, "asks": bool(_flag(body.get("asks"), "asks")),
             "dirs": dirs if any(a["enabled"] for a in there) else [],
-            "sessions": bool(_flag(body.get("sessions"), "sessions"))}
+            "sessions": bool(_flag(body.get("sessions"), "sessions")),
+            "skills": bool(_flag(body.get("skills"), "skills"))}
 
 
 def _kept_here(ws: str, vaults: list[dict]) -> list[dict]:
@@ -340,7 +344,7 @@ def announce(user_id: str, username: str, ws: str, token_id: str, body) -> dict:
         if live is None:
             live = _live[token_id] = _Live(user_id)
         live.version, live.written = secrets.token_urlsafe(8), time.monotonic()
-        live.sessions = found["sessions"]
+        live.sessions, live.skills = found["sessions"], found["skills"]
         live.pending = [reason for reason in live.pending if reason != "announce"]
         version = live.version
         came = _beat(token_id, live)
@@ -944,6 +948,16 @@ def answers(token_id: str) -> bool:
     with _lock:
         live = _live.get(token_id)
         return live is not None and live.sessions
+
+
+def runs_skills(token_id: str) -> bool:
+    """Whether the computer behind ``token_id`` runs a turn's skill, as its
+    announce since it was last online said: a turn that ran one is
+    refused for a computer that does not (routers/local_agents.py
+    ``_far_turn_started``)."""
+    with _lock:
+        live = _live.get(token_id)
+        return live is not None and live.skills
 
 
 def own_computer(user_id: str, ws: str, computer_id: str) -> dict | None:

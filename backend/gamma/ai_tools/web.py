@@ -280,7 +280,17 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
     read_page's document excerpt. The fetch goes through the same resolver
     and SSRF guard as opening a link; the text is cached in memory only. A
     wall only a person gets past is handed to the user's browser, and what
-    they send back is read before any fetch."""
+    they send back is read before any fetch. The chat's scope keeps the
+    requests its calls asked for (``handoffs``): a reply its client left
+    lets them go (routers/ai.py)."""
+    answer, action = _fetch_paper(scope, args)
+    asked = (action or {}).get("handoff", {}).get("id")
+    if asked and isinstance(scope.get("handoffs"), list):
+        scope["handoffs"].append(asked)
+    return answer, action
+
+
+def _fetch_paper(scope: dict, args: dict):
     from .. import fetch_handoff, paper_links, publisher_sessions
     from ..ai_web import fetch_document, identity
     from ..web_fetch import WALLS, FetchError, window, window_pages

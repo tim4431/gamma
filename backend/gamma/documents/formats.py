@@ -202,6 +202,20 @@ def stored_extension(name: str) -> str:
     return ext or ".bin"
 
 
+def upload_extension(name: str, media: str = "") -> str:
+    """The extension an uploaded file is stored under (``POST /upload-file``,
+    an MCP assistant's ``upload_file``): a picture's from its media type
+    ``media`` (declared, or sniffed from its bytes) unless the name's own
+    extension is an image row of that type, which it keeps (``photo.jpeg``
+    stays ``.jpeg``: a mirror pushing a ``<hash>.jpeg`` must land it under
+    the same name); any other file's ``stored_extension``. Raises
+    ValueError for BLOCKED_EXTENSIONS."""
+    if media in IMAGE_EXTENSIONS:
+        own = extension_of(name)
+        return own if IMAGE_MEDIA_TYPES.get(own) == media else IMAGE_EXTENSIONS[media]
+    return stored_extension(name)
+
+
 def vault_extension(name: str) -> str:
     """The extension a work folder's file is stored and served under
     (gamma/vault/kinds.py): ``stored_extension``, with a blocked one

@@ -137,9 +137,11 @@ All state is SQLite + files on disk under a data directory (env
     [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)), the
     Google Drive connection (`gdrive`: `{refresh_token, email, name, folder,
     connected_at, client_id}` as JSON, the token encrypted the same way, ""
-    once disconnected) and the OAuth client an admin saved for it
-    (`gdrive_client`: `{client_id, client_secret}`, the secret encrypted
-    the same way, "" once removed;
+    once disconnected) and Google apps of the server's own for it, in
+    place of Gamma's (`gdrive_client`, the code's, and
+    `gdrive_desktop_client`, the page's: `{client_id, client_secret}`, set
+    by `manage.py gdrive-client [--desktop]`, the secret encrypted the
+    same way, "" once removed;
     [debugging.md](debugging.md#google-drive)), this server's Zotero app
     (`zotero_app`: `{client_key, client_secret}`, the secret encrypted the
     same way, "" once removed; [zotero_sync.md](zotero_sync.md)) and the
@@ -167,7 +169,8 @@ All state is SQLite + files on disk under a data directory (env
     scope's tokens such read tokens: [mcp.md](mcp.md) "The Comment level";
     [comments.md](comments.md) "Who may comment"), and `edits`, where it may
     also change notes, each `''`, `'*'` or a JSON list; `asks`, whether each
-    note change asks first), and `mcp_oauth` — the OAuth flow's
+    note change asks first; `deletes`, whether it may also delete notes
+    where it edits, step 70), and `mcp_oauth` — the OAuth flow's
     expiring records ([mcp.md](mcp.md));
   - `mirrors` — the offline copies of remote workspaces: the local workspace,
     the remote's address and workspace, the write token (Fernet-encrypted
@@ -491,6 +494,15 @@ All state is SQLite + files on disk under a data directory (env
     the block's return takes its row, and one deleted more than
     `ops.STAMP_KEEP_DAYS` (7) ago goes at the next such delete. Additive;
     no mirror or Gamma export carries it;
+  - `agent_changes` — each change an MCP connection made here, with what
+    taking it back needs ([mcp.md](mcp.md) "Undoing a change"): the
+    connection (`token_id`), its stamp then (`agent`), `at`, `tool`,
+    `kind`, `block_id`, `page_id`, `summary`, the tool's revert record
+    (`revert`) and `undone_at`. The newest 500 per connection, none older
+    than 30 days (`mcp_changes.KEEP_PER_CONNECTION`, `KEEP_DAYS`).
+    Additive; each account's own, like `workspace_prefs`: no zip carries
+    it, a restore keeps the live rows, and no mirror or Gamma export
+    carries it;
   - `page_follows` — who hears of every comment on a page
     ([comments.md](comments.md) "Following a page"): a row per page and
     account, `level` `all` or `replies`, `at`. A person who creates, edits
@@ -986,7 +998,8 @@ version), each workspace's own ones when it is first opened after the
 upgrade or by the background walk after startup (its `pages.db` has a
 `user_version` of its own; a new workspace is stamped current). A
 directory this build cannot upgrade (newer, or below `MIN_UPGRADABLE`) is
-not served: the server shows one page saying what to run instead.
+not served: the server shows one page saying what to do instead
+(`gamma/standby.py`).
 `db.connect_users_db()` raises
 `SchemaOutdated` on an old file so nothing reads it with new assumptions;
 a workspace whose own step fails answers a 503 with the guidance while the

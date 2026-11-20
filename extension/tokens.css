@@ -264,6 +264,23 @@
   --bracket-err: #f14c4c;
   --bracket-active-bg: rgba(90, 140, 255, 0.28);
   --bracket-active-ring: rgba(140, 170, 255, 0.65);
+  /* The tab strip's groups (workspace/stripGroups.js): Chrome's nine
+     colours as it paints them on a dark frame (its Google 300 tones,
+     docs/research/chrome-strip-groups.md), for a group's chip, its line and
+     its dot; the chip's name in Chrome's darkest grey on every one of them,
+     which reads better than white on each (--on-strip-group). */
+  --strip-group-blue: #8ab4f8;
+  --strip-group-red: #f28b82;
+  --strip-group-yellow: #fdd663;
+  --strip-group-green: #81c995;
+  --strip-group-pink: #ff8bcb;
+  --strip-group-purple: #c58af9;
+  --strip-group-cyan: #78d9ec;
+  --strip-group-orange: #fcad70;
+  --strip-group-grey: #dadce0;
+  --on-strip-group: #202124;
+  --on-strip-group-yellow: var(--on-strip-group);
+  --on-strip-group-orange: var(--on-strip-group);
 }
 
 /* The light recipe: every surface steps from the ground toward the ink. */
@@ -309,6 +326,21 @@
   --bracket-err: #e51400;
   --bracket-active-bg: rgba(11, 89, 214, 0.12);
   --bracket-active-ring: rgba(11, 89, 214, 0.45);
+  /* On a light frame Chrome's deeper tones, the name in white but on the
+     two light enough for its darkest grey to read better (yellow, orange):
+     --on-strip-group-<colour> where it differs from --on-strip-group. */
+  --strip-group-blue: #1a73e8;
+  --strip-group-red: #d93025;
+  --strip-group-yellow: #f9ab00;
+  --strip-group-green: #188038;
+  --strip-group-pink: #d01884;
+  --strip-group-purple: #a142f4;
+  --strip-group-cyan: #007b83;
+  --strip-group-orange: #fa903e;
+  --strip-group-grey: #5f6368;
+  --on-strip-group: #fff;
+  --on-strip-group-yellow: #202124;
+  --on-strip-group-orange: #202124;
 }
 
 /* ---- The themes (THEMES in app/prefDefs.js; DARK_THEMES take the dark

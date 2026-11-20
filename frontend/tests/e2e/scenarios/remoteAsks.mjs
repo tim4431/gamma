@@ -168,7 +168,7 @@ export async function remoteAskScenarios(env) {
     // a message from alice's page, and the ask it raised on the computer
     const send = async (dock, text) => {
       const before = new Set(waiting().map((a) => a.id));
-      await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(text);
+      await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(text);
       await dock.getByRole("button", { name: "Send", exact: true }).click();
       await dock.locator(".chatBubble.user", { hasText: text }).waitFor();
       return until(() => waiting().find((a) => !before.has(a.id)),
@@ -418,7 +418,7 @@ export async function remoteAskScenarios(env) {
         }
         await until(async () => (await stripLine(dock)) === `Codex on ${name}`, { what: `the strip names the computer: ${await stripText(dock)}` });
         const asked = new Set(waiting().map((a) => a.id));
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(REBUILD);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(REBUILD);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         // the card on the phone: the build, allowed once at most
         const card = dock.locator(".chatAsk");

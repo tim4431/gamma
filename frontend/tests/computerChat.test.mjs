@@ -121,10 +121,15 @@ test("what a turn changed, as its card lists it", () => {
 test("Retry sends the newest failed turn's message again", () => {
   const failed = agent({ state: "failed", error: "Codex stopped." });
   const asked = { ...person, selections: [{ text: "a passage", page: 2 }] };
-  assert.deepEqual(retryOf({ messages: [asked, failed] }, failed), { text: "fix this", selections: [{ text: "a passage", page: 2 }] });
+  assert.deepEqual(retryOf({ messages: [asked, failed] }, failed),
+    { text: "fix this", selections: [{ text: "a passage", page: 2 }], skill: null });
   assert.equal(retryOf({ messages: [asked, failed, person, agent()] }, failed), null, "only the newest");
   const done = agent();
   assert.equal(retryOf({ messages: [person, done] }, done), null, "only a failed one");
+  // A skill run with nothing after its name is a message too, and goes again with its skill.
+  const skill = { id: "builtin:review", name: "review", args: "" };
+  assert.deepEqual(retryOf({ messages: [{ ...person, text: "", skill }, failed] }, failed), { text: "", selections: [], skill });
+  assert.equal(retryOf({ messages: [{ ...person, text: "" }, failed] }, failed), null, "nothing to send again");
 });
 
 test("how a turn ended when it did not answer, and a session not resumed", () => {
@@ -239,6 +244,9 @@ test("a message goes with text, no turn still to end, and an agent able to run",
   assert.equal(canSend({ ...ready, paused: true }, conversation, "next"), false);
   assert.equal(canSend({ ...ready, ready: false }, conversation, "next"), false);
   assert.equal(canSend({ ...ready, ready: null }, conversation, "next"), true, "still checking: the server decides");
+  const skill = { id: "builtin:review", name: "review", args: "" };
+  assert.equal(canSend(ready, conversation, "", skill), true, "a skill with nothing after its name");
+  assert.equal(canSend(ready, { messages: [person, agent({ state: "running" })] }, "", skill), false);
 });
 
 test("a message carries the model, effort and speed chosen, none when it is the agent's default", () => {

@@ -9,10 +9,10 @@ Where every setting lives, and how the Settings dialog is built.
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-pen-writes-pdf`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`), the papers this browser left showing their translation (`gamma-translated:<user>@<workspace>`, `pdf/translateRecall.js`, [translation.md](translation.md#a-paper-opened-again)) and the directories its conversations with a computer's agent began in, so a new one starts where the last did (`gamma-agent-dirs-used`, `chat/computer/usedDirs.js`, [local_agents.md](local_agents.md) "The strip") |
 | Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer)), the tours (whether they are suggested, `suggestTours`, and which the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, the PDFs' page direction (`pdfFlow`), smooth wheel scrolling, how search opens, how a replaced PDF's highlights, and a changed text file's ranges, are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds))), handwriting (the habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the text highlighters (`highlightPresets`, [Text highlighters](#text-highlighters)) and the released builds' highlighter colour, which only seeds the first (`highlighterColor`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), a comment field's *Send to {agent}* tick as the person left it last (`commentSendTo`, which the tick itself sets, with no row; the Chat pane's Chat section's tag holds it, [comments.md](comments.md) "Sent to an agent"), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
-| Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
+| Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`, with their groups, [strip_groups.md](strip_groups.md#where-it-is-kept)), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
 | Per account, done reminders | `users.db` `reminders_done`, a row per dismissed reminder (its key, the workspace it was last found in, when), written by `POST /api/reminders/done` and kept while the reminder exists ([mentions.md](mentions.md) "Reminders"); no pref, as there may be thousands (the `reminders-done` prefs key held them before migration step 39) | which of the account's reminders it has dismissed, in every browser |
-| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / Tavily / SearXNG / OpenAlex settings |
+| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)), and the account's own skills under the reserved `skills` key (`/api/ai/skills*`, never synced to Gamma Cloud, [skills.md](skills.md#storage)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / Tavily / SearXNG / OpenAlex settings, the account's skills |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
 | Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), the Google Drive connection (the `gdrive` key via `/api/admin/gdrive`, its refresh token encrypted the same way), the network proxy (the `proxy` key via `/api/admin/proxy`, its password encrypted the same way, [network_proxy.md](network_proxy.md)), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
 
@@ -711,7 +711,7 @@ AI:
   (`aiServiceTiles` in `settings/providerEditor.js`). Once a connection made from the
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
-- **Chat**: three sections. **Chat** holds the default reasoning effort,
+- **Chat**: five sections. **Chat** holds the default reasoning effort,
   the default speed, the follow-up while a reply runs (`chatFollowUpMode`,
   a Steer / Queue `Segmented`, [ai.md](ai.md#queue-and-steer)) and the
   snapshot-clearing switch. The effort menu
@@ -719,6 +719,20 @@ AI:
   ([ai.md](ai.md#reasoning-effort)). A speed reaches only models whose
   provider offers that service tier ([ai.md](ai.md#speed-service-tier)).
   **Prompts** is the accordion, with one Cancel / Save pair as its action.
+  **Your skills** and **Built-in skills**
+  ([SettingsSkills.jsx](../../frontend/src/settings/SettingsSkills.jsx))
+  are the instructions a chat message runs with `/name`. Your skills lists
+  the account's, each with Edit and Delete, with *Add skill* and *Import
+  SKILL.md…* on the rule; the editor is a `SubDialog` (name, description,
+  argument hint, instructions, and whether the assistant may use it on its
+  own) whose save names the version it read, so a change made elsewhere
+  meanwhile is a notice with *Load the newer version*, never overwritten.
+  Built-in skills lists the server's with View (and *Copy to your
+  skills*) and an on/off switch. A guest's sections are read-only. They
+  read the chat's own skill store, not the pane's reads, and every write
+  refreshes it once ([skills.md](skills.md#settings--ai--chat-the-skills-sections)).
+  `openSettings("skills")` (the "/" menu's *Manage skills…*, the card of a
+  skill gone before the send) opens this pane at Your skills.
   **Context size** holds the three text budgets and "Pictures per message"
   (the chat's picture budget, [ai.md](ai.md#pictures)), with the Standard /
   Larger / Custom preset as its action.
@@ -727,7 +741,9 @@ AI:
   `AssistantTools.jsx`). Rows explain library reading, web research and changes;
   each column's menu offers the Read library / Read & search / Ask before
   changes / Allow all presets. Web search, fetching and using connected
-  journal sign-ins have separate rows; the last of the changes, **Comments
+  journal sign-ins have separate rows, and so has **Use skills on its own**
+  (`skills`, whether the agent loads a skill by itself,
+  [skills.md](skills.md#load_skill-the-agent-loads-a-skill-itself)); the last of the changes, **Comments
   and highlights** (`comment`, Ask by default), is what the agent writes
   under its own name: comments, replies, resolves and highlights
   ([ai_tools.md](ai_tools.md) "comment / resolve / highlight"). Under the table, two switches:
@@ -764,12 +780,15 @@ AI:
   provider mints — or token), what it reads ("Reads A, B", all workspaces, or
   read and write for a token's workspace), where it comments ("comments in
   Lab", "comments everywhere"), where it edits notes ("edits notes in Lab",
-  "edits notes wherever you edit") and "changes without asking" once it no
-  longer asks first, the connected and expiry dates, an
-  icon-only **Choose workspaces** (read connections) that opens
+  "edits notes wherever you edit"), "may delete notes" and "changes
+  without asking" once it no longer asks first, the connected and expiry
+  dates, an icon-only **Changes** on a connection that edits (what it
+  changed, each with Undo: `ConnectionChanges`, [mcp.md](mcp.md) "Undoing a
+  change"), an icon-only **Choose workspaces** (read connections) that opens
   the checklist under the row, with View, Comment or Edit on each workspace
-  ticked, **Ask me before each change it makes** once one is Edit, and Save
-  and Cancel, and an icon-only
+  ticked, **Ask me before each change it makes** and **May delete notes**
+  (off unless turned on; saved off once no workspace is Edit) once one is
+  Edit, and Save and Cancel, and an icon-only
   Disconnect. **Tokens (advanced)**, folded, makes a token by hand: its name,
   its scope as a `Segmented` (read for assistants and scripts, at the levels
   its checklist gives each workspace; read and write for an offline copy of
@@ -933,23 +952,24 @@ Library:
   the pane says of either store is
   [backupStores.js](../../frontend/src/settings/backupStores.js)): a
   folder in a Google account's My Drive that tasks may copy their
-  snapshots to as well, beside the bucket or instead. Without an OAuth
-  client its row reads "Not set up" with Set up…, which opens "Set up an
-  OAuth client": the three Google Cloud console pages to visit (each an
-  Open link), the client ID and the write-only secret ("secret set — type
-  to replace" once saved). With one, an "OAuth client" row names it, "<id>
-  · from your Google Cloud project", with Edit… (and Remove…, which asks
-  first). Each server's admin registers their own: Gamma ships none and
-  reads none from the environment. The connection's row above it reads
-  "Not connected" with Connect…, or the account's address with "Gamma
+  snapshots to as well, beside the bucket or instead. Nothing is set up
+  first: connecting is signing in to Google with Gamma's own app. Its row
+  reads "Not connected" with Connect…, or the account's address with "Gamma
   backups · backup tasks can copy their snapshots here", Test (the folder's
   item count and the account's storage, answered beside it) and Edit….
-  Connect… opens "Connect Google Drive": the folder's name, then Get a
-  code, after which the dialog shows Google's code in a copy box, a link
-  to Google's address, and "Waiting for Google…" while it polls; a yes
-  closes it ("Google Drive connected."), and a no or an expired code shows
-  why and offers the folder step again. A connection waiting for its code
-  reads "Waiting for the code" with Enter the code…. Edit… changes the
+  Where Gamma is opened on its own computer (the desktop app; the read's
+  `browser`), Connect… opens "Connect Google Drive" with Continue with
+  Google, a link drawn as the dialog's button to Google's page; once the
+  person allows there, the dialog sees the connection and closes, and
+  the tab Google sent back says "Google Drive is connected". Anywhere
+  else Connect… opens "Connect Google Drive" and asks Google for a code at
+  once: the code in a copy box, "Copy the code and open Google" (a link
+  drawn as the dialog's button: it copies the code and opens Google's
+  page), two steps (enter the code; choose the account and allow), and
+  "Waiting for Google…" while it polls; a yes closes it ("Google Drive
+  connected."), and a no or an expired code shows why with Get a new
+  code. A connection waiting for its code reads "Waiting for the code"
+  with Enter the code…. Edit… changes the
   folder (new copies go there) and holds Disconnect…, which asks first.
   A connection that cannot be used shows why under the rows, with
   Connect again…. A task's editor
@@ -1207,10 +1227,11 @@ one caption per pane. Picking one opens the pane and focuses the matching
 `tests/settingsSearch.test.mjs` fails when an entry's target is no
 `data-setting` its pane renders. The search box and the Keyboard filter
 carry their own × (the browser's is hidden).
-Three names open a pane at one of its sections, the targets of the bars'
-and the highlighters' settings rows: `topbar`, `viewer-tools` and
+Four names open a pane at one of its sections: the targets of the bars'
+and the highlighters' settings rows, `topbar`, `viewer-tools` and
 `highlighters` (Toolbars at the Top bar, Viewer tools or Text highlighters
-section). The strip's *Handwriting settings…* names the Handwriting pane
+section), and the chat's *Manage skills…*, `skills` (Chat at Your
+skills). The strip's *Handwriting settings…* names the Handwriting pane
 itself (`handwriting`). One table in `settingsNavigation.js` holds them:
 `resolveSettingsPane` gives the pane and `settingsSection` the row the
 dialog jumps to. Any other name is a pane's own. A link names one as
@@ -1271,7 +1292,10 @@ fading in only after a moment (`.loadingHint`; `Empty`'s and `LogBox`'s
 again to refresh it in place: a second visit is instant. Settings opened
 straight onto a pane (a notice, the chat's AI tiles) shows it at once, its
 reads starting together as it mounts. A test checks that every path a
-section reads is named in `PANE_READS` (`tests/settingsReads.test.mjs`).
+section reads through `useSettingsRead` is named in `PANE_READS`
+(`tests/settingsReads.test.mjs`). The Chat pane's skills sections are the
+exception: they read the chat's own skill store (`chat/useSkills.js`),
+which the "/" menu shares, so naming its path here would read it twice.
 At 150 ms of latency the Server pane, measured while it still held the
 sign-in, guests, storage-defaults and reports sections that are now in
 Users, made 8 requests in two waves and switched once, at 208 ms, with

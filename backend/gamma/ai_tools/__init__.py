@@ -56,6 +56,8 @@ Each family's module holds its tools' executors and their TOOLS entries:
 - ``commenting``: comment, resolve, highlight.
 - ``drawing``: draw, add_text_box, place_picture, add_sheet.
 - ``pages``: show_page, create_page, export, backlinks.
+- ``skills``: load_skill, which loads one of the user's skills (gamma/skills.py)
+  and renders it again on replay; its saved action keeps a stub.
 
 ``base`` is what they share (the scope, the limits, links, the read window,
 the writer, the diff); ``registry`` joins the entries and dispatches;
@@ -66,7 +68,9 @@ the functions that need it).
 Each executor returns ``(result_text, action)``: ``result_text`` goes back
 to the model; ``action`` is the ``{kind, summary}`` event streamed to the
 UI and saved with the chat message, for every successful call (reads
-included); errors carry None. A change also names what changed, so the chat
+included); errors carry None. An action's ``result``, when it sets one, is
+what the chip keeps in place of the text the model got (load_skill keeps a
+stub). A change also names what changed, so the chat
 can list it without parsing the summary: rename/move_page carry ``title``
 (the page's title before the call) and ``from`` / ``to`` (old and new title,
 the old folder paths and the new one as they read — "" is the library

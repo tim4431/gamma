@@ -171,7 +171,7 @@ def test_chat_page_scope_arms_read_tools(org, monkeypatch):
         "view_image", "cite", "search_library", "search_papers", "related_papers", "search_web", "fetch_paper",
         "fetch_url", "read_paper", "save_paper", "edit_block", "create_block", "move_block", "delete_block",
         "clip_region", "comment", "resolve", "highlight", "draw", "add_text_box", "place_picture", "add_sheet",
-        "backlinks"]
+        "backlinks", "load_skill"]  # the built-in skills are the session's to load
     assert f'page_id "{ids["a"]}"' in seen["system"]
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     reads = [l["action"] for l in lines if "action" in l]
@@ -649,7 +649,7 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
     assert [t["name"] for t in seen["tools"]] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "list_annotations", "read_annotation",
         "view_pdf_page", "view_ink", "view_image", "cite", "search_library", "search_papers", "related_papers",
-        "search_web", "fetch_paper", "fetch_url", "read_paper", "list_deleted", "backlinks"]
+        "search_web", "fetch_paper", "fetch_url", "read_paper", "list_deleted", "backlinks", "load_skill"]
     assert seen["blocked"].startswith("error: tool not enabled")
     assert props(c, ids["a"])["content"] == before  # nothing was renamed
 
@@ -891,6 +891,17 @@ def test_an_asking_tool_is_never_batched(org):
                            {"id": "3", "name": "read_page", "arguments": {}}])
     assert [[item.name for item in group] for group in groups] == [
         ["read_page"], ["fetch_paper"], ["read_page"]]
+
+
+def test_storing_a_picture_asks_nobody(org):
+    """With note changes on Ask, clip_region, which only stores a picture,
+    shows no card: the note write that embeds it does, with the picture on
+    it."""
+    from gamma.ai_agent import ApprovalGate
+
+    _, ids = org
+    gate = ApprovalGate(ids["ws"], {"type": "folder", "folder": "", "permissions": {"block_edit": "ask"}}, "someone")
+    assert not gate.asks("clip_region") and gate.asks("create_block")
 
 
 # --- a helper's status -----------------------------------------------------------

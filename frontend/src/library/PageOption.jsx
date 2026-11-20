@@ -1,5 +1,5 @@
 // A library page as an option of a picker's list: Ctrl+P (QuickOpen.jsx) and
-// the chat's @ picker (chat/PaperMentionInput.jsx), over rankLibraryPages'
+// the chat's @ picker (chat/ChatComposerInput.jsx), over rankLibraryPages'
 // rows. The kind glyph, the title with the query's matches marked (exact
 // matches only; a typo-only match stays unmarked), under it the pages a
 // sub-page is in ("Top › Parent", the row's `path`) then authors and year, a

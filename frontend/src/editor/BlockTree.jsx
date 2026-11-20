@@ -2336,7 +2336,8 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
 // The stored text plus an addition the agent is appending/prepending (an
 // edit_block call with mode "append"/"prepend", previewed while it streams):
 // mirrors backend ai_tools.join_block_text — own line, blank line when either
-// side is a paragraph-level construct. Mode "replace" is just the new text;
+// side is a paragraph-level construct, but a list item, quote line or table
+// row meeting its own kind continues the run. Mode "replace" is just the new text;
 // "patch" swaps the one passage `find` names in place (ai_tools
 // .patch_block_text — exact, else whitespace-relaxed), showing the stored
 // text unchanged until the passage is found once; "selection" swaps the
@@ -2346,6 +2347,8 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
 // the pairs the stored text holds, a passage converts unless it lands in
 // code or math (pasteMath.js).
 const BLOCKY_LINE = /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|\$\$|---)/;
+const RUN_LINES = [["list", /^\s*([-*+]|\d+[.)])\s/], ["quote", /^\s*>/], ["table", /^\s*\|/]];
+const runKind = (line) => RUN_LINES.find(([, re]) => re.test(line))?.[0] || "";
 function joinBlockText(existing, addition, mode, find, at) {
   if (mode === "selection") {
     const cur = existing || "";
@@ -2375,6 +2378,8 @@ function joinBlockText(existing, addition, mode, find, at) {
   const add = pasteMath(before, before.length, addition || "").replace(/^\n+|\n+$/g, "");
   if (!cur) return add;
   const [head, tail] = mode === "prepend" ? [add, cur] : [cur, add];
+  const run = runKind(head.slice(head.lastIndexOf("\n") + 1));
+  if (run && run === runKind(tail.split("\n", 1)[0])) return head + "\n" + tail;
   const sep = head.includes("\n") || tail.includes("\n") || BLOCKY_LINE.test(tail) || BLOCKY_LINE.test(head) ? "\n\n" : "\n";
   return head + sep + tail;
 }
@@ -2440,7 +2445,8 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
   if ((!blocks || blocks.length === 0) && !ghost) return null;
   const list = blocks || [];
   let ghostAt = ghost ? list.length : -1;
-  if (ghost && ghost.afterId) {
+  if (ghost && ghost.afterId === ghost.parentId) ghostAt = 0; // after its own parent: first
+  else if (ghost && ghost.afterId) {
     const i = list.findIndex((b) => b.id === ghost.afterId);
     if (i >= 0) ghostAt = i + 1;
   }

@@ -388,7 +388,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
       // a pane strip's own right-click joins the panes
       const paneStrip = await liveGroup(page).locator(".tabStrip").boundingBox();
       await page.mouse.click(paneStrip.x + paneStrip.width - 8, paneStrip.y + paneStrip.height / 2, { button: "right" });
-      await page.getByRole("menuitem", { name: "Join tab groups" }).click();
+      await page.getByRole("menuitem", { name: "Join panes" }).click();
       await until(async () => (await groups(page).count()) === 0, { what: "one group again" });
       assertEq(await top.locator('[data-guide="header.search"]').count(), 1, "Search back on the top bar with one group");
       assertEq(await page.locator(live(".tabLiveBar")).count(), 0, "and no pane bar");
@@ -417,7 +417,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
       await until(async () => (await tabIn(liveGroup(page), "Lecture notes").count()) === 1, { what: "its tab in the live group's strip" });
       // Join from a tab's menu: one group again, the notes still on screen
       await tabIn(liveGroup(page), "Lecture notes").click({ button: "right" });
-      await page.getByRole("menuitem", { name: "Join tab groups" }).click();
+      await page.getByRole("menuitem", { name: "Join panes" }).click();
       await until(async () => (await groups(page).count()) === 0, { what: "one group" });
       await until(async () => (await page.locator(live(".topbar .tabStrip .tab")).count()) === 2, { what: "both tabs in the topbar's strip" });
       assertEq(blockOf(page), notes.id);
@@ -438,7 +438,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
       await page.mouse.click(at.x + at.width / 2, at.y + 30);
       await until(() => blockOf(page) === paper.id, { what: "the paper opens again" });
       await readGroup(page).locator(".pagePaneEmpty").waitFor();
-      await readGroup(page).getByRole("button", { name: "Close this group" }).click();
+      await readGroup(page).getByRole("button", { name: "Close this pane" }).click();
       await until(async () => (await groups(page).count()) === 0, { what: "one group again" });
       assertEq(blockOf(page), paper.id);
       assertNoProblems(page);
@@ -483,5 +483,122 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
       await until(() => blockOf(page) === paper.id, { what: "the paper opens in the workbench" });
       assertNoProblems(page);
     } finally { await ctx.close(); await shown.close(); }
+  });
+
+  // Chrome's tab groups in the strip (workspace/stripGroups.js, docs/dev/strip_groups.md).
+  // A strip as drawn: a chip as [name], a tab by its title with * when grouped.
+  const drawn = (strip) => strip.locator(live(".stripGroupChip, .tab")).evaluateAll((els) => els.map((el) => (el.classList.contains("tab")
+    ? `${el.querySelector(".tabTitle").textContent}${el.classList.contains("grouped") ? "*" : ""}` : `[${el.querySelector("[role=button]").getAttribute("aria-label")}]`)).join(" "));
+  // …and at rest: a tab still gliding to its place takes no drag (OpenTabs), and
+  // the helper's drag sends one dragover where a hand sends many
+  const shows = (strip, want) => until(async () => (await drawn(strip)) === want
+    && (await strip.locator("[data-moving], [data-entering]").count()) === 0, { what: `the strip shows ${want}, at rest` });
+  const reading = await user.api("/api/pages", { method: "POST", body: { title: "Reading list" } });
+  const glossary = await user.api("/api/pages", { method: "POST", body: { title: "Glossary" } });
+
+  await step("strip groups: a tab put in a new group gets a named chip, tabs join and leave it by dragging, collapsing it opens a tab outside it, and the group reaches another browser", async () => {
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [
+      { id: paper.id, title: "Split paper" }, { id: notes.id, title: "Lecture notes" }, { id: reading.id, title: "Reading list" },
+    ] } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?page=${notes.id}&ws=${user.ws}`);
+    const topbar = page.locator(".topbar");
+    const strip = topbar.locator(".tabStrip");
+    const chip = strip.locator(live(".stripGroupChip"));
+    const editor = page.getByRole("dialog", { name: "Tab group" });
+    try {
+      await shows(strip, "Split paper Lecture notes Reading list");
+      // a new group: its editor opens under its chip with the name to type and a colour to pick
+      await tabIn(topbar, "Split paper").click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Add tab to new group" }).click();
+      const name = editor.getByRole("textbox", { name: "Group name" });
+      await until(() => name.evaluate((el) => el === document.activeElement), { what: "the name field focused" });
+      await name.fill("Reading");
+      await editor.getByRole("button", { name: "Green" }).click();
+      assertEq(await editor.getByRole("button", { name: "Green" }).getAttribute("aria-pressed"), "true");
+      await name.press("Enter");
+      await editor.waitFor({ state: "detached" });
+      await shows(strip, "[Reading] Split paper* Lecture notes Reading list");
+      // a tab dragged over a tab of the group joins it there
+      await (await dragOver(page, tabIn(topbar, "Lecture notes"), tabIn(topbar, "Split paper"), { x: 0.5, y: 0.5 })).drop();
+      await shows(strip, "[Reading] Lecture notes* Split paper* Reading list");
+      // another browser of the account shows the group once the tabs reach the server
+      await until(async () => ((await user.api("/api/prefs/open-tabs")).value || []).filter((tab) => tab.group?.title === "Reading").length === 2,
+        { what: "the group on the server" });
+      const other = await user.context(browser);
+      try {
+        const otherPage = await openPage(other, `${server.base}/?page=${reading.id}&ws=${user.ws}`);
+        await shows(otherPage.locator(".topbar .tabStrip"), "[Reading] Lecture notes* Split paper* Reading list");
+      } finally { await other.close(); }
+      // a drag over the strip's own padding, short of its end, moves nothing
+      await (await dragOver(page, tabIn(topbar, "Split paper"), strip, { x: 0.02, y: 0.05 })).drop();
+      await page.waitForTimeout(300);
+      assertEq(await drawn(strip), "[Reading] Lecture notes* Split paper* Reading list", "nothing moved");
+      await page.reload();
+      await shows(strip, "[Reading] Lecture notes* Split paper* Reading list");
+      // collapsing the group the page on screen is in opens the tab outside it
+      await chip.click();
+      await until(() => blockOf(page) === reading.id, { what: "the tab outside the group opens" });
+      await shows(strip, "[Reading] Reading list");
+      assertEq(await chip.getByRole("button").getAttribute("aria-expanded"), "false");
+      // a grouped page opened from elsewhere opens its group again
+      await openNotes(page);
+      await shows(strip, "[Reading] Lecture notes* Split paper* Reading list");
+      // the chip dragged carries its group past a tab
+      await (await dragOver(page, chip, tabIn(topbar, "Reading list"), { x: 0.5, y: 0.5 })).drop();
+      await shows(strip, "Reading list [Reading] Lecture notes* Split paper*");
+      // and Ctrl+← / → from the keyboard, as Chrome's header
+      await chip.getByRole("button").focus();
+      await page.keyboard.press("ControlOrMeta+ArrowLeft");
+      await shows(strip, "[Reading] Lecture notes* Split paper* Reading list");
+      await page.keyboard.press("ControlOrMeta+ArrowRight");
+      await shows(strip, "Reading list [Reading] Lecture notes* Split paper*");
+      // a tab dragged past a tab outside the group leaves it; the tab menu puts it back, at the group's end
+      await (await dragOver(page, tabIn(topbar, "Split paper"), tabIn(topbar, "Reading list"), { x: 0.5, y: 0.5 })).drop();
+      await shows(strip, "Split paper Reading list [Reading] Lecture notes*");
+      await tabIn(topbar, "Split paper").click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Add tab to group" }).click();
+      await page.getByRole("menuitem", { name: "Reading", exact: true }).click();
+      await shows(strip, "Reading list [Reading] Lecture notes* Split paper*");
+      // Close group closes both its tabs, the page on screen among them; the page viewed before them comes forward
+      await chip.click({ button: "right" });
+      await editor.getByRole("button", { name: "Close group" }).click();
+      await shows(strip, "Reading list");
+      await until(() => blockOf(page) === reading.id, { what: "the page viewed before comes forward" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("strip groups: a group moves whole to the other pane with the page on screen still on screen; a group holding every tab collapses to the library", async () => {
+    const group = { id: "readinggroup", title: "Reading", color: "green" };
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [
+      { id: paper.id, title: "Split paper", group }, { id: notes.id, title: "Lecture notes", group },
+      { id: glossary.id, title: "Glossary" }, { id: reading.id, title: "Reading list" },
+    ] } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?page=${notes.id}&ws=${user.ws}`);
+    const topbar = page.locator(".topbar");
+    try {
+      await shows(topbar.locator(".tabStrip"), "[Reading] Split paper* Lecture notes* Glossary Reading list");
+      await tabIn(topbar, "Reading list").click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Split right" }).click();
+      await until(async () => (await groups(page).count()) === 2, { what: "two panes" });
+      await liveGroup(page).locator(live(".stripGroupChip")).click({ button: "right" });
+      await page.getByRole("dialog", { name: "Tab group" }).getByRole("button", { name: "Move group to the other pane" }).click();
+      await shows(readGroup(page).locator(".tabStrip"), "Glossary");
+      await shows(liveGroup(page).locator(".tabStrip"), "Reading list [Reading] Split paper* Lecture notes*");
+      assertEq(blockOf(page), notes.id, "the page on screen stays, in the pane its group went to");
+      // one pane again, every other tab closed: collapsing the group shows the library
+      await tabIn(liveGroup(page), "Reading list").click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Join panes" }).click();
+      await until(async () => (await groups(page).count()) === 0, { what: "one pane" });
+      for (const title of ["Glossary", "Reading list"]) await page.getByRole("button", { name: `Close ${title}`, exact: true }).click();
+      const strip = topbar.locator(".tabStrip");
+      await shows(strip, "[Reading] Split paper* Lecture notes*");
+      await strip.locator(live(".stripGroupChip")).click();
+      await until(() => !blockOf(page), { what: "the library" });
+      await shows(strip, "[Reading]");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
   });
 }

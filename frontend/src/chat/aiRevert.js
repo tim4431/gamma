@@ -55,10 +55,12 @@ export function canRevert(a) {
 }
 
 // A reverted change that can be put back. A new note needs the place it
-// was made in, which older actions did not record; a page made needs none.
+// was made in, which older actions did not record; a page made needs none,
+// and a paste of several notes records every block it made (`blocks`).
 export function canRedo(a) {
   return recorded(a) && !!a.reverted
-    && (a.kind !== "create" || a.tool === MADE_REVERTIBLE || typeof a.revert.parent === "string");
+    && (a.kind !== "create" || a.tool === MADE_REVERTIBLE || typeof a.revert.parent === "string"
+      || Array.isArray(a.revert.blocks));
 }
 
 // The actions as the request's history sends them for the replay: the

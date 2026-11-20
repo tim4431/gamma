@@ -1305,8 +1305,8 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   directory has accounts already and the Keychain holds no password for
   them (the seed reaches nothing there; a directory the test itself
   seeded on an unsigned host is one until deleted), or that a newer build
-  upgraded (the server is up but answers every `/api` call with the
-  `data_directory_not_upgradable` 503).
+  upgraded (the server is up but answers its API, the sign-in aside, with
+  the `data_directory_not_upgradable` 503).
 - `backend/tests/test_mobile_requirements.py`: every server dependency is
   in the mobile requirements or excluded with a reason, and nothing
   excluded is still listed.

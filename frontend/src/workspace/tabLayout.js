@@ -174,6 +174,33 @@ export function moveTab(layout, tabId, toGroupId, index) {
   return settle(layout, next);
 }
 
+// Several tabs into a group, at its end in their order (a strip group moved
+// to the other pane), the ones it holds already staying where they are.
+// What is on screen stays: the live page keeps showing, its role following
+// it when it is among them, and the target keeps the page it showed (one
+// with none shows the first of them). Groups emptied go.
+export function moveTabs(layout, tabIds, toGroupId) {
+  const next = clone(layout);
+  const to = groupById(next, toGroupId);
+  if (!to) return layout;
+  const shown = activeGroup(next)?.active;
+  const emptied = [];
+  for (const id of tabIds) {
+    const from = groupOf(next, id);
+    if (!from || from === to) continue;
+    const at = from.tabs.indexOf(id);
+    from.tabs.splice(at, 1);
+    if (from.active === id) from.active = heirOf(from.tabs, at);
+    to.tabs.push(id);
+    emptied.push(from.id);
+  }
+  if (shown && tabIds.includes(shown) && to.tabs.includes(shown)) {
+    to.active = shown;
+    next.active = to.id;
+  } else if (!to.active) to.active = tabIds.find((id) => to.tabs.includes(id)) ?? null;
+  return settle(layout, tidy(next, emptied));
+}
+
 // A new group beside `groupId` on `side` (left, right, top, bottom): a
 // sibling in a split of that direction, which an existing parent of the
 // same direction takes as one more child, each of the pair getting half the

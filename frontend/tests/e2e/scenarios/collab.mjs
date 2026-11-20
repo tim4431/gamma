@@ -453,7 +453,11 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     } finally {
       await ctxB.setOffline(false);
     }
-    await until(async () => !(await B.textContent("body")).includes("twothree"), { what: "bob's refused join gone from his screen", timeout: 15000 });
+    // Row by row: the page's text as one string runs "onetwo" into the
+    // "three of bob's" under it, which reads "twothree" whenever no other
+    // text (alice's caret marker on the lower row) stands between them.
+    await until(async () => !(await B.$$eval(".blockRow", (rows) => rows.map((r) => r.textContent))).some((t) => t.includes("twothree")),
+      { what: "bob's refused join gone from his screen", timeout: 15000 });
     await shown(B, "three of bob's");
     await shown(B, "onetwo");
     await stored(refused, ["onetwo", "three of bob's", "tail"]);

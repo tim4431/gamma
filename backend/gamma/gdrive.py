@@ -232,6 +232,42 @@ def start_device_flow(oauth: OAuthClient) -> dict:
             "expires_in": int(data.get("expires_in") or 1800), "interval": max(int(data.get("interval") or 5), 1)}
 
 
+def authorize_url(oauth: OAuthClient, redirect_uri: str, state: str, challenge: str) -> str:
+    """Google's authorization page for a browser on the server's own
+    computer (``oauth`` a "Desktop app" client, ``redirect_uri`` a loopback
+    address): it asks for ``drive.file`` and offline access, always shows
+    the consent (so a refresh token comes back), and sends the browser to
+    ``redirect_uri`` with ``state`` and a code bound to ``challenge``
+    (PKCE, S256)."""
+    params = {"client_id": oauth.id, "redirect_uri": redirect_uri, "response_type": "code", "scope": SCOPE,
+              "access_type": "offline", "prompt": "consent", "state": state,
+              "code_challenge": challenge, "code_challenge_method": "S256"}
+    return f"{config.google_accounts_base()}/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}"
+
+
+def exchange_code(oauth: OAuthClient, code: str, verifier: str, redirect_uri: str) -> dict:
+    """The authorization page's code traded for the tokens: as
+    ``poll_device_flow`` answers, ``{state: "done", refresh_token,
+    access_token, expires_in, scope}``, or ``{state: "denied"}`` for a grant
+    without ``drive.file``. DriveError when Google refuses the code."""
+    resp = _form(f"{config.google_oauth_base()}/token", {
+        "client_id": oauth.id, "client_secret": oauth.secret, "code": code, "code_verifier": verifier,
+        "redirect_uri": redirect_uri, "grant_type": "authorization_code"}, attempts=INTERACTIVE_ATTEMPTS)
+    data = resp.json()
+    if resp.status == 200 and data.get("access_token"):
+        if SCOPE not in str(data.get("scope", "")).split():
+            return {"state": "denied"}
+        if not data.get("refresh_token"):
+            raise DriveError("Google gave no refresh token")
+        return {"state": "done", "refresh_token": str(data["refresh_token"]),
+                "access_token": str(data["access_token"]), "expires_in": int(data.get("expires_in") or 3600),
+                "scope": str(data.get("scope", ""))}
+    reason, message = _error(resp)
+    if reason in ("invalid_client", "unauthorized_client"):
+        raise DriveConfigError(f"Google refused the OAuth client ({reason})")
+    raise DriveError(f"Google did not take the sign-in: {message or reason or resp.status}")
+
+
 def poll_device_flow(oauth: OAuthClient, device_code: str) -> dict:
     """Ask once whether the person entered the code: ``{state: "pending"}``,
     ``{state: "slow_down"}``, ``{state: "denied"}``, ``{state: "expired"}``,

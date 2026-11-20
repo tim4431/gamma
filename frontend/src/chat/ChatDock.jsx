@@ -14,7 +14,7 @@ import { postFile } from "../transfers/FileChip";
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import { IconSwap } from "../shared/ui/MotionWidgets";
-import PaperMentionInput from "./PaperMentionInput";
+import ChatComposerInput from "./ChatComposerInput";
 import ChatTranscript, { SpeedGlyph, UsageLine, knobsLabel } from "./ChatTranscript";
 import ChatHistoryPop, { deleteQuestion, matchRows } from "./ChatHistoryPop";
 import GrantChip from "./GrantChip";
@@ -22,13 +22,17 @@ import { refusalCopy, sendRevert } from "./AgentChanges";
 import RevertChanges from "./RevertChanges";
 import { forReplay, markReverted, revertRefusal, revertible } from "./aiRevert.js";
 import * as chatQueue from "./chatQueue.js";
-import { canSteer, messageText, quotedText, quotesOf, steerBody, steeredMessage, useChatQueue } from "./chatQueue.js";
+import { canSteer, messageText, quotedText, quotesOf, sentText, steerBody, steeredMessage, useChatQueue } from "./chatQueue.js";
+import { skillText, skillTitle, splitSkill } from "./skills.js";
+import { effectiveSkills, refreshSkills, useSkills } from "./useSkills.js";
 import { MAX_CHAT_QUOTES, addQuote, noteTitle, structuredNote, structurePrompt } from "./chatQuotes.js";
 import ChatSelectionTip from "./ChatSelectionTip.jsx";
 import ChatQueue from "./ChatQueue.jsx";
 import { noteReview } from "./noteReview.js";
 import { GRANTS_KEY, conversationId, grantsIn, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
+import { letGoOf, stoppedRequests } from "./fetchHandoff.js";
+import { connectorTab } from "../shared/lib/connector.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
 import { addUsage, contextUsed, conversationUsage, fmtTokens, usageDetail } from "./tokenUsage";
@@ -58,7 +62,7 @@ import { formatOf } from "../documents/formats.js";
 import ChipPreview from "./ChipPreview.jsx";
 import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
 import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, EyeIcon, FileIcon,
-  HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteIcon, QuoteMarkIcon, SearchIcon,
+  HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteMarkIcon, SearchIcon,
   SettingsIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
@@ -82,6 +86,7 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 const NO_MESSAGES = Object.freeze([]);
 const NO_DIRS = Object.freeze([]);
 const NO_QUOTES = Object.freeze([]);
+const NO_SKILLS = Object.freeze([]);
 
 // What a remount (an iPad turning, the dock closed and opened again) must
 // not lose: the composer's draft and the transcript's passages it quotes,
@@ -89,21 +94,17 @@ const NO_QUOTES = Object.freeze([]);
 // App already sent. One dock is mounted at a time.
 const kept = { key: "", draft: "", quotes: [], asked: 0 };
 
-// A conversation's display name when the user never named it: the first
-// user message's first non-quote line (mirrors derive_title in
-// gamma/routers/chats.py, which names entries when they are archived).
-function deriveTitle(messages) {
-  const first = (messages || []).find((m) => m.role === "user");
-  const line = (first?.text || "").split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith(">"));
-  return (line || "").replace(/\s+/g, " ").slice(0, 80);
-}
+// A conversation's display name when the user never named it, from its
+// first user message (chat/skills.js skillTitle, the rule derive_title in
+// gamma/routers/chats.py names entries by when they are archived).
+const deriveTitle = (messages) => skillTitle((messages || []).find((m) => m.role === "user"));
 
 // The History row for a conversation the server just filed under `id` (the
 // archive and the open answer with it), as the list's next read gives it.
 function filedRow(id, { title, messages }) {
   const first = messages.find((m) => m.role === "user");
   return {
-    id, title: title || deriveTitle(messages), preview: (first?.text || "").replace(/\s+/g, " ").trim().slice(0, 120),
+    id, title: title || deriveTitle(messages), preview: skillText(first).replace(/\s+/g, " ").trim().slice(0, 120),
     count: messages.length, updated_at: new Date().toISOString(),
   };
 }
@@ -152,7 +153,7 @@ function useModelInfo(modelId) {
 // attached — it rides along because of where the cursor is — with a dashed
 // border; `kind` is the modifier class (isCursor / isBlock / isNote /
 // isInk; none for a PDF passage).
-const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteIcon, block: OutlineIcon, ink: PenIcon, quote: QuoteMarkIcon };
+const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteMarkIcon, block: OutlineIcon, ink: PenIcon, quote: QuoteMarkIcon };
 
 export function SelChip({ kind, icon, label, note, file = "", cut, auto = false, text, title, onRemove, removeTitle }) {
   const Glyph = SEL_CHIP_ICONS[icon];
@@ -444,6 +445,13 @@ export default function ChatDock({
     return () => { live = false; };
   }, [wantsSetup]);
   const aiKnown = readOnly || (aiInfo ? aiInfo.enabled || !!setupInfo : aiInfoFailed);
+  // The skills a message can run, "/name" at its start (chat/skills.js,
+  // chat/useSkills.js): none while the catalog is unknown, so a "/word"
+  // goes as text then. The composer offers them to whichever agent it
+  // sends to, where it sends at all.
+  const skillStore = useSkills();
+  const skillCatalog = useMemo(() => (skillStore.ready ? effectiveSkills(skillStore.rows) : NO_SKILLS), [skillStore]);
+  const offersSkills = !readOnly && skillCatalog.length > 0 && (onComputer ? !side.shown : !aiOff);
   const settingsIntent = preloadSettings
     ? { onPointerEnter: preloadSettings, onPointerDown: preloadSettings, onFocus: preloadSettings } : {};
   const composerRef = useRef(null);
@@ -1325,6 +1333,16 @@ export default function ChatDock({
     setChatQuotes(NO_QUOTES);
     return parts;
   }
+  // The inverse of takeComposer: `parts` back on the composer, with `text`
+  // in its box (a message that could not go).
+  function giveBack(parts, text) {
+    setChatInput(text);
+    setChatImages(parts.images || []);
+    setChatFiles(parts.files || []);
+    setPdfSelections(parts.selections || []);
+    setChatNotes?.(parts.notes || []);
+    setChatQuotes(parts.quotes || NO_QUOTES);
+  }
   // A passage of the transcript quoted into the next message (its
   // selection's Ask about this), the box taking the focus for the question.
   function quoteInComposer(md) {
@@ -1341,23 +1359,26 @@ export default function ChatDock({
   });
 
   // The /api/ai/chat request for `text` after `prevMessages`, with `parts`
-  // (what the composer holds now, by default) — the send and the context
-  // export build the same one.
+  // (what the composer holds now, by default, and the skill the message
+  // runs, `parts.skill`) — the send and the context export build the same
+  // one.
   function chatRequest(text, prevMessages, { parts = composerParts(), selectedDocs = chatDocs, includeNotes = chatIncludeNotes, attach = false, model = "", key = chatKey } = {}) {
     const { notes, cursorSel } = notesOf(parts);
     const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
     return {
       prompt: messageText(text, parts),
+      ...(parts.skill ? { skill: parts.skill } : {}),
       page_id: focusedBlockId || "",
       // Only what the server replays: the text and the tool calls of
       // each turn, and a user message's pictures by URL (the server reads
       // the newest back within the picture budget; a data URL of an old
       // chat is never re-sent) — not the reports and counts saved with
       // them, nor the texts kept for reverting a change (failed replies
-      // aren't answers).
-      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions, reasoning, images: turnImages }) => {
+      // aren't answers). A user message that ran a skill names it, which
+      // the server renders again from the catalog (docs/dev/skills.md).
+      history: prevMessages.filter((m) => !m.error).map(({ role, text: turnText, actions: turnActions, reasoning, images: turnImages, skill }) => {
         const sent = historyPictures(turnImages);
-        return { role, text: turnText, ...(turnActions?.length ? { actions: forReplay(turnActions) } : {}),
+        return { role, text: turnText, ...(skill ? { skill } : {}), ...(turnActions?.length ? { actions: forReplay(turnActions) } : {}),
           ...(reasoning ? { reasoning } : {}), ...(sent.length ? { images: sent } : {}) };
       }),
       chat_key: key, // the conversation, for the provider's prompt cache
@@ -1408,10 +1429,14 @@ export default function ChatDock({
 
   // Download what the model would be sent now — system prompt, tools, every
   // turn with the pages' context, the draft as the last message — as Markdown.
-  const exportContext = () => exportWith(() => downloadFetched(`${API}/ai/chat/context`, {
-    method: "POST", headers: JSON_HEADERS,
-    body: JSON.stringify({ ...chatRequest(chatInput.trim(), chatMessages), title: activeTitle }),
-  }, `${fileBase} - context.md`), (message) => t("Couldn't export the chat context: {message}", { message }));
+  const exportContext = () => {
+    const draft = splitSkill(chatInput, skillCatalog);
+    return exportWith(() => downloadFetched(`${API}/ai/chat/context`, {
+      method: "POST", headers: JSON_HEADERS,
+      body: JSON.stringify({ ...chatRequest(draft.text.trim(), chatMessages, { parts: { ...composerParts(), skill: draft.skill } }),
+        title: activeTitle }),
+    }, `${fileBase} - context.md`), (message) => t("Couldn't export the chat context: {message}", { message }));
+  };
 
   // A conversation as a file to keep: the transcript as Markdown with every
   // picture the chat shows beside it (a .zip with assets/; the bare .md when
@@ -1429,6 +1454,10 @@ export default function ChatDock({
   // does not send its continuation over it (chat/FetchHandoffCards.jsx).
   const composerHasDraft = !!(chatInput.trim() || chatImages.length || chatFiles.length
     || pdfSelections.length || chatNotes?.length || chatQuotes.length);
+  // The composer as it is now, for a send that ended later: a message
+  // whose skill was gone goes back only into the same bucket's empty box.
+  const composerNow = useRef(null);
+  composerNow.current = { key: chatKey, empty: !composerHasDraft };
   // Whether a message (the composer's, or a dictation's) can join the queue
   // while the reply runs.
   const queues = (text) => !!text.trim() && (onComputer ? side.queues(text) : !aiOff && !readOnly);
@@ -1437,17 +1466,20 @@ export default function ChatDock({
   // Core chat send. baseMessages overrides the history (used when re-sending
   // an edited message: everything after the edited message is discarded,
   // ChatGPT-style); `parts` what goes with the message (a queued one's),
-  // else what the composer holds, taken off it.
-  async function sendChat(rawText, { baseMessages, referenceMessage, model, parts } = {}) {
+  // else what the composer holds, taken off it; `skill` the skill it runs
+  // ({id, name, args}, chat/skills.js splitSkill: its text is then the
+  // arguments, and may be empty), by default the queued one's.
+  async function sendChat(rawText, { baseMessages, referenceMessage, model, parts, skill = parts?.skill || null } = {}) {
     if (readOnly || aiOff) return;
     const text = (rawText || "").trim();
-    if (!text || busyHere) return;
+    if ((!text && !skill) || busyHere) return;
     // pdf: the whole file goes with this message (the PDF switch's hint).
     guideEvents.emit("chat.sent", { pdf: !!(pdfInContext && attachPdf && nativePdf) });
     const selectedDocs = referenceMessage ? (referenceMessage.contextPages || []).map((p) => p.id) : chatDocs;
     const includeNotes = referenceMessage ? !!referenceMessage.includeNotes : chatIncludeNotes;
     if (referenceMessage) { setChatDocs(selectedDocs); setChatIncludeNotes(includeNotes); }
-    const taken = parts || takeComposer();
+    const { skill: _queued, ...given } = parts || takeComposer();
+    const taken = skill ? { ...given, skill } : given;
     const { images = [], files = [] } = taken;
     const prevMessages = baseMessages ?? chatMessages;
     const shown = quotedText(messageText(text, taken), quotesOf(taken));
@@ -1473,6 +1505,7 @@ export default function ChatDock({
       includeNotes,
       role: "user",
       text: shown,
+      ...(skill ? { skill } : {}),
       ...(images.length ? { images } : {}),
       // pdfDocs records WHICH documents rode along, so reloading the page
       // can tell whether this document was already sent in the conversation
@@ -1666,6 +1699,18 @@ export default function ChatDock({
       if (allActions.some(isChange)) guideEvents.emit("chat.changed");
     } catch (err) {
       const stopped = err?.name === "AbortError";
+      if (stopped) {
+        // Stop lets go of the paper requests the reply asked for, as each
+        // card's Dismiss would (the server does too as the reply ends):
+        // Background tasks drops them, Gamma Connector closes a tab it kept
+        // for one, and the cards under the reply say so.
+        for (const id of stoppedRequests(allActions, handoffs)) {
+          apiJson(`${API}/ai/handoffs/${encodeURIComponent(id)}/stop`, { method: "POST" }).catch(() => {});
+          connectorTab(id, "close");
+        }
+        actions = letGoOf(actions);
+        before.forEach((m, i) => { if (m.actions) before[i] = { ...m, actions: letGoOf(m.actions) }; });
+      }
       // fetch's own TypeError ("Failed to fetch", or the body reader's
       // "network error") means the connection to the server was lost, not
       // that the provider failed — the server says that in-band.
@@ -1676,9 +1721,22 @@ export default function ChatDock({
       // replayed to the model as an answer. A reply cut off mid-stream keeps
       // its text and gets the compact card under it. errorKind & co. carry
       // what the card says (chat/chatErrors.js).
-      showReply(aiMsg(stopped
-        ? { text: acc ? `${acc}\n\n*(stopped)*` : "*(stopped)*" }
-        : { text: acc || `Error: ${reason}`, ...(acc ? {} : { error: true }), ...failureFields(err) }), true);
+      if (!stopped && err?.kind === "skill") {
+        // The skill went between the catalog's read and the send: the
+        // catalog is read again, and the message as typed goes back in the
+        // composer, with what went with it, unless the box holds a newer
+        // draft or shows another conversation; the card stands where the
+        // message would have.
+        refreshSkills();
+        const box = composerNow.current;
+        if (box?.key === sendKey && box.empty) giveBack(taken, skillText({ skill, text }));
+        session.update(sendKey, [...prevMessages, aiMsg({ text: `Error: ${reason}`, error: true, ...failureFields(err) })], true)
+          ?.catch((saveErr) => setStatus(t("Couldn't save the conversation: {message}", { message: saveErr.message })));
+      } else {
+        showReply(aiMsg(stopped
+          ? { text: acc ? `${acc}\n\n*(stopped)*` : "*(stopped)*" }
+          : { text: acc || `Error: ${reason}`, ...(acc ? {} : { error: true }), ...failureFields(err) }), true);
+      }
     } finally {
       if (taskId) removeTask?.(taskId);
       // What the reply did not take in is queued again; the queue goes on
@@ -1725,11 +1783,17 @@ export default function ChatDock({
   // with what goes with it, and is handed to the reply at once when the
   // follow-up preference says Steer, the default (`other`, Ctrl/⌘+Enter:
   // when it says Queue; chat/enterKey.js followUpSteers). One that cannot steer
-  // stays queued. `text` a dictation's, sent in the composer's place.
+  // stays queued, as does one that runs a skill. `text` a dictation's, sent
+  // in the composer's place. The text as typed is split once here, before
+  // anything goes with it, into the skill it runs ("/name" at its start,
+  // chat/skills.js splitSkill) and what it says; a queued message keeps
+  // that split.
   async function sendChatMessage({ other = false, text = chatInput } = {}) {
+    const { skill, text: said } = splitSkill(text, skillCatalog);
     if (replying) {
       if (!queues(text)) return;
-      const item = { id: makeId(), text, parts: onComputer ? { selections: pdfSelections, quotes: chatQuotes } : takeComposer() };
+      const parts = onComputer ? { selections: pdfSelections, quotes: chatQuotes } : takeComposer();
+      const item = { id: makeId(), text, parts: skill ? { ...parts, skill } : parts };
       if (onComputer) { setPdfSelections([]); setChatQuotes(NO_QUOTES); }
       chatQueue.enqueue(queueKey, item);
       setChatInput("");
@@ -1738,12 +1802,12 @@ export default function ChatDock({
     }
     if (onComputer) {
       chatStickRef.current = true;
-      if (await side.send(messageText(text, { quotes: chatQuotes }))) { setChatInput(""); setChatQuotes(NO_QUOTES); }
+      if (await side.send(messageText(said, { quotes: chatQuotes }), null, skill)) { setChatInput(""); setChatQuotes(NO_QUOTES); }
       return;
     }
-    if (!text.trim() || busyHere) return;
+    if ((!said.trim() && !skill) || busyHere) return;
     setChatInput("");
-    sendChat(text);
+    sendChat(said, { skill });
   }
   sendTextRef.current = (text) => sendChatMessage({ text });
 
@@ -1812,12 +1876,12 @@ export default function ChatDock({
   // the queue paused.
   async function sendQueued(item) {
     if (!onComputer) {
-      sendChat(item.text, { parts: item.parts });
+      sendChat(sentText(item), { parts: item.parts });
       return;
     }
     chatQueue.started(queueKey);
     chatStickRef.current = true;
-    if (!(await side.send(messageText(item.text, item.parts), item.parts.selections || []))) {
+    if (!(await side.send(messageText(sentText(item), item.parts), item.parts.selections || [], item.parts.skill || null))) {
       chatQueue.enqueue(queueKey, item);
       chatQueue.move(queueKey, item.id, 0);
       chatQueue.ended(queueKey, false);
@@ -1839,7 +1903,8 @@ export default function ChatDock({
   // A computer agent's turn says what it took in (its message's `steers`):
   // those messages leave the queue, as Gamma AI's stream says (sendChat).
   const lastTurn = onComputer ? lastTurnState(side.chat.conversation) : "";
-  const canTakeQueued = onComputer ? side.ready(queue.items[0]?.text) : !readOnly && !aiOff && loadedFor === chatKey;
+  const canTakeQueued = onComputer ? side.ready(sentText(queue.items[0]), queue.items[0]?.parts?.skill)
+    : !readOnly && !aiOff && loadedFor === chatKey;
   useEffect(() => {
     if (!onComputer) return;
     const taken = queue.items.filter((m) => m.state === "steering" && steerTaken(side.chat.conversation, m.id));
@@ -1998,17 +2063,18 @@ export default function ChatDock({
 
   // Edit-and-resend (ChatGPT-style): user message `idx` goes again as
   // `text`, and it and everything after it are replaced; `model` overrides
-  // the chat's pick.
-  function resendFrom(idx, text, model) {
-    sendChat(text, { baseMessages: chatMessages.slice(0, idx), referenceMessage: chatMessages[idx], model });
+  // the chat's pick, and `skill` is the skill it runs: the message's own
+  // unless the edit dropped it (null).
+  function resendFrom(idx, text, { model, skill = chatMessages[idx]?.skill || null } = {}) {
+    sendChat(text, { baseMessages: chatMessages.slice(0, idx), referenceMessage: chatMessages[idx], model, skill });
   }
 
-  // Re-send the user message a failed reply answered; `model` retries with
-  // another model.
+  // Re-send the user message a failed reply answered, with the skill it
+  // ran; `model` retries with another model.
   function retryReply(idx, model) {
     const asked = chatMessages[idx - 1];
     if (asked?.role !== "user" || busyHere) return;
-    resendFrom(idx - 1, asked.text, model);
+    resendFrom(idx - 1, asked.text, { model });
   }
 
   // An error card's buttons: the fix for its kind (open the failing
@@ -2027,13 +2093,14 @@ export default function ChatDock({
     const fix = {
       connect: openAiKeysEditor, own_key: openAiKeysEditor, key: openEntry, signin: openEntry,
       connection: openEntry, proxy: isAdmin && openSettings ? () => openSettings("proxy") : null,
-      new_chat: latest ? newChat : null,
+      new_chat: latest ? newChat : null, skills: openSettings ? () => openSettings("skills") : null,
     }[copy.fix];
     if (fix && !readOnly) {
       out.push(<button key="fix" type="button" className="uiBtn sm primary" {...(fix === newChat ? {} : settingsIntent)}
         onClick={() => fix()}>{fixLabel(copy.fix)}</button>);
     }
-    if (latest) {
+    // A skill that is gone leaves no message to retry: it went back in the composer.
+    if (latest && m.errorKind !== "skill") {
       out.push(<button key="retry" type="button" className="uiBtn sm" onClick={() => retryReply(idx)}>{t("Retry")}</button>);
       const others = copy.switchModel ? headerModels.filter((x) => x.id !== chatModel) : [];
       if (others.length) {
@@ -2331,6 +2398,7 @@ export default function ChatDock({
   // started, or the message carries what only a message of its own takes.
   const steerTarget = onComputer ? side.steering : queue.reply;
   const steerNote = (item) => (!replying ? ""
+    : item?.parts?.skill ? t("A skill runs in a message of its own: this one is sent when the reply ends")
     : !canSteer(item) ? t("Files, attached blocks and handwriting go with a message of their own: this one is sent when the reply ends")
       : steerTarget ? "" : onComputer ? t("{agent} hasn't started yet: this one goes when its turn ends", { agent: side.label })
         : t("This reply can't take messages in: this one is sent when it ends"));
@@ -2439,7 +2507,8 @@ export default function ChatDock({
             replying={onComputer ? side.working : busyHere} still={onComputer ? false : fromLoad}
             findHit={chatFindOpen && chatFind.trim() ? chatFindMatches[chatFindIdx] ?? -1 : -1}
             titleOf={pageTitleOf} onOpenPage={onOpenPage} openActions={openActions} toggleAction={toggleAction}
-            editing={onComputer ? null : editingMsg} onEdit={readOnly || onComputer ? undefined : setEditingMsg} onResend={resendFrom}
+            editing={onComputer ? null : editingMsg} onEdit={readOnly || onComputer ? undefined : setEditingMsg}
+            onResend={(idx, text, skill) => resendFrom(idx, text, { skill })}
             copiedIdx={copiedMsgIdx} onCopy={copyChatMessage} canReport={!onComputer}
             approvals={{ answered: answeredApprovals, kindLabel: chatKindLabel, onDecide: decideApproval }}
             onAnswer={(m, ask, decision, note) => side.chat.answer(m.turnId, ask.id, decision, note)}
@@ -2498,7 +2567,8 @@ export default function ChatDock({
       <ChatQueue items={queue.items} paused={queue.paused && !replying}
         steers={(item) => !!steerTarget && canSteer(item)} steerNote={steerNote}
         onSteer={steerQueued} onSend={sendNow} onRemove={(id) => chatQueue.remove(queueKey, id)}
-        onEdit={(id, text) => chatQueue.edit(queueKey, id, text)} onMove={(id, to) => chatQueue.move(queueKey, id, to)}
+        onEdit={(id, text) => chatQueue.edit(queueKey, id, text, splitSkill(text, skillCatalog).skill)}
+        onMove={(id, to) => chatQueue.move(queueKey, id, to)}
         setStatus={setStatus} />
       {/* One box: the context chips on top, the message at full
           width, then a toolbar — [+], the PDF switch while a PDF is in
@@ -2621,7 +2691,7 @@ export default function ChatDock({
           </div>
         ) : (
         <>
-        <PaperMentionInput
+        <ChatComposerInput
           key={chatKey}
           pages={pickerPages} tree={libraryTree} recentViews={recentViews} openTabs={openTabs}
           currentPageId={focusedBlockId} selected={chatDocs}
@@ -2635,10 +2705,13 @@ export default function ChatDock({
           onChange={setChatInput}
           onPaste={attaches ? handleChatPaste : undefined}
           mentions={attaches} label={onComputer ? t("Message {agent}", { agent: side.label }) : ""}
+          skills={offersSkills ? skillCatalog : null}
+          onManageSkills={openSettings ? () => openSettings("skills") : null}
           disabled={closed}
           // Until the chat knows its AI the field names nothing, so it
           // never offers to ask before it says a service is needed.
-          placeholder={replying ? (steersFirst ? t("Steer the reply…") : t("Queue a follow-up…")) : onComputer ? (side.where ? t("Message {agent} on {computer}…", { agent: side.label, computer: side.where })
+          // Where a message can run a skill, it says so last.
+          placeholder={(replying ? (steersFirst ? t("Steer the reply…") : t("Queue a follow-up…")) : onComputer ? (side.where ? t("Message {agent} on {computer}…", { agent: side.label, computer: side.where })
             : t("Message {agent} on this computer…", { agent: side.label }))
             : !aiKnown ? "" : aiOff ? t("Connect an AI service to start chatting") : (
             // Names what the message will be about, most specific attachment first.
@@ -2650,7 +2723,7 @@ export default function ChatDock({
               : chatNotes[0].kind === "ink" ? t("Ask about the selected handwriting…") : t("Ask about the selected note…"))
             : cursorChip?.sel ? t("Ask about the selection…") : cursorChip ? t("Ask about this block…") : chatDocs.length ? tn("Ask about {n} attached page…", "Ask about {n} attached pages…", chatDocs.length)
             : (!noTools && agentAsk) || t("Ask…")
-          ) + t(" (@ paper)")}
+          ) + t(" (@ paper)")) + (offersSkills && !replying && (onComputer || aiKnown) ? t(" (/ skill)") : "")}
         />
         <div className="chatComposerBar">
           {/* where a computer's agent works, at the bar's start as a Codex thread's folder */}

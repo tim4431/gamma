@@ -65,6 +65,8 @@ def main():
         "--add-data", f"{REPO / 'backend' / 'gamma' / 'onboarding' / 'welcome.md'}{sep}gamma/onboarding",
         # Zotero's item types and fields (gamma/zotero_fields.py reads it next to the module).
         "--add-data", f"{REPO / 'backend' / 'gamma' / 'zotero_schema.json'}{sep}gamma",
+        # The built-in chat skills (gamma/skills.py reads builtin_skills/*/SKILL.md next to the module).
+        "--add-data", f"{REPO / 'backend' / 'gamma' / 'builtin_skills'}{sep}gamma/builtin_skills",
         # uvicorn resolves loop/protocol classes from strings at runtime.
         "--collect-all", "uvicorn",
         "--collect-all", "websockets",  # uvicorn loads its websocket protocol lazily

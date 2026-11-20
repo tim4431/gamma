@@ -108,9 +108,12 @@ scope is read-only, and its `link_base` makes results carry absolute links
 to pages, PDF pages, blocks and comment threads (`gamma_link`; the chat's
 results carry none, [mcp.md](mcp.md) "Links in results"). The three
 writing tools (`comment`, `resolve`, `highlight`) reach MCP at a
-connection's Comment level, the four note tools and the four drawing tools
-at its Edit level
-([mcp.md](mcp.md) "The Comment level", "Editing notes").
+connection's Comment level, the four note tools, `create_page` and the four
+drawing tools at its Edit level, and `delete_block` where the person also
+allowed deleting
+([mcp.md](mcp.md) "The Comment level", "Editing notes"). MCP has no reply
+to revert from, so it journals each change's revert record and takes it
+back with `ai_revert.revert_change` ([mcp.md](mcp.md) "Undoing a change").
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
@@ -144,8 +147,8 @@ at its Edit level
 | `delete_folder` | Delete folders and labels | folder | Delete a folder and its subfolders, never their pages; the user can revert it, the folders' chats included |
 | `delete_label` | Delete folders and labels | folder | Delete a label and take it off its pages; the user can revert it |
 | `edit_block` | Edit note blocks | folder + page | Change one note block's markdown text: replace it, add to it, patch one passage, or rewrite the user's selection |
-| `create_block` | Edit note blocks | folder + page | Add a note block under a page or block, optionally after a sibling |
-| `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
+| `create_block` | Edit note blocks | folder + page | Paste Markdown as note blocks under a page or block, split as the editor's Paste as → Blocks splits it, after a sibling, first or last |
+| `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree), after a sibling, first or last |
 | `delete_block` | Edit note blocks | folder + page | Delete a note block with everything under it; the user can revert |
 | `clip_region` | Edit note blocks | folder + page | Store a picture of a PDF region (with the handwriting on it, if asked) or of a handwriting block as an upload the notes can embed, and return its URL |
 | `comment` | Comments and highlights | folder + page | Write a comment as the chat's agent, for its account: a reply in a thread, or a new thread on a PDF quote with its page, an area of a PDF page, a text file's lines, a note or the page itself |
@@ -159,6 +162,7 @@ at its Edit level
 | `create_page` | Create pages | folder | Make a page of notes in a folder (made when missing) or inside a page; the user can revert it |
 | `export` | Read pages | folder + page | Start the Export dialog's job for a page or a folder (Markdown, the annotated PDF, the notes as a PDF, BibTeX, Obsidian, Zotero RDF, Notion, Logseq); the app downloads the file. Only a live chat in the app has it |
 | `backlinks` | Read pages | folder + page | The notes that link to a page or a note (`[[id]]`) among the pages the chat reaches, newest first |
+| `load_skill` | Use skills on its own | folder + page | Load one of the account's skills by its name, from the list the system prompt ends with: the skill's instructions, `$ARGUMENTS` empty. Only a skill the assistant may use on its own; offered only where the request's catalog has one, never over MCP. The saved chip keeps the skill's id and a stub, never the instructions ([skills.md](skills.md#load_skill-the-agent-loads-a-skill-itself)) |
 
 ### list_pages (folder only)
 
@@ -1373,6 +1377,18 @@ cost one wait. What happens next:
   over, up to `MAX_WAIT`, 15 minutes). The model is told what blocked the
   paper and that nothing arrived (`ai_tools.unanswered_fetch`), the request
   stays open for its 6 hours, and its card stays under the reply.
+- **Stopped.** Stop, there or in Background tasks, ends the reply, and its
+  paper requests go with it, as a Dismiss lets one go: every request its
+  `fetch_paper` calls asked for (the chat scope's `handoffs`), waited on or
+  left under the reply by an earlier round, in either mode. The server lets
+  each one still waiting go as the reply ends with its client gone
+  (`agent_ndjson`, so a dropped connection does the same), including one
+  that a call running at Stop opened and the client never heard of. The
+  chat does it at once for those it knows (`stoppedRequests`): their stop
+  route, and Gamma Connector closing a tab it kept. Their cards under the
+  stopped reply start dismissed (`letGoOf`), so none asks the server or is
+  handed to the Connector after. One the user's browser already delivered
+  stays delivered.
 
 A wall on the PDF still falls back to the page's text, so the model keeps
 what was readable; an article-page-only read carries the same card. With
@@ -1896,8 +1912,11 @@ makes `content` the block's entire new text. `append` / `prepend` add
 `content` after / before the existing text on its own line, so the model
 sends only the addition and never retypes what is there; a blank line
 separates the two when either side is a heading, list, quote, table, fence,
-display math or multi-line (`join_block_text`, mirrored in `editor/BlockTree.jsx`
-for the streamed preview). `patch` rewrites one passage in place: `find`
+display math or multi-line, except where the line the two meet at is a
+list item, a quote line or a table row on both sides: then they join with
+one newline, so the result is one tight list, one quote, one table
+(`join_block_text`, mirrored in `editor/BlockTree.jsx` `joinBlockText` for
+the streamed preview). `patch` rewrites one passage in place: `find`
 quotes the existing text (it must occur once — exact match first, then a
 whitespace-relaxed one so a wrapped quote still hits; zero or several hits
 are refused with the count) and `content` replaces it, an empty `content`
@@ -1941,9 +1960,34 @@ block counts as read with the model's own text, as does a block
 `append`, `prepend`, `patch` and `selection` need no read: they apply to
 the current text.
 
-`create_block` inserts a new block
-under a page or block, after the sibling named by `after_id` (default: last).
-Notes write math only as `$…$` and `$$…$$`, which both specs tell the model,
+`create_block` is a paste. Its `content` may be a whole Markdown passage,
+split by the parser behind the editor's Paste as → Blocks and
+`POST /api/markdown-blocks` (`markdown_import.md_to_blocks`, through
+`notes._paste_tree`): a heading holds what follows it, list items nest by
+indentation, and a paragraph, table, quote, code fence or `$$` math stays
+one block. `split: false` keeps the whole content in one block, and an
+empty content makes one empty block. The blocks go under a page or block,
+after the sibling named by `after_id`, first when `after_id` is the parent's
+own id (`base._sibling_gap`, which `move_block` shares: a move to first of
+a block already first answers "ok — the block is already first"), else
+last. The run is planned under the write lock (`_run_create_block`), the gap
+read and its keys minted there, so a block someone adds at that spot
+meanwhile lands beside the paste, never inside it; the tree becomes one op
+batch (`blocks_store.tree_inserts(conn, parent, nodes, gap)`, which the
+Zotero sync's note regions use too). One call takes at most `ops.MAX_OPS`
+(500) blocks and 100,000 characters; past either it is refused, with
+nothing written, and told to paste in parts. Every block carries the
+scope's `properties.agent`, and each counts as read with its own text. A
+one-block paste answers `ok — created block [id]`; a longer one lists the
+new blocks, `[id] <first line>` indented by depth, up to 50 lines, and the
+action carries `block_ids` (all, in order) beside `block_id` (the first).
+Its preview adds `count`, `after` (the sibling's excerpt) or `first`,
+`picture_count` and `file_count`, and its `diff` is the blocks' texts,
+indented two spaces a level, which the approval card titles "Add {n} notes
+to “…”" (`chat/approvals.js`). On an MCP scope (`link_base` set), this
+server's absolute Gamma links are stored host-free first
+(`base.host_free`; `edit_block`'s written text too), as the editor's
+`relativeGammaLink` stores a pasted link of its own library. Notes write math only as `$…$` and `$$…$$`, which both specs tell the model,
 and a `content` that writes it as `\( … \)` or `\[ … \]` (GPT models do) is
 converted before anything compares, previews or stores it, by the rules a
 paste follows: a `\[ … \]` converts only when it is shaped as a formula, so
@@ -1968,7 +2012,7 @@ All four go through the op path (`ops.apply_ops`, [collab.md](collab.md)):
 logged, fanned out to anyone on the page, and the page root's `updated_at`
 stamped so the home feed reorders. Their UI actions carry `page_id` (moves across
 pages also `src_page_id`) and `block_id` (the edited/moved block, or the
-created block's new id; `read_block` actions carry it too). The frontend
+created block's new id, the first of a paste's; `read_block` actions carry it too). The frontend
 reloads the open page's block tree when it was touched and lights the block
 up; edit/create calls are previewed in the block while the model is still
 writing them (see "Watching the agent work" in [ai.md](ai.md)). Each of
@@ -2018,10 +2062,14 @@ like every other and stored under its content hash (`ai_pictures.store_picture`,
 the workspace's quota), so the same region clipped twice is one file; the
 upload GC keeps it while a note or a chat names it. The result tells the
 model to put it in a note as a line of its own, `![caption](url)`, with
-`create_block` or `edit_block`. The approval card shows the region from the
-same `GET /api/ai/page-image` / `GET /api/ai/ink-image` URL the chat renders
-(`picture` on the preview), storing nothing until the user allows. Its chip
-is "Clipped a picture of …" (kind `clip`, with `url` and `picture`); it is a
+`create_block` or `edit_block`; the chat's answer adds that the user sees
+it in the chat when the reply embeds the same line, which an MCP scope's
+leaves out. It only stores a file, so it asks nobody, even with Edit note
+blocks on Ask: its registry entry carries `"stores": True`
+(`registry.STORING_TOOLS`), which the chat's `ApprovalGate.asks` and MCP's
+`call_tool` skip, and the note write that embeds the picture asks with it
+on its card. Its chip is "Clipped a picture of …" (kind `clip`, with `url`,
+`picture` and `upload`, which MCP's structured content copies); it is a
 change the budget counts (`MAX_TOOL_ACTIONS`) but not a note change, so it
 has no revert row.
 
@@ -2031,7 +2079,8 @@ workspace does not hold (`missing_uploads`; references the block already
 had are not checked), and their approval cards show the pictures a change
 adds (`pictures` on the preview). The prompt says which URLs the model may
 embed: the ones in a picture's label line, `clip_region`'s result, and
-`read_block`'s text.
+`read_block`'s text; over MCP the refusal names `upload_file`'s result too
+([mcp.md](mcp.md#editing-notes)).
 
 ### comment / resolve / highlight (both scopes, one permission)
 
@@ -2180,9 +2229,9 @@ file. The prompt's drawing paragraph, armed with any of them, says to
 anchor to the text where it can, to look at the page before placing by
 fractions, to check the picture a result shows, and to draw only what the
 user asks for. MCP offers them at a connection's Edit level, asking first
-as its note tools do ([mcp.md](mcp.md) "Editing notes"); there a result
-says the user removes a misplaced drawing in Gamma, since MCP has neither
-`delete_block` nor a reply to revert from (`_placed_after`).
+as its note tools do ([mcp.md](mcp.md) "Editing notes"); there, with no
+reply to revert from, a result says `undo_change` takes a misplaced drawing
+back (`_placed_after`, [mcp.md](mcp.md) "Undoing a change").
 
 ### show_page (both scopes)
 
@@ -2315,7 +2364,7 @@ The note tools record what undoing and redoing their change needs, as
 | Tool | `revert` |
 | --- | --- |
 | `edit_block` | `before` and `after`: the block's text just before and just after the write, read under the write lock |
-| `create_block` | `after`: the text the block was made with; `parent` and `position`: where it went |
+| `create_block` | one block: `after`: the text the block was made with; `parent` and `position`: where it went. A paste of several: `blocks`, every block it made, parent first, as `delete_block`'s `[id, parent, position, content, properties]` (none past `_DELETE_REVERT_MAX` chars, which the result says) |
 | `draw` / `add_text_box` / `place_picture` / `add_sheet` | as `create_block`'s, and `props`: the properties the block was made with (a drawing's `ink_url`, a box's `text_box`, a picture's `picture`, a sheet's `sheet`, the agent's stamp) |
 | `create_page` | `made`: the page's id |
 | `move_block` | `parent` and `position`: where the block was; `to_parent` and `to_position`: where it went |
@@ -2331,6 +2380,7 @@ one write lock:
 | Change | Reverted by | Stops (409) when |
 | --- | --- | --- |
 | edit | merging the change `after → before` into the text stored now (`textmerge.merge` with word-level hunks, `semantic`) | `changed`: someone changed the agent's own text |
+| new blocks (a paste's `blocks`) | deleting its top blocks (`ai_revert._plan_pasted`); a redo puts the rows back under the same ids (`_put_back`, shared with a deletion's revert) | `filled`: a block's text changed, a block the paste did not make sits under one, or comment threads are on one; forceable |
 | new block | deleting it | `filled`: it was typed in, has notes under it (`preview.children`) or comment threads on it (`preview.threads`), or, made with an `ink_url`, holds another stroke file now (`preview.drawn`: strokes were drawn into it). A move or a restyle loses nothing of anyone's and does not stop it |
 | made page | moving it to Recently deleted (`ops.trash_page`, kind `made`); a redo restores it (`ops.restore_page`) | `filled` (`preview.page`): it holds notes, pages or comment threads; forceable, since Recently deleted keeps it. A page deleted for good is `gone` for a redo |
 | move | moving it back to the old parent at the old key, re-keyed if a sibling took it (across pages: `ops.move_across_pages`) | `moved`: it was moved on since |
@@ -2366,7 +2416,8 @@ and key, with the properties it was made with (`props`); with its parent
 gone it is `gone`. A move goes to `to_parent` at
 `to_position`, and stops with `moved` when the block left the place the
 revert put it. An older move without `to_position` goes last under its
-parent, and an older new block without `parent` cannot be redone. A redo of
+parent, and an older new block without `parent` cannot be redone; a paste of
+several redoes from its `blocks` (`chat/aiRevert.js` `canRedo`). A redo of
 a new block brings back the agent's text only: notes deleted with it by a
 forced revert stay gone.
 

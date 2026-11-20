@@ -22,9 +22,23 @@ export function row(page, text) {
   return page.locator(".blockRow", { hasText: text }).first();
 }
 
+// A press that opens a block's editor (`body`, its .blockBody): halfway
+// across the block, level with the middle of its first rendered piece, never
+// the block's own middle. In a block of a paragraph and a list that is the gap
+// between them, and a press there once the gap's line has drawn under the
+// pointer, as a loaded machine draws it in time, opens a new line in the gap
+// instead (clickToSource.js gapInSource). Halfway across, the press misses an
+// object narrower than the row (a table), whose press would select it.
+export async function pressToEdit(body) {
+  const piece = body.locator(".blockRendered > :not([data-markdown-copy-ignore])").first();
+  if (!(await piece.count())) return body.click();
+  const [b, k] = [await body.boundingBox(), await piece.boundingBox()];
+  await body.click({ position: { x: b.width / 2, y: k.y - b.y + k.height / 2 } });
+}
+
 // Click a rendered block to open its editor, caret at the end.
 export async function editRow(page, text) {
-  await row(page, text).locator(".blockBody").click();
+  await pressToEdit(row(page, text).locator(".blockBody"));
   await page.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
   await page.keyboard.press("End");
 }
@@ -1126,9 +1140,16 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await p.waitForSelector(".blockRow .blockRendered", { timeout: 15000 });
     // The tree as nested [content, ...children], the server's.
     const shape = async () => (await tree(alice2, made.id)).map(function line(b) { return [b.content, ...b.children.map(line)]; });
-    const held = (want, what) => until(async () => same(await shape(), want), { what: what || `tree ${JSON.stringify(want)}` });
+    const held = async (want, what) => {
+      let got;
+      try {
+        return await until(async () => same((got = await shape()), want), { what: what || `tree ${JSON.stringify(want)}` });
+      } catch (e) {
+        throw new Error(`${e.message}; the server's tree: ${JSON.stringify(got)}`);
+      }
+    };
     const edit = async (id) => {
-      await p.locator(`.blockRowWrap[data-block-id="${id}"] > .blockRow .blockBody`).click();
+      await pressToEdit(p.locator(`.blockRowWrap[data-block-id="${id}"] > .blockRow .blockBody`));
       await p.waitForFunction((id) => document.activeElement?.closest(".blockRowWrap")?.dataset.blockId === id, id, { timeout: 5000 });
       await p.keyboard.press("ControlOrMeta+End");
     };
@@ -2076,9 +2097,15 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     // source) — and in the editor the table stays a table.
     const tableFrame = frameOf(withTable.id, "table");
     await tableFrame.waitFor();
-    await tableFrame.scrollIntoViewIfNeeded();
+    // The page's pictures in first, and the press placed in the frame when it
+    // is made: a picture that loaded after the box was read pushed the table
+    // down under a press measured before. The left margin halfway down: the
+    // corner handle is at the top left, the + strips along the right and the
+    // bottom, and the paragraph below lies over the frame's bottom edge (its
+    // negative margin), where a press is that paragraph's.
+    await p.waitForFunction(() => [...document.images].every((img) => img.complete));
     const fb = await tableFrame.boundingBox();
-    await p.mouse.click(fb.x + fb.width - 1, fb.y + fb.height - 1); // the margin, clear of the corner handle
+    await tableFrame.click({ position: { x: 1, y: fb.height / 2 } });
     await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
     await p.locator(".blockEditorCm .cmTableWidget").waitFor();
     assertEq(await p.locator(".mdObjectSelected").count(), 0, "the margin press did not select the table");

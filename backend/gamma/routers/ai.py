@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import (agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_steer, ai_usage,
-                chatgpt_oauth, net_proxy, search_services, translate_engines)
+                chatgpt_oauth, fetch_handoff, net_proxy, search_services, skills, translate_engines)
 from ..ai_client import (
     Alarm,
     CallRefused,
@@ -41,6 +41,7 @@ from ..ai_tools.registry import (
     PICTURE_TOOLS,
     agent_tools,
     available,
+    replayed,
     tool_states,
 )
 from ..ai_context import (
@@ -233,6 +234,18 @@ class AIChatRequest(BaseModel):
     delegate_reads: bool = True
     context_char_limit: int = Field(default=60000, ge=100, le=1_000_000)
     multi_context_char_limit: int = Field(default=120000, ge=100, le=1_000_000)
+    # The skill this message runs ("/name" at its start, docs/dev/skills.md):
+    # {id, name, args}, `args` the text after the name, which is also the
+    # message's `prompt`. Its instructions are rendered from the account's
+    # catalog by id (gamma/skills.py turn_text), as they are for a history
+    # item carrying `skill`; an id the catalog no longer holds is a 400
+    # with kind "skill" (_chat_prompt).
+    skill: dict | None = None
+
+    @field_validator("skill")
+    @classmethod
+    def _skill_invocation(cls, value):
+        return skills.invocation(value)
 
 
 def resolve_effort(requested: str) -> str:
@@ -1571,6 +1584,12 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
             # What a block or a comment the chat makes says of who made it
             # (agents.stamp): Gamma AI, or a token's connection that drives it.
             "agent": agents.stamp(agents.of_request(request) or agents.gamma(), request.state.user or ""),
+            # The skills a message may run and load_skill may load
+            # (gamma/skills.py): the account's own only in its own session,
+            # the built-ins alone for a guest, a share link or an integration
+            # token, so no other reader of a conversation, nor its context
+            # export, reaches a private skill's instructions.
+            "skills": skills.catalog(user_id, bool(personal) and not is_token(request)),
             # Bound inside fetch_paper and fetch_url: streamed tools run in a
             # separate thread, which does not inherit the request's ContextVars.
             # Journal sign-ins are on or off (a part of fetching, not a call to approve).
@@ -1580,6 +1599,9 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
             # (gamma/fetch_handoff.py), whose delivered PDFs fetch_paper and
             # fetch_url read.
             "handoff_user": personal,
+            # The requests this reply's fetch_paper calls asked for: a reply
+            # its client left lets them go (ai_chat's agent_ndjson).
+            "handoffs": [],
             # Whether such a fetch waits on its card inside this reply
             # (ai_agent.PaperWait): the prompt tells the model which it is.
             "paper_wait": bool(payload.paper_wait and can_ask and personal),
@@ -1645,7 +1667,11 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     reads text only) sends none and says how many were left out.
     ``quote_budget`` sizes what the message points at (the request's
     ``passage_budget`` unless the window fit shrank it); what it cut is
-    kept on the scope as ``quoted`` (ai_context.gather_inputs)."""
+    kept on the scope as ``quoted`` (ai_context.gather_inputs). A
+    ``skill`` the scope's catalog does not hold is skills.SkillGone."""
+    catalog = scope.get("skills") or []
+    if payload.skill and not skills.find(catalog, payload.skill["id"]):
+        raise skills.SkillGone(payload.skill)
     crops = []
     quote_budget = quote_budget or passage_budget(payload)
     quoted = {"budget": quote_budget}
@@ -1683,7 +1709,8 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     messages = _build_messages(payload, context, with_tools=bool(tools), located=located,
                                message_context=message_context, drop_turns=drop, picture_lines=lines,
                                files=document_pdfs, quote_budget=quote_budget,
-                               date_line=f"Today is {page_now()[:10]} (UTC)." if dated else "")
+                               date_line=f"Today is {page_now()[:10]} (UTC)." if dated else "", skills=catalog,
+                               replay=replayed)
     # A custom prompt always applies; the built-in one only when there's a document
     documents = context or pdf_b64s or document_pdfs
     system = (payload.system or "").strip()[:8000] or (_SYSTEM_PROMPT if documents else "")
@@ -1795,7 +1822,10 @@ def ai_chat_context(payload: AIChatContextRequest, request: Request):
     tools = _chat_tools(payload, scope)
     if tools and entry and entry.get("tools") is False:
         tools = None  # the model answers without them (_checked_tools); never checked here
-    _, messages, system, coverage, pictures = _chat_prompt(ws, payload, scope, tools, allow_native=False)
+    try:
+        _, messages, system, coverage, pictures = _chat_prompt(ws, payload, scope, tools, allow_native=False)
+    except skills.SkillGone as e:
+        return _failure_response(400, str(e), {"kind": "skill"})
     text = context_markdown(payload.title, system, messages, tools, coverage, pictures)
     return Response(text, media_type="text/markdown; charset=utf-8")
 
@@ -2055,6 +2085,14 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     finally:
                         if steering:
                             steering.close()
+                        # A reply its client left (Stop, a dropped connection)
+                        # lets go of the paper requests it asked for, as the
+                        # card's Dismiss does: nobody waits on them now, so
+                        # Background tasks and Gamma Connector leave them.
+                        # One the user's browser already delivered stays.
+                        if stopped.is_set():
+                            for rid in scope["handoffs"]:
+                                fetch_handoff.dismiss(scope["handoff_user"], rid)
 
                 return WatchedStream(keepalive_lines(agent_ndjson(), "ai_chat", abandoned=stopped, inbox=inbox),
                                      stopped, media_type="application/x-ndjson")
@@ -2155,6 +2193,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 **({"shortened": shortened} if shortened else {})}
     except CallRefused as e:
         return _failure_response(e.status_code, e.detail, _failure_info(e, rt, entry))
+    except skills.SkillGone as e:
+        return _failure_response(400, str(e), {"kind": "skill"})
     except HTTPException:
         raise
     except Exception as e:

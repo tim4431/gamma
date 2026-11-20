@@ -1,6 +1,6 @@
 ---
 name: gamma
-description: Read Gamma page, block, and share links, search pages, notes, highlights, PDF text, and the text of files, browse folders, read a page's AI chats, export pages as Markdown or PDF, and act on the user's highlights and comments, replying, resolving, commenting on passages and highlighting them under its own name where the user allows it, through the user's configured Gamma PDF Annotator MCP connection. Use for Gamma links and library questions; not for Gamma presentation software.
+description: Read Gamma page, block, and share links, search pages, notes, highlights, PDF text, and the text of files, browse folders, read a page's AI chats, export pages as Markdown or PDF, act on the user's highlights and comments, replying, resolving, commenting on passages and highlighting them under its own name, and write and paste notes, pictures and files, where the user allows it, through the user's configured Gamma PDF Annotator MCP connection. Use for Gamma links and library questions; not for Gamma presentation software.
 ---
 
 # Gamma library
@@ -73,16 +73,35 @@ sessions, databases, or private files to work around a missing connection.
   workspaces), `create_block`, `edit_block`, `move_block` and `clip_region`
   change notes. Change notes only when the user asks, read a note with
   `read_block` before rewriting it whole (or use `append` / `patch`), and
-  say what you changed with a link to it. Nothing can be deleted this way.
-  Gamma may ask the user before each change; a declined change is final, so
-  do not retry it another way.
+  say what you changed with a link to it. Gamma may ask the user before
+  each change; a declined change is final, so do not retry it another way.
+- To put a passage into the notes, paste the Markdown with one
+  `create_block` and follow its own description on how it splits (an older
+  Gamma's `create_block` makes one block a call, and says so).
+- A picture or file goes in as the Markdown line its storing tool returns:
+  store it first, then paste that line with `create_block` or `edit_block`.
+  Use `clip_region` for a figure or handwriting in the library, and
+  `upload_file` for a public URL or a file on this computer (run the
+  command it returns in a shell). Never invent an `/api/uploads/` URL.
+  Without `upload_file` (an older Gamma), or when the command cannot reach
+  Gamma, ask the user to drop the file into the note in Gamma.
+- Every change's answer names a change id: `undo_change(change_id=…)` takes
+  it back (`list_changes` names them when you no longer have it). Undo the
+  latest change first when several touch one note. When it says someone
+  changed the note since, tell the user what undoing would lose, and pass
+  `force: true` only if they agree.
+- Use `create_page` when the user asks for a page to write into.
+- `delete_block` exists only where the user allowed this connection to
+  delete notes; without it, say you can't delete and leave that to the user.
+- This connection cannot rename or move existing pages, or change folders or
+  settings: say so and leave those to the user in Gamma.
 - There `draw`, `add_text_box`, `place_picture` and `add_sheet` put shapes, a
   text box, a picture or a page of paper on a page for the user, one block a
   call. Anchor to a PDF page's text with a verbatim quote where you can
   (`around`, `from_quote`, `to_quote`, `near`); place by page fractions only
   after looking at the page with `view_pdf_page`. Check the picture a result
-  returns; nothing you make can be deleted this way, so tell the user when
-  one is misplaced. Draw only what the user asks for.
+  returns; when one is misplaced, `undo_change` takes it back to try again.
+  Draw only what the user asks for.
 - When the user wants a file, call `export_page`: `markdown` returns the text
   to write where they asked; `pdf` (the annotated paper) and `notes_pdf` (the
   notes typeset) return an embedded PDF. Save it under the returned name unless

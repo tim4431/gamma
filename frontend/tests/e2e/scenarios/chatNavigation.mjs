@@ -1692,6 +1692,95 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
+  // Stop lets go of the paper requests the reply asked for (the server lets
+  // them go too as the reply ends: backend/tests/test_fetch_handoff.py): the
+  // card it waited on, and one an earlier round left under it, each stopped
+  // as Background tasks' Stop does, with the Connector closing its tab; the
+  // card under the stopped reply says so without asking, and nothing hands
+  // the request to the Connector after.
+  await step("chat navigation: Stop lets go of the reply's paper requests: each is stopped, its Connector tab closes, and its card under the reply reads dismissed", async () => {
+    const live = { id: "e2eHandoffStopLive1", host: "www.science.org", wall: "captcha", source: "doi:10.1126/e2e.live" };
+    const earlier = { id: "e2eHandoffStopEarly", host: "iopscience.iop.org", wall: "login", source: "doi:10.1088/e2e.early" };
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), fetchInBackground: true } } });
+    const status = { [live.id]: "waiting", [earlier.id]: "waiting" };
+    const stops = [], reads = [];
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = { push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")) };
+              init.signal.addEventListener("abort", () => controller.error(new DOMException("Stopped", "AbortError")));
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        return fetch(input, init);
+      };
+      window.connectorAsked = [];
+      window.addEventListener("message", (e) => {
+        const d = e.data;
+        if (d?.source !== "gamma-app") return;
+        if (d.type === "connector-probe") {
+          window.postMessage({ source: "gamma-connector", type: "connector-status", id: d.id, status: "ok" }, location.origin);
+        } else if (d.type === "connector-tab") {
+          window.connectorAsked.push({ id: d.id, do: d.do });
+          const answer = { open: "opened", show: "shown", close: "closed" }[d.do];
+          window.postMessage({ source: "gamma-connector", type: "connector-tab", id: d.id, do: d.do, status: answer }, location.origin);
+        }
+      });
+    });
+    await ctx.route("**/api/ai/handoffs/**", (route) => {
+      const path = new URL(route.request().url()).pathname;
+      const id = decodeURIComponent(path.split("/")[4]);
+      const handoff = id === live.id ? live : earlier;
+      if (path.endsWith("/stop")) { stops.push(id); status[id] = "dismissed"; } else reads.push(id);
+      return route.fulfill({ json: { ...handoff, url: `https://${handoff.host}/doi/x`, pdf_url: "", detail: "",
+        status: status[id], watched: false, note: "", background: false, pages: 0, from_url: "" } });
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await input.fill("Read both papers");
+      await input.press("Enter");
+      await page.waitForFunction(() => !!window.chatStream);
+      // an earlier round's blocked fetch, then the card the reply waits on
+      await page.evaluate(({ live, earlier }) => {
+        window.chatStream.push({ action: { kind: "fetch", error: true, summary: `Needs your browser: ${earlier.host}`,
+          tool: "fetch_paper", args: { source: earlier.source }, result: "error: blocked", handoff: earlier } });
+        window.chatStream.push({ handoff: { ...live, call_id: "f2", timeout: 300 } });
+      }, { live, earlier });
+      await page.locator(".chatHandoff").getByText("www.science.org asked for a CAPTCHA or bot check").waitFor();
+      await page.getByRole("button", { name: "Stop generating", exact: true }).click();
+      await until(() => stops.length === 2, { what: "both requests stopped" });
+      assertEq(JSON.stringify([...stops].sort()), JSON.stringify([earlier.id, live.id].sort()), "the reply's two requests");
+      await until(async () => (await page.evaluate(() => window.connectorAsked.filter((a) => a.do === "close").length)) === 2,
+        { what: "the Connector lets both tabs go" });
+      const card = page.locator(".chatHandoff");
+      await card.getByText("Dismissed.").waitFor();
+      assertEq(await card.count(), 1, "the card of the call that ran stays under the reply; the live one went with the wait");
+      const readsAfter = reads.length, asked = await page.evaluate(() => window.connectorAsked.length);
+      await page.waitForTimeout(1500);
+      assertEq(await page.evaluate(() => window.connectorAsked.length), asked, "nothing is handed to the Connector after Stop");
+      assertEq(reads.length, readsAfter, "the settled card asks the server nothing");
+      // reloaded, the card reads the same
+      await page.reload();
+      await page.locator(".chatHandoff").getByText("Dismissed.").waitFor();
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
+  });
+
   await step("chat navigation: a change waits on its approval card; allowing for the chat, declining and always allowing", async () => {
     const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Approvals page" } });
     const block = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "Draft summary" } });

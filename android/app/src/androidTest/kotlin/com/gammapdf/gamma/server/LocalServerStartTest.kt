@@ -120,8 +120,8 @@ class LocalServerStartTest {
             val up = Health.isUp(health.status, health.body)
             assertTrue("/api/health answered ${health.status}", up)
             // Up by the desktop's rule, but standing aside: a data directory
-            // this build cannot upgrade, which answers every /api call with the
-            // same 503 (gamma/app.py _blocked_app). Not expected on a directory
+            // this build cannot upgrade, which answers its API (all but the
+            // sign-in) with the same 503 (gamma/standby.py). Not expected on a directory
             // made fresh, but nothing below could run.
             assumeFalse("the data directory cannot be upgraded by this build", health.status == 503)
 

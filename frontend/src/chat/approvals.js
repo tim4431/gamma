@@ -68,6 +68,11 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
         selection: () => t("Edit your selection in “{title}”", { title }),
       }[preview.mode]?.() || t("Edit a note in “{title}”", { title });
     case "create_block":
+      // a paste of several blocks (ai_tools.notes create_block) says how many
+      if (preview.count > 1) {
+        return preview.parent ? t("Add {n} notes under “{parent}” in “{title}”", { n: preview.count, parent: preview.parent, title })
+          : t("Add {n} notes to “{title}”", { n: preview.count, title });
+      }
       return preview.parent ? t("Add a note under “{parent}” in “{title}”", { parent: preview.parent, title })
         : t("Add a note to “{title}”", { title });
     case "move_block":

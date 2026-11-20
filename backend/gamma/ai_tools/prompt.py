@@ -7,6 +7,7 @@ PDF."""
 
 import json
 
+from .. import skills
 from ..trash import KEEP_DAYS
 from .base import _scope_folder
 from .registry import MUTATING_TOOLS, TOOLS, WRITING_TOOLS, _state_of, agent_tools, available
@@ -380,4 +381,11 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
         text += " Change only the notes the user asked you to change."
     if not any(n in MUTATING_TOOLS for n in names):
         text += " Making changes is not available here — suggest them instead of attempting them."
+    if "load_skill" in names:
+        # The skills the model may load, sorted by name: it reads the same
+        # while the account's skills stand, and an edit of one costs the
+        # cached prefix once.
+        listed = skills.listing(scope.get("skills") or [])
+        if listed:
+            text += "\n\n" + listed
     return text

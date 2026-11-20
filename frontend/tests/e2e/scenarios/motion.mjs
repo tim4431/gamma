@@ -14,7 +14,8 @@ import { selectPdfText, waitForPdf } from "./pdf.mjs";
 // its rows go; the Inbox opens a tab on what it showed last, a first
 // listing waits blank in its room and comes into focus, and its rows and
 // day headers leave through copies; In progress goes with the last task
-// running as Finished's header glides up, and a removed task leaves; the
+// running as Finished's header glides up, and a removed task leaves, the
+// panel (nor the Inbox) never showing a scroll bar meanwhile; the
 // PDF margin's cards grow in and shrink away, a reply glides its thread to
 // the top of the Comments window (from where its row stood at any Interface
 // size) and rises into its thread; the share
@@ -150,7 +151,10 @@ export async function motionScenarios(env) {
       const seen = await glides(page);
       for (const key of ["moving mv2", "moving under:mv2", "moving mv3", "moving tail"]) assert(seen.includes(key), `${key} glides: ${seen}`);
       assert(!seen.some((g) => /^moving (mv0|mv1|mv2c\d)$/.test(g)), `the rows above stay, and the children travel with theirs: ${seen}`);
-      assertEq(seen.filter((g) => g.startsWith("entering ") && !/ (mv|under:)/.test(g)).length, 1, `the new row fades in: ${seen}`);
+      // The seeded rows by their ids whole, a body by its key: the new row's
+      // id is random and may begin with "mv" itself (mv_rMlbZhhH6 did).
+      const seeded = (key) => /^mv(\d|2c\d)$/.test(key) || key.startsWith("under:");
+      assertEq(seen.filter((g) => g.startsWith("entering ") && !seeded(g.slice("entering ".length))).length, 1, `the new row fades in: ${seen}`);
       await arrived(rowOf(page, "mv3"));
       assertEq(await page.locator("[data-moving], [data-entering]").count(), 0, "every glide has landed");
       // Tab: the row glides into its new place; its new parent's body does not fade it
@@ -336,10 +340,25 @@ export async function motionScenarios(env) {
         }
       }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-moving", "data-entering", "data-reveal"] });
       document.addEventListener("animationstart", (e) => window.__moves.push(`anim ${e.animationName} ${name(e.target)}`), true);
+      // A popover that could scroll in some frame (its scroll bar shows):
+      // the lists in these never outgrow them, so a scroll bar is one a
+      // motion drew for a moment.
+      const could = new Set();
+      const frame = () => {
+        for (const el of document.querySelectorAll(".tasksPopover:not([data-leaving]), .inboxPopover:not([data-leaving])")) {
+          const scrolls = getComputedStyle(el).overflowY !== "hidden" && el.scrollHeight > el.clientHeight;
+          if (scrolls && !could.has(el)) window.__scrolled.push(`${name(el)} ${el.scrollHeight} > ${el.clientHeight}`);
+          if (scrolls) could.add(el); else could.delete(el);
+        }
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
     };
+    window.__scrolled = [];
     if (document.documentElement) go(); else document.addEventListener("readystatechange", go, { once: true });
   });
   const moves = (page) => page.evaluate(() => window.__moves.splice(0));
+  const scrolled = (page) => page.evaluate(() => window.__scrolled.splice(0));
   // The requests `pattern` matches, answered `ms` later.
   const slowly = (page, pattern, ms) => page.route(pattern, async (route) => { await sleep(ms); await route.continue().catch(() => {}); });
   const copiesGone = (page) => until(async () => (await page.locator("[data-leaving]").count()) === 0, { timeout: 3000, what: "every copy goes" });
@@ -398,6 +417,7 @@ export async function motionScenarios(env) {
       await sleep(400);
 
       await moves(page);
+      await scrolled(page);
       const first = inboxRows(page).first();
       await first.hover();
       await first.getByRole("button", { name: "Mark read" }).click();
@@ -408,6 +428,8 @@ export async function motionScenarios(env) {
       assert(seen.filter((m) => m.startsWith("moving ")).length >= 1, `the rows below close up: ${seen}`);
       await arrived(inboxRows(page).first());
       await copiesGone(page);
+      const bars = await scrolled(page);
+      assert(!bars.length, `no scroll bar while they close up: ${bars}`);
       for (let n = 2; n > 0; n--) {
         const row = inboxRows(page).first();
         await row.hover();
@@ -467,6 +489,7 @@ export async function motionScenarios(env) {
       await row("slow.pdf").locator(".taskBar").waitFor({ timeout: 10000 });
       await row(QUICK).waitFor();
       await moves(page);
+      await scrolled(page);
       await until(async () => (await row("slow.pdf").getAttribute("class")).includes("done"), { timeout: 20000, what: "the slow upload finishes" });
       await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
       let seen = await moves(page);
@@ -474,6 +497,9 @@ export async function motionScenarios(env) {
       assert(seen.includes("leaving row popoverSection"), `In progress goes with its last row: ${seen}`);
       await copiesGone(page);
       await arrived(row(QUICK));
+      // the rows drawn where they stood never make the shrunk panel scroll
+      let bars = await scrolled(page);
+      assert(!bars.length, `no scroll bar while the rows close up: ${bars}`);
 
       await moves(page);
       const quick = row(QUICK);
@@ -483,6 +509,9 @@ export async function motionScenarios(env) {
       seen = await moves(page);
       assert(seen.includes("leaving row taskRow"), `it leaves through a copy: ${seen}`);
       await copiesGone(page);
+      bars = await scrolled(page);
+      assert(!bars.length, `nor while the removed one leaves: ${bars}`);
+      await until(async () => !(await page.locator("[data-scroll-held]").count()), { timeout: 2000, what: "the panel scrolls again once they land" });
 
       // (the slow upload's metadata lookup over first, as the quick ones' were:
       // a row still running when the clear lands leaves with the next listing)

@@ -253,6 +253,8 @@ function GroupFrame({ group, framed, live, barSlot, tabs, activeTabId, onActivat
             onTogglePin={strip.onTogglePin}
             onContext={strip.onContext}
             onDropTab={(id, index) => onMoveTab(id, group.id, index)}
+            onGroupChange={strip.onGroupChange}
+            onGroupMenu={strip.onGroupMenu}
           />
           {live ? (barSlot ? <div className="tabLiveBarSlot" data-live-bar-slot="" /> : null) : strip.actions?.(group)}
         </div>
