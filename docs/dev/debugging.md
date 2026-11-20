@@ -920,7 +920,29 @@ editor with esbuild over an in-memory fixture ([latex_editing.md](latex_editing.
 A worker runs other files before a test each time (`--dist loadfile` hands
 them out as workers free up), and a CI runner is slower than this machine,
 so a test that depends on either passes here and fails there now and then.
-What releasing 0.4.0 met, and what each needs:
+Run unpinned, this machine gives each worker several times a runner's CPU
+(32 fast threads for 32 pytest workers or 6 browser workers, where a runner
+has 4 slower vCPU for 4 or 3), and from 13 to 19 November 2026 every merge
+to `main` but one met at least one race CI lost and this machine never
+showed, each a PR round of 30-40 minutes. `tools/ci_local.sh` runs the
+slow jobs at CI's pace instead: the backend suite on both Pythons with
+`-n 4` and the browser suite's three shards at `--jobs 3`, each job pinned
+to one core and its SMT sibling (`taskset`), which times them about as a
+runner does, all five at once in about ten minutes. Its first runs here,
+and the pinned reruns after them, turned up six failures CI can meet, the
+causes of two Known flakes among them, and one of those a real bug (a
+collaborator's screen left on stale text, [collab.md](collab.md) "The
+client"). The `merge` skill's local step runs it; a fix of a race is rerun
+at the same pace (`taskset -c <core>,<sibling>`, several runs side by
+side).
+
+```bash
+bash tools/ci_local.sh                 # backend, backend-mobile, e2e-1..3
+bash tools/ci_local.sh e2e             # the three browser shards
+GAMMA_CI_CPUS=4 bash tools/ci_local.sh # two cores a job: faster than CI
+```
+
+What releasing 0.4.0 and the merges after it met, and what each needs:
 
 - **A token on the shared client.** `client` carries the last login's
   cookie, and `auth.py` takes a session cookie before a bearer, so a token
@@ -947,6 +969,41 @@ What releasing 0.4.0 met, and what each needs:
   wall clock on a loaded runner. A test that bounds how long pure code
   takes measures the thread's CPU time (`time.thread_time()`), as
   `test_notion_nfm`'s long inputs do.
+- **A debounce against the requests' pace.** Three PATCHes meant to land
+  inside a 0.2 s settle window settled apart on a loaded runner and sent
+  three PUTs. A test that counts what a debounce coalesces holds the delay
+  long while it makes the changes, then lets it settle (`test_cloud_auth`'s
+  `_settle_now`).
+- **A handshake's first message taken as its end.** A page socket's
+  `hello` comes before the server checks the peer's access a second time
+  (`routers/collab.py`), so a page trashed right after the hello closed
+  the socket (4403) before its `trashed` arrived. A test that changes the
+  page under a socket it just opened waits until the socket is live in the
+  room (`test_trash_room_messages`'s `_open`: a cursor it sends reaches a
+  second tab).
+- **A browser step's text found in what an earlier step left.** The
+  mentions step waited for a reply reading "References received." in a
+  conversation that already held one: the wait returned at once, or found
+  two once the new one drew. A step that waits for its own result starts
+  from a clean slate (the conversation emptied first) or counts.
+- **A press on a box read earlier, or on a block's middle.** A picture
+  that loads after a box is read moves what is under it, so a press goes
+  through the locator (`locator.click({ position })`, measured at the
+  press) once the page's pictures are in. A block's middle is the gap
+  between two of its rendered pieces when it has two (a paragraph and a
+  list), and a press there, once the gap's line has drawn, opens a new line
+  instead of the editor where the caret was: the notes helpers press level
+  with a block's first piece, halfway across it (`pressToEdit`).
+- **A random id told apart by a prefix.** Ids are 12 random base64url
+  characters (`makeId`), so a new block's id begins with any two given
+  characters about once in 4096: the motion step that left out its seeded
+  rows `mv0` … `mv3` by the prefix "mv" missed a new row `mv_rMlbZhhH6`. A
+  step matches the ids it seeded whole.
+- **The page's text read as one string.** `textContent("body")` runs one
+  row into the next: the collab merge race's "onetwo" over "three of
+  bob's" read "twothree" whenever nothing else (a caret marker) stood
+  between them. A step that asks whether some text is gone reads it row
+  by row, as its `shown` helper does.
 
 `GAMMA_TEST_SHUFFLE=<seed>` puts the files in another order (conftest's
 `pytest_collection_modifyitems`; each file's tests stay in theirs):
@@ -966,20 +1023,6 @@ Failures seen once that a rerun cleared, not yet fixed: what was seen and
 what is known of the cause. The `merge` skill adds one when it reruns
 instead of fixing; the fix removes its entry.
 
-- **collab: two people's Backspace merges never lose a block's text**
-  (`frontend/tests/e2e/scenarios/collab.mjs:456`, CI, 2026-11-14): "bob's
-  refused join gone from his screen" timed out, though his screenshot shows
-  the rows as they should be (`onetwo`, `three of bob's`, `tail`) and the
-  "couldn't be saved" toast: some element of the page, not one on screen,
-  still held "twothree". Its refused save's 404, expected there, then failed
-  the next step's `assertNoProblems` ("a highlight bob makes on the PDF
-  appears on alice's page"), since a failed step leaves its page problems
-  behind.
-- **notes: Backspace right after a list marker takes it in one press**
-  (`frontend/tests/e2e/scenarios/notes.mjs:1272`, CI, 2026-11-14): the
-  server's tree never matched the screen's, though each of the six edits
-  went out as an ops request answered 200. Not seen in four local runs of
-  the `notes:` steps.
 - **local-agents: on main.tex of the synced folder a passage commented
   with Send to Codex ticked is answered…**
   (`frontend/tests/e2e/scenarios/localAgents.mjs:471`, this machine,
@@ -1003,19 +1046,6 @@ instead of fixing; the fix removes its entry.
   2026-11-14): one run ended with an uncaught file-system error (its stack
   lost) while the backend suite and the frontend tests ran beside it; 18
   runs since, under the same load, passed.
-- **test_cloud_auth: test_profile_pull_push_and_debounce**
-  (`backend/tests/test_cloud_auth.py:864`, this machine, 2026-11-18): an
-  assertion failed in the full parallel suite while five browser groups
-  ran beside it; the file alone passed 41/41. Likely the debounce: with
-  `PUSH_DELAY` at 0.2 s, three quick PATCHes that take longer than that
-  under load settle apart and send two PUTs where the test counts one.
-- **notes: images and tables are objects — a press selects…**
-  (`frontend/tests/e2e/scenarios/notes.mjs:2082`, this machine,
-  2026-11-18): the press on the table's bottom margin opened no editor.
-  The screenshot shows the table under the step's 200 px image, its
-  bounding box read before the image loaded: the image pushed the table
-  down and the press missed. Seen while the backend suite ran beside the
-  run; the group run alone passed.
 
 ### What a run leaves behind
 

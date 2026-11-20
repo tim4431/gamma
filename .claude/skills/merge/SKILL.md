@@ -48,7 +48,12 @@ is one of:
   [debugging.md](../../../docs/dev/debugging.md)), not the symptom: no
   retry loop, no longer timeout alone, no skipped test. Rerun it several
   times (`--only <step>` for a browser step, the file alone for pytest) to
-  show the flake is gone.
+  show the flake is gone, at CI's pace (step 2), or force the race (slow
+  the one call the test outran) when a rerun is luck. Then look for the
+  same shape beside it (the same missing wait in a sibling step, the same
+  helper) and fix those in the same commit: each one CI meets costs a PR
+  round. A Known flakes entry whose cause turns up is fixed the same way,
+  and its entry goes.
 - **a real bug** — in the app or in a test that asserts the wrong thing.
   Fix it with a test that fails without the fix, and verify it as any
   change (the [test policy](../../../docs/dev/debugging.md#local-changes-test-the-affected-modules),
@@ -96,10 +101,18 @@ instead, and the merge waits.
    scratchpad directory):
 
    ```bash
-   # backend/ — check: backend (~4 min)
-   "$MAIN/backend/venv/Scripts/python.exe" -m pytest tests -q -n auto --dist loadfile
-   # frontend/ — check: frontend
+   # frontend/ — check: frontend, and the worktree's own build, which the
+   # browser suite runs (the developer's 9001 server serves the main
+   # checkout's frontend/dist, not this one)
    npm run lint && npm test
+   npm run build
+   npm run budget
+   # repository root — check: backend, backend-mobile and e2e in CI's shape
+   # (~10 min): CI's worker counts, each job on two CPUs of its own, which
+   # run the suites at a runner's pace, all five at once. Leave out
+   # backend-mobile when the branch leaves backend/ alone:
+   # bash tools/ci_local.sh backend e2e
+   bash tools/ci_local.sh
    # repository root — check: branding, frontend (desktop), extension
    node tools/branding/build.mjs --check && node --test tools/branding/check.test.mjs
    node --test desktop/test/*.test.js
@@ -108,14 +121,6 @@ instead, and the merge waits.
    # backend/requirements*.txt; a Python 3.13 on Linux or macOS (WSL here:
    # under a Windows Python, pip asks for pywin32, which no device has)
    bash tools/check_mobile_pins.sh
-   # backend/ — check: backend-mobile, when the branch changes backend/: the
-   # suite under the apps' Python and pins
-   "$MAIN/backend/venv313/Scripts/python.exe" -m pytest tests -q -n auto --dist loadfile
-   # frontend/ — check: e2e (~12 min), the worktree's own build (the
-   # developer's 9001 server serves the main checkout's frontend/dist, not this one)
-   npm run build
-   npm run budget  # check: frontend
-   GAMMA_E2E_PYTHON="$MAIN/backend/venv/Scripts/python.exe" npm run e2e -- --continue
    # cloud/, when the branch changes it — cloud.yml
    "$MAIN/backend/venv/Scripts/python.exe" -m pytest tests -q
    # sites/, when the branch changes sites/, docs/, desktop/ui/fonts/, docker-compose.yml.example, PRIVACY.md or TERMS.md — site.yml
@@ -128,11 +133,20 @@ instead, and the merge waits.
    bash ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug -Pgamma.webBuild=prebuilt
    ```
 
-   Run the browser suite on its own, not beside the backend suite: its
-   steps time what they wait for, and a loaded machine makes failures CI
-   would not see (a failure that shows only under load is still a flake
-   worth fixing, but find it apart from the noise). A failure → fix it (above),
-   rerun what the fix touches, and go on once everything is green.
+   `tools/ci_local.sh` is the PR's slow jobs as CI runs them: the backend
+   suite with `-n 4`, the browser suite in three shards at `--jobs 3`, each
+   job pinned (`taskset`) to one core and its sibling, which on this
+   machine times them about as a GitHub runner does. Unpinned, each test
+   worker had several times a runner's CPU, so a step that acts before the
+   state it needs passed here and failed in CI, and the merges of
+   November 2026 met one such race a PR round, a round of 30-40 minutes
+   each (debugging.md "Order and timing"). Run at CI's pace, such a step
+   fails here first. The five jobs share no core; run the light checks
+   before or after it, not beside it. Without `taskset` (Windows) the jobs
+   run unpinned: CI's worker counts, not its pace. A failure → fix it
+   (above), rerun what the fix touches at the same pace (its step or file,
+   a few runs side by side, each under `taskset -c <core>,<sibling>`), and
+   go on once everything is green.
 
 3. **Push**: `git push -u origin merge/<yyyy-mm-dd>`.
 
@@ -157,10 +171,12 @@ instead, and the merge waits.
    tail, `gh run download <id> -n e2e-failures-<shard> -D "$SCRATCH/ci"`
    (for the Android emulator, `-n android-emulator-failures`: the
    server's log, logcat and the test report).
-   Reproduce it locally (`npm run e2e -- --only "<step>"`, the pytest
-   file alone), fix it (above), commit, push — the push restarts the
-   checks — and watch again. A failure CI shows but the machine does not
-   is a flake still: the log, the screenshots and the code find its cause.
+   Reproduce it locally at CI's pace (`npm run e2e -- --only "<step>"`,
+   the pytest file alone, under `taskset` as step 2 says, several runs
+   side by side, or its job through `tools/ci_local.sh <job>`), fix it
+   (above), commit, push — the push restarts the checks — and watch
+   again. A failure CI shows but the machine does not is a flake still:
+   the log, the screenshots and the code find its cause.
    One whose cause is outside the repo (a runner, npm or PyPI outage, a
    GitHub incident; the log says so) gets one `gh run rerun <id> --failed`,
    named in the report. So may one in code the merge does not change —
