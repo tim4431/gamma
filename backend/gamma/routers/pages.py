@@ -26,8 +26,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import (comments, config, folder_links, highlight_relocate, jobs, linked_files, pdf_meta, pdf_ocr, publish,
-               storage, upload_gc)
+from .. import (comments, config, folder_links, highlight_relocate, jobs, linked_files, ocr_auto, pdf_meta, pdf_ocr,
+               publish, storage, upload_gc)
 from ..auth import (DISK_CLIENT, actor_of, link_ratelimit, require_user_id, require_ws, require_ws_writer, resolve_ws,
                     share_scope, writer_client)
 from ..blocks_store import (
@@ -414,21 +414,26 @@ def page_by_file(payload: ByFile, request: Request):
     it, 403 ``locked``); no ``auto_title`` and no manifest for a document
     that is no PDF. A ``.pdf``, and a file whose bytes are a PDF under
     another extension (stored again as ``<hash>.pdf``), goes the ``by-doc``
-    way. → ``{page, created}``. 400 for a name that is no stored file's or a
+    way; a PDF page made is a person's upload, a scan of it with no text
+    recognized by itself (``ocr_auto.consider``). → ``{page, created}``.
+    400 for a name that is no stored file's or a
     Markdown file (``MARKDOWN_IS_A_NOTE``: ``POST /pages/from-file`` makes
     its note), 404 when the file is not in this workspace. Workspace
     editors."""
     ws = require_ws(request, write=True)
+    actor = actor_of(request)
     stored = StoredFile(ws, (payload.file or "").strip(), payload.name)
     with connect_pages_db(ws) as conn:
         write_lock(conn)  # the lookup and the create as one step: one page per file
         created = page_for_file(conn, stored.hash, stored.ext) is None
         try:
             page = get_or_create_doc_page(conn, stored.hash, "", None, payload.name, folder=payload.folder.strip(),
-                                          ws=ws, actor=actor_of(request), format=stored.format, ext=stored.ext,
+                                          ws=ws, actor=actor, format=stored.format, ext=stored.ext,
                                           size=stored.size)
         except OpError as e:
             return op_refusal(e)
+    if created and stored.format == "pdf":  # a scan with no text recognized by itself (gamma/ocr_auto.py)
+        ocr_auto.consider(ws, stored.hash, page["id"], actor)
     return {"page": page, "created": created}
 
 
@@ -1114,7 +1119,8 @@ def add_file_to_library(page_id: str, payload: LibraryFiling, request: Request):
     sets ``library`` and files it in its directory and in ``folder`` (a
     library folder) when one is given, and a PDF's title turns automatic
     (``auto_title``), so its record may title it as an upload's does; the
-    PDF's manifest is scheduled (``pdf_meta.schedule``). → ``{page}``, its
+    PDF's manifest is scheduled (``pdf_meta.schedule``), and a scan of it
+    with no text recognized by itself (``ocr_auto.consider``). → ``{page}``, its
     ``page_summary``. 400 for a page that is no file or is in the library
     already, or a ``folder`` that is no library folder; 409 with ``page_id``
     when a library page owns those bytes already ("Already in the library
@@ -1142,6 +1148,7 @@ def add_file_to_library(page_id: str, payload: LibraryFiling, request: Request):
         return op_refusal(e)
     if is_pdf(view):
         pdf_meta.schedule(ws, own_hash(view))
+        ocr_auto.consider(ws, own_hash(view), page_id, actor_of(request))  # a scan with no text: gamma/ocr_auto.py
     return {"page": out}
 
 
@@ -1183,7 +1190,8 @@ def copy_file_to_library(page_id: str, payload: LibraryFiling, request: Request)
     comments or stamps of the file's: it is annotated apart, a figure's
     version kept apart. A library page that owns those bytes already (the
     file once added, an earlier copy) answers instead. → ``{page,
-    existed}``; a PDF's manifest is scheduled for a page made. 400 for a
+    existed}``; for a page made, a PDF's manifest is scheduled and a scan
+    of it with no text recognized by itself (``ocr_auto.consider``). 400 for a
     page that is no file with a document, or a ``folder`` that is no
     library folder; 409 when the bytes cannot be had (a listed file among
     them, ``TOO_LARGE``). Workspace editors."""
@@ -1210,4 +1218,5 @@ def copy_file_to_library(page_id: str, payload: LibraryFiling, request: Request)
         out = _summary(conn, block["id"])
     if not existed and is_pdf(view):
         pdf_meta.schedule(ws, doc_id)
+        ocr_auto.consider(ws, doc_id, block["id"], actor_of(request))  # a scan with no text: gamma/ocr_auto.py
     return {"page": out, "existed": existed}

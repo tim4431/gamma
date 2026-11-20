@@ -46,6 +46,11 @@ function socketUrl(pageId) {
 //                               went (the account's nudge, on any page), or the
 //                               socket (re)joined or the poll came round: refetch
 //                               the page's computers (vault/usePageComputer.js)
+//   onOcr(msg)                — a stored PDF's recognized text changed ({t: "ocr",
+//                               doc_id, stamp}: the workspace file's nudge, on any
+//                               page), or the socket joined again after it dropped
+//                               or the poll came round (null): refetch that file's
+//                               recognition, or the one on screen (pdf/ocrState.js)
 // A `{t: "inbox"}` nudge (the account's inbox has news) becomes the window
 // event gamma:inbox, whatever page it arrived on.
 // Returns the session's commit/flush/hasPending/sendCursor/sendInkLive/overlay/

@@ -94,6 +94,22 @@ test("a halted job's row says where it stopped", () => {
   assert.deepEqual(f.said, []);
 });
 
+test("a job halted because the PDF's text changed under it says so, and Try again translates the new text", () => {
+  const f = follower();
+  f.set("/a.pdf", run(0.3));
+  f.set("/a.pdf", end({ progress: 0.3, halted: "text", untranslated: 0 }));
+  assert.deepEqual([f.tasks.get(1).state, f.tasks.get(1).info], ["cancelled", "stopped: this PDF's text changed"]);
+  assert.equal(f.said.length, 1);
+  assert.equal(f.said[0].msg, "The translation stopped because this PDF's text changed — translate again to go on with its new text.");
+  f.said[0].action.run();
+  assert.equal(f.host.reruns, 1);
+  // off screen: said, with nothing to run there
+  const g = follower();
+  g.set("/b.pdf", run(0.3));
+  g.set("/b.pdf", end({ progress: 0.3, halted: "text" }));
+  assert.deepEqual([g.said.length, g.said[0].action], [1, undefined]);
+});
+
 test("a job that failed says why", () => {
   const f = follower();
   f.set("/a.pdf", run(0.2));

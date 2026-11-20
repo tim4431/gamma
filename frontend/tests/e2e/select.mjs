@@ -40,6 +40,8 @@ export const GROUPS = [
   { id: "contextual-guide", files: ["contextualGuide.mjs"], s: 70 },
   { id: "sub-pages", files: ["subPages.mjs"], s: 68 },
   { id: "zotero-link", files: ["zotero-link.mjs"], s: 67 },
+  // measured alone (one worker), not yet from CI: it grew to 25 steps and two more servers
+  { id: "scan-layer", files: ["scanLayer.mjs"], s: 66 },
   { id: "pdf-load", files: ["pdfload.mjs"], s: 65 },
   { id: "collab", files: ["collab.mjs"], s: 59 },
   { id: "files", files: ["files.mjs"], s: 54 },
@@ -60,7 +62,6 @@ export const GROUPS = [
   { id: "auth", files: ["auth.mjs"], s: 28 },
   { id: "block-properties", files: ["blockProperties.mjs"], s: 28 },
   { id: "text-search", files: ["textSearch.mjs"], s: 28 },
-  { id: "scan-layer", files: ["scanLayer.mjs"], s: 38 },
   { id: "notebooks", files: ["notebooks.mjs"], s: 27 },
   { id: "recording", files: ["recording.mjs"], s: 27 },
   { id: "pen", files: ["pen.mjs"], s: 25 },

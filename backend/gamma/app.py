@@ -15,7 +15,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
-from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, offsite, reports
+from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, ocr_engine, offsite
+from . import reports
 from . import sync_engine, trash, upload_gc, version, workspaces, ws_backup, zotero_stream
 from .annotations import listeners as annotation_listeners
 from .computers import channel as computer_channel
@@ -594,6 +595,7 @@ def create_app() -> FastAPI:
 
     sync_engine.start_loop()
     upload_gc.start()
+    ocr_engine.start_check()  # whether this server's engine starts, known before anyone asks for a run
     return app
 
 

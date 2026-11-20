@@ -21,6 +21,7 @@ import com.gammapdf.gamma.app.Prefs
 import com.gammapdf.gamma.json.Json
 import com.gammapdf.gamma.json.jsonDouble
 import com.gammapdf.gamma.json.jsonInt
+import com.gammapdf.gamma.json.jsonObject
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeFalse
 import org.junit.Test
@@ -36,7 +37,8 @@ import org.junit.runner.RunWith
  * a tablet. /api/health proves the start but not the reader, which the
  * server imports at its first PDF read: the manifest's page sizes and a page
  * picture both come from PyMuPDF, and page-image answers 404 when it draws
- * nothing.
+ * nothing. Last, the text recognition models the build carries are where
+ * the server finds them, and served for a run in the window.
  *
  * The server runs on a data directory of the test's own, made fresh each
  * run in the app's cache, with a vault of its own and a seed for a vault
@@ -164,6 +166,20 @@ class LocalServerStartTest {
             if (picture.status != 200 || !picture.type.startsWith("image/") || picture.body.size <= 2048) {
                 failed("GET /api/ai/page-image (MuPDF rendering the page)", picture, server)
             }
+
+            // The text recognition models: the build carries backend/tessdata,
+            // Chaquopy unpacks it beside gamma/, where the server looks for
+            // it, and the server, which reads no text itself here, offers the
+            // page a run in the window and serves it the models (4 MB for
+            // English).
+            val config = call("GET", "$api/server-config", cookie = cookie)
+            val ocr = config.json["ocr"].jsonObject()
+            val models = ocr?.get("models") as? String
+            if (config.status != 200 || ocr?.get("where") != "window" || models.isNullOrEmpty()) {
+                failed("GET /api/server-config (text recognition in the window)", config, server)
+            }
+            val model = call("GET", "$url$models/eng.traineddata", cookie = cookie)
+            if (model.status != 200 || model.body.size < 1_000_000) failed("GET $models/eng.traineddata", model, server)
         } finally {
             scope.cancel()
         }

@@ -148,12 +148,23 @@ an older macOS the requirement's marker (`sys_platform != "darwin" or
 platform_release >= "24"`, Darwin 24 being macOS 15) skips tesserocr, so
 `pip install -r requirements.txt` still succeeds there and the server
 runs without the engine. The apps' server has none either
-(`requirements-mobile.txt` leaves it out). A server without the engine
-reports no `ocr` in `/api/server-config` and offers no Recognize text.
-Read when asked:
+(`requirements-mobile.txt` leaves it out). Where recognition is on and the
+models are there, a server without the engine leaves the reading to the
+window that asks (tesseract.js, `ocr.where` `window` in
+`/api/server-config`); without the models it reports no `ocr` and offers
+no Recognize text. Read when asked:
 
 - `GAMMA_OCR`: `on` or `off` (also 1/0, true/false, yes/no). Unset, it is
   on, except on a hosted container and in demo mode.
+- `GAMMA_OCR_ENGINE=window`: a server with the engine reads no text itself
+  and leaves every reading to the window, as the apps do. Any other value
+  changes nothing. The scan-layer browser group sets it for the window
+  path.
+- `GAMMA_OCR_AUTO`: `on` or `off` (the same spellings), the automatic
+  recognition of a scan uploaded with no text, over the admin's switch
+  (on by default; it acts only where the server recognizes text itself).
+  The backend's `conftest.py` and the browser harness set it `off`, and
+  the tests of the automatic runs turn it on.
 - `GAMMA_OCR_WORKERS`: how many files are recognized at once on the
   server, and engines kept loaded (about 50 MB each); 1 unless set. A page
   keeps one core busy for seconds.
@@ -164,7 +175,10 @@ Read when asked:
   thread per core otherwise, which measured slower.
 
 The backend's real-engine tests skip without tesserocr; the others use the
-fake engine of `tests/ocr_fake.py`. The desktop bundle's own check is
+fake engine of `tests/ocr_fake.py`, and the window's tests play the window
+over the routes. With recognition on, the server checks its engine at
+startup on a thread (`ocr_engine.start_check`); a test that patches the
+engine calls `ocr_engine.reset()`, which waits for that check. The desktop bundle's own check is
 `gamma-server --check-ocr`
 ([desktop/docs/architecture.md](../../desktop/docs/architecture.md)).
 
@@ -1709,8 +1723,21 @@ The scenarios live in `tests/e2e/scenarios/`:
   over its printed word; Ctrl+F finding a word only the recognition read;
   a highlight made before the run taking the recognized line as its quote
   and a heavily garbled one keeping its own, both in place; the metadata
-  popover's text cell after the run, the menu row gone then, and the row
-  and the popover's prompt for a scan with no layer.
+  popover's text cell after the run, the menu row gone then; Forget the
+  recognized text…, asked first (Cancel forgets nothing), its summary and
+  row, then the garbled layer and the old quote back, the highlights in
+  place, Ctrl+F finding the garbled word and Recognize text offered again;
+  and the row and the popover's prompt for a scan with no layer. Then a
+  second account's tab open on a shared workspace's scan reading the
+  recognized words, and later its own layer again, from the page socket's
+  `ocr`, without a reload; the window path against a server with
+  `GAMMA_OCR_ENGINE=window` (the row's title, the `ocr-tab` row done with
+  its summary, the file's engine `tesseract.js 7.0.0`, every request to
+  that server, the spans over their printed words, Ctrl+F); and on a
+  server with `GAMMA_OCR_AUTO=on` a 40-page picture-only scan recognized by
+  itself (the workspace's job, its row, its summary on the page shown) and
+  Settings → Server → Text recognition held by the environment. The
+  harness sets `GAMMA_OCR_AUTO=off` for every other server.
 - `translation.mjs`: a two-column page whose paragraph runs over the column
   break: the request carries one text with `{br}`, the formulas and the
   citation marker as tokens, the page and the section; the reply fills both

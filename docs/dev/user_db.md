@@ -556,18 +556,25 @@ All state is SQLite + files on disk under a data directory (env
   translations"; asked of the model again, at its cost, when they are
   gone), the text recognized from scanned pages (`gamma/pdf_ocr.py`,
   [documents.md](documents.md#recognized-text)): `pdf_ocr`, a row per
-  stored file (`doc_id`; the `engine` and `langs` of its last apply,
-  `ver` `pdf_ocr.VERSION` then, its page count `pages`, `scanned` its scan
-  and picture pages or NULL before a run classified them, `rev` a counter
+  stored file (`doc_id`; `engine` the engines its live pages were read
+  with, " + " between two, `''` after a forget, the `langs` and `ver`
+  (`pdf_ocr.VERSION`) of its last apply, its page count `pages`, `scanned`
+  its scan and picture pages and `kinds` which (JSON `{"<page>": "scan" |
+  "picture"}`), each NULL before a run classified them, `rev` a counter
   for display, `stamp` the readers' caches key on, new at every applied
-  change and `''` before the first, `pending` while an apply's finishing
-  steps are still to run, `at`), and `pdf_ocr_pages`, a row per page
+  change and every forget and `''` before the first, `pending` while the
+  finishing steps of an apply or a forget are still to run, `at`; a forget
+  keeps the row), `pdf_ocr_pages`, a row per page
   (`doc_id`, `page` 1-based, the `ver` and `langs` it was read with,
   `applied` 0 while a run has it staged and nobody reads it, `kept` when
   the page keeps its own text (a scan page's layer, or a picture page's own
   words) and has no words, `shared` the share of the
-  layer's words the recognition read too, NULL without a layer, and
-  `words`, gzip of `{"lines": [[[text, x0, y0, x1, y1], …], …]}`); kept
+  layer's words the recognition read too, NULL without a layer,
+  `words`, gzip of `{"lines": [[[text, x0, y0, x1, y1], …], …]}`, and
+  `engine`, what read it: the server's Tesseract or `tesseract.js 7.0.0`;
+  a forget deletes every row of the file), and `pdf_ocr_auto`, the
+  automatic recognition's marker per file (`doc_id`; `state` `queued`,
+  `skipped`, `done` or `declined`; `by`, who uploaded it; `at`); kept
   while a block carries the file or the workspace stores it
   (`index.purge_unused`, which asks the store only about the recognized
   files no block carries, `storage.exists`, without listing the uploads),
@@ -972,8 +979,8 @@ track of the ones nothing uses.
   the next.
 - **The purge.** A file whose record and mtime are both older than its
   keep (30 days, or its `upload_retention` row's) is deleted
-  (`storage.delete`); a purged PDF's recognized text (`pdf_ocr` and
-  `pdf_ocr_pages` in data.db) goes with it after the commit
+  (`storage.delete`); a purged PDF's recognized text (`pdf_ocr`,
+  `pdf_ocr_pages` and `pdf_ocr_auto` in data.db) goes with it after the commit
   (`pdf_ocr.drop`). The references are read again under
   the workspace's write lock first, so no batch can add one meanwhile, and
   each due file's date with them, one file at a time (`storage.stat`,

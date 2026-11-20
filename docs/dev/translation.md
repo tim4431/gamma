@@ -240,8 +240,9 @@ through `useSyncExternalStore` and starts its jobs; it only draws.
   screen.
 - **At most `MAX_DOCS` (8) documents are kept**, the least recently used
   going first, never one whose job runs.
-- **A page's text can change under the same URL**: the server recognized
-  its words from the picture, and `pdf/ocrState.js` announces which pages
+- **A page's text can change under the same URL**: its words were
+  recognized from the picture, or the recognized words were forgotten,
+  here or by another member, and `pdf/ocrState.js` announces which pages
   changed (`translateState.textChanged(url, pages)`,
   [pdf_loading.md](pdf_loading.md#recognized-words)). Those pages' segmented
   blocks, segmentations under way and page entries go, with the pages
@@ -249,7 +250,11 @@ through `useSyncExternalStore` and starts its jobs; it only draws.
   epoch moves on, a seed under way stops and every page may be seeded
   again; a segmentation that began before keeps nothing it read. While a
   job runs, it is halted and the change applies once it has unwound, so no
-  entry made of the old text lands after it. The next job or seed segments
+  entry made of the old text lands after it. Its row closes as "stopped:
+  this PDF's text changed" (`halted: "text"`, `app/translateFollow.js`).
+  The status line says "The translation stopped because this PDF's text
+  changed — translate again to go on with its new text.", with Try again
+  while the document is on screen. The next job or seed segments
   those pages from the recognized words, and the viewer seeds again at
   once when the document's revision moves on. A document's first state
   announces only the pages read from their own layer because the 3 s wait

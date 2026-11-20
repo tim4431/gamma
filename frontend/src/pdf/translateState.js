@@ -236,7 +236,10 @@ export function forgetAll() {
 // entries made from them; the next job or seed segments them afresh from
 // the new text. A seed under way is stopped and every page may be seeded
 // again. A job that runs is halted, and the change applies once it has
-// unwound, so no entry of the old blocks lands after it.
+// unwound, so no entry of the old blocks lands after it; its last status
+// says why it stopped (`halted: "text"`), which its row and the status line
+// tell (app/translateFollow.js): another member's recognition or forget can
+// stop it.
 export function textChanged(url, pages) {
   const d = docs.get(url);
   if (!d || !pages.length) return;
@@ -630,7 +633,8 @@ export function startJob(url, { doc, pages, label, key, parallel, references = f
     seed: (pn) => d.view.entries.get(pn),
     context: pageId || !head ? { pageId } : head.then((text) => ({ head: text })),
     onPages: (changed) => update(d, { entries: new Map([...d.view.entries, ...changed]) }),
-    onStatus: (status) => update(d, { status }),
+    // its end while a text change waits for it: halted by that change
+    onStatus: (status) => update(d, { status: status.running || !d.textDrop.size ? status : { ...status, halted: "text" } }),
     limit: REQUESTS,
   });
   d.job = job;

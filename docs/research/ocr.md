@@ -569,9 +569,10 @@ equations, and they are a Stage 3 question:
 
 ### A design that follows
 
-Its server part is built, started from the Document menu
-([dev/documents.md](../dev/documents.md#recognized-text)); what is left is
-under [Still open](#still-open).
+It is built ([dev/documents.md](../dev/documents.md#recognized-text)): the
+server's engine from the Document menu, tesseract.js in the window where
+the server has none, automatic runs for scans with no text, and a way back
+to the file's own text. What is left is under [Still open](#still-open).
 
 - **Engine.** Tesseract 5.5 everywhere, with the fast models and English,
   French and German loaded by default:
@@ -610,9 +611,53 @@ under [Still open](#still-open).
   vault's, a Zotero attachment's. MuPDF's `Pixmap.pdfocr_tobytes`, the way
   to do it without Tesseract's command line, wrote no text in a test here.
 
+### The window's pipeline, measured once built
+
+Measured in November 2026 on the built pipeline, in headless Chromium on
+the same machine: the page drawn by pdf.js 4.4.168 (legacy build) at the
+plan's 300 dpi, turned grey into a PGM by `ocrRaster.js`, read by
+tesseract.js 7.0.0 with the SIMD LSTM core, the fast models from
+`backend/tessdata` and automatic page segmentation, and its TSV parsed as
+the window sends it. Twelve of the 13 text pages; Siegman p99 was left
+out, since its PDF is only in a developer's own library.
+
+| Page | Errors, window | Errors, server | Words shared with the server | The same, over the truth's words | Recognize s | Draw s |
+|---|---|---|---|---|---|---|
+| Lounis p2 | 1.10% | 0.81% | 0.986 | 0.994 | 1.94 | 0.12 |
+| Lounis p4 | 2.04% | 2.12% | 0.933 | 1.000 | 2.90 | 0.10 |
+| Hänsch p2 | 0.81% | 1.26% | 0.968 | 1.000 | 4.53 | 0.46 |
+| Holstein p2 | 1.55% | 1.63% | 0.964 | 0.995 | 6.40 | 0.45 |
+| Kitagawa p4 | 2.49% | 2.56% | 0.960 | 0.996 | 5.13 | 0.46 |
+| Feshbach p3 | 0.71% | 0.78% | 0.990 | 1.000 | 3.28 | 0.12 |
+| NACA p15 | 2.65% | 2.65% | 0.871 | 1.000 | 4.40 | 0.23 |
+| Kollin p2 | 0.46% | 0.39% | 0.990 | 0.996 | 6.96 | 0.65 |
+| J. Phys. Radium p12 | 2.57% | 2.48% | 0.928 | 0.985 | 5.14 | 0.82 |
+| Phys. Rev. p8 | 0.78% | 0.57% | 0.996 | 0.998 | 3.43 | 0.88 |
+| Annalen p10 | 0.71% | 0.71% | 1.000 | 1.000 | 2.14 | 0.45 |
+| Shannon p2 | 0.41% | 0.41% | 0.981 | 1.000 | 2.80 | 0.06 |
+| **All** | **1.31%** | **1.33%** | **0.964** | **0.997** | 4.09 mean | 0.40 mean |
+
+- **The window reads as well as the server.** 1.31% errors against
+  1.33%, and 95.0% continuity against 94.8%.
+- **The two read different words outside the text.** Six pages share
+  fewer than 97% of their words with the server's reading (NACA p15 the
+  fewest, 87%). Nearly all the words that differ are in figures, display
+  math and specks, which the truth leaves out: of the window's 63 extra
+  words on NACA p15, 6 are in the truth. Over the truth's own words the
+  two share 99.7%.
+- **Time.** The engine was ready in 0.16 s from a local server, and a page
+  took about 4.1 s to recognize and 0.4 s to draw, about the server's
+  3.8 s. No request left the page's own server.
+- **One pdf.js rule found on the way.** A render with intent `print`
+  refuses an optional-content config read for the display intent, so
+  every page failed until the window let the print intent use its own.
+
 ### Not measured
 
-- A NAS, a phone, or tesseract.js in a browser rather than Node.
+- A NAS, a phone or a tablet. The window's pipeline was measured in
+  Chromium on a desktop only: not in WebKit, Firefox or the apps' web
+  views, and not over a slow link, where the core and the models are some
+  11 MB to fetch once.
 - tesserocr frozen by PyInstaller on macOS, and MuPDF's Tesseract on Linux
   and macOS (seen only as strings in the wheels).
 - Apple Vision and ML Kit accuracy.
@@ -623,21 +668,24 @@ under [Still open](#still-open).
 
 ### Stage 2: what is left to build
 
-The server's engine, run from the Document menu, is built: the words kept
-per stored file, every reader taking them, highlights keeping their place
-and taking the new text. Left:
+Built ([dev/documents.md](../dev/documents.md#recognized-text)): the
+server's engine from the Document menu; tesseract.js in the window where
+the server has none (the Android and iPad apps, macOS before 15), the
+server judging and keeping the words it sends; automatic runs of a scan
+uploaded with no text at all, on a server with the engine, one at a time
+and giving way to a run someone asks for; Forget the recognized text; and
+a socket message, so the open tabs that show the file read the new text.
+Left:
 
-- **In the browser**: tesseract.js in the web view for a server without
-  the engine (the Android and iPad apps, macOS before 15).
-- **Automatic runs**: on upload, or for a scan the viewer meets, by the
-  rule above (always for a page with no text; a sample first for a layer).
-- **Dropping recognized text**: a way back to the PDF's own text ("Use the
-  PDF's own text").
 - **More languages** than English, French and German.
 - **Copies elsewhere**: carrying recognized text to mirrors, clones and
   publishing.
-- **Other tabs**: a socket nudge, so another member's open tab reads the
-  new text without opening the PDF again.
+- **Automatic runs in the window**, and for a scan whose layer is poor:
+  the automatic runs take only scans with no text, on the server.
+- **The window on devices**: its speed and memory on a mid-range phone and
+  a tablet, the screen kept on past Auto-Lock, and a run sent to the
+  background and back ([dev/android.md](../dev/android.md#device-checks),
+  [dev/ipad.md](../dev/ipad.md#device-checks)).
 
 The threshold for replacing a layer rests on 12 pages and should be
 checked on more.

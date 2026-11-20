@@ -556,8 +556,23 @@ test("a change while a job runs halts it, and lands once the job has unwound", a
   await running;
   assert.equal(s.asked.length, 1, "halted: no request went after the change");
   assert.equal(translateState.snapshot(url).status.running, false);
+  assert.equal(translateState.snapshot(url).status.halted, "text", "its last status says the text change stopped it");
   assert.deepEqual([3, 4].map((pn) => [translateState.blocks(url, pn), translateState.entries(url).has(pn)]), [[null, false], [null, false]]);
   assert.ok(translateState.blocks(url, 1) && translateState.blocks(url, 2), "the pages the change did not reach stay segmented");
+  // The next job, with no change while it runs, ends as a job does.
+  await job(url, { doc: changingDoc(), pages: [1], translate: server().translate });
+  assert.equal(translateState.snapshot(url).status.halted, undefined);
+});
+
+test("a job the reader halts, with no text change, says nothing of one", async () => {
+  const url = "/uploads/halted-by-hand.pdf";
+  const s = heldServer();
+  const running = job(url, { doc: changingDoc(), pages: [1, 2, 3, 4], parallel: 1, translate: s.translate });
+  await until(() => s.asked.length > 0, "the first request");
+  translateState.halt(url);
+  await running;
+  assert.equal(translateState.snapshot(url).status.running, false);
+  assert.equal(translateState.snapshot(url).status.halted, undefined);
 });
 
 test("a recognized page's words segment with no font face to wait for", async () => {

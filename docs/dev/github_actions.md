@@ -30,8 +30,8 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `fleet` | `fleet.yml` | a pull request or a push to `main` touching `cloud/fleet/`; manual dispatch from any branch | pass/fail: the fleet agent's pytest; on a push to main or a dispatch, when green, `ghcr.io/tim4431/gamma-fleet:latest` + `:sha-<short>` (`cloud/fleet/Dockerfile`, amd64; [hosted.md](hosted.md)) |
 | `site` | `site.yml` | a PR or a push to `main` touching `sites/`, `docs/` (the artwork it copies and the documents it renders), `desktop/ui/fonts/` (the font it copies), `docker-compose.yml.example` (the file the front page shows), `PRIVACY.md` or `TERMS.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds with every internal link resolving and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
-| `ipad` | `ipad.yml` | a pull request touching `ipad/`, the server's mobile entry and pins (`backend/gamma_mobile.py`, `backend/requirements-mobile.txt`), `backend/requirements.txt`, the ink fixtures its tests read (`tests/shared/inkwidth.json`, `inkhold.json`), the desktop app's chrome pages the app carries (`desktop/ui/`), `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on macOS: the app's Python, wheels, server code and web app prepared (`ipad/scripts/build-python.sh`), the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator with the embedded server started, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
-| `android` | `android.yml` | a pull request touching `android/`, the server's mobile entry and pins, `backend/requirements.txt`, the ink fixtures, `desktop/ui/`, `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on Ubuntu: the JVM unit tests, an unsigned 64-bit ARM release build checked for 16 KB alignment, and the device tests on an x86_64 Android 16 emulator with the embedded server started |
+| `ipad` | `ipad.yml` | a pull request touching `ipad/`, the server's mobile entry and pins (`backend/gamma_mobile.py`, `backend/requirements-mobile.txt`), `backend/requirements.txt`, the text recognition models the app carries (`backend/tessdata/`), the ink fixtures its tests read (`tests/shared/inkwidth.json`, `inkhold.json`), the desktop app's chrome pages the app carries (`desktop/ui/`), `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on macOS: the app's Python, wheels, server code and web app prepared (`ipad/scripts/build-python.sh`), the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator with the embedded server started, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
+| `android` | `android.yml` | a pull request touching `android/`, the server's mobile entry and pins, `backend/requirements.txt`, the text recognition models (`backend/tessdata/`), the ink fixtures, `desktop/ui/`, `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on Ubuntu: the JVM unit tests, an unsigned 64-bit ARM release build checked for 16 KB alignment, and the device tests on an x86_64 Android 16 emulator with the embedded server started |
 | `Assistant plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | plugin packaging and installer tests on Windows/macOS/Linux and preview plugin release assets (`plugins-<os>` artifacts) |
 
 The `desktop` workflow also builds the versioned assistant plugin assets —
@@ -158,7 +158,9 @@ The `desktop` matrix runs on `windows-latest`, `macos-latest` and
 version, take the built web app, freeze the backend with PyInstaller,
 check the frozen server (`--check-ocr` reads a printed line back with the
 bundled Tesseract, then the server answers `/api/health` and its
-`/api/server-config` reports `ocr`), electron-builder, verify the signature,
+`/api/server-config` reports `ocr.where` `server`, since a frozen engine
+that failed its startup check would leave the reading to the window),
+electron-builder, verify the signature,
 run the packaged app's `--smoke` self-test (under Xvfb on Linux), and
 upload `desktop-<name>`. Each platform's signing secrets reach only its
 own build step, and the signature check sees only whether they exist, so
@@ -368,7 +370,8 @@ declaration), the listing and the closed test are in
 Two Ubuntu jobs (`ubuntu-24.04`) for the Android app (`android/`), which
 carries the Gamma server on Chaquopy's CPython, the built web app and the
 desktop's chrome pages. Like `ipad.yml`, it runs for the server's mobile
-entry and pins, `backend/requirements.txt`, `desktop/ui/`, the two ink
+entry and pins, `backend/requirements.txt`, the text recognition models
+the app carries (`backend/tessdata/`), `desktop/ui/`, the two ink
 fixtures the Kotlin pen ports are held to and the frontend's build helper
 as well as for `android/`, but not for backend or frontend code, which the
 other checks test. Both build the web app first (Node 22, `npm ci`, `npm
@@ -510,10 +513,11 @@ One macOS job (`macos-15`, 50 minutes) for the iPad app, which carries
 the Gamma server and the built web app ([ipad.md](ipad.md#the-local-server)).
 It runs for the server's dependencies, its mobile entry and pins
 (`backend/gamma_mobile.py`, `backend/requirements-mobile.txt`, shared with
-Android) and the frontend's build helper as well as for `ipad/`, but not
-for backend or frontend code, which the other checks test. It also runs
-for the two ink fixtures the Swift ports of the brush table and the held
-shape are held to (`tests/shared/inkwidth.json`, `inkhold.json`, resources
+Android), the text recognition models the app carries
+(`backend/tessdata/`) and the frontend's build helper as well as for
+`ipad/`, but not for backend or frontend code, which the other checks
+test. It also runs for the two ink fixtures the Swift ports of the brush
+table and the held shape are held to (`tests/shared/inkwidth.json`, `inkhold.json`, resources
 of the test bundle), and for `desktop/ui/`, the desktop app's bar and
 launcher, which the app carries as its own chrome
 ([ipad.md](ipad.md#the-chrome)). A change that matters on the device is

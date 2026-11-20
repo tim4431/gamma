@@ -2143,25 +2143,31 @@ def _letters(text: str) -> str:
     return _NOT_LETTERS_RE.sub("", normalize_quote(text))
 
 
-def _pages_showing(conn, doc_hash: str) -> list[str]:
+def pages_showing(conn, doc_hash: str) -> list[str]:
     """The live pages of the library showing the stored PDF ``doc_hash``:
     the one owning it (the ``doc_id`` column) and every duplicate showing it
-    as a copy, which the column leaves out."""
+    as a copy, which the column leaves out. Whose quotes a recognition
+    respells, and whose rooms hear that it changed (pdf_ocr ``announce``)."""
     return [r[0] for r in conn.execute(
         "SELECT id FROM unified_blocks WHERE parent_id = 'root' AND json_extract(properties, '$.doc.format') = 'pdf' "
         "AND (doc_id = :h OR (json_extract(properties, '$.doc.copy') IS NOT NULL "
         "AND json_extract(properties, '$.doc.hash') = :h)) ORDER BY id", {"h": doc_hash})]
 
 
-def respell_quotes(ws: str, doc_hash: str, pages, *, actor: str) -> dict:
+def respell_quotes(ws: str, doc_hash: str, pages, *, actor: str, back: bool = False) -> dict:
     """The quotes of the highlights on the PDF ``doc_hash``'s pages
     ``pages`` (1-based) respelled as the text recognized there reads
     (gamma/pdf_ocr.py), once that text went live: the picture did not
     change, so each highlight keeps its place, and only its quote, read
     from the old layer, is stale. Moving them by their passage instead
-    would lose the ones made on garbled words.
+    would lose the ones made on garbled words. ``back``: the other way, as
+    the file's own layer reads, while the recognized text is still live and
+    about to be forgotten (pdf_ocr ``forget_recognized``): ``was`` and
+    ``now`` below swap their readings, and a highlight under which the
+    layer reads nothing (a page that is only a picture) keeps its quote,
+    counted ``unread``.
 
-    On every live page showing the file (``_pages_showing``), the text
+    On every live page showing the file (``pages_showing``), the text
     highlights and link regions placed on one of ``pages`` by rectangles
     measured on this file (no ``doc_id``, or this one), neither an area nor
     lost, are read twice under their rectangles (``_old_passage``, as the
@@ -2179,17 +2185,19 @@ def respell_quotes(ws: str, doc_hash: str, pages, *, actor: str) -> dict:
     ``actor``); a page deleted or showing another file meanwhile writes
     nothing. → ``{respelled, kept, changed}``: the quotes written, the
     ones left because the guard said no, and the ones a person changed
-    meanwhile (or on a page that changed). A quote already reading ``now``
-    counts in none. No stored file, no pages: all 0."""
-    counts = {"respelled": 0, "kept": 0, "changed": 0}
+    meanwhile (or on a page that changed); ``back`` adds ``unread``. A
+    quote already reading ``now`` counts in none. No stored file, no
+    pages: all 0."""
+    counts = {"respelled": 0, "kept": 0, "changed": 0, **({"unread": 0} if back else {})}
     wanted = {int(n) for n in pages}
     path = find_upload_file(stored_name(safe_doc_id(doc_hash), ".pdf"), ws) if wanted else None
     if path is None:
         return counts
     with connect_pages_db(ws) as conn:
-        shown = {page_id: page_highlights(conn, page_id) for page_id in _pages_showing(conn, doc_hash)}
+        shown = {page_id: page_highlights(conn, page_id) for page_id in pages_showing(conn, doc_hash)}
     plans = []
     with Doc(path, ocr=False) as layer, Doc(path, ocr=True) as recognized:
+        before, after = (recognized, layer) if back else (layer, recognized)
         for page_id, items in shown.items():
             ops = []
             for bid, props in items:
@@ -2199,11 +2207,13 @@ def respell_quotes(ws: str, doc_hash: str, pages, *, actor: str) -> dict:
                 if shape.page_of(props) not in wanted:
                     continue
                 quote = props.get("quote") if isinstance(props.get("quote"), str) else ""
-                read = _old_passage(recognized, pos, "", spell=True)
+                read = _old_passage(after, pos, "", spell=True)
                 now = read[0] if read else ""
+                if back and not now and quote:
+                    counts["unread"] += 1  # no text of the page's own under it: the recognized words stay
                 if not now or now == quote or _letters(now) == _letters(quote):
                     continue
-                read = _old_passage(layer, pos, "", spell=True)
+                read = _old_passage(before, pos, "", spell=True)
                 was = read[0] if read else ""
                 if _letters(quote) == _letters(was) and _agrees(normalize_quote(now), normalize_quote(was)):
                     ops.append({"op": "set", "id": bid, "props": {"quote": now}})

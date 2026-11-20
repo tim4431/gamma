@@ -15,9 +15,13 @@
   pattern (``GAMMA_PAGE_HOST``, "" = none), by which the app knows it was
   opened on a page host (gamma/publish.py) — and, for a hosted container
   (gamma/hosted.py), ``read_only`` and ``hosted: {plan, status}`` (null
-  elsewhere, or before the first sync) — and ``ocr``, whether this server
-  recognizes the text of scanned PDFs (``{engine, langs}``, or null:
-  gamma/ocr_engine.py ``probe``, which never loads the engine);
+  elsewhere, or before the first sync) — and ``ocr``, where the text of
+  scanned PDFs is recognized (``{where: "server", engine, langs, auto}``,
+  ``{where: "window", engine, langs, models, auto}`` for the window that
+  asks, or null: gamma/ocr_engine.py ``capability``, which never loads the
+  engine; ``auto``, whether a scan uploaded with no text is recognized by
+  itself, gamma/ocr_auto.py ``enabled``: the admin's switch, on a server
+  that recognizes text itself);
 - ``GET /api/auth/cloud/start?next=&link=1&invite=`` → redirect to the
   account server (``link=1`` with a session attaches the identity to that
   account; ``invite``, the link id of an invitation by e-mail whose mailed
@@ -60,8 +64,8 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from .. import (cloud_auth, cloud_sync, config, email_invites, guests, hosted, join_requests, ocr_engine, ratelimit,
-                server_settings)
+from .. import (cloud_auth, cloud_sync, config, email_invites, guests, hosted, join_requests, ocr_auto, ocr_engine,
+                ratelimit, server_settings)
 from ..auth import require_admin, require_personal_user_id, require_user_id, set_session_cookie
 from ..cloud_auth import CloudAuthError
 from ..db import connect_users_db
@@ -78,6 +82,9 @@ def server_config():
     plan = hosted.limits()
     lead = enabled and (config.hosted() or cfg["share_host"])
     mail = email_invites.available()
+    ocr = ocr_engine.capability()
+    if ocr is not None:
+        ocr["auto"] = ocr_auto.enabled(ocr)
     return {"cloud": {"enabled": enabled, "issuer": cfg["issuer"] if enabled else "", "lead": lead,
                       "join_requests": enabled and cfg["policy"] == "invited",
                       "email_invites": {"server": mail["server"], "members": mail["members"]}},
@@ -86,7 +93,7 @@ def server_config():
             "guest_seeded": bool(config.guest_seed_path()), "page_host": config.page_host_pattern(),
             "read_only": bool(plan and plan["read_only"]),
             "hosted": {"plan": plan["plan"], "status": plan["status"]} if plan else None,
-            "ocr": ocr_engine.probe()}
+            "ocr": ocr}
 
 
 @router.get("/api/auth/cloud/start")

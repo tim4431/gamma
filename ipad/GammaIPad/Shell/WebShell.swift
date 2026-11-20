@@ -35,6 +35,9 @@ final class WebShell {
     private(set) var themeName: String
     /// `session` or `themeName` changed (the controller hands the chrome its state).
     var onChange: (() -> Void)?
+    /// The system ended the page's process, before the page reloads: what
+    /// its document asked of the shell is void (`keepAwake`).
+    var onProcessEnded: (() -> Void)?
     private var readingSession = false
     private var loading: NSKeyValueObservation?
     private var address: NSKeyValueObservation?
@@ -131,6 +134,7 @@ final class WebShell {
     /// The page's process was ended by the system: the page reloads, and the
     /// web app restores itself as after any reload.
     private func recover() {
+        onProcessEnded?()
         loginDue = true
         Self.hideKeyboardAccessoryBar(of: webView) // a new process may bring a new content view
         reload()

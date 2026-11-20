@@ -301,10 +301,12 @@ def demo_override() -> bool:
 
 def tessdata_dir() -> Path:
     """Where the text recognition models are: ``GAMMA_TESSDATA_DIR`` (the
-    Docker image's /app/tessdata, the desktop bundle's), else
-    backend/tessdata beside the gamma package, where the repository keeps
-    them, outside the package so they ride neither the image's code layer
-    nor the mobile apps' bundles. Read when asked."""
+    Docker image's /app/tessdata, the desktop bundle's), else a tessdata
+    folder beside the gamma package: backend/tessdata, where the repository
+    keeps them, outside the package so they ride their own layer of the
+    image, and the mobile apps' copy beside their gamma/ (Android's source
+    set, the iPad's build-python.sh), which their server sends the window
+    that reads the pages (ocr_engine ``capability``). Read when asked."""
     return Path(os.environ.get("GAMMA_TESSDATA_DIR", "").strip() or Path(__file__).resolve().parent.parent / "tessdata")
 
 
@@ -327,6 +329,15 @@ def ocr_enabled() -> bool:
         return not server_settings.demo_mode()
     except Exception:  # noqa: BLE001 — a users.db that does not read now: a demo server says so once it does
         return True
+
+
+def ocr_in_window() -> bool:
+    """``GAMMA_OCR_ENGINE=window``: this server reads no text itself, as on
+    the mobile apps, and leaves every reading to the window that asks
+    (ocr_engine ``capability``), for tests and development on a machine
+    with the engine. Any other value, or none, changes nothing. Read when
+    asked."""
+    return os.environ.get("GAMMA_OCR_ENGINE", "").strip().lower() == "window"
 
 
 DEFAULT_OCR_WORKERS = 1

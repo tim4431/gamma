@@ -164,7 +164,7 @@ export class Server {
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-c", SERVE, String(this.port), ...(this.tls ? [this.tls.cert, this.tls.key] : [])], {
       cwd: BACKEND, stdio: ["pipe", log, log],
-      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...(this.serveApp ? { GAMMA_STATIC_DIR: dist } : {}), TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
+      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...(this.serveApp ? { GAMMA_STATIC_DIR: dist } : {}), TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", GAMMA_OCR_AUTO: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {

@@ -14,7 +14,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, done reminders | `users.db` `reminders_done`, a row per dismissed reminder (its key, the workspace it was last found in, when), written by `POST /api/reminders/done` and kept while the reminder exists ([mentions.md](mentions.md) "Reminders"); no pref, as there may be thousands (the `reminders-done` prefs key held them before migration step 39) | which of the account's reminders it has dismissed, in every browser |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / Tavily / SearXNG / OpenAlex settings |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), the Google Drive connection (the `gdrive` key via `/api/admin/gdrive`, its refresh token encrypted the same way), the network proxy (the `proxy` key via `/api/admin/proxy`, its password encrypted the same way, [network_proxy.md](network_proxy.md)), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, whether a scan uploaded with no text is recognized by itself (`ocr_auto`, `GAMMA_OCR_AUTO` overriding it), the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), the Google Drive connection (the `gdrive` key via `/api/admin/gdrive`, its refresh token encrypted the same way), the network proxy (the `proxy` key via `/api/admin/proxy`, its password encrypted the same way, [network_proxy.md](network_proxy.md)), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
 
 Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
 if the value needs validation) plus a control in the matching settings pane;
@@ -969,7 +969,8 @@ Administration (admins only):
 - **Server**: the machine itself. The dashboard (build, uptime, warnings,
   the update check), the public server URL, on a hosted container the
   **Plan** (`HostedPlan`, [cloud_accounts.md](cloud_accounts.md) "Hosted
-  containers"), the shared AI provider, shared workspaces,
+  containers"), the shared AI provider, **Text recognition** (below),
+  shared workspaces,
   **Databases** (Check databases: a quick check of every database file as
   a `db-check` job, [tasks.md](tasks.md), the damaged ones listed under
   the row), server backups (their delete a `danger` button named for the
@@ -1065,6 +1066,22 @@ millions ("M tokens", decimals allowed: `0.1` is 100k, the 10^9 ceiling is
 `1000`) because a real daily budget runs to eight or nine digits; the API
 stays in whole tokens, so the row converts both ways and a figure out of
 range snaps back to the stored one.
+
+**Text recognition** (Server,
+[SettingsTextRecognition.jsx](../../frontend/src/settings/SettingsTextRecognition.jsx))
+has one switch over `/api/admin/settings`, **Recognize scans
+automatically** (`ocr_auto`, on unless an admin turns it off): a PDF
+uploaded whose pages are all pictures is read on the server by itself, one
+file at a time, and a file someone asks for goes first
+([documents.md](documents.md#recognized-text)). Its hint says what each
+state does ("A PDF uploaded with no text is read from its page pictures",
+"Scans are recognized when someone asks, from the Document menu"), and its
+hover adds that off starts nothing new while a run under way finishes.
+Under `GAMMA_OCR_AUTO` the switch is disabled and the hint names the
+variable. Settings search finds it under Text recognition (its
+`settingsSearch.js` entry, with OCR, scan and Tesseract among its words). The section is left out where the server does not recognize
+text itself (`ocr_auto_available: false`: recognition off, a hosted
+container, a demo, the apps, macOS before 15).
 
 **Guests** (Users, [SettingsGuests.jsx](../../frontend/src/settings/SettingsGuests.jsx))
 has three rows over `/api/admin/settings`: the **Guest sign-in** switch
@@ -1203,8 +1220,8 @@ The sections of a pane read the server through one store, made each time
 the dialog opens and kept until it closes
 ([settingsReads.js](../../frontend/src/settings/settingsReads.js)): one
 entry per path, shared by every section over it. The sections over
-`/api/admin/settings` (the Server pane's public URL and plan, the Users
-pane's storage defaults, sign-in and guests) make one request, and what one
+`/api/admin/settings` (the Server pane's public URL, plan and text
+recognition, the Users pane's storage defaults, sign-in and guests) make one request, and what one
 of them saves the others show, on either pane. `useSettingsRead(path, {poll})` gives a section the entry
 (`data`, `error`, `set` for what a write answered, `reload`); a read whose
 answer is less than three seconds old, or one already on its way, is taken

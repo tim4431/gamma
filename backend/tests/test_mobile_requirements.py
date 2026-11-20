@@ -21,8 +21,9 @@ MOBILE = REPO / "backend" / "requirements-mobile.txt"
 # use there; the server in the apps must then run without it.
 EXCLUDED = {"truststore": "the apps verify HTTPS with certifi's bundle; truststore does not run on iOS or Android "
                           "(tls_trust.use_system_store skips it there)",
-            "tesserocr": "no iOS or Android wheel on PyPI or Flet's index; the apps' server has no text recognition "
-                         "engine (ocr_engine.probe answers None there), and the apps' PyMuPDF has no OCR either"}
+            "tesserocr": "no iOS or Android wheel on PyPI or Flet's index; the apps' server reads no text itself, "
+                         "the app's window reads the pages with tesseract.js (ocr_engine.capability answers "
+                         "'window' there), and the apps' PyMuPDF has no OCR either"}
 
 
 def _names(path):

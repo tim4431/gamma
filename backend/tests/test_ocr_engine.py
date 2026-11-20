@@ -1,8 +1,10 @@
 """The text recognition engine (gamma/ocr_engine.py) and the page pictures it
 reads (pdf_text.page_raster drawn grey, without annotations): the zoom a
-page is drawn at, whether a server can recognize text at all, the walk over
+page is drawn at, where a server's text is recognized (on the server, in
+the window that asks, nowhere) and the check at startup, the walk over
 Tesseract's results, and the models in backend/tessdata against the hashes
-their README lists. The last tests run the real engine on a printed scan
+their README lists, the tag a window fetches them by and the version of
+tesseract.js a window runs. The last tests run the real engine on a printed scan
 (``ocr_fixtures.printed_scan_pdf``) and skip where tesserocr is not
 installed (the mobile requirements' CI job)."""
 
@@ -26,6 +28,7 @@ def _fresh_engine(monkeypatch):
     (as on a self-hosted server) and the repository's models."""
     monkeypatch.setenv("GAMMA_OCR", "on")
     monkeypatch.delenv("GAMMA_TESSDATA_DIR", raising=False)
+    monkeypatch.delenv("GAMMA_OCR_ENGINE", raising=False)
     ocr_engine.reset()
     yield
     ocr_engine.reset()
@@ -89,7 +92,7 @@ def test_without_models_or_engine_or_on_a_mobile_app_nothing_is_offered(monkeypa
     assert ocr_engine.check() == "The text recognition engine is not installed on this server."
     ocr_engine.reset()
     monkeypatch.setattr(ocr_engine, "_mobile", lambda: True)
-    assert ocr_engine.check() == "Text recognition is not available in the mobile apps yet."
+    assert ocr_engine.check() == "This server does not read text itself: the pages are read in the window that asks."
 
 
 def test_an_older_macos_installs_no_engine_and_is_told_so(monkeypatch):
@@ -117,6 +120,108 @@ def test_a_failed_full_check_turns_the_probe_off(monkeypatch):
     assert ocr_engine.probe() == {"engine": "tesseract", "langs": ["eng", "fra", "deu"]}, "cheap: no Init"
     assert ocr_engine.check() == "The text recognition engine does not start on this server."
     assert ocr_engine.probe() is None
+
+
+# --- Where the text is recognized ----------------------------------------------------
+
+def _models_tag(folder=TESSDATA) -> str:
+    digest = hashlib.sha256()
+    for lang in ocr_engine.LANG_LIST:
+        digest.update((folder / f"{lang}.traineddata").read_bytes())
+    return digest.hexdigest()[:12]
+
+
+def _in_window():
+    return {"where": "window", "engine": ocr_engine.BROWSER_ENGINE, "langs": ["eng", "fra", "deu"],
+            "models": f"/api/ocr/models/{_models_tag()}"}
+
+
+def test_where_the_text_is_recognized_for_each_reason(monkeypatch, tmp_path):
+    installed = object()
+    monkeypatch.setattr(ocr_engine.importlib.util, "find_spec", lambda name: installed)
+    assert ocr_engine.capability() == {"where": "server", "engine": "tesseract", "langs": ["eng", "fra", "deu"]}
+    reasons = [("_mobile", ocr_engine.IN_WINDOW), ("_old_macos", ocr_engine.OLD_MACOS)]
+    for name, reason in reasons:
+        with monkeypatch.context() as m:
+            m.setattr(ocr_engine, name, lambda: True)
+            ocr_engine.reset()
+            assert ocr_engine.capability() == _in_window(), name
+            assert ocr_engine.probe() is None and ocr_engine.check() == reason, "no run on the server there"
+    ocr_engine.reset()
+    with monkeypatch.context() as m:
+        m.setattr(ocr_engine.importlib.util, "find_spec", lambda name: None)
+        assert ocr_engine.capability() == _in_window(), "no engine installed"
+    ocr_engine.reset()
+    monkeypatch.setenv("GAMMA_OCR_ENGINE", "window")
+    assert ocr_engine.capability() == _in_window(), "the switch of tests and development"
+    assert ocr_engine.probe() is None and ocr_engine.check() == ocr_engine.IN_WINDOW, \
+        "the switch is a reason of its own: probe, check and capability agree, and no run starts on the server"
+    monkeypatch.setenv("GAMMA_OCR_ENGINE", "server")
+    assert ocr_engine.capability()["where"] == "server", "any other value changes nothing"
+    monkeypatch.setenv("GAMMA_OCR", "off")
+    assert ocr_engine.capability() is None, "turned off"
+    monkeypatch.setenv("GAMMA_OCR", "on")
+    ocr_engine.reset()
+    monkeypatch.setattr(ocr_engine, "_mobile", lambda: True)
+    monkeypatch.setenv("GAMMA_TESSDATA_DIR", str(tmp_path))  # an empty folder: the window would need the models too
+    assert ocr_engine.capability() is None
+
+
+def test_an_engine_that_fails_its_check_leaves_the_reading_to_the_window(monkeypatch):
+    def broken(path):
+        raise RuntimeError("Failed to init API")
+
+    monkeypatch.setattr(ocr_engine.importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(ocr_engine, "_new_api", broken)
+    assert ocr_engine.capability()["where"] == "server", "cheap: no Init until the check"
+    ocr_engine.start_check()  # what the app does at startup
+    ocr_engine._startup.join(10)
+    assert ocr_engine.capability() == _in_window(), "known before anyone asks for a run"
+    assert ocr_engine.check() == "The text recognition engine does not start on this server."
+
+
+def test_the_startup_check_runs_only_where_it_can_pass(monkeypatch):
+    checks = []
+    monkeypatch.setattr(ocr_engine, "check", lambda: checks.append(1))
+    monkeypatch.setattr(ocr_engine, "_startup", None)
+    monkeypatch.setenv("GAMMA_OCR", "off")
+    ocr_engine.start_check()
+    assert ocr_engine._startup is None, "turned off: no thread at all"
+    monkeypatch.setenv("GAMMA_OCR", "on")
+    monkeypatch.setattr(ocr_engine.importlib.util, "find_spec", lambda name: None)
+    ocr_engine.start_check()
+    ocr_engine._startup.join(10)
+    assert checks == [], "no engine installed: nothing to check"
+    ocr_engine.reset()
+    monkeypatch.setattr(ocr_engine.importlib.util, "find_spec", lambda name: object())
+    ocr_engine.start_check()
+    ocr_engine._startup.join(10)
+    assert checks == [1]
+
+
+def test_the_models_tag_follows_the_files(monkeypatch, tmp_path):
+    for lang in ocr_engine.LANG_LIST:
+        shutil.copyfile(TESSDATA / f"{lang}.traineddata", tmp_path / f"{lang}.traineddata")
+    monkeypatch.setenv("GAMMA_TESSDATA_DIR", str(tmp_path))
+    tag = ocr_engine.models_tag()
+    assert tag == _models_tag() == _models_tag(tmp_path) and len(tag) == 12
+    assert ocr_engine.model_path(tag, "fra") == str(tmp_path / "fra.traineddata")
+    assert ocr_engine.model_path(tag, "spa") is None and ocr_engine.model_path("0" * 12, "eng") is None
+    with open(tmp_path / "deu.traineddata", "ab") as f:
+        f.write(b"\0")
+    assert ocr_engine.models_tag() not in ("", tag), "another file, another tag: a browser keeps the old one a year"
+    assert ocr_engine.model_path(tag, "eng") is None
+    (tmp_path / "eng.traineddata").unlink()
+    assert ocr_engine.models_tag() == ""
+
+
+def test_the_window_engine_is_the_one_the_frontend_pins():
+    import json
+
+    package = json.loads((TESSDATA.parents[1] / "frontend" / "package.json").read_text(encoding="utf-8"))
+    deps = package["dependencies"]
+    assert ocr_engine.BROWSER_ENGINE == f"tesseract.js {deps['tesseract.js']}", "pinned exactly, at this version"
+    assert deps["tesseract.js-core"] == deps["tesseract.js"]
 
 
 # --- The walk over Tesseract's results ---------------------------------------------
@@ -265,7 +370,8 @@ def test_stored_lines_are_fractions_of_the_page_as_drawn():
     class Raster:  # drawn at 2 px a point: what MuPDF's rounding makes of the pixel size does not count
         scale, width_pt, height_pt, width, height = 2.0, 500.0, 250.0, 1001, 501
 
-    assert pdf_ocr.to_lines([[("Zeno", 100, 50, 300, 100, 95.0)]], Raster) == [[["Zeno", 1000, 1000, 3000, 2000]]]
+    stored = pdf_ocr.to_lines([[("Zeno", 100, 50, 300, 100, 95.0)]], Raster)
+    assert stored == [[["Zeno", 1000, 1000, 3000, 2000, 95.0]]], "the confidence kept for the page rules"
 
 
 # --- The models ------------------------------------------------------------------
@@ -297,7 +403,7 @@ def test_the_engine_reads_a_printed_scan(tesserocr):
     assert all(word[5] >= pdf_ocr.PICTURE_CONF for line in lines for word in line)
     stored = pdf_ocr.to_lines(lines, raster)
     assert pdf_ocr.page_text(stored) == PRINTED_TEXT
-    x0, y0, x1, y1 = stored[0][0][1:]  # "Quantum", printed at 72 pt from the left on a 110 pt baseline
+    x0, y0, x1, y1 = stored[0][0][1:5]  # "Quantum", printed at 72 pt from the left on a 110 pt baseline
     assert abs(x0 - round(10000 * 72 / 612)) < 40 and round(10000 * 80 / 792) < y0 < y1 < round(10000 * 116 / 792)
 
 

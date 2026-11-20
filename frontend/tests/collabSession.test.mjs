@@ -19,7 +19,7 @@ const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(
 // A session over fakes; `api(path, init)` answers the HTTP calls. Timers
 // never fire on their own: h.fire() runs whatever is armed.
 function setup(t, api, { canWrite = true, connect = true } = {}) {
-  const h = { calls: [], remote: [], reloads: [], status: [], notices: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null, comments: [], inbox: 0, vault: 0, computer: 0 };
+  const h = { calls: [], remote: [], reloads: [], status: [], notices: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null, comments: [], inbox: 0, vault: 0, computer: 0, ocr: [] };
   let timerId = 0;
   const options = {
     pageId: "page-a", canWrite,
@@ -30,6 +30,7 @@ function setup(t, api, { canWrite = true, connect = true } = {}) {
     onComments: (msg) => h.comments.push(msg),
     onVault: () => { h.vault += 1; },
     onComputer: () => { h.computer += 1; },
+    onOcr: (msg) => h.ocr.push(msg),
   };
   h.session = createCollabSession({
     clientId: ME,
@@ -775,4 +776,27 @@ test("a computer's nudge is the account's, on any page, and every hello reads th
   h.message({ t: "computer" });
   assert.equal(h.computer, 4, "kept: the nudge is the account's, and the page open now is asked");
   assert.equal(h.vault, 2, "a vault's nudge is not one");
+});
+
+test("a recognition's nudge names its file, on any page; a hello after a dropped socket asks for the PDF on screen, the page's first does not", async (t) => {
+  const h = setup(t, async () => ({ seq: 0, batches: [] }));
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.deepEqual(h.ocr, [], "the page's first load read its PDF's recognition");
+  const nudge = { t: "ocr", doc_id: "d1", stamp: "s1" };
+  h.message(nudge);
+  assert.deepEqual(h.ocr, [nudge]);
+  h.socket().onclose({});
+  h.fire(); // the reconnect
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.deepEqual(h.ocr, [nudge, null], "a recognition may have ended while the socket was away");
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.equal(h.ocr.length, 3, "every hello after a drop");
+  h.load("page-b", [block("p")]); // navigated away while the socket is still the old page's
+  h.message(nudge);
+  assert.deepEqual(h.ocr.at(-1), nudge, "kept: the file may be on screen in any pane");
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.equal(h.ocr.length, 4, "the old page's rejoin asks nothing for the page open now");
+  h.session.connect("page-b");
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.equal(h.ocr.length, 4, "another page's first hello: its load read its PDF's");
 });

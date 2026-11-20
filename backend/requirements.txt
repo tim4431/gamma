@@ -19,9 +19,12 @@ certifi==2026.07.22
 truststore==0.10.5
 # Text recognition of scanned PDFs (gamma/ocr_engine.py): Tesseract 5.5 and
 # Leptonica inside the wheel, no system package; the models are in
-# backend/tessdata. Imported only when a page is recognized. No iOS or
-# Android wheel (requirements-mobile.txt leaves it out), and the macOS
-# wheels need macOS 15 (Darwin 24): on an older macOS the marker skips it,
-# since pip would try to build it and fail, and the server runs without
-# text recognition (ocr_engine.probe).
+# backend/tessdata. Where recognition is on, the check at startup imports it
+# (ocr_engine.start_check), so a server whose engine does not start says so
+# before anyone asks. No iOS or Android wheel (requirements-mobile.txt
+# leaves it out), and the macOS wheels need macOS 15 (Darwin 24): on an
+# older macOS the marker skips it, since pip would try to build it and
+# fail. A server without it reads no text itself: the window that asks
+# reads the pages with tesseract.js from the models here (ocr_engine
+# capability "window").
 tesserocr==2.13.0; sys_platform != "darwin" or platform_release >= "24"

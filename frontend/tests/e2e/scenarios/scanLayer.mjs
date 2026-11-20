@@ -35,13 +35,33 @@
 //   as its quote, the one garbled past that guard keeps its own;
 // - the metadata popover's text cell says the text was recognized and when,
 //   and the Document menu no longer offers to recognize it;
+// - the Document menu's "Forget the recognized text…" asks first, then the
+//   page reads its garbled layer again, the highlight that took the
+//   recognized line quotes the layer again, and Recognize text is offered
+//   again;
 // - a scan with no layer at all: the popover's cell points to Recognize text,
 //   which the Document menu offers.
+//
+// Then what reaches the other readers and the other servers
+// (docs/dev/pdf_loading.md "Recognized words", gamma/ocr_auto.py,
+// pdf/ocrRuns.js):
+// - a second account's tab open on a shared workspace's scan reads the
+//   recognized words once a recognition started elsewhere lands, and its own
+//   layer again once they are forgotten, told by the page's socket (`ocr`),
+//   without a reload;
+// - on a server that leaves the reading to the window (GAMMA_OCR_ENGINE=
+//   window), Recognize text reads the page in Chromium with tesseract.js,
+//   every file from that server, the `ocr-tab` job's row ends done with its
+//   summary, and the text layer and Ctrl+F read what the window recognized;
+// - on a server with GAMMA_OCR_AUTO=on, a scan uploaded whose pages are only
+//   pictures is recognized by itself: the workspace's run, its row in
+//   Background tasks and its summary on the page shown; Settings → Server →
+//   Text recognition shows the switch the environment holds.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pageText } from "../../../src/pdf/pageText.js";
-import { PYTHON, ROOT, fakeAiModels, live, wanted } from "../harness.mjs";
+import { Account, PYTHON, ROOT, Server, fakeAiModels, live, settingsPane, wanted } from "../harness.mjs";
 import { COVER, COVER_TITLE, PAGE_H, PAGE_W, PARAGRAPH, printedWidth, scanPaper } from "../scanPdf.mjs";
 import { movePast, selectPdfText, waitForPdf } from "./pdf.mjs";
 
@@ -74,6 +94,9 @@ export async function scanLayerScenarios(env) {
   if (!wanted("scan layer")) return;
   await repairedLayerSteps(env);
   await recognitionSteps(env);
+  await otherTabSteps(env);
+  await windowSteps(env);
+  await automaticSteps(env);
 }
 
 async function repairedLayerSteps({ server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage }) {
@@ -389,9 +412,70 @@ function printedScan(dir, layer) {
   return { bytes: fs.readFileSync(file), ...JSON.parse(out) };
 }
 
+// The printed scan with no layer, its page argv[3] times over: a scan whose
+// pages are all pictures, written to argv[2].
+const PICTURE_SCAN_PY = `
+import sys
+sys.path.insert(0, sys.argv[1])
+import pymupdf
+from ocr_fixtures import printed_scan_pdf
+one = pymupdf.open(stream=printed_scan_pdf(layer=None), filetype="pdf")
+doc = pymupdf.open()
+for _ in range(int(sys.argv[3])):
+    doc.insert_pdf(one)
+with open(sys.argv[2], "wb") as f:
+    f.write(doc.tobytes(deflate=True))
+`;
+
+function pictureScan(dir, pages) {
+  const file = path.join(dir, `picture-scan-${pages}.pdf`);
+  execFileSync(PYTHON, ["-I", "-c", PICTURE_SCAN_PY, path.join(ROOT, "backend", "tests"), file, String(pages)]);
+  return fs.readFileSync(file);
+}
+
 // JSON with its keys in order: the same position however a write re-serialized it.
 const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x)
   ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
+
+// The printed words a text layer should read, a span a word with the space
+// folded in, from lines of words.
+const spanTexts = (lineWords) => lineWords.flatMap((ws) => ws.map((w, i) => (i < ws.length - 1 ? `${w} ` : w)));
+
+// Ctrl+F for `word` on `page`: one match, and its marks on page `pn`.
+async function findMarks(page, until, word, pn = 1) {
+  await page.keyboard.press("ControlOrMeta+f");
+  const input = page.locator(".searchPopover .searchInput");
+  await input.waitFor();
+  await input.fill(word);
+  await until(async () => (await page.locator(".searchPopover .searchFindCount").textContent({ timeout: 500 }).catch(() => "")) === "1/1",
+    { what: `find count 1/1 for "${word}"` });
+  const marks = await until(async () => {
+    const now = await boxesOn(page, pn, ".pdfFindMark");
+    return now.length && now;
+  }, { what: `the find mark of "${word}"` });
+  await page.keyboard.press("Escape");
+  return marks;
+}
+
+// What the status line says once it matches `re`.
+const statusSaid = (page, until, re, timeout = 120000) => until(async () => {
+  const now = (await page.locator(".statusPill").textContent({ timeout: 500 }).catch(() => "")) || "";
+  return re.test(now) && now.trim();
+}, { what: `the status line matching ${re}`, timeout, every: 250 });
+
+// The Background tasks row titled `title`, once it is there; the tray stays open.
+async function taskRow(page, title) {
+  await page.click("button[aria-label='Background tasks']");
+  const row = page.locator(live(".tasksPopover .taskRow"), { hasText: title });
+  await row.waitFor();
+  return row;
+}
+
+// A job's end, read until it is over.
+const jobEnd = (who, until, id, timeout = 120000) => until(async () => {
+  const job = await who.api(`/api/jobs/${id}`);
+  return ["done", "failed", "cancelled"].includes(job.state) && job;
+}, { what: `job ${id}'s end`, timeout, every: 250 });
 
 async function recognitionSteps({ server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage }) {
   let ctx = null, page = null, pageId = "", docId = "", title = "", lines = [];
@@ -634,6 +718,78 @@ async function recognitionSteps({ server, browser, alice, step, until, assert, a
       return cell.title;
     });
 
+    // The respell back (highlight_relocate.respell_quotes, back=True): line
+    // 3's quote, the recognized line, reads like the recognized text under
+    // its rectangles and takes the layer's spelling again; line 5's already
+    // is the layer's.
+    let stampBefore = "";
+    await step("scan layer: Forget the recognized text…, a danger row of the Document menu, asks first; its Forget runs as a Background tasks row that ends with its summary", async () => {
+      stampBefore = (await alice.api(`/api/ocr/${docId}`)).stamp;
+      const forgetRow = page.locator('.attachPopover [data-ocr="forget"]');
+      await documentMenu();
+      await forgetRow.waitFor();
+      assertEq((await forgetRow.innerText()).trim(), "Forget the recognized text…");
+      assertEq(await forgetRow.getAttribute("title"), "Read this PDF's own text again in place of the words recognized from its page pictures, for everyone in this workspace");
+      assert(await forgetRow.evaluate((el) => el.classList.contains("danger")), "a danger row");
+      assert(await forgetRow.isEnabled(), "the row can be chosen");
+      await forgetRow.click();
+      const confirm = page.locator(".confirmModal");
+      await confirm.waitFor();
+      assertEq((await confirm.locator(".reportModalTitle").innerText()).trim(), "Forget the recognized text?");
+      assertEq((await confirm.locator(".confirmMessage").innerText()).trim(),
+        `The words recognized from the page pictures of “${title}” are forgotten for everyone in this workspace: selection, search, the AI and translation read the PDF's own text again, and a page that is only a picture has no text. Highlights there take the PDF's own text as their quote where it reads under them. Recognizing it again takes the time it took.`);
+      assert(await confirm.locator(".confirmIcon.danger").count(), "a destructive action's chip");
+      // Cancel forgets nothing.
+      await confirm.locator(".reportModalBtns button", { hasText: "Cancel" }).click();
+      await confirm.waitFor({ state: "detached" });
+      assert(!(await alice.api("/api/jobs")).jobs.some((j) => j.kind === "ocr-drop"), "no forget started on Cancel");
+      assertEq((await alice.api(`/api/ocr/${docId}`)).stamp, stampBefore, "the recognized text stays");
+
+      await documentMenu();
+      await forgetRow.click();
+      await confirm.locator(".reportModalBtns button", { hasText: "Forget" }).click();
+      const said = await statusSaid(page, until, /reads its own text again|Could not start|failed/, 60000);
+      assertEq(said, `“${title}” reads its own text again on 1 page. 1 highlight took the PDF's own text as its quote.`, "the summary");
+      const task = await taskRow(page, `Forgetting the recognized text of “${title}”`);
+      assert(await task.evaluate((el) => el.classList.contains("done")), `the row ended done: ${await task.getAttribute("class")}`);
+      await page.keyboard.press("Escape");
+      const job = (await alice.api("/api/jobs")).jobs.find((j) => j.kind === "ocr-drop" && j.params?.doc_id === docId);
+      const { result } = await alice.api(`/api/jobs/${job.id}`);
+      assertEq(JSON.stringify(["pages", "highlights_respelled", "highlights_kept", "highlights_changed", "highlights_unread"].map((k) => result[k])),
+        JSON.stringify([1, 1, 0, 0, 0]), `its result: ${JSON.stringify(result)}`);
+      assertNoProblems(page);
+      return said;
+    });
+
+    await step("scan layer: after the forget, the text layer and Ctrl+F read the garbled layer again, the highlight that took the recognized line quotes the layer again, both in place, and Recognize text is offered again", async () => {
+      const spans = await spansOf((now) => now.some((s) => s.text.trim() === "rc50m4mcc"), 15000);
+      assertEq(JSON.stringify(spans.map((s) => s.text)), JSON.stringify(spanTexts(lines.map((l) => l.garbled.split(" ")))),
+        "a span a word of the garbled layer, as before the recognition");
+      const now = Object.fromEntries((await children()).map((b) => [b.id, b.properties]));
+      assertEq(now[made[2].id].quote, lines[2].garbled, "line 3's highlight quotes the layer again");
+      assertEq(now[made[4].id].quote, lines[4].garbled, "line 5's keeps the layer's spelling");
+      for (const k of [2, 4]) {
+        assertEq(canon(now[made[k].id].pdf_position), canon(made[k].properties.pdf_position), `line ${k + 1}'s highlight keeps its place`);
+      }
+      await until(async () => (await page.locator(".blockQuote").allInnerTexts()).map((s) => s.trim()).includes(lines[2].garbled),
+        { what: "the notes show the layer's quote again" });
+      const [mark, ...more] = await findMarks(page, until, "rc50m4mcc");
+      assertEq(more.length, 0, "one mark");
+      const mid = middleOf(lines[4]);
+      assert(mark.top <= mid && mid <= mark.bottom, `the mark ${pt(mark.top)}..${pt(mark.bottom)} is on line 5 (its letters' middle ${pt(mid)})`);
+      const state = await alice.api(`/api/ocr/${docId}`);
+      assertEq(JSON.stringify([state.recognized, state.pending, state.todo, state.staged]), JSON.stringify([[], false, 1, 0]),
+        `the file's recognition: ${JSON.stringify(state)}`);
+      assert(state.stamp && state.stamp !== stampBefore, `a stamp of its own: ${state.stamp} after ${stampBefore}`);
+      await documentMenu();
+      await recognizeRow().waitFor();
+      assertEq((await recognizeRow().innerText()).trim(), "Recognize text in this PDF");
+      assert(await recognizeRow().isEnabled(), "the row can be chosen");
+      assertEq(await page.locator('.attachPopover [data-ocr="forget"]').count(), 0, "nothing left to forget");
+      await page.keyboard.press("Escape");
+      assertNoProblems(page);
+    });
+
     await step("scan layer: a scan with no layer: the metadata popover's text cell points to Recognize text in this PDF, which the Document menu offers", async () => {
       const bare = printedScan(server.dir, "none");
       const up = await alice.upload("/api/uploads", bare.bytes, "picture-scan.pdf", "application/pdf");
@@ -652,5 +808,253 @@ async function recognitionSteps({ server, browser, alice, step, until, assert, a
     });
   } finally {
     await ctx?.close();
+  }
+}
+
+// A second account's tab on a shared workspace's scan, while the file's
+// recognized text changes elsewhere (gamma/pdf_ocr.py announce,
+// collab.publish_file; collaboration/collabSession.js onOcr): the job is
+// another account's, so the tab hears of it from its page's socket alone.
+async function otherTabSteps({ server, browser, alice, bob, step, until, assert, assertEq, assertNoProblems, openPage }) {
+  let ctx = null, page = null, ann = null, pageId = "", lines = [], ws = "";
+  const spansOf = (ready, timeout) => restingSpans(page, until, 1, ready, timeout);
+  const printed = () => spanTexts(lines.map((l) => l.text.split(" ")));
+  const garbled = () => spanTexts(lines.map((l) => l.garbled.split(" ")));
+  try {
+    await step("scan layer: another tab: a printed scan under a garbled layer in a shared workspace, open in a second account's tab", async () => {
+      const out = await server.manage("create-workspace", "Scan lab", "alice", "shared");
+      ws = (out.match(/workspace (\S+)/) || [])[1];
+      assert(ws, `the shared workspace's id from: ${out}`);
+      await server.manage("set-member", ws, "bob", "editor");
+      // the same sessions, bound to the shared workspace
+      const as = (who) => Object.assign(new Account(server, who.name, who.password), { session: who.session, defaultWs: who.defaultWs, ws });
+      ann = as(alice);
+      const ben = as(bob);
+      const scan = printedScan(server.dir, "garbled");
+      lines = scan.lines;
+      const up = await ann.upload("/api/uploads", scan.bytes, "lab-scan.pdf", "application/pdf");
+      pageId = (await ann.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Lab scan", source_url: up.source_url } })).id;
+      ctx = await ben.context(browser);
+      page = await openPage(ctx, `${server.base}/?page=${pageId}&ws=${ws}`);
+      await waitForPdf(page, 1);
+      assertEq(JSON.stringify((await spansOf()).map((s) => s.text)), JSON.stringify(garbled()), "the tab reads the garbled layer");
+      // gone with a reload
+      await page.evaluate(() => { window.__e2eSameLoad = true; });
+      assertNoProblems(page);
+    });
+
+    await step("scan layer: another tab: a recognition the first account starts reaches the second account's open tab by its socket: its text layer and Ctrl+F read the recognized words, with no reload", async () => {
+      const job = await ann.api("/api/jobs/ocr", { method: "POST", body: { page_id: pageId } });
+      const ended = await jobEnd(ann, until, job.id);
+      assertEq(ended.state, "done", `the recognition ended: ${JSON.stringify(ended)}`);
+      const t0 = Date.now();
+      const spans = await spansOf((now) => now.some((s) => s.text.trim() === "resonance"), 15000);
+      const ms = Date.now() - t0;
+      assertEq(JSON.stringify(spans.map((s) => s.text)), JSON.stringify(printed()), "a span a recognized word");
+      assertEq(await page.evaluate(() => window.__e2eSameLoad), true, "the tab was not reloaded");
+      const [mark, ...more] = await findMarks(page, until, "resonance");
+      assertEq(more.length, 0, "one mark");
+      const mid = lines[4].base - 0.27 * lines[4].size;
+      assert(mark.top <= mid && mid <= mark.bottom, `the mark ${mark.top.toFixed(2)}..${mark.bottom.toFixed(2)} is on line 5`);
+      assertNoProblems(page);
+      return `the tab read the recognized words ${ms} ms after the job ended`;
+    });
+
+    await step("scan layer: another tab: the first account forgets the recognized text, and the second account's open tab reads its own layer again, with no reload", async () => {
+      const job = await ann.api("/api/jobs/ocr-drop", { method: "POST", body: { page_id: pageId } });
+      const ended = await jobEnd(ann, until, job.id, 60000);
+      assertEq(ended.state, "done", `the forget ended: ${JSON.stringify(ended)}`);
+      const t0 = Date.now();
+      const spans = await spansOf((now) => now.some((s) => s.text.trim() === "rc50m4mcc"), 15000);
+      const ms = Date.now() - t0;
+      assertEq(JSON.stringify(spans.map((s) => s.text)), JSON.stringify(garbled()), "the garbled layer again");
+      assertEq(await page.evaluate(() => window.__e2eSameLoad), true, "the tab was not reloaded");
+      assertNoProblems(page);
+      return `the tab read its own layer again ${ms} ms after the job ended`;
+    });
+  } finally {
+    await ctx?.close();
+  }
+}
+
+// A server that reads no text itself and leaves the reading to the window
+// that asks (GAMMA_OCR_ENGINE=window, as the apps' servers): the Document
+// menu's Recognize text reads the page in this Chromium with tesseract.js
+// (pdf/ocrRuns.js, pdf/ocrTab.js, pdf/ocrLoop.js), sends its words, and the
+// server's `ocr-tab` job judges and applies them.
+async function windowSteps({ browser, step, until, assert, assertEq, assertNoProblems, openPage }) {
+  const win = new Server({ env: { GAMMA_OCR_ENGINE: "window" } });
+  let ctx = null, page = null, reader = null, pageId = "", docId = "", title = "", lines = [], config = null;
+  const requests = [];
+  const spansOf = (ready, timeout) => restingSpans(page, until, 1, ready, timeout);
+  try {
+    await step("scan layer: in the window: setup, a server that reads no text itself, and a printed scan under a garbled layer open there", async () => {
+      await win.start();
+      await win.manage("create-user", "win-reader", "win-reader-pw");
+      reader = await new Account(win, "win-reader", "win-reader-pw").login();
+      config = (await reader.api("/api/server-config")).ocr;
+      assert(config?.where === "window" && config.engine === "tesseract.js 7.0.0" && /^\/api\/ocr\/models\/[0-9a-f]{12}$/.test(config.models || "")
+        && config.auto === false, `the server leaves the reading to the window: ${JSON.stringify(config)}`);
+      const scan = printedScan(win.dir, "garbled");
+      lines = scan.lines;
+      const up = await reader.upload("/api/uploads", scan.bytes, "window-scan.pdf", "application/pdf");
+      docId = up.doc_id;
+      pageId = (await reader.api(`/api/blocks/by-doc/${docId}`, { method: "POST", body: { default_title: "Window scan", source_url: up.source_url } })).id;
+      title = (await reader.api(`/api/blocks/${pageId}`)).content || "Window scan";
+      ctx = await reader.context(browser);
+      // every request the page and its workers make
+      ctx.on("request", (r) => requests.push(r.url()));
+      page = await openPage(ctx, `${win.base}/?page=${pageId}&ws=${reader.ws}`);
+      await waitForPdf(page, 1);
+      assert((await spansOf()).some((s) => s.text.trim() === "rc50m4mcc"), "the text layer reads the garbled layer");
+      assertNoProblems(page);
+      return `"${title}"`;
+    });
+
+    await step("scan layer: in the window: Recognize text in this PDF reads the page in this window, every file from its server, and the job's row in Background tasks ends done with its summary", async () => {
+      await page.click("button[aria-label='Document']");
+      await page.locator(".attachPopover").waitFor();
+      const row = page.locator('.attachPopover [data-ocr="recognize"]');
+      await row.waitFor();
+      assertEq((await row.innerText()).trim(), "Recognize text in this PDF");
+      assertEq(await row.getAttribute("title"), "Read the words of this PDF's scanned pages from their pictures: selection, search, the AI and translation read them, and each highlight there keeps its place and takes the new text. The PDF file itself is unchanged. The pages are read in this window: keep it open and in front until it is done.");
+      const t0 = Date.now();
+      await row.click();
+      const said = await statusSaid(page, until, /Text recognized on|Could not start|failed/);
+      const seconds = (Date.now() - t0) / 1000;
+      assertEq(said, `Text recognized on 1 page of “${title}”.`, "the summary");
+      const task = await taskRow(page, `Reading the text of “${title}” in a window`);
+      assert(await task.evaluate((el) => el.classList.contains("done")), `the row ended done: ${await task.getAttribute("class")}`);
+      await page.keyboard.press("Escape");
+      const job = (await reader.api("/api/jobs")).jobs.find((j) => j.kind === "ocr-tab" && j.params?.doc_id === docId);
+      assert(job, "an ocr-tab job");
+      const { result } = await reader.api(`/api/jobs/${job.id}`);
+      assertEq(JSON.stringify(["scanned", "recognized", "kept", "empty", "failed", "good_layer"].map((k) => result[k])),
+        JSON.stringify([1, 1, 0, 0, 0, false]), `its result: ${JSON.stringify(result)}`);
+      const state = await reader.api(`/api/ocr/${docId}`);
+      assertEq(JSON.stringify([state.recognized, state.engine, state.pending]), JSON.stringify([[1], "tesseract.js 7.0.0", false]),
+        `the file's recognition: ${JSON.stringify(state)}`);
+      // tesseract.js's own defaults are a CDN's: nothing went there
+      const away = requests.filter((u) => !u.startsWith(win.base) && !/^(data|blob):/.test(u));
+      assertEq(away.join(", "), "", "every request went to the server");
+      for (const lang of ["eng", "fra", "deu"]) {
+        assert(requests.some((u) => u === `${win.base}${config.models}/${lang}.traineddata`),
+          `the ${lang} model came from the server: ${requests.filter((u) => /traineddata|tesseract|worker/.test(u)).join(", ")}`);
+      }
+      assert(requests.some((u) => /\/assets\/tesseract-core-simd-lstm\.wasm-[\w-]+\.js$/.test(u)) && requests.some((u) => /\/assets\/worker\.min-[\w-]+\.js$/.test(u)),
+        "the core and the worker are the build's hashed assets");
+      assertNoProblems(page);
+      return `${said} (${seconds.toFixed(1)} s from the click, the engine's start included)`;
+    });
+
+    await step("scan layer: in the window: the text layer reads the words the window recognized, each on its printed line, and Ctrl+F finds one only the recognition read", async () => {
+      const spans = await spansOf((now) => now.some((s) => s.text.trim() === "resonance"), 15000);
+      const got = await reader.api(`/api/ocr/${docId}/pages?first=1&last=1`);
+      const read = got.pages["1"].lines.map((line) => line.map((w) => w[0]));
+      assertEq(JSON.stringify(read), JSON.stringify(lines.map((l) => l.text.split(" "))), "the window read the printed words");
+      assertEq(JSON.stringify(spans.map((s) => s.text)), JSON.stringify(spanTexts(read)), "a span a recognized word");
+      let n = 0;
+      const off = [];
+      lines.forEach((line, k) => {
+        const mid = line.base - 0.27 * line.size;
+        for (const w of line.words) {
+          const s = spans[n++];
+          const centre = (w.x0 + w.x1) / 2;
+          if (!(s.x0 <= centre && centre <= s.x1 && s.top <= mid && mid <= s.bottom)) {
+            off.push(`line ${k + 1}, "${w.text}" printed ${w.x0.toFixed(2)}..${w.x1.toFixed(2)}, its span ${s.x0.toFixed(2)}..${s.x1.toFixed(2)} × ${s.top.toFixed(2)}..${s.bottom.toFixed(2)}`);
+          }
+        }
+      });
+      assertEq(off.join("\n          "), "", "every recognized word's span over its printed word");
+      const word = lines[4].words.find((w) => w.text === "resonance");
+      const [m, ...more] = await findMarks(page, until, "resonance");
+      assertEq(more.length, 0, "one mark");
+      const centre = (word.x0 + word.x1) / 2;
+      assert(m.x0 <= centre && centre <= m.x1, `the mark ${m.x0.toFixed(2)}..${m.x1.toFixed(2)} is over "resonance" printed ${word.x0.toFixed(2)}..${word.x1.toFixed(2)}`);
+      assertNoProblems(page);
+      return `${spans.length} spans`;
+    });
+  } finally {
+    await ctx?.close();
+    await win.stop();
+  }
+}
+
+// A server that recognizes the text of a scan uploaded with no text by
+// itself (GAMMA_OCR_AUTO=on; gamma/ocr_auto.py): the run is the workspace's
+// own, one file at a time, and a tab showing the page says when it is done
+// (tasks/taskKinds.js ocrEnding), whether its tasks store saw the run going
+// or only heard of its end from the page socket (useTasks expectEnd). The
+// scan is long enough (a quarter of a second a page here) for the tab
+// usually to open on it while it still goes.
+const AUTO_PAGES = 40;
+
+async function automaticSteps({ browser, step, until, assert, assertEq, assertNoProblems, openPage }) {
+  const auto = new Server({ env: { GAMMA_OCR_AUTO: "on" } });
+  let ctx = null, page = null, owner = null;
+  try {
+    await step("scan layer: automatically: setup, a server that recognizes scans by itself", async () => {
+      await auto.start();
+      await auto.manage("create-user", "auto-owner", "auto-owner-pw");
+      await auto.manage("set-admin", "auto-owner", "on");
+      owner = await new Account(auto, "auto-owner", "auto-owner-pw").login();
+      const config = (await owner.api("/api/server-config")).ocr;
+      assert(config?.where === "server" && config.auto === true, `the server recognizes scans by itself: ${JSON.stringify(config)}`);
+      ctx = await owner.context(browser);
+      page = await openPage(ctx, `${auto.base}/?ws=${owner.ws}`);
+      await page.waitForSelector(".folderNewBtn");
+      assertNoProblems(page);
+    });
+
+    await step("scan layer: automatically: a scan uploaded whose pages are only pictures is recognized by itself, as the workspace's run in Background tasks, and the tab showing it says so when it is done", async () => {
+      const up = await owner.upload("/api/uploads", pictureScan(auto.dir, AUTO_PAGES), "picture-book.pdf", "application/pdf");
+      const docId = up.doc_id;
+      const pageId = (await owner.api(`/api/blocks/by-doc/${docId}`, { method: "POST", body: { default_title: "Picture book", source_url: up.source_url } })).id;
+      await page.goto(`${auto.base}/?page=${pageId}&ws=${owner.ws}`);
+      await waitForPdf(page, 1);
+      const title = (await owner.api(`/api/blocks/${pageId}`)).content || "Picture book";
+      const job = await until(async () => (await owner.api("/api/jobs")).jobs.find((j) => j.kind === "ocr" && j.params?.doc_id === docId),
+        { what: "the automatic run's job", timeout: 15000 });
+      assertEq(JSON.stringify([job.owner, job.params.auto, job.params.page_id, job.params.title]), JSON.stringify(["", true, pageId, title]),
+        `the workspace's own run, of the page uploaded: ${JSON.stringify(job)}`);
+      // the open tray reads the jobs every 1.5 s; the row may already be done
+      // (a loaded machine opens the tab late): the summary below comes either
+      // way, from the page socket's `ocr` message (useTasks expectEnd)
+      const task = await taskRow(page, `Recognizing the text of “${title}” automatically`);
+      await page.keyboard.press("Escape");
+      const said = await statusSaid(page, until, /Text recognized automatically|failed/);
+      assertEq(said, `Text recognized automatically on ${AUTO_PAGES} pages of “${title}”.`, "the summary");
+      const ended = await jobEnd(owner, until, job.id, 10000);
+      assertEq(JSON.stringify([ended.state, ended.result?.recognized, ended.result?.scanned]), JSON.stringify(["done", AUTO_PAGES, AUTO_PAGES]),
+        `the run: ${JSON.stringify(ended)}`);
+      await page.click("button[aria-label='Background tasks']");
+      await until(() => task.evaluate((el) => el.classList.contains("done")), { what: "the row ended done" });
+      await page.keyboard.press("Escape");
+      const spans = await restingSpans(page, until, 1, (s) => s.some((x) => x.text.trim() === "resonance"), 15000);
+      assert(spans.map((s) => s.text).join("").includes("Lounis and Cohen measured the resonance twice."),
+        `the text layer reads the recognized words: ${JSON.stringify(spans.map((s) => s.text))}`);
+      assertNoProblems(page);
+      return said;
+    });
+
+    await step("scan layer: automatically: Settings → Server → Text recognition shows the switch on and held by the environment", async () => {
+      await page.locator('[data-guide="header.account"]').click();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      await settingsPane(page, "Server");
+      const row = page.locator('.settingsPane [data-setting="Recognize scans automatically"]').first();
+      await row.waitFor();
+      const box = row.locator('input[type="checkbox"], [role="switch"]').first();
+      assert(await box.isChecked(), "the switch is on");
+      assert(await box.isDisabled(), "the environment holds it");
+      const text = (await row.innerText()).replace(/\s+/g, " ").trim();
+      assert(text.includes("Set by GAMMA_OCR_AUTO in the server's environment"), `the row says what holds it: ${text}`);
+      await page.keyboard.press("Escape");
+      assertNoProblems(page);
+      return text;
+    });
+  } finally {
+    await ctx?.close();
+    await auto.stop();
   }
 }

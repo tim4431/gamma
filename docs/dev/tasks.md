@@ -7,7 +7,7 @@ of work meet there:
 - **Server jobs**: exports, workspace exports, snapshots, restores, library
   imports and their reviews, batch metadata lookups, deletes of a workspace or an account,
   the admin's server snapshots and database checks, a scanned PDF's text
-  recognized, and the search indexer. A job lives
+  recognized or forgotten, and the search indexer. A job lives
   on the server (`gamma/jobs.py`), so it goes on when the tab or the dialog
   that started it closes, and every tab and device of the account sees it.
 - **This tab's own work**: a PDF loading in the viewer, a file uploading
@@ -66,7 +66,8 @@ in the worker thread and returns the result. It reports through
 - Any other keyword goes into the progress as it is, a JSON number or
   string the kind's row reads: the text recognition's `since` (when its
   phase began, in ms) and `from` (its count then), from which the row
-  tells the time left.
+  tells the time left, and a run in a window's `idle` (the seconds no page
+  came for, when that ended it).
 - A new phase or unit starts its own counts; a field left out is kept.
 
 Every report is also where a job stops: once the job was asked to stop,
@@ -88,6 +89,18 @@ writes it to `job.artifact_path` and names the download with
 `HTTPException`'s detail, a `ValueError` or an `OSError` is the message as
 it stands; anything else is logged with its traceback.
 
+`jobs.start(ended=fn)` tells `fn(state)` how the job ended, once the job
+reads as ended. It runs outside the jobs' lock, since it may start jobs,
+and `jobs.wait` and `refuse_writers` wait for it. A queued job that
+`cancel` stops is told too, before `cancel` returns. A queued job that
+`refuse_writers` fails is not told. `state` is the row's (`done`,
+`failed`, `cancelled`), except for two cases. A job that gave way is told
+`"yielded"` (its row reads cancelled), and a running job that
+`refuse_writers` stopped is told `"refused"` (its row reads failed). The
+text recognition settles its file's automatic marker this way
+([documents.md](documents.md#recognized-text)). A replacement's highlight
+run lets its Zotero link go on ([zotero_sync.md](zotero_sync.md)).
+
 The work itself takes the report as a plain `progress` callable, never
 the job: `ws_backup.write_zip`, `create`, `restore_zip` and
 `keep_final_copy`, `backups.create`, `workspaces.delete`, `delete_account`
@@ -103,8 +116,24 @@ pumped): the text recognition, `ocr`, at most `GAMMA_OCR_WORKERS` (1 by
 default) at once on the server, whoever starts them, the others queued,
 and a queued one stops at once. A lane's jobs hold no place of the
 server's four or an account's two, so a book's recognition never holds up
-an export. An account may have 20 queued or running jobs (429 past
-that), its lane jobs among them. A `key` makes two jobs of one owner and kind the same work: while
+an export. A lane job started with `yields=True` (an automatic
+recognition nobody asked for) starts after the lane's other queued jobs,
+and gives way to one of them that waits. `_pump`, called wherever a
+lane's jobs change, asks as many running yielding jobs of the lane to
+give way as there are jobs waiting that do not yield. It withdraws a
+give-way that nobody waits for any more (the job that waited was stopped,
+or started) from a job that has not given way yet. A job asked to give
+way raises `jobs.Yield` at its next report, decided under the lock, and
+ends cancelled. Its `ended` hook is told `"yielded"` rather than
+`"cancelled"`. Until it ends it reads `stopping: true`, and a start of its
+work is not `Busy` with it but a job of its own. `jobs.promote(id)` makes
+a job one that someone asked for, which no longer yields. It returns True
+for a job promoted now or before, and False for one that is gone or that
+gave way already. A kind whose work is done elsewhere (`AT_ONCE`:
+`ocr-tab`, whose job waits for a window's pages) starts at once, outside
+the lane and the running limits. An account may
+have 20 queued or running jobs (429 past that), its lane and `AT_ONCE`
+jobs among them. A `key` makes two jobs of one owner and kind the same work: while
 one is queued or running, starting another raises `jobs.Busy` with it (the
 indexer, one per workspace; an import and a review's reading, one each
 per review; a highlight run, one
@@ -113,7 +142,12 @@ check, one per admin). Work done once whoever asks for it (a text
 recognition, one per workspace and file) starts with `exclusive=True`:
 `Busy` then comes for any owner's job of that kind and key, found in the
 same turn of the lock as the job is added, so two starts at the same
-moment get one run. `jobs.live(kind, key)` reads such a job of any owner.
+moment get one run. `exclusive` may also be a tuple of kinds, for works
+that must not run beside one another: the three that change a file's
+recognized text pass `pdf_ocr.OCR_KINDS` (`ocr`, `ocr-tab`, `ocr-drop`),
+and `Busy.job`'s `kind` says which was found. `jobs.live(kind, key)` reads
+such a job of any owner, and `jobs.live_count(kind)` counts a kind's
+queued and running jobs, whoever owns them.
 
 **Files.** A job's file is `<data dir>/jobs/<id>/artifact`; an upload a job
 reads (a restore's zip) waits in `jobs/incoming/` and the job removes it
@@ -140,7 +174,7 @@ the viewer's layout this way, so it can be started again
 
 **Ending.** A finished job is kept 24 hours (`RETENTION_S`). The sweep
 (`jobs.sweep`, every 10 minutes from the app lifespan) removes it with its
-file and what it kept, the jobs of a share that no longer exists, job directories no row names and uploads no job took. At startup
+file and what it kept, the jobs of a share that no longer exists, job directories no row names and uploads no job took, then starts the automatic text recognitions left waiting (`ocr_auto.resume`). At startup
 `jobs.recover` fails the jobs a stopped process left queued or running
 ("interrupted: the server restarted while this ran"). A process only
 recovers rows another process stamped (`instance`), so a second app
@@ -213,7 +247,9 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `workspace-delete` | `workspace-delete` (`routers/workspaces.py`, one per workspace) | Settings → Workspaces → Manage → Delete…, for an owner or an admin | `{warning, final_copy}`; phases `keeping` (the final copy's bytes) and `deleting`, past which it no longer stops ([workspaces.md](workspaces.md) "Deleting a workspace") |
 | `account-delete` | `account-delete` (`routers/admin.py`, one per account; `workspaces.start_account_delete`) | Settings → Users → an account → Delete… (admins); on a share host also the server's own, owner `jobs.WORKSPACE`, for an account whose Gamma Cloud account was deleted ([cloud_accounts.md](cloud_accounts.md) "A deleted account on the share host") | `{deleted_workspaces}`; the same phases, a final copy per workspace that goes |
 | `db-check` | `db-check` (`routers/admin.py`) | Settings → Server → Databases → Check now (admins) | what `/admin/check-databases` answers; progress in files |
-| `ocr` | `ocr` (`routers/ocr.py`, one per workspace and file, whoever starts it; its own lane) | the Document menu → Recognize text in this PDF | `{scanned, recognized, kept, empty, failed, good_layer, shared, highlights_respelled, highlights_kept, highlights_changed}`: the scan and picture pages, those reading recognized words, keeping their own text and recognized without words (the whole file's), this run's pages without a result, whether the file's own text reads well, the median share of a layer's words the recognition read too (0 to 1, null with no layer), what the quotes' respell did; params `{page_id, doc_id, title}`; phases `reading`, `recognizing` and `updating`, past which it no longer stops ([documents.md](documents.md#recognized-text)) |
+| `ocr` | `ocr` (`routers/ocr.py`, one OCR job per workspace and file, whoever starts it; its own lane) | the Document menu → Recognize text in this PDF, where the server recognizes text itself; a scan uploaded with no text, by itself (owner `jobs.WORKSPACE`, `params.auto`, `yields`; `gamma/ocr_auto.py`) | `{scanned, recognized, kept, empty, failed, good_layer, shared, highlights_respelled, highlights_kept, highlights_changed}`: the scan and picture pages, those reading recognized words, keeping their own text and recognized without words (the whole file's), this run's pages without a result, whether the file's own text reads well, the median share of a layer's words the recognition read too (0 to 1, null with no layer), what the quotes' respell did; params `{page_id, doc_id, title}`, plus `auto: true` for an automatic one; phases `reading`, `recognizing` and `updating`, past which it no longer stops ([documents.md](documents.md#recognized-text)) |
+| `ocr-tab` | `ocr` with `window` (`routers/ocr.py`; `AT_ONCE`, outside the lane) | the same menu row, where the window reads the pages (`/api/server-config`'s `ocr.where` is `window`) | the `ocr` result, `failed` the pages the window found no result on; params `{page_id, doc_id, title, window: {doc_id, engine, langs, ver, client}}` (`client` the window that started it, kept after another window takes the run over); the same phases; ends cancelled with `progress.idle` when no page came for 10 minutes of its `recognizing` phase, and without `idle` when stopped ([documents.md](documents.md#recognized-text)) |
+| `ocr-drop` | `ocr-drop` (`routers/ocr.py`, outside the lane) | the Document menu → Forget the recognized text… | `{pages, highlights_respelled, highlights_kept, highlights_changed, highlights_unread}`: the pages that read recognized text before, and what the respell back did; params `{page_id, doc_id, title}`; phase `updating` from its start, so it never stops; no retry |
 | `relocate-highlights` | `relocate-highlights` (`routers/pages.py`, one per page and file; `PUT /pages/{id}/attachment` starts it by itself) | a replaced PDF (the Document menu → Replace the PDF…, a build script's `PUT`, a Zotero link bringing Zotero's new file, which starts it for the link's owner, [zotero_sync.md](zotero_sync.md#pdfs)); a replaced text file over 512 KiB (a smaller one's ranges are placed in the replacement itself, no task, [highlight_relocation.md](highlight_relocation.md#text-files)); the Document menu → Find highlights in this PDF (a text file's: Find highlights in this file) | `{highlights, moved, kept, lost, approx, changed, min_match, exact_chars}` (a text file's with `format: "text"`): the counts, then the owner's thresholds the run went by, which its params `{page_id, title, doc_id, format, min_match, exact_chars}` record as it starts, `format` naming which run places it, `pdf` or `text` ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) |
 
 The off-site copies' Copy now (Settings → Backups, `POST
@@ -292,21 +328,50 @@ itself unstoppable and writes. When the replacement's run cannot start
 stopping, or the new PDF is shown from a URL alone and not stored), the
 replacement stands and its answer says why (`relocation_error`).
 
-A text recognition (`ocr`) is keyed by the workspace and the file
-(`<ws>:<doc_id>`): one run at a time for a file, whoever starts it. A start
-while the same account's run is queued or running answers it (409 while
-it is still stopping), and another account's gets 409 "Someone else is
-recognizing this PDF's text right now." Before that the route refuses a
-guest (403) and a viewer, needs a PDF stored on the server (400), and sets
-the engine up once (`ocr_engine.check`, 503 with its sentence when it
-cannot). The job writes, so a
-delete of the workspace stops it. A stop lands between two pages, and the
-pages read so far wait, unseen, for the next run, which goes on from
-there. Its `recognizing` phase counts the pages done by earlier runs too
-and carries `since` and `from`. A failure in the finishing steps after
-the text went live is logged and the job still ends done, the file left
-pending for the next run to finish
+A text recognition (`ocr`, `ocr-tab`) and a forget (`ocr-drop`) are keyed
+by the workspace and the file (`<ws>:<doc_id>`) and start with
+`exclusive=pdf_ocr.OCR_KINDS`: one of the three at a time for a file,
+whoever starts it. A start beside one is answered by `busy_job`: the same
+account's job of the kind asked for answers it (409 while it is still
+stopping); a forget going gets 409 "This PDF's recognized text is being
+forgotten — try again in a moment."; another account's recognition gets
+409 "Someone else is recognizing this PDF's text right now."; the
+account's own of another kind, or an automatic one, gets 409 "This PDF's
+text is being recognized — wait for it, or stop it in Background tasks."
+A person's `ocr` start beside the workspace's automatic `ocr` run of the
+same file gets that job instead, promoted so it no longer yields. If that
+run gave way already, the start is a job of its own, queued behind the
+run that took the lane, never the job that is ending. Before
+that the route refuses a guest (403) and a viewer and needs a PDF stored
+on the server (400). A server run sets the engine up once
+(`ocr_engine.check`, 503 with its sentence when it cannot). The jobs
+write, so a delete of the workspace stops them. A stop lands between two
+pages, and the pages read so far wait, unseen, for the next run, which
+goes on from there. The `recognizing` phase counts the pages done by
+earlier runs too and carries `since` and `from`. A failure in the
+finishing steps after the text went live is logged and the job still ends
+done, the file left pending for the next run to finish
 ([documents.md](documents.md#recognized-text)).
+
+An automatic run (`gamma/ocr_auto.py`) is the workspace's own `ocr` job,
+which its members see and its editors stop. At most one goes on the
+server, started only while no `ocr` job is queued or running, and it
+yields to a person's run waiting for the lane. Every `ocr` job's `ended`
+hook (`ocr_auto.ended`) settles the file's marker and starts the next
+waiting file. A run that gave way, or that a delete of its workspace
+stopped (`refused`), stays queued. A run that was stopped, running or
+still waiting for the lane, is declined. A run that is done or failed is
+done. Before restarting a file after a restart of the server, it
+dismisses the interrupted row the restart left.
+
+A run in a window (`ocr-tab`) holds no lane place, since the window's CPU
+does the reading. Its job waits for the window's pages and applies them
+(`pdf_ocr.window_run`). A Stop by its owner, a person's or the window's
+own after a failure on its side, ends the job at its next report, within
+2 s. The job ends cancelled without `progress.idle`, which only its idle
+end sets, and its staged pages are kept. Until then it reads `running`
+with `stopping: true`, and a page sent meanwhile or after lands nowhere
+(409).
 
 ## The web app (`frontend/src/tasks/`)
 
@@ -325,18 +390,35 @@ pending for the next run to finish
 - When a job ends, the store fetches its file if asked, then calls
   `onFinished(job, started)` once per job. That includes a job that ended
   before any listing saw it running.
+- `expectEnd(match)` is for an end the tab heard of elsewhere. App's
+  `onOcr` calls it with `ocrState.fileJobs(doc_id)` when a page's socket
+  says that a file's recognized text changed. The store lists at once.
+  For 15 s, a listing that first shows a matching job already ended (one
+  the listing before did not have) settles it as if it had been seen
+  running (`newlyFinished`'s `expected`). So the server's own run of an
+  upload, done between two slow listings, is still reported on the page.
 - This tab's rows: `addLocal`, `updateLocal`, `reviveLocal`, `removeLocal`,
   and `cancel` to stop one. A late report of work the person stopped never
-  overwrites "cancelled".
+  overwrites "cancelled". A run that waits its turn to read a scan in this
+  window has such a row (kind `ocr-tab`, "Waiting for its turn…",
+  `pdf/ocrRuns.js`). Its Stop calls the run off, and the job's row takes
+  over at the run's turn. For a job, `cancel` first calls its kind's
+  `halt(task)`, which ends this tab's own side of the work at once. An
+  `ocr-tab` row's halt ends this window's run of the job
+  (`ocrRuns.jobStopped`), so the run does not wait for its next request.
 
 `taskModel.js` and `taskKinds.js` are pure, tested in
-`tests/tasks.test.mjs`. `taskModel.js` holds the states, the order (what
-runs first, oldest on top; then what ended, newest on top) and the tray
-badge. `taskKinds.js` gives each kind its icon, title, detail line and row
+`tests/tasks.test.mjs`, except for what `ocr-tab` reads of this window:
+its hidden time and its run here. `taskModel.js` holds the states, the
+order (what runs first, oldest on top; then what ended, newest on top) and
+the tray badge. `taskKinds.js` gives each kind its icon, title, detail line and row
 actions, how long a kind that can tell still takes (`left(task, now)`,
 after the counts: the `ocr` row's, at the pace of this run's pages since
-`since`), where a click opens it (`open`) and how to start it again
-(`retry`: the same route and body; an export that carried the viewer's
+`since`; the `ocr-tab` row's in the window reading it leaves out the time
+that window was hidden, `noteHidden`), where a click opens it (`open`) and
+how to start it again (`retry`: the same route and body; an `ocr-tab` row
+is read again in this window, or on the server where the server now reads
+text itself, `ocrState.recognizeAgain`; an export that carried the viewer's
 translation, or a folder's that carried its papers', names its job as
 `translation_of`, since its params cannot hold the layout and the server
 keeps it with the job,
@@ -404,16 +486,29 @@ window does not show:
   were not found, and were left as someone moved them meanwhile. A run stopped or refused because the PDF was replaced
   again says nothing (`relocationSuperseded`): the newer run reports. The
   positions themselves reach every tab over the page socket.
-- A text recognition, however it ended, makes every tab of the workspace
-  that heard it end read the file's recognition again (`ocrState.refresh`,
-  [pdf_loading.md](pdf_loading.md#recognized-words)). The tab that started
-  it says how it went (`ocrSummary`): the pages recognized and the
+- A text recognition or a forget, however it ended, makes every tab of the
+  workspace that heard it end read the file's recognition again
+  (`ocrState.refresh`, [pdf_loading.md](pdf_loading.md#recognized-words)).
+  What a tab says is `taskKinds.ocrEnding`'s. The tab that started a
+  recognition says how it went (`ocrSummary`): the pages recognized and the
   highlights that took the new text, the pages that could not be read, the
   file's own text kept because it reads well (and its picture pages
   recognized, when there were some), no scanned pages, or where a stop left
   it: how many pages were done when it stopped while recognizing, and only
   "was stopped" during the other phases, since the reading phase counts
-  pages classified, not recognized.
+  pages classified, not recognized. A run in a window says nothing of a
+  job that it goes on from while this window still reads. That is a job
+  failed by a restart of its server, or one the idle timer ended
+  (`progress.idle`) while the window was hidden, which the run starts
+  again. It also says nothing of a job whose end it reported already
+  (`told`): the run failed on this window's side, said why on the status
+  line and stopped the job. A job that applied after all is still
+  reported, and so is a person's Stop, which carries no `idle`. A forget
+  says how many pages read their own text again and what became of the
+  highlights there (`ocrDropSummary`). A done automatic run is told on the
+  page it recognized, in any tab of the workspace showing it: "Text
+  recognized automatically on {n} pages of “{title}”." (`ocrAutoSummary`),
+  even when no listing saw it run (`expectEnd`, above).
 - A job started from a menu shows its progress in the pill while it runs
   (`meta.pill`).
 
@@ -522,9 +617,16 @@ page or folder by link").
   export unpacking no PDF) are tested in `test_import_review.py`, the metadata batch in `test_metadata_batch.py`
   and the indexer in `test_search.py`. `test_jobs_lanes.py` covers the
   lane (one recognition running and one queued while an export starts,
-  `GAMMA_OCR_WORKERS`, a queued one stopped), `jobs.live`, the exclusive
-  start and the extra progress fields; `test_ocr_api.py` the recognition's
-  start, a second member's start between a look and a start included. `test_delete_jobs.py` covers the
+  `GAMMA_OCR_WORKERS`, a queued one stopped and its end hook told),
+  `jobs.live`, the exclusive start with a kind or a tuple of kinds,
+  `AT_ONCE`, a yield, a give-way withdrawn, `promote` and a job that gave
+  way, and the extra progress fields; `test_ocr_api.py` the recognition's
+  start, a second member's start between a look and a start included;
+  `test_ocr_window.py` the `ocr-tab` job (its idle time, a stop by its
+  owner, a take-over, a start beside an automatic run that gave way),
+  `test_ocr_auto.py` the automatic runs and their queue (a run stopped
+  while it waits, one a delete stopped), `test_ocr_forget.py` the
+  `ocr-drop` job and Busy across the three kinds. `test_delete_jobs.py` covers the
   delete kinds (a stop during the final copy and just after it deletes
   nothing, none after it, the refusals, a second start of either kind, the
   check at the point of no return, two admins deleting each other, the
@@ -532,7 +634,7 @@ page or folder by link").
   a share, the AI's tools and the jobs that change it), the database
   check and the streamed snapshot download; `test_backup_safety.py` the
   final copy itself and the delete holds.
-- Frontend: `tests/tasks.test.mjs` covers the model and kinds (the share view's follow rounds too, the time left, the text recognition's row and summary),
+- Frontend: `tests/tasks.test.mjs` covers the model and kinds (the share view's follow rounds too, the time left, the text recognition's rows and summaries, `ocr-tab`'s hidden time and `halt`, `ocrEnding`, `newlyFinished`'s `expected`),
   `tests/uploadBatch.test.mjs` the upload batch (its plan, question, pool, Stop and closing line),
   `tests/transferFormats.test.mjs` the export job's body and
   `tests/pageBatch.test.mjs` the library's page batches; `test_bulk_pages.py` their

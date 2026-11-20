@@ -534,11 +534,23 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 }
 
 // A document opened with no viewer, for work that reads its text (a folder's
-// translated export, pdf/folderTranslation.js): its bytes as the viewer gets
-// them (the caches above, else one GET), parsed by the shared worker. It
-// goes in no cache of documents; the caller destroys it.
-export async function openPdfDocument(url) {
+// translated export, pdf/folderTranslation.js) or its pages (a scan read in
+// the window, pdf/ocrTab.js): its bytes as the viewer gets them (the caches
+// above, else one GET), parsed by the shared worker. `ranged`: an upload
+// past WHOLE_MAX_BYTES is opened by range requests instead, as the viewer
+// opens it (pdfSource.chooseTransport), so a large scan read page by page is
+// never held whole in the tab, nor copied into pdf.js's worker. It goes in
+// no cache of documents; the caller destroys it.
+export async function openPdfDocument(url, { ranged = false } = {}) {
   const lib = await loadPdfEngine();
+  if (ranged) {
+    const held = PDF_CACHE.get(url);
+    const bytes = held ? held.byteLength
+      : docIdOf(url) ? await firstValue([fetchManifest(url).then((m) => m?.bytes), fetchSize(url)]) : null;
+    if (chooseTransport({ url, bytes }) === "range") {
+      return lib.getDocument(openParams(rangeOpenOptions(withShare(url)))).promise;
+    }
+  }
   const data = await fetchPdfData(url, null, () => false);
   if (!data) throw new Error("the PDF could not be read");
   return lib.getDocument(openParams({ data: data.slice(0), disableAutoFetch: true, disableRange: true })).promise;

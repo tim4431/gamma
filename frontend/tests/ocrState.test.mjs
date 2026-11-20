@@ -6,12 +6,17 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import * as ocrRuns from "../src/pdf/ocrRuns.js";
 import * as ocrState from "../src/pdf/ocrState.js";
 import { pageText } from "../src/pdf/pageText.js";
 import * as translateState from "../src/pdf/translateState.js";
 import { paperLayout } from "../src/pdf/folderTranslation.js";
 
 const linesOf = (n) => [[[`page${n}`, 1000, 1000, 2000, 1150], ["words", 2100, 1000, 2800, 1150]]];
+// /api/server-config's `ocr`: a server that reads the pages itself, and one
+// whose pages the window that asks reads.
+const SERVER = { where: "server", engine: "tesseract 5.5.0", langs: ["eng", "fra", "deu"] };
+const WINDOW = { where: "window", engine: "tesseract.js 7.0.0", langs: ["eng", "fra", "deu"], models: "/api/ocr/models/0123456789ab" };
 // Lines enough for a paragraph the translation sends: four of a sentence.
 const SENTENCE = "Recognized words read from the picture of this scanned page make a sentence long enough to translate".split(" ");
 const proseOf = (n) => [0, 1, 2, 3].map((k) => SENTENCE.map((w, i) => [i ? w : `${w}${n}`, 1000 + i * 520, 1000 + k * 200,
@@ -239,12 +244,13 @@ test("the Document menu offers recognition while scanned pages are left, or once
   ocrState.register(doc, "d5", "/api/uploads/d5.pdf");
   await until(() => s.asked.length === 1, "the state");
   await flush();
-  const row = (over = {}) => ocrState.menuRow({ docId: "d5", offered: true, ...over });
-  assert.equal(row({ offered: false }), null, "a reader, a server without the engine, a file not stored");
+  const row = (over = {}) => ocrState.menuRow({ docId: "d5", offered: true, capability: SERVER, running: false, ...over });
+  assert.equal(row({ offered: false }), null, "a reader, a guest, a file not stored");
+  assert.equal(row({ capability: null }), null, "a server that recognizes no text");
   assert.equal(row(), null, "nothing known of the file's pages yet");
   ocrState.noteScan(doc.page(3));
   assert.deepEqual(row(), {
-    busy: false, pill: true,
+    busy: false, dropping: false, pill: true, where: "server", docId: "d5", capability: SERVER, label: "Recognize text in this PDF",
     title: "Read the words of this PDF's scanned pages from their pictures: selection, search, the AI and translation read them, and each highlight there keeps its place and takes the new text. The PDF file itself is unchanged.",
   });
   const known = async (state) => {
@@ -265,12 +271,183 @@ test("the Document menu offers recognition while scanned pages are left, or once
   await known({ stamp: "c", recognized: [1], kept: [], scanned: 200 });
   assert.equal(row().pill, false, "a long book's run is followed in Background tasks");
   const running = { kind: "ocr", state: "running", workspace: "w1", params: { page_id: "p1", doc_id: "d5" } };
-  assert.deepEqual(row({ jobs: [running] }), { busy: true, pill: false, title: "This PDF's text is being recognized — see Background tasks" });
+  assert.deepEqual(row({ jobs: [running] }), { busy: true, dropping: false, pill: false, where: "server", docId: "d5", capability: SERVER,
+    label: "Recognize text in this PDF", title: "This PDF's text is being recognized — see Background tasks" });
   assert.equal(row({ jobs: [{ ...running, workspace: "w2" }] }).busy, false, "the same file in another workspace is another");
   assert.match(row({ translated: true }).title, / Its translation of those pages is made again from the new text when you next translate it\.$/);
   const started = [];
   await ocrState.startRecognizing({ start: async (...a) => started.push(a) }, "p1", row());
   assert.deepEqual(started, [["ocr", { page_id: "p1" }, { pill: false }]]);
+});
+
+// The recognition's state as GET /api/ocr/<doc> answers it, known to the tab.
+async function knownState(s, docId, state) {
+  s.state = state;
+  const asked = s.asked.length;
+  ocrState.refresh(docId);
+  await until(() => s.asked.length > asked, "the state");
+  await flush();
+}
+
+test("once a run read the kinds of the pages, the row shows while pages are left, wait to be applied or are being finished", async () => {
+  const s = server({ stamp: "", recognized: [] });
+  const doc = pdfDoc(12);
+  ocrState.register(doc, "d9", "/api/uploads/d9.pdf");
+  await until(() => s.asked.length === 1, "the state");
+  await flush();
+  ocrState.noteScan(doc.page(1));
+  const row = (over = {}) => ocrState.menuRow({ docId: "d9", offered: true, capability: SERVER, running: false, ...over });
+  await knownState(s, "d9", { stamp: "a", recognized: [1, 2], kept: [], scanned: 10, todo: 8 });
+  assert.equal(row().pill, true, "8 pages to read");
+  await knownState(s, "d9", { stamp: "a", recognized: [1, 2], kept: [], scanned: 10, todo: 0 });
+  assert.equal(row(), null, "nothing left, though the counts would say 8 scanned pages are not done and the viewer met a scan");
+  await knownState(s, "d9", { stamp: "a", recognized: [1, 2], kept: [], scanned: 10, todo: [] });
+  assert.equal(row(), null, "a todo given as the list of its pages");
+  await knownState(s, "d9", { stamp: "a", recognized: [1, 2], kept: [], scanned: 10, todo: 0, pending: true });
+  assert.equal(row().label, "Recognize text in this PDF", "an apply's finishing steps are due: a run does them");
+  await knownState(s, "d9", { stamp: "a", recognized: [1, 2], kept: [], scanned: 10, todo: 0, staged: 3 });
+  assert.equal(row().label, "Go on recognizing this PDF's text", "a stopped run's pages wait for the next to apply them");
+  assert.equal(row({ running: true }).label, "Recognize text in this PDF", "while it runs the row only waits");
+  await knownState(s, "d9", { stamp: "a", recognized: [1], kept: [2, 3], scanned: 10, todo: 0, good_layer: true });
+  assert.equal(row(), null, "the PDF's own text reads well and nothing else is left");
+  await knownState(s, "d9", { stamp: "a", recognized: [1], kept: [2, 3], scanned: 10, todo: 2, good_layer: true });
+  assert.equal(row().busy, false, "its own text reads well, but picture pages are left (or failed last time)");
+  await knownState(s, "d9", { stamp: "a", recognized: [1], kept: [2, 3], scanned: 10, todo: null, good_layer: true, staged: 1 });
+  assert.equal(row().label, "Go on recognizing this PDF's text", "pages wait, whatever the counts say");
+});
+
+test("where the window reads the pages, the row says so and starts the run here; a run in this window or any OCR job of the file makes it wait", async () => {
+  const s = server({ stamp: "", recognized: [] });
+  const doc = pdfDoc(6);
+  ocrState.register(doc, "dw", "/api/uploads/dw.pdf");
+  await until(() => s.asked.length === 1, "the state");
+  await knownState(s, "dw", { stamp: "", recognized: [], kept: [], scanned: 6, todo: 6 });
+  const row = (over = {}) => ocrState.menuRow({ docId: "dw", offered: true, capability: WINDOW, running: false, ...over });
+  assert.equal(row().where, "window");
+  assert.match(row().title, / The pages are read in this window: keep it open and in front until it is done\.$/);
+  assert.doesNotMatch(row({ capability: SERVER }).title, /in this window/);
+  const busy = "This PDF's text is being recognized — see Background tasks";
+  assert.deepEqual([row({ running: true }).busy, row({ running: true }).title], [true, busy], "this window reads it");
+  for (const kind of ["ocr", "ocr-tab"]) {
+    const job = { kind, state: "queued", workspace: "w1", params: { page_id: "p1", doc_id: "dw" } };
+    assert.deepEqual([row({ jobs: [job] }).busy, row({ jobs: [job] }).title, row({ jobs: [job] }).dropping], [true, busy, false], kind);
+  }
+  const drop = { kind: "ocr-drop", state: "running", workspace: "w1", params: { page_id: "p1", doc_id: "dw" } };
+  assert.deepEqual([row({ jobs: [drop] }).busy, row({ jobs: [drop] }).dropping, row({ jobs: [drop] }).title],
+    [true, true, "This PDF's recognized text is being forgotten — see Background tasks"]);
+  assert.equal(row({ jobs: [{ ...drop, state: "done" }] }).busy, false, "one that ended");
+  assert.equal(row({ jobs: [{ ...drop, kind: "relocate-highlights" }] }).busy, false, "another kind of job");
+  assert.deepEqual([row({ running: true, queued: true }).busy, row({ running: true, queued: true }).title], [true, "Waiting for its turn…"],
+    "behind another document's run in this window: no job yet to see in Background tasks");
+  // The account's own window run of the file, which no window here reads (this
+  // one was reloaded, or another window of the account reads it): offered, to
+  // go on here; the start hands this window that job.
+  const tab = { kind: "ocr-tab", state: "running", workspace: "w1", progress: { phase: "recognizing" },
+    params: { page_id: "p1", doc_id: "dw", window: { client: "a-window-before-the-reload" } } };
+  assert.deepEqual([row({ jobs: [tab] }).busy, row({ jobs: [tab] }).label, row({ jobs: [tab] }).where], [false, "Go on recognizing this PDF's text", "window"]);
+  assert.equal(row({ jobs: [tab] }).title,
+    "Go on reading this PDF's pages in this window, from the pages read: a window reading them now stops. Keep this one open and in front until it is done.");
+  const mine = { ...tab, params: { ...tab.params, window: { client: ocrRuns.windowClient() } } };
+  assert.deepEqual([row({ jobs: [mine] }).busy, row({ jobs: [mine] }).title], [true, busy], "this window's own job");
+  assert.equal(row({ jobs: [tab], running: true }).busy, true, "this window reads it");
+  assert.equal(row({ jobs: [{ ...tab, stopping: true }] }).busy, true, "being stopped: a start would be refused");
+  assert.equal(row({ jobs: [tab], capability: SERVER }).busy, true, "a server that reads text itself takes no window's run");
+  assert.equal(ocrState.dropRow({ docId: "dw", offered: true, running: false, jobs: [tab] }), null, "nothing recognized yet to forget");
+  // what the tasks store looks for when the socket says the file's text changed
+  const ofFile = ocrState.fileJobs("dw");
+  assert.deepEqual([tab, { ...tab, kind: "ocr" }, { ...tab, kind: "ocr-drop" }, { ...tab, kind: "relocate-highlights" },
+    { ...tab, params: { doc_id: "other" } }].map(ofFile), [true, true, true, false, false]);
+  // Started here: the run reads the pages in this window, under the page's title.
+  const runs = fakeRuns();
+  const tasks = { start: async () => { throw new Error("no server run"); } };
+  const said = [];
+  assert.equal(await ocrState.startRecognizing(tasks, "p1", row(), { title: "Lounis 1992", say: (text) => said.push(text), runs }), null,
+    "started at once, not when the run ends");
+  assert.deepEqual(runs.started, [{ docId: "dw", pageId: "p1", title: "Lounis 1992", tasks, capability: WINDOW }]);
+  runs.end({ phase: "done" });
+  await flush();
+  assert.deepEqual(said, [], "a run that ends well is told by its job's end");
+  await ocrState.startRecognizing(tasks, "p1", row(), { title: "Lounis 1992", say: (text) => said.push(text), runs });
+  runs.end({ phase: "failed", error: "This browser cannot recognize text: it lacks WebAssembly SIMD." });
+  await flush();
+  assert.deepEqual(said, ["Reading the text of “Lounis 1992” in a window failed: This browser cannot recognize text: it lacks WebAssembly SIMD."]);
+  await ocrState.startRecognizing(tasks, "p1", row(), { say: (text) => said.push(text), runs });
+  runs.end({ phase: "stopped" });
+  await flush();
+  assert.equal(said.length, 1, "a stop is no failure");
+});
+
+// pdf/ocrRuns.js as the menu reaches it: `started` the runs asked for,
+// `end(status)` ends the last of them (its last status: start resolves
+// with it, and never rejects).
+function fakeRuns() {
+  const runs = { started: [], ends: [] };
+  runs.start = (opts) => { runs.started.push(opts); return new Promise((resolve) => runs.ends.push(resolve)); };
+  runs.end = (status) => runs.ends.at(-1)(status);
+  return runs;
+}
+
+test("a window run's retry is read in this window, or on a server that now reads text itself", async () => {
+  const task = { kind: "ocr-tab", params: { page_id: "p1", doc_id: "dw", title: "Lounis 1992", window: { client: "old" } } };
+  const runs = fakeRuns();
+  const tasks = { started: [], start: async (...a) => { tasks.started.push(a); return { id: "j1" }; } };
+  await ocrState.recognizeAgain(tasks, task, WINDOW, { runs });
+  assert.deepEqual(runs.started, [{ docId: "dw", pageId: "p1", title: "Lounis 1992", tasks, capability: WINDOW }],
+    "a fresh window run, not the old window's");
+  assert.deepEqual(await ocrState.recognizeAgain(tasks, task, SERVER, { runs }), { id: "j1" });
+  assert.deepEqual(tasks.started, [["ocr", { page_id: "p1" }, { pill: false }]]);
+  await ocrState.recognizeAgain(tasks, task, null, { runs });
+  assert.equal(tasks.started.length, 2, "nowhere to read it: the server says why");
+  assert.equal(runs.started.length, 1);
+});
+
+test("the Forget row shows while pages read recognized words, waits for an OCR job, and is asked first", async () => {
+  const s = server({ stamp: "", recognized: [] });
+  ocrState.register(pdfDoc(4), "df", "/api/uploads/df.pdf");
+  await until(() => s.asked.length === 1, "the state");
+  await flush();
+  const row = (over = {}) => ocrState.dropRow({ docId: "df", offered: true, running: false, ...over });
+  assert.equal(row(), null, "nothing recognized");
+  await knownState(s, "df", { stamp: "s1", recognized: [2, 3], kept: [1], scanned: 4, todo: 0 });
+  const title = "Read this PDF's own text again in place of the words recognized from its page pictures, for everyone in this workspace";
+  assert.deepEqual(row(), { busy: false, title });
+  assert.equal(row({ offered: false }), null, "a reader, a guest, a share view");
+  assert.deepEqual(row({ running: true }), { busy: true, title: "This PDF's text is being recognized — see Background tasks" });
+  const job = { kind: "ocr-tab", state: "running", workspace: "w1", params: { page_id: "p1", doc_id: "df" } };
+  assert.equal(row({ jobs: [job] }).busy, true);
+  assert.equal(row({ jobs: [{ ...job, params: { ...job.params, window: { client: "another-window" } } }] }).busy, true,
+    "a window run no window here reads still waits: the Recognize row goes on with it");
+  assert.deepEqual(row({ jobs: [{ ...job, kind: "ocr-drop" }] }),
+    { busy: true, title: "This PDF's recognized text is being forgotten — see Background tasks" });
+  assert.equal(ocrState.menuRow({ docId: "df", offered: true, capability: SERVER, running: false }), null,
+    "nothing left to recognize: the Recognize row is gone while the Forget row shows");
+  await knownState(s, "df", { stamp: "s2", recognized: [], kept: [], scanned: 4, todo: 3 });
+  assert.equal(row(), null, "forgotten: nothing to forget");
+  // The confirm box, and its Forget.
+  const tasks = { started: [], start: async (...a) => { tasks.started.push(a); return { id: "j2" }; } };
+  const said = [];
+  const box = ocrState.forgetBox(tasks, "p1", "Lounis 1992", (text) => said.push(text));
+  assert.deepEqual({ ...box, onConfirm: undefined }, {
+    title: "Forget the recognized text?", confirmLabel: "Forget", danger: true, onConfirm: undefined,
+    message: "The words recognized from the page pictures of “Lounis 1992” are forgotten for everyone in this workspace: selection, search, the AI and translation read the PDF's own text again, and a page that is only a picture has no text. Highlights there take the PDF's own text as their quote where it reads under them. Recognizing it again takes the time it took.",
+  });
+  await box.onConfirm();
+  assert.deepEqual(tasks.started, [["ocr-drop", { page_id: "p1" }, { pill: true }]]);
+  assert.deepEqual(said, []);
+  await ocrState.forgetBox({ start: () => Promise.reject(new Error("This PDF's text is being recognized")) }, "p1", "X", (text) => said.push(text)).onConfirm();
+  assert.deepEqual(said, ["Could not start: This PDF's text is being recognized"]);
+});
+
+test("a refresh always reads the state again, so a message about the file is never lost to an answer that said the same", async () => {
+  const s = server({ stamp: "s1", recognized: [1], kept: [], scanned: 2 });
+  ocrState.register(pdfDoc(2), "dr", "/api/uploads/dr.pdf");
+  await until(() => s.statesAsked() === 1, "the state");
+  ocrState.refresh("dr");
+  ocrState.refresh("dr");
+  await until(() => s.statesAsked() === 3, "every refresh asks");
+  ocrState.refresh("not-open-here");
+  await flush();
+  assert.equal(s.statesAsked(), 3, "a file this tab has not opened is not asked for");
 });
 
 test("the metadata popover says the text was recognized, or where to have it recognized", () => {
@@ -284,6 +461,15 @@ test("the metadata popover says the text was recognized, or where to have it rec
     /^The scanned pages were recognized from their pictures on .*2026.*, but they hold little or no readable text\.$/);
   assert.equal(ocrState.textStatusTitle({ found: true, ok: true }, true), null);
   assert.equal(ocrState.textStatusTitle({ checking: true }, true), null);
+  // While the row waits for a recognition (the server's own run of a scan
+  // just uploaded, most often), it says so, not to choose a row that waits.
+  const recognizing = "Its text is being recognized from the page pictures — see Background tasks.";
+  assert.equal(ocrState.textStatusTitle({ found: true, ok: false }, { busy: true, dropping: false }), recognizing);
+  assert.equal(ocrState.textStatusTitle({ found: true, ok: true, ocr: { recognized: 3, at: "" } }, { busy: true }), recognizing);
+  assert.equal(ocrState.textStatusTitle({ found: true, ok: false }, { busy: true, dropping: true }),
+    "No text layer — a scan? Choose Recognize text in this PDF in the Document menu so the AI and search can read it.",
+    "a forget under way recognizes nothing");
+  assert.equal(ocrState.textStatusTitle({ checking: true }, { busy: true }), null);
 });
 
 test("a replaced PDF's status says the new file's text is not recognized, where the menu would offer it", () => {

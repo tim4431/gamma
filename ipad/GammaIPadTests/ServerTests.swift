@@ -151,7 +151,9 @@ final class SavedServersTests: XCTestCase {
 /// wheel or an import error fails here instead of on an iPad. /api/health
 /// proves the start but not the reader, which the server imports at its
 /// first PDF read: the manifest's page sizes and a page picture both come
-/// from PyMuPDF, and page-image answers 404 when it draws nothing. The
+/// from PyMuPDF, and page-image answers 404 when it draws nothing. Last,
+/// the text recognition models the bundle carries are where the server
+/// finds them, and served for a run in the window. The
 /// server is started with an account the test knows: the Keychain's, as the
 /// app's, or one the test seeds itself where the Keychain refuses
 /// (LocalServer's seed): the test host on CI is unsigned
@@ -168,8 +170,8 @@ final class LocalServerStartTests: XCTestCase {
         let resources = try XCTUnwrap(Bundle.main.resourceURL)
         // What the build puts in the bundle (project.yml, install_python),
         // checked first so an unprepared build says what is missing.
-        for path in ["python/app/gamma_mobile.py", "python/app/gamma", "python/app_packages",
-                     "python/frontend_dist/index.html", "python/lib/python3.13/os.py",
+        for path in ["python/app/gamma_mobile.py", "python/app/gamma", "python/app/tessdata/eng.traineddata",
+                     "python/app_packages", "python/frontend_dist/index.html", "python/lib/python3.13/os.py",
                      "python/lib/python3.13/lib-dynload"] {
             guard FileManager.default.fileExists(atPath: resources.appendingPathComponent(path).path) else {
                 XCTFail("\(path) is not in the app bundle: run bash ipad/scripts/build-python.sh before building")
@@ -277,6 +279,23 @@ final class LocalServerStartTests: XCTestCase {
         let picture = try await get(pictureURL)
         guard picture.status == 200, picture.type.hasPrefix("image/"), picture.body.count > 2048 else {
             fail("GET /api/ai/page-image (MuPDF rendering the page)", picture, server)
+            return
+        }
+        // The text recognition models: the bundle carries them beside gamma/,
+        // where the server looks for them, and the server, which reads no
+        // text itself here, offers the page a run in the window and serves it
+        // the models (4 MB for English).
+        let config = try await get(api.appendingPathComponent("server-config"))
+        let ocr = config.json["ocr"] as? [String: Any]
+        guard config.status == 200, ocr?["where"] as? String == "window",
+              let models = ocr?["models"] as? String, !models.isEmpty else {
+            fail("GET /api/server-config (text recognition in the window)", config, server)
+            return
+        }
+        let modelURL = try XCTUnwrap(URL(string: "\(models)/eng.traineddata", relativeTo: url))
+        let model = try await get(modelURL)
+        guard model.status == 200, model.body.count > 1_000_000 else {
+            fail("GET \(models)/eng.traineddata", model, server)
             return
         }
     }

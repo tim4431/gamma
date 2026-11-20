@@ -33,6 +33,11 @@ limits. A kind that takes a core for hours (``ocr``, a scanned book's text
 recognized) runs in a lane of its own instead (``KIND_LIMITS``): so many of
 it at once on the server, whoever starts them, the others of it queued, and
 none of them holds a place of those limits, so it never holds up an export.
+A lane job started ``yields`` (an automatic recognition nobody asked for)
+gives way to one that does not: it is asked to stop at its next report
+when such a job waits for the lane (``Yield``). A kind whose work is done
+elsewhere (``AT_ONCE``: a window reading a PDF's pages, its job waiting
+for their words) starts at once, outside every running limit.
 A share view's exports are owned by the share (``share_owner``),
 which stands for an account in every limit. A finished job is kept
 ``RETENTION_S``, then ``sweep`` removes it with its file, and the files of
@@ -71,6 +76,12 @@ MAX_ACTIVE_PER_ACCOUNT = 20      # queued + running: past it, starting another i
 # up its owner's exports, or every account's), but toward its
 # MAX_ACTIVE_PER_ACCOUNT like any.
 KIND_LIMITS = {"ocr": config.ocr_workers}
+# The kinds whose work is done elsewhere, their job only waiting for it and
+# keeping it (``ocr-tab``: a window recognizes a PDF's pages and sends their
+# words, gamma/pdf_ocr.py ``window_run``): they start at once, held by
+# neither MAX_RUNNING, an account's running jobs nor a lane, and count toward
+# MAX_ACTIVE_PER_ACCOUNT like any.
+AT_ONCE = frozenset({"ocr-tab"})
 RETENTION_S = 24 * 3600          # a finished job, and its file, is kept this long
 ARTIFACT_CAP = 10 << 30          # the finished files of one account, all together
 MIN_FREE_BYTES = 1 << 30         # a job that writes a file does not start on a fuller disk
@@ -108,10 +119,21 @@ class Refused(Cancelled):
     stopped it: the job ends failed, saying why (its message)."""
 
 
+class Yield(Cancelled):
+    """Raised in a job's run by ``Job.progress`` once a lane job started
+    ``yields`` was asked to give way to one that does not (``_pump``): the
+    job ends cancelled, as a stop leaves it, and its ``ended`` hook is told
+    "yielded", so what started it can start it again later (nobody stopped
+    it). From the moment it is raised the job reads as stopping, ``promote``
+    no longer keeps it, and a start of its work is no longer told it is
+    ``Busy`` with it: that start is a job of its own."""
+
+
 class Busy(Exception):
     """``start`` found the same work already queued or running — the same
-    owner, kind and key (any owner's, for a start ``exclusive``). ``job``
-    is that job: its ``owner`` says whose."""
+    owner, kind and key (any owner's, for a start ``exclusive``, of any kind
+    it names). ``job`` is that job: its ``owner`` says whose, its ``kind``
+    which."""
 
     def __init__(self, job: dict):
         super().__init__(f"{job['kind']} job {job['id']} is already {job['state']}")
@@ -172,12 +194,15 @@ class _Live:
     ``progress`` (always a new dict) and ``artifact``; ``state`` and
     ``started_at`` change under ``_lock``."""
 
-    def __init__(self, row: dict, run, ended=None, writes: bool = False):
+    def __init__(self, row: dict, run, ended=None, writes: bool = False, yields: bool = False):
         self.id = row["id"]
         self.kind = row["kind"]
         self.owner = row["owner"]
         self.ws = row["workspace_id"]
         self.writes = writes
+        self.yields = yields        # gives way to a job of its lane that does not (``promote`` clears it)
+        self.giving_way = False     # asked to: ``Yield`` at its next report (under ``_lock``, as the next two)
+        self.yielded = False        # it raised ``Yield``: its run is ending
         self.refused = ""  # why refuse_writers stopped it
         self.key = row["key"]
         self.created_at = row["created_at"]
@@ -196,6 +221,11 @@ class Job:
 
     def __init__(self, live: _Live):
         self._live = live
+
+    @property
+    def id(self) -> str:
+        """The job's id, as the API names it."""
+        return self._live.id
 
     @property
     def artifact_path(self) -> Path:
@@ -219,8 +249,10 @@ class Job:
         (the ``ocr`` job's ``since``, when its phase began in ms, and
         ``from``, its count then: the time it still takes). A new phase or
         unit starts its own counts; what is not given is kept.
-        ``stoppable=False``: from here on the job can no longer be stopped.
-        Raises ``Cancelled`` when the job was stopped (and still may be)."""
+        ``stoppable=False``: from here on the job can no longer be stopped
+        (nor give way: what it has left is finishing its work). Raises
+        ``Cancelled`` when the job was stopped (and still may be), ``Yield``
+        when it was asked to give way."""
         live = self._live
         current = live.progress
         if phase is not None and phase != current.get("phase"):
@@ -239,6 +271,13 @@ class Job:
                 live.stoppable = False
         if live.stoppable and live.cancel.is_set():
             raise Refused(live.refused) if live.refused else Cancelled()
+        if live.stoppable and live.giving_way:
+            # under the lock: a promote lands before the give-way, which it
+            # then withdraws, or after it, which it then knows (``yielded``)
+            with _lock:
+                if live.giving_way:
+                    live.yielded = True
+                    raise Yield()
 
 
 def no_progress(**_) -> None:
@@ -284,7 +323,7 @@ def _snapshot(live: _Live) -> dict:
     """What ``_public`` reads of a live job, in one go (the caller holds
     ``_lock``)."""
     return {"state": live.state, "progress": dict(live.progress), "started_at": live.started_at,
-            "stopping": live.cancel.is_set(), "stoppable": live.stoppable}
+            "stopping": live.cancel.is_set() or live.yielded, "stoppable": live.stoppable}
 
 
 def _live_views(*job_ids: str) -> dict[str, dict]:
@@ -359,6 +398,13 @@ def live(kind: str, key: str) -> dict | None:
     return _public(row, view) if row else None
 
 
+def live_count(kind: str) -> int:
+    """How many jobs of ``kind`` are queued or running in this process,
+    whoever owns them (whether a lane is free for work nobody asked for)."""
+    with _lock:
+        return sum(1 for job in _live.values() if job.kind == kind)
+
+
 def for_account(owner: str, ws: str = "") -> list[dict]:
     """The account's jobs, newest first, plus the own jobs of workspace
     ``ws`` (the caller passes a workspace the account is a member of, or
@@ -375,31 +421,48 @@ def for_account(owner: str, ws: str = "") -> list[dict]:
 
 def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: dict | None = None,
           key: str = "", artifact: bool = False, ended=None, kept: dict[str, bytes] | None = None,
-          writes: bool = False, exclusive: bool = False) -> dict:
+          writes: bool = False, exclusive: bool | tuple = False, yields: bool = False) -> dict:
     """Queue ``run(job)`` as a job of ``kind`` for ``owner`` (an account's
     id, or ``WORKSPACE`` for a workspace's own work) and return it. ``key``: work
     already queued or running for the same owner, kind and key raises
     ``Busy``; ``exclusive``, for any owner's of that kind and key (work
     done once at a time whoever asks for it: a workspace file's text
-    recognition), told in the same turn of the lock as the job is added,
-    so two starts at once never both get one. ``artifact``: the job writes
+    recognition), or, a tuple of kinds, for any owner's of one of them and
+    that key (works that must not run beside one another: a file's
+    recognition on the server or in a window and the forgetting of what
+    it recognized), told in the same turn of the lock as the job is added,
+    so two starts at once never both get one: ``Busy`` carries the job
+    found, whose ``kind`` says which. ``artifact``: the job writes
     a file, so it needs room — 507
     when the disk or the account's share of finished files is full. 429
     when the account already has ``MAX_ACTIVE_PER_ACCOUNT`` jobs going.
     ``ended(state)``: called once a run that started has ended, however it
-    ended, when the job already reads as ended (``get``, ``latest``), so
-    work it wakes never finds it still running. ``kept``: files (name to
+    ended, or once a person stopped the job while it waited (``cancel``),
+    when the job already reads as ended (``get``, ``latest``), so work it
+    wakes never finds it still running; ``state`` is its own (done, failed,
+    cancelled), or "yielded" for one that gave way (its row reads
+    cancelled) and "refused" for one a delete stopped (``refuse_writers``;
+    its row reads failed). ``kept``: files (name to
     bytes) the job holds for as long as it is listed, whatever its state —
     what a run needs that ``params`` cannot hold, read back with
     ``kept(id, name)`` by the run or by a later start of the same work.
     They count against the account's share like a finished file (507 past
     it), so a job that fails at once still cannot pile them up. ``writes``:
     the run changes workspace ``ws`` (an import, a restore, a metadata
-    lookup), so a delete of it stops the job first (``refuse_writers``)."""
+    lookup), so a delete of it stops the job first (``refuse_writers``).
+    ``yields``: a lane job nobody asked for (an automatic recognition),
+    which its lane starts after the jobs that do not yield and which gives
+    way to one of them waiting for the lane: ``Yield`` at its next report,
+    until ``promote`` makes it a job someone asked for. A job that gave way
+    and is still ending raises no ``Busy``: the start beside it is a job of
+    its own."""
     with _lock:
         if key:
+            kinds = {kind, *exclusive} if isinstance(exclusive, tuple) else {kind}
             for other in _live.values():
-                if (other.kind, other.key) == (kind, key) and (exclusive or other.owner == owner):
+                # one that gave way does nothing more but end: this start is its work's
+                if (other.key == key and other.kind in kinds and (exclusive or other.owner == owner)
+                        and not other.yielded):
                     view = _snapshot(other)
                     raise Busy(_public(_read(other.id), view))
         if owner != WORKSPACE and sum(1 for other in _live.values() if other.owner == owner) >= MAX_ACTIVE_PER_ACCOUNT:
@@ -424,7 +487,7 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
             conn.execute(f"INSERT INTO jobs ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
                          tuple(row.values()))
             conn.commit()
-        live = _Live(row, run, ended, writes)
+        live = _Live(row, run, ended, writes, yields and kind in KIND_LIMITS)
         _live[live.id] = live
         _pump()
     return get(live.id)
@@ -462,24 +525,33 @@ def _check_room(owner: str, adding: int = 0) -> None:
 def _pump() -> None:
     """Start the queued jobs the limits allow, oldest first (``_lock`` held):
     a kind with a lane of its own (``KIND_LIMITS``) while fewer than its
-    limit of it run, an account's other jobs within ``MAX_RUNNING`` and
-    ``MAX_RUNNING_PER_ACCOUNT``, a workspace's own at once."""
+    limit of it run, those that do not yield before those that do; an
+    account's other jobs within ``MAX_RUNNING`` and
+    ``MAX_RUNNING_PER_ACCOUNT``; a workspace's own and the ``AT_ONCE``
+    kinds at once. Then each job of a lane that does not yield and still
+    waits has a running one of its lane that yields asked to give way, and
+    a give-way nobody waits for any more (the job that waited stopped, or
+    started) is withdrawn from one that has not given way yet: called
+    wherever a lane's jobs change."""
     running = [live for live in _live.values() if live.state == "running"]
     lanes = Counter(live.kind for live in running if live.kind in KIND_LIMITS)
-    shared = [live for live in running if live.owner != WORKSPACE and live.kind not in KIND_LIMITS]
+    shared = [live for live in running
+              if live.owner != WORKSPACE and live.kind not in KIND_LIMITS and live.kind not in AT_ONCE]
     per_owner = Counter(live.owner for live in shared)
     total = len(shared)
     limits: dict = {}  # a lane's limit, read once a pass when a job of it waits
-    for live in sorted(_live.values(), key=lambda live: live.created_at):
+    waiting = Counter()  # a lane's jobs that do not yield and could not start
+    for live in sorted(_live.values(), key=lambda live: (live.yields, live.created_at)):
         if live.state != "queued":
             continue
         if live.kind in KIND_LIMITS:
             if live.kind not in limits:
                 limits[live.kind] = KIND_LIMITS[live.kind]()
             if lanes[live.kind] >= limits[live.kind]:
+                waiting[live.kind] += not live.yields
                 continue
             lanes[live.kind] += 1
-        elif live.owner != WORKSPACE:
+        elif live.owner != WORKSPACE and live.kind not in AT_ONCE:
             if total >= MAX_RUNNING or per_owner[live.owner] >= MAX_RUNNING_PER_ACCOUNT:
                 continue
             total += 1
@@ -487,6 +559,14 @@ def _pump() -> None:
         live.state = "running"
         live.started_at = page_now()
         threading.Thread(target=_work, args=(live,), daemon=True, name=f"job-{live.kind}-{live.id[:6]}").start()
+    for kind in KIND_LIMITS:
+        yielding = [live for live in running if live.kind == kind and live.yields and live.stoppable]
+        asked = sum(1 for live in yielding if live.giving_way)
+        for live in yielding:
+            if asked < waiting[kind] and not live.giving_way:
+                live.giving_way, asked = True, asked + 1
+            elif asked > waiting[kind] and live.giving_way and not live.yielded:
+                live.giving_way, asked = False, asked - 1
 
 
 def error_text(exc: Exception) -> str:
@@ -522,6 +602,7 @@ def _work(live: _Live) -> None:
     """The worker thread: run the job, then record how it ended."""
     job = Job(live)
     state, result, encoded, error, artifact = "done", None, None, "", {}
+    told = ""  # what the ended hook is told when it is not the state: "yielded", "refused"
     try:
         _update(live.id, state="running", started_at=live.started_at)
         result = live.run(job)
@@ -535,8 +616,10 @@ def _work(live: _Live) -> None:
             artifact = {"artifact_name": live.artifact[0], "artifact_type": live.artifact[1],
                         "artifact_size": final.stat().st_size}
     except Refused as exc:
-        state, error = "failed", str(exc)[:500]
+        state, told, error = "failed", "refused", str(exc)[:500]
         log.warning(f"[jobs] {live.kind} {live.id} refused: {exc}")
+    except Yield:
+        state, told = "cancelled", "yielded"
     except Cancelled:
         state = "cancelled"
     except Exception as exc:  # noqa: BLE001 — every failure ends the job with its message
@@ -560,36 +643,72 @@ def _work(live: _Live) -> None:
             if live.ended is not None:
                 _ending.add(live.id)
             _pump()
-    if live.ended is not None:
-        try:
-            live.ended(state)
-        except Exception:  # noqa: BLE001 — the job's own outcome stands
-            log.exception(f"[jobs] {live.kind} {live.id}: its end hook failed")
-        finally:
-            _ending.discard(live.id)
+    _tell_ended(live, told or state)
     # A workspace's own job (the indexer) runs on every search and paper set
     # up: only how it ended otherwise is worth a console line.
     routine = live.owner == WORKSPACE and state == "done"
-    (log.debug if routine else log.info)(f"[jobs] {live.kind} {live.id} {state}")
+    (log.debug if routine else log.info)(f"[jobs] {live.kind} {live.id} {told or state}")
+
+
+def _tell_ended(live: _Live, state: str) -> None:
+    """The job's ``ended`` hook told how it ended, outside ``_lock`` (the
+    hook may start jobs), its id in ``_ending`` until it returns (put there
+    under the lock as the job left ``_live``). Its failure is logged: the
+    job's own outcome stands."""
+    if live.ended is None:
+        return
+    try:
+        live.ended(state)
+    except Exception:  # noqa: BLE001
+        log.exception(f"[jobs] {live.kind} {live.id}: its end hook failed")
+    finally:
+        _ending.discard(live.id)
 
 
 # --- control ------------------------------------------------------------------------------
 
 def cancel(job_id: str) -> dict | None:
-    """Stop a job: a queued one ends at once, a running one at its next
-    progress report (409 once it can no longer stop). A finished job is
-    left as it is. Returns the job."""
+    """Stop a job: a queued one ends at once, its ``ended`` hook told
+    "cancelled" before this returns, a running one at its next progress
+    report (409 once it can no longer stop). A finished job is left as it
+    is. Returns the job."""
+    stopped = None
     with _lock:
         live = _live.get(job_id)
         if live is not None and live.state == "queued":
             _update(job_id, state="cancelled", finished_at=page_now())  # the row first, as in _work
             live.state = "cancelled"
             _live.pop(job_id, None)
+            if live.ended is not None:
+                _ending.add(job_id)
+            stopped = live
+            _pump()  # a give-way it asked for is withdrawn
         elif live is not None:
             if not live.stoppable:
                 raise HTTPException(status_code=409, detail="this task can no longer be stopped")
             live.cancel.set()
+    if stopped is not None:
+        _tell_ended(stopped, "cancelled")
     return get(job_id)
+
+
+def promote(job_id: str) -> bool:
+    """The job no longer yields (``start``'s ``yields``): someone asked for
+    its work (a person's start that found the automatic recognition of the
+    file going), so it keeps its place in the lane, a give-way asked of it
+    and not yet taken withdrawn (another of its lane that yields is asked
+    instead). Whether its run goes on for whoever asked: False when it is no
+    live job any more or already gave way (``Yield``: it is ending, and a
+    start of its work now is a job of its own), True for one promoted now or
+    before, or one that never yielded."""
+    with _lock:
+        live = _live.get(job_id)
+        if live is None or live.yielded:
+            return False
+        if live.yields:
+            live.yields = live.giving_way = False
+            _pump()
+        return True
 
 
 def refuse_writers(ws_ids, why: str, progress=no_progress, poll: float = 0.05) -> list[str]:
@@ -613,6 +732,7 @@ def refuse_writers(ws_ids, why: str, progress=no_progress, poll: float = 0.05) -
             elif live.stoppable:
                 live.refused = why
                 live.cancel.set()
+        _pump()  # a give-way a queued one asked for is withdrawn
     ids = [live.id for live in writers]
     for live in writers:
         log.info(f"[jobs] {live.kind} {live.id}: stopped, {why}")
@@ -706,8 +826,10 @@ def _forget_stopped_shares() -> None:
 def sweep(now: float | None = None) -> int:
     """Remove the jobs that finished more than ``RETENTION_S`` ago with
     their files, the jobs of shares that are gone, job directories no row
-    names, and uploads no job took. Returns how many finished jobs went
-    for their age."""
+    names, and uploads no job took; then start the automatic text
+    recognitions left waiting (gamma/ocr_auto.py ``resume``: at startup, the
+    ones a restart cut short, which ``recover`` failed). Returns how many
+    finished jobs went for their age."""
     now = time.time() if now is None else now
     _forget_stopped_shares()
     cutoff = format_stamp(datetime.fromtimestamp(now - RETENTION_S, timezone.utc))
@@ -727,6 +849,9 @@ def sweep(now: float | None = None) -> int:
                     shutil.rmtree(entry, ignore_errors=True)
             except OSError:
                 continue
+    from . import ocr_auto  # local: it starts its jobs through this module
+
+    ocr_auto.resume()
     return len(ids)
 
 
@@ -742,4 +867,5 @@ def forget_account(user_id: str) -> None:
                 _live.pop(live.id, None)
             else:
                 live.cancel.set()
+        _pump()  # a give-way a queued one asked for is withdrawn
     _drop("owner = ?", (user_id,))

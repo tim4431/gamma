@@ -30,7 +30,8 @@ const PANE_FILES = {
   backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "BackupBucket.jsx", "BackupDrive.jsx"],
   maintenance: ["SettingsDialog.jsx"],
   users: ["SettingsUsers.jsx", "SettingsServer.jsx", "SettingsCloudSignIn.jsx", "SettingsGuests.jsx", "SettingsReports.jsx"],
-  server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsAi.jsx", "SettingsWorkspacesAdmin.jsx", "SettingsBackups.jsx"],
+  server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsAi.jsx", "SettingsTextRecognition.jsx", "SettingsWorkspacesAdmin.jsx",
+    "SettingsBackups.jsx"],
   proxy: ["SettingsProxy.jsx"],
   diagnostics: ["SettingsDialog.jsx"],
 };
@@ -89,6 +90,9 @@ test("labels that hold the query come first; hints and synonyms find the rest", 
   const zotero = searchSettings("zotero", all).map((r) => `${r.pane}/${r.label}`);
   assert.deepEqual(zotero.slice(0, 1), ["account/Zotero"]);
   assert.ok(zotero.includes("workspaces/Clones and Zotero links"), zotero.join(", "));
+  // the Server pane's switch for scans uploaded with no text
+  assert.equal(searchSettings("ocr", all)[0]?.label, "Recognize scans automatically");
+  assert.equal(searchSettings("text recognition", all)[0]?.section, "Text recognition");
 });
 
 test("an admin-only section is found only by admins (the Server pane is theirs alone)", () => {

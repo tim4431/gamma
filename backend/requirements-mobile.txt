@@ -21,10 +21,11 @@
 # Two server packages are left out (test_mobile_requirements.EXCLUDED says
 # why): truststore, and tesserocr, the text recognition of scanned PDFs,
 # which has no iOS or Android wheel on PyPI or Flet's index (the apps'
-# PyMuPDF is built without its OCR too). The apps' server reports no engine
-# (gamma/ocr_engine.py ``probe``), so the Document menu offers no Recognize
-# text there; recognizing in the app's web view is the next step
-# (docs/research/ocr.md).
+# PyMuPDF is built without its OCR too). The apps' server reads no text
+# itself: it reports where "window" (gamma/ocr_engine.py ``capability``),
+# and the app's web view reads the pages with tesseract.js from the models
+# both apps carry beside gamma/ (backend/tessdata), sending their words to
+# the server (docs/dev/documents.md "Recognized text").
 
 fastapi==0.136.0
 starlette==1.9.0

@@ -1952,8 +1952,9 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   `OMP_THREAD_LIMIT=1`, as the Docker image does. `--check-ocr` reads a
   printed line back with the bundled Tesseract (`gamma/ocr_engine.py`'s
   full check, then one recognition) and exits 0, or 1 with the reason:
-  the release's smoke step runs it, since `/api/server-config`'s `ocr`
-  only finds the module and the model files.
+  the release's smoke step runs it, then requires `/api/server-config`'s
+  `ocr.where` to be `server`: a bundle whose engine does not start still
+  reports `ocr`, its reading left to the window (`window`).
 - `build_backend.py` — PyInstaller onedir freeze into
   `dist-backend/gamma-server/` (collects uvicorn's string-resolved modules,
   PyMuPDF's native libraries — MuPDF and its C++ wrapper beside the

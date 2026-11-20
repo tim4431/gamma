@@ -47,8 +47,12 @@ know the floor, so the release notes name it.
 Recognizing the text of scanned PDFs (*Recognize text in this PDF*,
 `gamma/ocr_engine.py`) needs macOS 15: the tesserocr wheels the frozen
 server carries are built for it (`macosx_15_0`). On macOS 13 and 14 the
-server reports no `ocr` in `/api/server-config`, the Document menu leaves
-the item out, and everything else runs. Tesseract and its models add about
+server reads no text itself: it reports `ocr.where` `window` in
+`/api/server-config`, and the item reads the pages in the app's window
+with tesseract.js from the bundled models
+([documents.md](../../docs/dev/documents.md#recognized-text)), so the
+window must stay open meanwhile; scans uploaded with no text are not
+recognized by themselves there. Tesseract and its models add about
 65 MB to the Windows bundle (the wheel's libraries are 56 MB, 33 MB of them
 ICU's data) and about 16 MB to the Mac one (9 MB of libraries, 7 MB of
 models).
@@ -454,7 +458,8 @@ refuses to load without them.
 **Build**, on a Mac running macOS 15 or later (the architecture is the
 build machine's, since the frozen server is, arm64 on Apple silicon; on an
 older macOS requirements.txt's marker skips tesserocr, which has no wheel
-there, and the app is built without text recognition):
+there, and the app's server has no engine of its own: its scans are read
+in the window):
 
 ```bash
 (cd frontend && npm ci && npm run build)

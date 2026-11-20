@@ -696,6 +696,14 @@ already reading `now` counts in none, so a second run writes nothing. A
 respelled quote reaches Zotero (`annotationText`) and a synced vault's
 callout as any changed quote does.
 
+**Forgetting the recognized text** (`pdf_ocr.forget_recognized`) respells
+the other way first, while the recognized words are still live:
+`respell_quotes(…, back=True)` swaps the two readings, so `was` is the
+recognized words and `now` the layer, under the same guards. A highlight
+under which the layer reads nothing, on a page that is only a picture,
+keeps the recognized words as its quote and counts as `unread`, a fourth
+count only `back` gives.
+
 **A replacement of a recognized file.** A passage read from one file's
 recognized words is not in another file's layer, so `relocate` reads the
 two sides of each highlight's comparison alike, chosen per highlight by

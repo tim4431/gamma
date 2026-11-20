@@ -143,6 +143,18 @@ final class BridgeTests: XCTestCase {
                        "a shown that is no Bool: on")
     }
 
+    func testTheScreenStaysOnOnlyWhenThePageSaysSo() throws {
+        let on: [String: Any] = ["type": "keepAwake", "on": true]
+        let off: [String: Any] = ["type": "keepAwake", "on": false]
+        let number: [String: Any] = ["type": "keepAwake", "on": 1]
+        XCTAssertEqual(try WebMessage(body: on), .keepAwake(on: true))
+        XCTAssertEqual(try WebMessage(body: off), .keepAwake(on: false))
+        XCTAssertEqual(try WebMessage(body: ["type": "keepAwake"]), .keepAwake(on: false), "no on: off")
+        XCTAssertEqual(try WebMessage(body: ["type": "keepAwake", "on": "yes"]), .keepAwake(on: false),
+                       "an on that is no Bool: off")
+        XCTAssertEqual(try WebMessage(body: number), .keepAwake(on: false), "a number is no Bool either")
+    }
+
     func testAHapticDecodesWithItsPlace() throws {
         let snap: [String: Any] = ["type": "haptic", "kind": "snap", "at": ["x": 300, "y": 412.5]]
         XCTAssertEqual(try WebMessage(body: snap), .haptic(kind: .snap, at: CGPoint(x: 300, y: 412.5)))
@@ -249,7 +261,7 @@ final class BridgeTests: XCTestCase {
     func testTheUserScriptDeclaresTheHost() {
         let script = HostInfo(version: "0.2.0").userScript
         XCTAssertTrue(script.contains(
-            #"{"editMenu":true,"haptics":true,"hold":true,"ink":true,"inkLooks":["pressure","dash","blend","stabilize","pencil","calligraphy","snap"],"openFiles":true,"pencil":true,"pencilPhases":true,"pencilRoll":true,"platform":"ipad","shellBar":true,"version":"0.2.0"}"#
+            #"{"editMenu":true,"haptics":true,"hold":true,"ink":true,"inkLooks":["pressure","dash","blend","stabilize","pencil","calligraphy","snap"],"keepAwake":true,"openFiles":true,"pencil":true,"pencilPhases":true,"pencilRoll":true,"platform":"ipad","shellBar":true,"version":"0.2.0"}"#
         ), script)
         XCTAssertTrue(script.contains(#"setAttribute("data-host", "ipad")"#))
         XCTAssertTrue(script.contains("queue.push({ msg, resolve, reject })"), "the stub queues until host.js drains it")

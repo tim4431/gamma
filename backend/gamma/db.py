@@ -1484,25 +1484,34 @@ DATA_SCHEMA = [
     # The text recognized from a stored PDF's scanned pages
     # (gamma/pdf_ocr.py), which every PDF text reader reads in place of
     # the file's own layer on the pages it was applied to. pdf_ocr = one
-    # row a file (its doc_id): the engine and languages of the last apply,
-    # pdf_ocr.VERSION then, the file's page count, how many of its pages
-    # are scans or pictures (NULL: not classified yet), a counter for
-    # display, the stamp the readers' caches key on (new at every applied
-    # change, "" before the first), whether an apply's finishing steps
-    # (re-index, briefs, quotes) are still to run, when. pdf_ocr_pages =
-    # one row a page (1-based): the VERSION and languages it was recognized
-    # with, whether a run staged it (0, read by nobody) or it is applied
-    # (1, live), whether the page keeps its own text (kept: no words; a scan
+    # row a file (its doc_id): the engines its live pages were read with
+    # (" + " between two), the languages and pdf_ocr.VERSION of the last
+    # apply, the file's page count, how many of its pages are scans or
+    # pictures (NULL: not classified yet) and which (kinds: JSON {"<page>":
+    # "scan" | "picture"}, NULL until classified), a counter for display,
+    # the stamp the readers' caches key on (new at every applied change, ""
+    # before the first), whether an apply's finishing steps (re-index,
+    # briefs, quotes) are still to run, when. pdf_ocr_pages = one row a
+    # page (1-based): the VERSION and languages it was recognized with,
+    # whether a run staged it (0, read by nobody) or it is applied (1,
+    # live), whether the page keeps its own text (kept: no words; a scan
     # page's layer, a picture page's own words), the share of the layer's
-    # words the recognition read too (NULL: no layer), and its words, gzip
-    # of {"lines": [[[text, x0, y0, x1, y1],
-    # ...], ...]} in 1/10000 of the page as shown, top-left origin.
+    # words the recognition read too (NULL: no layer), its words, gzip of
+    # {"lines": [[[text, x0, y0, x1, y1], ...], ...]} in 1/10000 of the page
+    # as shown, top-left origin, and the engine that read it (the server's
+    # Tesseract, or a window's tesseract.js). pdf_ocr_auto = one row a file
+    # the automatic recognition of scans with no text considered
+    # (gamma/ocr_auto.py): queued, skipped (not such a scan), done or
+    # declined (stopped by a person, or its recognized text forgotten),
+    # who uploaded it, when.
     "CREATE TABLE IF NOT EXISTS pdf_ocr (doc_id TEXT PRIMARY KEY, engine TEXT NOT NULL, langs TEXT NOT NULL, "
-    "ver INTEGER NOT NULL, pages INTEGER NOT NULL, scanned INTEGER, rev INTEGER NOT NULL, stamp TEXT NOT NULL, "
-    "pending INTEGER NOT NULL DEFAULT 0, at TEXT NOT NULL)",
+    "ver INTEGER NOT NULL, pages INTEGER NOT NULL, scanned INTEGER, kinds TEXT, rev INTEGER NOT NULL, "
+    "stamp TEXT NOT NULL, pending INTEGER NOT NULL DEFAULT 0, at TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS pdf_ocr_pages (doc_id TEXT NOT NULL, page INTEGER NOT NULL, ver INTEGER NOT NULL, "
     "langs TEXT NOT NULL, applied INTEGER NOT NULL DEFAULT 0, kept INTEGER NOT NULL DEFAULT 0, shared REAL, "
-    "words BLOB NOT NULL, PRIMARY KEY (doc_id, page))",
+    "words BLOB NOT NULL, engine TEXT NOT NULL DEFAULT '', PRIMARY KEY (doc_id, page))",
+    "CREATE TABLE IF NOT EXISTS pdf_ocr_auto (doc_id TEXT PRIMARY KEY, state TEXT NOT NULL, by TEXT NOT NULL, "
+    "at TEXT NOT NULL)",
 ]
 
 # Snapshots exist only to cover the (24-entry) recents queue; keep a few

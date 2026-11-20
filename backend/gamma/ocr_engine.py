@@ -5,22 +5,27 @@ folder's README names their source and hashes). gamma/pdf_ocr.py runs it on
 the pictures of a stored PDF's scanned pages; docs/research/ocr.md, "Stage
 2", measured it against the other engines.
 
-- ``probe()``: whether this server can recognize text, cheaply, for
-  /api/server-config.
+- ``capability()``: where this server's PDFs have their text recognized,
+  for /api/server-config: on the server, in the window that asks (with
+  tesseract.js, ``BROWSER_ENGINE``, from the models this server sends:
+  ``models_tag``), or nowhere.
+- ``probe()``: whether this server recognizes text itself, cheaply.
 - ``check()``: the full check, the engine loaded and its models opened,
-  before a run's first page.
+  before a run's first page; ``start_check`` runs it once at startup.
 - ``recognize(raster)``: a page picture's words, line by line, in reading
   order.
 - ``render_zoom(width, height)``: the zoom a page is drawn at for it.
 
-tesserocr is imported on first use: it loads 35 MB (Linux) to 56 MB
-(Windows) of native libraries, and a server that never recognizes a page
-never pays that. It has no iOS or Android build, so the mobile apps' server
-has no engine (``probe`` says so). Recognition releases the GIL (measured:
-the longest event-loop stall 1.8 ms over a 2.6 s page), so it runs on the
-job's own thread beside every request.
+tesserocr loads 35 MB (Linux) to 56 MB (Windows) of native libraries; the
+check at startup imports it on a server where recognition is on, so that
+a server whose engine does not start says so before anyone asks for a run.
+It has no iOS or Android build, so the mobile apps' server reads no text
+itself: the window that asks does (``capability``). Recognition releases
+the GIL (measured: the longest event-loop stall 1.8 ms over a 2.6 s page),
+so it runs on the job's own thread beside every request.
 """
 
+import hashlib
 import importlib.util
 import math
 import os
@@ -34,6 +39,10 @@ from .logbuf import log
 
 LANGS = "eng+fra+deu"
 LANG_LIST = tuple(LANGS.split("+"))
+# The engine a window recognizes text with where the server does not
+# (frontend/package.json pins tesseract.js at this version, a test says
+# so): what its pages record, and what a window must say it runs.
+BROWSER_ENGINE = "tesseract.js 7.0.0"
 
 # A page is drawn at 300 dpi (what the study measured), less when that
 # would pass MAX_PIXELS (an A4 page at 300 dpi; a poster drawn at 300 dpi
@@ -53,6 +62,17 @@ _tess = None                 # the tesserocr module once imported
 _static: dict = {}           # tessdata path → probe's reason ("" none), the cheap checks
 _checked: dict = {}          # tessdata path → check's reason ("" none), the full check
 _check_lock = threading.Lock()
+_startup: threading.Thread | None = None  # start_check's
+_tag: tuple = ((), "")       # (the models' path, sizes and times; their tag): models_tag's
+
+# Why this server reads no text itself, the cheap checks' findings: plain
+# sentences without paths. Each but the missing models leaves the reading to
+# the window that asks (``capability``).
+IN_WINDOW = "This server does not read text itself: the pages are read in the window that asks."
+OLD_MACOS = "Text recognition needs macOS 15 or later."
+NO_MODULE = "The text recognition engine is not installed on this server."
+NO_MODELS = "The text recognition models are missing on this server."
+TURNED_OFF = "Text recognition is turned off on this server."
 
 
 def _tesserocr():
@@ -94,19 +114,29 @@ def _old_macos() -> bool:
         return True
 
 
+def _models(path) -> list[str]:
+    """The paths of the model files ``LANGS`` reads, in ``path``."""
+    return [os.path.join(os.fspath(path), f"{lang}.traineddata") for lang in LANG_LIST]
+
+
 def _static_reason(path) -> str:
     """The cheap checks: no import, no Init. "" when they pass, else why
-    not, in words a person can read (no paths)."""
+    not, in words a person can read (no paths): the switch that leaves
+    every reading to the window (``config.ocr_in_window``, read every
+    time), the mobile apps and macOS before 15 (no engine is built for
+    them), no engine installed, the models missing."""
+    if config.ocr_in_window():
+        return IN_WINDOW
     key = os.fspath(path)
     if key not in _static:
         if _mobile():
-            reason = "Text recognition is not available in the mobile apps yet."
+            reason = IN_WINDOW
         elif _old_macos():
-            reason = "Text recognition needs macOS 15 or later."
+            reason = OLD_MACOS
         elif importlib.util.find_spec("tesserocr") is None:
-            reason = "The text recognition engine is not installed on this server."
-        elif not all(os.path.isfile(os.path.join(key, f"{lang}.traineddata")) for lang in LANG_LIST):
-            reason = "The text recognition models are missing on this server."
+            reason = NO_MODULE
+        elif not all(os.path.isfile(model) for model in _models(key)):
+            reason = NO_MODELS
         else:
             reason = ""
         _static[key] = reason
@@ -114,18 +144,82 @@ def _static_reason(path) -> str:
 
 
 def probe() -> dict | None:
-    """Whether this server can recognize text, as /api/server-config tells
-    the client: ``{"engine": "tesseract", "langs": [...]}``, or None when
-    it is turned off (``config.ocr_enabled``), has no engine or no models,
-    runs where the engine does not (the mobile apps, macOS before 15), or
-    failed its full check (``check``). Cheap: the engine is not imported
-    here. The checks are cached; whether OCR is on is read every time."""
+    """Whether this server recognizes text itself: ``{"engine":
+    "tesseract", "langs": [...]}``, or None when it is turned off
+    (``config.ocr_enabled``), has no engine or no models, runs where the
+    engine does not (the mobile apps, macOS before 15), is told to leave
+    it to the window (``config.ocr_in_window``), or failed its full check
+    (``check``). Cheap: the engine is not imported here. The checks are
+    cached; whether OCR is on is read every time."""
     if not config.ocr_enabled():
         return None
     path = config.tessdata_dir()
     if _static_reason(path) or _checked.get(os.fspath(path)):
         return None
     return {"engine": "tesseract", "langs": list(LANG_LIST)}
+
+
+def capability() -> dict | None:
+    """Where the text of this server's scanned PDFs is recognized, as
+    /api/server-config tells the client:
+
+    - ``{"where": "server", "engine", "langs"}``: here (``probe``);
+    - ``{"where": "window", "engine": BROWSER_ENGINE, "langs", "models"}``:
+      in the window that asks, which reads the pages with tesseract.js
+      from the models at ``models`` (``/api/ocr/models/<tag>``, this
+      server's own files) and sends their words (routers/ocr.py), when
+      recognition is on and the only reason against the server is where
+      it runs (the mobile apps, macOS before 15, ``config.ocr_in_window``),
+      a missing engine or an engine that failed its check;
+    - None: turned off (by default on hosted and demo servers), or the
+      models are missing, which the window would need too.
+
+    Cheap, as ``probe``: the models are hashed once, and again when they
+    change (``models_tag``)."""
+    found = probe()
+    if found is not None:
+        return {"where": "server", **found}
+    if not config.ocr_enabled():
+        return None
+    path = config.tessdata_dir()
+    reason = _static_reason(path) or _checked.get(os.fspath(path), "")
+    if not reason or not all(os.path.isfile(model) for model in _models(path)):
+        return None
+    tag = models_tag()
+    if not tag:
+        return None
+    return {"where": "window", "engine": BROWSER_ENGINE, "langs": list(LANG_LIST), "models": f"/api/ocr/models/{tag}"}
+
+
+def models_tag() -> str:
+    """The tag of the models in ``config.tessdata_dir()``: the first 12 hex
+    of the sha256 over the three files' bytes (``LANG_LIST``'s order), so
+    the URL a window fetches them by (``capability``'s ``models``) changes
+    with them and a browser may keep them for a year. Hashed once per
+    path, size and time of the files; "" when one cannot be read."""
+    global _tag
+    files = _models(config.tessdata_dir())
+    try:
+        mark = tuple((f, st.st_size, st.st_mtime_ns) for f, st in zip(files, map(os.stat, files)))
+        if _tag[0] != mark:
+            digest = hashlib.sha256()
+            for f in files:
+                with open(f, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        digest.update(chunk)
+            _tag = (mark, digest.hexdigest()[:12])
+        return _tag[1]
+    except OSError as e:
+        log.warning(f"[ocr] the recognition models cannot be read: {e}")
+        return ""
+
+
+def model_path(tag: str, lang: str) -> str | None:
+    """The model file of ``lang`` (one of ``LANG_LIST``) when ``tag`` is the
+    models' tag now (``models_tag``), else None."""
+    if lang not in LANG_LIST or not tag or tag != models_tag():
+        return None
+    return _models(config.tessdata_dir())[LANG_LIST.index(lang)]
 
 
 def check() -> str | None:
@@ -135,7 +229,7 @@ def check() -> str | None:
     Cached once run (a failure turns ``probe`` off), except whether OCR is
     on. Blocking: call it on a worker thread, never in ``async def``."""
     if not config.ocr_enabled():
-        return "Text recognition is turned off on this server."
+        return TURNED_OFF
     path = config.tessdata_dir()
     reason = _static_reason(path)
     if reason:
@@ -145,6 +239,29 @@ def check() -> str | None:
         if key not in _checked:
             _checked[key] = _try_engine(path)
     return _checked[key] or None
+
+
+def start_check() -> None:
+    """At startup, when recognition is on, in a thread of its own: the full
+    check (``check``) where the cheap checks pass, so that ``capability``
+    answers right before anyone asks for a run (an engine that does not
+    start leaves the reading to the window), then the models hashed where
+    the window reads them (``models_tag``). Never raises; logs a
+    failure."""
+    global _startup
+    if not config.ocr_enabled():
+        return
+
+    def run():
+        try:
+            if not _static_reason(config.tessdata_dir()):
+                check()
+            capability()
+        except Exception:  # noqa: BLE001 — the check is asked again by the first run
+            log.exception("[ocr] the startup check failed")
+
+    _startup = threading.Thread(target=run, name="ocr-check", daemon=True)
+    _startup.start()
 
 
 def _try_engine(path) -> str:
@@ -273,9 +390,12 @@ def _end(apis) -> None:
 
 
 def reset() -> None:
-    """End every idle engine and forget the checks (tests). An engine lent
-    to a page now is ended when it comes back."""
-    global _gen, _made
+    """End every idle engine and forget the checks (tests), once the check
+    at startup is through (``start_check``). An engine lent to a page now
+    is ended when it comes back."""
+    global _gen, _made, _tag
+    if _startup is not None:
+        _startup.join()
     with _pool:
         ended, _idle[:] = list(_idle), []
         _gen, _made = _gen + 1, 0
@@ -284,6 +404,7 @@ def reset() -> None:
     with _check_lock:
         _static.clear()
         _checked.clear()
+        _tag = ((), "")
 
 
 def recognize(raster):

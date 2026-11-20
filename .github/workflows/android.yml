@@ -5,9 +5,10 @@
 # picture asked for, which only PyMuPDF draws), so a broken Python bundle
 # fails here and not on a phone. No signing, no upload: the release build
 # is desktop.yml's android job. The app carries the server and its mobile
-# pins, the built web app and the desktop app's chrome pages (desktop/ui/),
-# so a change to the server's dependencies or to those pages starts this
-# workflow too; the code itself is what the other checks test. The two ink
+# pins, the text recognition models (backend/tessdata/), the built web app
+# and the desktop app's chrome pages (desktop/ui/), so a change to the
+# server's dependencies, the models or those pages starts this workflow
+# too; the code itself is what the other checks test. The two ink
 # fixtures the Kotlin pen ports are held to (tests/shared/inkwidth.json,
 # inkhold.json) start it as well.
 # Overview: docs/dev/github_actions.md.
@@ -21,6 +22,7 @@ on:
       - "backend/gamma_mobile.py"
       - "backend/requirements.txt"
       - "backend/requirements-mobile.txt"
+      - "backend/tessdata/**"
       - "tests/shared/inkwidth.json"
       - "tests/shared/inkhold.json"
       - "desktop/ui/**"

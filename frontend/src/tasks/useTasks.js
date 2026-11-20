@@ -26,11 +26,13 @@ import { t } from "../shared/i18n/i18n.js";
 import { cancelJob, clearJobs, dismissJob, downloadJob, getJob, listJobs, startJob, stopAt, uploadJob } from "./tasksApi";
 import { addLocalRow, afterFollow, followed, isActive, isFinished, localRow, mergeTasks, newlyFinished, trayBadge }
   from "./taskModel.js";
-import { byteProgress, quietKinds, stopPath } from "./taskKinds.js";
+import { byteProgress, kindOf, quietKinds, stopPath } from "./taskKinds.js";
 import { guideEvents } from "../guide/events.js";
 
 const FAST_MS = 1500;
 const SLOW_MS = 30000;
+// How long an end this tab was told of (`expectEnd`) is looked for.
+const EXPECT_MS = 15000;
 
 // Whether two listings carry the same jobs in the same state (plain JSON rows).
 function sameListing(a, b) {
@@ -55,6 +57,8 @@ export function useTasks({ enabled, onFinished, follow = false }) {
   const notified = useRef(new Set()); // jobs onFinished already heard of
   const fetched = useRef(new Set());  // jobs whose file this tab downloaded (before the server hears of it)
   const stopped = useRef(new Set());  // local rows the person stopped
+  const expected = useRef([]);        // ends this tab was told of: {match(job), until}
+  const listed = useRef(false);       // jobsRef holds a listing: a job it lacks is new
   const finishedRef = useRef(onFinished);
   finishedRef.current = onFinished;
 
@@ -88,7 +92,10 @@ export function useTasks({ enabled, onFinished, follow = false }) {
     // A listing that reads like the last one changes nothing: the idle poll
     // every half minute would otherwise re-render the app for no reason.
     if (sameListing(jobsRef.current, list)) return;
-    const ended = newlyFinished(jobsRef.current, list);
+    const now = Date.now();
+    expected.current = expected.current.filter((e) => e.until > now);
+    const looked = listed.current && expected.current.length ? (job) => expected.current.some((e) => e.match(job)) : null;
+    const ended = newlyFinished(jobsRef.current, list, looked);
     jobsRef.current = list;
     setJobs(list);
     ended.forEach(settle);
@@ -113,9 +120,22 @@ export function useTasks({ enabled, onFinished, follow = false }) {
         return;
       }
       const { jobs: list } = await listJobs();
-      if (seq === listingSeq.current) take(list || []); // a slower, older answer never undoes a newer one
+      if (seq === listingSeq.current) { // a slower, older answer never undoes a newer one
+        take(list || []);
+        listed.current = true;
+      }
     } catch { /* the next round asks again */ }
   }, [enabled, follow, take]);
+
+  // A job `match(job)` names ended, as this tab was told elsewhere (a page's
+  // socket: a recognition of a file landed), though no listing may have
+  // shown it run (the server's own run of an upload, done between two
+  // slow listings): the listing is asked for at once, and a listing within
+  // EXPECT_MS that first shows it ended settles it as one seen running.
+  const expectEnd = useCallback((match) => {
+    expected.current = [...expected.current, { match, until: Date.now() + EXPECT_MS }];
+    wake();
+  }, [wake]);
 
   // A job the server just answered with (started, stopped): known at once,
   // before the next listing — a quick job may end before it.
@@ -131,6 +151,7 @@ export function useTasks({ enabled, onFinished, follow = false }) {
   useEffect(() => {
     if (!enabled) {
       jobsRef.current = [];
+      listed.current = false;
       setJobs([]);
       return undefined;
     }
@@ -217,9 +238,11 @@ export function useTasks({ enabled, onFinished, follow = false }) {
   }, [addLocal, updateLocal, removeLocal, adopt]);
 
   // A kind with a stop of its own (a computer turn) answers no job: the row
-  // reads Stopping… until the listing drops it.
+  // reads Stopping… until the listing drops it. A kind whose work this tab
+  // also does ends that at once (`halt`: a recognition read here).
   const cancel = useCallback(async (task) => {
     if (task.local) { stopLocal(task.id); return; }
+    kindOf(task).halt?.(task);
     const path = stopPath(task);
     if (path) {
       await stopAt(path);
@@ -266,9 +289,9 @@ export function useTasks({ enabled, onFinished, follow = false }) {
     running: tasks.filter(isActive).length,
     byId: (id) => jobs.find((job) => job.id === id) || null,
     fetchJob: getJob,
-    start, adopt, upload, cancel, dismiss, clear, download, setDownload, startedHere, watch, wake,
+    start, adopt, upload, cancel, dismiss, clear, download, setDownload, startedHere, watch, wake, expectEnd,
     addLocal, updateLocal, reviveLocal, removeLocal, wasStopped,
-  }), [tasks, jobs, start, adopt, upload, cancel, dismiss, clear, download, setDownload, startedHere, watch, wake,
+  }), [tasks, jobs, start, adopt, upload, cancel, dismiss, clear, download, setDownload, startedHere, watch, wake, expectEnd,
     addLocal, updateLocal, reviveLocal, removeLocal, wasStopped]);
 }
 

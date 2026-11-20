@@ -143,6 +143,7 @@ window.gammaNative = {
   openFiles: true,    // the host holds the files the system opens in the app (`files`)
   shellBar: true,     // the host's bar can be hidden, and `shellBar` sets and reports it
   editMenu: true,     // the host turns its edit menu off over a selection while the page says (`editMenu`)
+  keepAwake: true,    // the host keeps the screen on while the page says (`keepAwake`)
 };
 document.documentElement.setAttribute("data-host", "ipad");
 ```
@@ -152,18 +153,19 @@ The Android app declares its own set, with its own document-start script
 from `shell/Bridge.kt`; [android.md](android.md) "The bridge"):
 `platform: "android"`, its `versionName`, `ink`, the same seven
 `inkLooks`, `hold`, `pencil`, `pencilGestures: ["tap", "squeeze"]`,
-`haptics` (true when the device has a vibrator), `openFiles`, `save` and
-`shellBar`. It declares no `pencilPhases` and no `pencilRoll`: a stylus's
+`haptics` (true when the device has a vibrator), `openFiles`, `save`,
+`shellBar` and `keepAwake`. It declares no `pencilPhases` and no `pencilRoll`: a stylus's
 buttons have no squeeze phases, and Android reports no barrel roll. Its
 script also defines `post(msg)`, the Android app's way to native (below).
 
 The web app reads `platform` and the flags `ink`, `hold`, `pencil`,
 `pencilGestures`, `pencilPhases`, `pencilRoll`, `haptics`, `openFiles`,
-`save`, `shellBar` and `editMenu`, never `version`:
+`save`, `shellBar`, `editMenu` and `keepAwake`, never `version`:
 what a shell does not declare it does not do, and the web leaves it out
 (no `hold` listener, no `haptic`, no pen settings, no *Server
 bar* row, no Copy in the PDF's selection popup; without `save`, a saved
-file is the browser's download). `pencilGestures`
+file is the browser's download; without `keepAwake`, the page asks the
+browser's Screen Wake Lock where there is one). `pencilGestures`
 lists the gestures the host forwards as `pencil`, of `tap` and `squeeze`;
 a host that declares `pencil` without it forwards both, as the iPad app
 does. Settings shows a gesture's row only when its gesture is listed
@@ -219,6 +221,7 @@ Both shells take messages only from the server's own main frame.
 | `{type: "fileDone", id}` | `{}` | The page is done with that file (taken, refused or put aside): the shell deletes its copy |
 | `{type: "shellBar", shown?}` | `{shown}` | The View menu's *Server bar* row (`app/useShellBar.js`): `shown` hides or shows the shell's bar ([The chrome](#the-chrome)). Without it, as the page loads, it only asks, and so does a `shown` that is no Bool. The reply is the person's choice; the bar still shows while it is needed |
 | `{type: "editMenu", shown}` | `{}` | The system's edit menu over a selection (Copy, Look Up, Translate, Share, …): off while the selection is a PDF page's text or a text file's in its code view, where the selection popup opens and the menu would cover it, and on again once the selection is anything else, a note's or none (`pdf/PdfViewer.jsx`, `documents/viewers/TextTip.jsx`). The page says so on the selection change itself, not after the popup's wait, so the menu is off before it would open, and the popup carries Copy in its place. A `shown` that is missing or no Bool is on. The shell's web view (`ShellWebView`, `WebShell.swift`) then refuses every action UIKit asks the menu about and empties the edit menu's builder, and a menu already open closes; a key command, ⌘C on a keyboard, still runs |
+| `{type: "keepAwake", on}` | `{}` | Under `keepAwake`: the screen kept on (`on` true) or let sleep again (anything else, a missing `on` included). The page asks from the start of a text recognition that reads a scan's pages in the window to its end, stop or failure (`keepAwake` in `shared/lib/host.js`, called by `pdf/ocrRuns.js`; [documents.md](documents.md#recognized-text)): the run pauses while the page is hidden, so Auto-Lock or a screen timeout would stop it. The iPad turns the system's idle timer off (`UIApplication.shared.isIdleTimerDisabled`) only while the page asks and the app is in front: on again in the background, off again when the app is active. Android adds `FLAG_KEEP_SCREEN_ON` to the activity's window, which holds only while the window shows. What the page asked is its document's, so a new document, or the end of the page's process, lets the screen sleep (`ScreenAwake` in `ShellView.swift`; [android.md](android.md) "The bridge") |
 | `{type: "save", name, mime, size}` | `{id}`, or `{}` | Under `save`: begin a file the page saves, of exactly `size` bytes (`saveBlob` in `shared/lib/saveFile.js`). `name` and `mime` may be `""`. `{}`: the host refuses it, and the page says the app did not take the file |
 | `{type: "saveData", id, offset, data}` | `{}` | The file's next bytes in base64, from `offset`, which is the count of bytes sent so far. The page sends 2,097,150 raw bytes at a time (`SAVE_CHUNK`, a multiple of 3, so only the last chunk's base64 ends in padding and the host may decode each chunk on its own or join them). An unknown id, or an offset that is not the bytes so far, gets an error reply |
 | `{type: "saveDone", id, cancel?}` | `{saved}` | The file is complete: the host answers at once and presents the file after answering. `saved: false` is a refusal; a reply without `saved` counts as saved. With `cancel: true`, sent after a chunk failed, the host drops what it has |
@@ -926,6 +929,16 @@ answers. Nothing in it knows what the server holds.
   (`GAMMA_STATIC_DIR`). This iPad therefore shows the web app of the app's
   own build, as a desktop's local server does; another server shows its
   own.
+- **The text recognition models** from `backend/tessdata`: Tesseract's
+  fast English, French and German models, with their licence and notice,
+  6.8 MB. They sit in `python/app/tessdata`, beside the `gamma` package,
+  where `config.tessdata_dir()` looks when `GAMMA_TESSDATA_DIR` is unset,
+  so nothing is set for them. The server reads no text itself here,
+  since tesserocr has no iOS wheel ([The wheels](#the-wheels)). It serves
+  the models to the page instead (`/api/ocr/models/<tag>/<lang>.traineddata`),
+  which reads a scan's pages in the window with tesseract.js and keeps
+  the screen on meanwhile (`keepAwake`, [The host contract](#the-host-contract);
+  [documents.md](documents.md#recognized-text)).
 - **`backend/gamma_mobile.py`**, the entry the iPad and Android apps
   share, their `desktop/backend_entry.py`. The app calls
   `gamma_mobile.run()`, which takes the environment the app set in the
@@ -991,9 +1004,10 @@ a reason, so each new one gets a decision for both apps. Two are excluded
 (its `EXCLUDED`): truststore, which does not run on iOS or Android (the
 apps verify HTTPS with certifi's bundle), and tesserocr, the text
 recognition of scanned PDFs, which has no iOS or Android wheel (the apps'
-PyMuPDF has no OCR either). The apps' server reports no engine, so the
-Document menu offers no Recognize text there
-([documents.md](documents.md#recognized-text)).
+PyMuPDF has no OCR either). The apps' server therefore reads no text
+itself: the page that asks reads a scan's pages in the window, from the
+models the bundle carries ([What runs](#what-runs),
+[documents.md](documents.md#recognized-text)).
 `tools/check_mobile_pins.sh` resolves every pin, installing nothing, for
 the four platforms the apps ship: the iPad's device and simulator and
 Android's arm64 and x86_64 ([Tests](#tests)).
@@ -1175,7 +1189,8 @@ the app is open and This iPad has been opened in that launch.
 to run it, its outputs and its cache: [ipad/README.md](../../ipad/README.md#build-and-run)).
 It downloads the support package once and checks it against a pinned
 sha256. It installs the wheels for the device and for the simulator,
-copies the server code and the built web app, and compiles their bytecode
+copies the server code, the text recognition models and the built web
+app, and compiles their bytecode
 with the Mac's Python 3.13. The device writes no bytecode, so without it
 each launch would compile the standard library, the wheels and the
 server from source.
@@ -1234,10 +1249,11 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     the opened files' `files`, `fileData`, `fileDone` and `filesOpened`,
     `theme` with its `name` and without it (and with one that is no
     string), `shellBar` both ways (a `shown` that is no Bool only asks),
-    `editMenu` (off only for a `shown` of false),
+    `editMenu` (off only for a `shown` of false), `keepAwake` (on only
+    for an `on` of true),
     a `servers` message refused, the declared flags (`pencilRoll`,
-    `openFiles`, `shellBar`, `editMenu`, and `calligraphy` and `snap` in
-    `inkLooks`)
+    `openFiles`, `shellBar`, `editMenu`, `keepAwake`, and `calligraphy`
+    and `snap` in `inkLooks`)
   - the chrome's bridge (`ChromeTests`, in `ChromeTests.swift`): who may
     call (`Chrome.accepts`: a `file:` main frame, not a frame inside it, a
     server's page or none), the launcher's URL with a failure that
@@ -1277,7 +1293,9 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     Swift ports are held to the rows the web's tests read. Only
     `shapes.test.mjs` reads `inkhold.json`; `finishStroke.test.mjs` and
     the server's `test_shared_fixtures.py` read `inkwidth.json`
-  - the address, navigation and colour rules, the keyboard accessory
+  - the address, navigation and colour rules, the screen kept on
+    (`ScreenAwake`: the idle timer off only while the page asks and the
+    app is in front, on again for a new document), the keyboard accessory
     bar hidden on a real `WKWebView`, and `ShellWebView`'s edit menu:
     every action refused while it is off but a key command's, and
     WebKit's own answers once it is on again (`ShellTests`)
@@ -1301,7 +1319,10 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   612 × 792 points) and a page picture (`/api/ai/page-image`, an
   `image/*` body). Both come from PyMuPDF, which the server imports at
   its first PDF read (`/api/health` proves only the start), so they are
-  the proof that PyMuPDF's frameworks load and render. It is CI's one check that the
+  the proof that PyMuPDF's frameworks load and render. Last it asks
+  `/api/server-config` for text recognition in the window (`ocr.where`
+  is `window`) and fetches the English model from the address it names,
+  the proof that the bundle's models are where the server finds them. It is CI's one check that the
   bundle runs: a wrong layout, a broken framework conversion, a missing
   wheel or an import error fails here instead of on an iPad, and a call
   that does not answer as expected fails with the server's log tail. It
@@ -1665,6 +1686,13 @@ Only an iPad can show these, and none has been run yet:
     in Safari (downloaded, or shown with no script run). Then an annotated
     PDF and a Notability export of that page on This iPad, whose server
     draws the SVG itself, with no time limit.
+40. Text recognition in the window on This iPad: a scan of a few pages
+    recognized from the Document menu, the screen staying on past
+    Auto-Lock while it runs (`keepAwake`) and locking again once it ends,
+    the app sent Home and brought back mid-run (the screen kept on again
+    after the return, the local server's restart survived), and the time and the
+    memory a page takes (Web Inspector), since WebKit ends a page's
+    process under memory pressure.
 
 ### Not built yet
 

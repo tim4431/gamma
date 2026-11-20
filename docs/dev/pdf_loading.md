@@ -625,9 +625,9 @@ same words in the same places.
 
 ### Recognized words
 
-Once the server has recognized a stored PDF's scanned pages
-([documents.md](documents.md#recognized-text)), those pages read the
-recognized words in place of their own layer, here as on the server.
+Once a stored PDF's scanned pages are recognized, on the server or in a
+window ([documents.md](documents.md#recognized-text)), those pages read
+the recognized words in place of their own layer, here as on the server.
 
 - **The state** (`pdf/ocrState.js`, module state like `translateState`).
   `PdfViewer.jsx` registers each document as it commits it, under the
@@ -675,40 +675,165 @@ recognized words in place of their own layer, here as on the server.
   pinned search runs again for that document alone. The translated view
   hears which pages changed
   ([translation.md](translation.md#outliving-the-viewer)).
-- **When it changes.** A recognition that ends, done, stopped or failed,
-  makes every tab of the workspace that heard it end read the state again
-  (`tasks/useAppJobs.js`). Another member's tab reads it at its next open
-  of the PDF. A session's end clears every document's state
-  (`ocrState.reset`, beside `endTranslations`).
-- **The Document menu row** (`ocrState.useOcrMenu`). Recognize text in
-  this PDF shows for a writer with an account (never a guest), outside
-  share views, on a server whose `/api/server-config` has `ocr`, for a
-  stored PDF, while the server counts more scanned pages than it
-  recognized or kept, or, before it has read the file, once `pageText` met
-  a scan's layer or a page with no text (`noteScan`). It is hidden once
-  `GET /api/ocr` says `good_layer`. While a recognition of the file runs
-  it is shown disabled, its title "This PDF's text is being recognized —
-  see Background tasks". A run of 50 pages or fewer follows in the status
-  pill.
+- **When it changes.** A recognition or a forget that ends, done, stopped
+  or failed, makes every tab of the workspace that heard it end read the
+  state again (`tasks/useAppJobs.js`). Other tabs hear it from their page
+  socket: the server's `ocr` message ([collab.md](collab.md)) passes the
+  page filter whichever page carries it, and App's `onOcr` refreshes that
+  file, or the one on screen. For a message that names the file it also
+  has the tasks store list at once and look out for the end of the file's
+  OCR jobs (`tasks.expectEnd(ocrState.fileJobs(doc_id))`,
+  [tasks.md](tasks.md#the-web-app-frontendsrctasks)). That way a run that
+  started and ended between two listings is still reported. The socket
+  also asks with no message on a hello after a dropped socket and on its
+  poll rounds, which may have missed one. `refresh` always reads, and an answer that says nothing new
+  announces nothing. A session's end clears every document's state
+  (`ocrState.reset`, beside `endTranslations`) and ends this window's runs
+  (`ocrRuns.reset`).
+- **Reading in the window** (`pdf/ocrRuns.js`, `pdf/ocrTab.js`,
+  `pdf/ocrLoop.js`, `pdf/ocrRaster.js`), where `/api/server-config`'s
+  `ocr.where` is `window`. `ocrRuns` runs one scan at a time in a window,
+  since each holds an engine of about 100 MB and a page's picture; a later
+  start waits, the menu row's title then "Waiting for its turn…". tesseract.js
+  7.0.0 is in `ocrTab.js`, a chunk of its own fetched by the first run
+  ([frontend-refactor.md](frontend-refactor.md#lazy-boundaries)). Its
+  worker script and its one core (the single-file SIMD LSTM build) are
+  hashed assets of this build, and the models come from the server's
+  `ocr.models`; `workerOptions` refuses any file of another origin, so
+  nothing comes from a CDN. A browser without WebAssembly SIMD gets "This
+  browser cannot recognize text: it lacks WebAssembly SIMD." The loop
+  (`runWindow`, its server, engine and clock handed in):
+  1. It starts the `ocr-tab` job through the tasks store (`POST
+     /api/jobs/ocr` with `window: {doc_id, client, engine, langs, ver}`),
+     follows it until it reads `recognizing`, then asks the plan (`GET
+     /api/ocr/<doc>/plan`).
+  2. It opens the stored file on its own, by range requests past
+     `WHOLE_MAX_BYTES` (`openPdfDocument(url, {ranged: true})`), so the run
+     goes on while the reader is elsewhere.
+  3. Each page the plan names, one at a time: drawn as the server draws it
+     for its engine (300 dpi, less past the plan's pixel and side limits
+     or the device's canvas caps; intent `print`, which a hidden window
+     still draws, without annotations), read back in strips of 256 rows to
+     a grey PGM, the canvas released, recognized (page segmentation
+     automatic, `user_defined_dpi` the canvas's), its TSV parsed into
+     lines in 1/10000ths (`parseTsv`), and sent (`PUT
+     /api/ocr/<doc>/pages/<n>`). A page past the plan's limits, or one
+     that fails, goes as `{failed: true}`. The answer says which pages the
+     server still wants.
+  4. With none left, the job applies by itself. The window posts `POST
+     /api/ocr/<doc>/done` only while the server still wants pages it cannot
+     send (past the end of the document it opened, or sent already).
+
+  Some failed requests wait until the window is shown and go again after
+  1, 2, 4, 8 and 16 s: one with no answer, a proxy's 502, 503 or 504, the
+  server's 503 that ends "— try again" (a page's words could not be kept
+  just then), and a page's 429 from the rate limit. The start's 429 (the
+  account's tasks are full) is not retried: the run fails at once with
+  the server's reason. A 409 on the plan, a page or the done is judged
+  by the job, by what the server says about how it ended:
+  - The job is gone, failed as interrupted by a restart of the server (the
+    apps' local server), or cancelled with `progress.idle` by its idle
+    timer. The run starts the job again, at most 3 times, and the server
+    skips the pages it staged.
+  - The job is cancelled without `idle`, or still running with `stopping`
+    set. A person stopped it, on any device, however long this window was
+    away, and the run ends stopped.
+  - The job is applying (`updating`) or done, and the run ends done.
+  - Otherwise the refusal stands, such as another window taking the run
+    over. The run fails with its sentence, and the job goes on without it.
+
+  A failure on this window's side after the job started stops the job at
+  once through the tasks store (`POST /api/jobs/<id>/cancel`). Such a
+  failure is an engine that does not start, a document that does not
+  open, or a request the server refuses outright (not a 409). Without the
+  stop, the job would wait 10 minutes for pages. The pages sent wait for
+  the next run, and the tab reports only that the run failed. A page's
+  drawing and its reading have 120 s each, and the engine's start 180 s,
+  counted only while the window is shown. A page that runs out goes as
+  failed. A drawing that ran out is called off (`RenderTask.cancel`), so
+  its canvas is freed at once, and a page whose time ran out while it
+  waited behind a stalled one draws nothing once pdf.js gives it. An
+  engine that ran out is started afresh, as it is every 50 pages.
+  Tesseract's own messages go to its `debug_file`, the core's
+  `/dev/null`, rather than to the console as errors.
+
+  While a run goes, the pill says so on the channel `ocr:<docId>`
+  (`ocrRuns.followPill`, from `useAppJobs`): "Reading the pages of
+  “{title}” in this window: keep it open and in front until it is done. A
+  stop keeps what was read." Its Stop ends the run. The screen is kept on
+  meanwhile (`keepAwake` in `shared/lib/host.js`: the app shells get
+  `{type: "keepAwake", on}`, [ipad.md](ipad.md#the-host-contract); a
+  browser asks for the Screen Wake Lock, again each time the page is
+  shown). The job's row in Background tasks shows the run on every
+  device. Its Stop in this window ends the run here at once
+  (`TASK_KINDS["ocr-tab"].halt`, `ocrRuns.jobStopped`), not at the run's
+  next request. A run that waits its turn has no job yet. A row of this
+  tab's own stands for it (kind `ocr-tab`, "Waiting for its turn…"), and
+  its Stop calls the run off. At the run's turn the job's row takes over.
+- **The Document menu rows** (`ocrState.useOcrMenu`), for a writer with an
+  account (never a guest), outside share views, for a stored PDF.
+  **Recognize text in this PDF** shows on a server whose `ocr` names a
+  `where`, while `GET /api/ocr` counts pages a run would read (`todo`), a
+  stopped run's pages wait to be applied (`staged`) or the last apply's
+  steps are due (`pending`). Before a run has read which pages are scans,
+  it shows while the server counts more scanned pages than it recognized
+  or kept, or once `pageText` met a scan's layer or a page with no text
+  (`noteScan`), and not once `good_layer` is said. With staged pages and
+  nothing running it reads "Go on recognizing this PDF's text". On the
+  window path its title adds "The pages are read in this window: keep it
+  open and in front until it is done.", and a click starts the run in
+  `ocrRuns`. A run of 50 pages or fewer on the server follows in the
+  status pill. **Forget the recognized text…** (a trash icon, `danger`)
+  shows while a page reads recognized words, needs no engine, and asks
+  first ("Forget the recognized text?", `ocrState.forgetBox`); its Forget
+  starts `POST /api/jobs/ocr-drop`. Both rows are disabled while an `ocr`,
+  `ocr-tab` or `ocr-drop` job of the file waits or runs, or this window
+  reads it, their title then saying it is being recognized or forgotten.
+  There is one exception: the account's own `ocr-tab` job that is running
+  and not stopping, for another window, while no run of the file goes
+  here. The job's `params.window.client` is not this window's
+  `ocrRuns.windowClient()`, so it belongs to a window reloaded since, or
+  another one. The Recognize row is then offered as "Go on recognizing
+  this PDF's text", and its title says the pages are read on in this
+  window from the pages read, and that a window reading them now stops.
+  A click starts the run here, and the server hands it that job
+  (`window_take`, [documents.md](documents.md#recognized-text)). Known
+  limit: after a take-over the job still names the window that started
+  it, so that window's row stays disabled until the job ends.
 - **The metadata popover** (`ocrState.textStatusTitle`): its text cell says
   when the text was recognized from the page pictures (`/api/pdf-text-status`'s
-  `ocr`). With `ocr` there and too little text (`ok` false) it says "The
-  scanned pages were recognized from their pictures on {date}, but they
-  hold little or no readable text." On a PDF without text it points to
-  Recognize text only while the Document menu shows the row.
+  `ocr`), and "Its text is being recognized from the page pictures — see
+  Background tasks." while a run of the file goes. With `ocr` there and too
+  little text (`ok` false) it says "The scanned pages were recognized from
+  their pictures on {date}, but they hold little or no readable text." On
+  a PDF without text it points to Recognize text only while the Document
+  menu shows the row. The popover reads the status again when the file's
+  revision moves on.
 - **A replaced PDF** whose answer has `text_not_recognized`
   (`ocrState.replacedNote`): the status line adds "The new file's text is
   not recognized: choose Recognize text in this PDF in the Document menu."
-  where the row would be offered (a writer with an account, a server with
-  the engine).
+  where the row would be offered (a writer with an account, a server that
+  recognizes text, itself or in the window).
 
 Tests: `tests/ocrText.test.mjs` (the shape, the tiling, a one-character
 word, rotations and a crop box through real pdf.js viewports),
 `tests/ocrState.test.mjs` (the chunks, revisions, the first answer, a
 seed that waited for it, a late state rebuilding a page, failures, a stale
-stamp, the bound on the words held, the menu row and `good_layer`, the
-popover, the replaced-file note, a folder's export and App's search nonce)
-and `tests/scanText.test.mjs` (`pageText` with a fake state).
+stamp, the bound on the words held, the menu rows and `good_layer`, the
+window path, the go-on labels, another window's job taken over, the
+forget row and its confirm, the popover, the replaced-file note, a
+folder's export, App's search nonce and `fileJobs`),
+`tests/scanText.test.mjs` (`pageText` with a fake state),
+`tests/ocrRaster.test.mjs` (the zoom, the PGM, `parseTsv`, the dpi, the
+same-origin options and `debug_file`, the SIMD probe, the engine string
+held to the pin), `tests/ocrLoop.test.mjs` (the loop against a fake
+server, engine and clock: retries, the start's 429, restarts, a Stop
+however late it is seen, a Stop the job has not reached yet, the idle
+end, a failure on the window's side, hung pages and their drawing called
+off, the done POST), `tests/ocrRuns.test.mjs` (one run at a time, the
+waiting run's row, stop, the job's Stop, a failure here stopping the
+job, the pill, reset, the wake lock), and `tests/collabSession.test.mjs` /
+`collabPoll.test.mjs` (`onOcr`).
 
 ## Load phases
 

@@ -119,6 +119,15 @@ class BridgeTest {
     }
 
     @Test
+    fun theScreenStaysOnOnlyWhenThePageSaysSo() {
+        assertEquals(WebMessage.KeepAwake(true), decode("""{"type":"keepAwake","on":true}"""))
+        assertEquals(WebMessage.KeepAwake(false), decode("""{"type":"keepAwake","on":false}"""))
+        assertEquals("no on: off", WebMessage.KeepAwake(false), decode("""{"type":"keepAwake"}"""))
+        assertEquals("an on that is no true: off", WebMessage.KeepAwake(false), decode("""{"type":"keepAwake","on":"yes"}"""))
+        assertEquals("a number is no true either", WebMessage.KeepAwake(false), decode("""{"type":"keepAwake","on":1}"""))
+    }
+
+    @Test
     fun anythingElseIsRefused() {
         refused("""{"type":"open-page"}""") // an unknown type
         refused("""{"type":"servers"}""") // no message of the host contract
@@ -190,7 +199,7 @@ class BridgeTest {
     @Test
     fun theHostInfoDeclaresTheAndroidHost() {
         assertEquals(
-            """{"haptics":true,"hold":true,"ink":true,"inkLooks":["pressure","dash","blend","stabilize","pencil","calligraphy","snap"],""" +
+            """{"haptics":true,"hold":true,"ink":true,"inkLooks":["pressure","dash","blend","stabilize","pencil","calligraphy","snap"],"keepAwake":true,""" +
                 """"openFiles":true,"pencil":true,"pencilGestures":["tap","squeeze"],"platform":"android","save":true,"shellBar":true,"version":"0.2.0"}""",
             HostInfo("0.2.0", haptics = true).json,
         )

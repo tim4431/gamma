@@ -296,11 +296,11 @@ test("a recognized page reads the server's words with no operator list; another 
   assert.equal(selected(tc), "Recognized words\n");
   assert.equal(lists.n + read, 0, "neither the layer nor the operator list is read");
   assert.equal(knownScan(recognized), true, "a selection's translation says so too");
-  assert.equal(ocrState.menuRow({ docId: "scanned", offered: true }), null, "the server has not said what is left");
+  assert.equal(ocrState.menuRow({ docId: "scanned", offered: true, capability: { where: "server" } }), null, "the server has not said what is left");
   const layered = await pageText(page(2));
   assert.equal(layered.repaired && !layered.ocr, true, "a page not recognized has its layer repaired");
   assert.equal(lists.n, 1);
-  assert.equal(ocrState.menuRow({ docId: "scanned", offered: true })?.busy, false, "a scan met: the menu offers recognition");
+  assert.equal(ocrState.menuRow({ docId: "scanned", offered: true, capability: { where: "server" } })?.busy, false, "a scan met: the menu offers recognition");
   ocrState.connect({ json: null });
   ocrState.reset();
 });

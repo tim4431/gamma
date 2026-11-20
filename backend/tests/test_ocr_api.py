@@ -90,7 +90,8 @@ def test_a_run_through_the_api_and_what_it_reads_back(alice, monkeypatch):
     never = alice.get(f"/api/ocr/{doc}")
     assert never.status_code == 200 and never.headers["cache-control"] == "no-store"
     assert never.json() == {"stamp": "", "rev": 0, "engine": "", "langs": "", "pages": 0, "scanned": None,
-                            "recognized": [], "kept": [], "at": "", "pending": False, "good_layer": False}
+                            "recognized": [], "kept": [], "at": "", "pending": False, "good_layer": False,
+                            "todo": None, "staged": 0}
     r = start(alice, page_id)
     assert r.status_code == 200, r.text
     job = r.json()
@@ -100,6 +101,7 @@ def test_a_run_through_the_api_and_what_it_reads_back(alice, monkeypatch):
     assert done["state"] == "done" and done["result"]["recognized"] == 1 and done["result"]["scanned"] == 1
     found = alice.get(f"/api/ocr/{doc}").json()
     assert (found["recognized"], found["kept"], found["scanned"], found["pages"], found["rev"]) == ([1], [], 1, 1, 1)
+    assert (found["todo"], found["staged"]) == (0, 0), "nothing left for a run to read"
     assert len(found["stamp"]) == 16 and found["engine"] == "tesseract 5.5.4" and found["langs"] == "eng+fra+deu"
     pages = alice.get(f"/api/ocr/{doc}/pages", params={"first": 1, "last": 40})
     assert pages.status_code == 200 and pages.headers["cache-control"] == "no-store"
@@ -214,10 +216,11 @@ def test_the_reads_follow_the_files_own_rule(alice, anon, monkeypatch):
     assert anon.get(f"/api/ocr/{doc}").status_code == 401
 
 
-def test_server_config_says_whether_text_is_recognized(anon, monkeypatch):
+def test_server_config_says_where_text_is_recognized(anon, monkeypatch):
     install(monkeypatch)
-    assert anon.get("/api/server-config").json()["ocr"] == {"engine": "tesseract", "langs": ["eng", "fra", "deu"]}
-    monkeypatch.setattr(ocr_engine, "probe", lambda: None)
+    assert anon.get("/api/server-config").json()["ocr"] == {"where": "server", "engine": "tesseract",
+                                                            "langs": ["eng", "fra", "deu"], "auto": False}
+    monkeypatch.setattr(ocr_engine, "capability", lambda: None)
     assert anon.get("/api/server-config").json()["ocr"] is None
 
 

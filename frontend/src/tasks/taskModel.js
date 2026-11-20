@@ -62,10 +62,13 @@ export function progressFraction(task) {
 }
 
 // The server's jobs that finished between two listings (or were known
-// active — just started here — and come back finished).
-export function newlyFinished(before, after) {
+// active — just started here — and come back finished), and those
+// `expected(job)` names that come finished without `before` showing them at
+// all: work this tab was told ended (a page's socket said a recognition
+// landed), which may have started and ended between two listings.
+export function newlyFinished(before, after, expected = null) {
   const was = new Map(before.map((job) => [job.id, job]));
-  return after.filter((job) => isFinished(job) && isActive(was.get(job.id)));
+  return after.filter((job) => isFinished(job) && (isActive(was.get(job.id)) || (!!expected && !was.has(job.id) && expected(job))));
 }
 
 // The share view's store (useTasks' `follow`) follows only the share's own
