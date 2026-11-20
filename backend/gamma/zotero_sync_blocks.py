@@ -34,12 +34,10 @@ import re
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
-from fractional_indexing import generate_n_keys_between
-
 from . import storage, sync_clock, text_box, zotero_account, zotero_annotations, zotero_local, zotero_merge
 from . import ink as inkmod
 from . import zotero_remote as zr
-from .blocks_store import new_block_id, write_lock
+from .blocks_store import new_block_id, tree_inserts, write_lock
 from .db import connect_pages_db, parse_stamp
 from .documents.model import stored_name
 from .highlights import is_ink
@@ -180,26 +178,6 @@ def _with_ids(node: dict, props: dict | None = None) -> dict:
     its own new id, ``props`` on the root."""
     return {"id": new_block_id(), "content": node.get("content") or "", "properties": dict(props or {}),
             "children": [_with_ids(c) for c in node.get("children") or ()]}
-
-
-def _tree_inserts(conn, parent: str, nodes) -> list[dict]:
-    """The inserts of block trees (``_with_ids``'), the top ones last under
-    ``parent`` in order, each subtree under its root."""
-    if not nodes:
-        return []
-    last = conn.execute("SELECT MAX(position) FROM unified_blocks WHERE parent_id = ?", (parent,)).fetchone()[0]
-    out = []
-
-    def add(under, node, position):
-        out.append({"op": "insert", "id": node["id"], "parent": under, "position": position,
-                    "content": node.get("content") or "", "props": node.get("properties") or {}})
-        kids = node.get("children") or []
-        for child, pos in zip(kids, generate_n_keys_between(None, None, len(kids)) if kids else ()):
-            add(node["id"], child, pos)
-
-    for node, position in zip(nodes, generate_n_keys_between(last, None, len(nodes))):
-        add(parent, node, position)
-    return out
 
 
 def _empty_region(page_id: str):
@@ -1499,7 +1477,7 @@ class Blocks:
         if self.new_blocks:
             out += zotero_local.annotation_inserts(conn, self.u.page_id, self.new_blocks)
         if self.new_regions:
-            out += _tree_inserts(conn, self.u.page_id, self.new_regions)
+            out += tree_inserts(conn, self.u.page_id, self.new_regions)
         return out
 
     def rows_tx(self, conn) -> None:

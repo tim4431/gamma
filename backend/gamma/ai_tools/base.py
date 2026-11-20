@@ -374,11 +374,18 @@ def notes_seen(scope: dict) -> dict:
     return scope.setdefault("read_texts", {})
 
 
-def _sibling_position(conn, parent_id: str, after_id, block_id: str = "") -> tuple:
-    """Position for a (re)inserted child of parent_id: after `after_id` when
-    given (it must be a child of the same parent), else appended at the end.
-    Returns ``(position, error)``; block_id is excluded from the neighbour
-    lookup so moving a block after its current predecessor works."""
+def _sibling_gap(conn, parent_id: str, after_id, block_id: str = "") -> tuple:
+    """The keys a (re)inserted child of parent_id goes between: after
+    `after_id` when given (it must be a child of the same parent; the
+    parent's own id puts it first), else at the end. Returns ``((lo, hi),
+    error)``, either key None for an open end; block_id is excluded from
+    the neighbour lookup so moving a block after its current predecessor
+    works."""
+    if after_id and str(after_id) == parent_id:
+        row = conn.execute(
+            "SELECT position FROM unified_blocks WHERE parent_id = ? AND id != ? ORDER BY position LIMIT 1",
+            (parent_id, block_id)).fetchone()
+        return (None, row[0] if row else None), None
     if after_id:
         row = conn.execute(
             "SELECT position FROM unified_blocks WHERE id = ? AND parent_id = ?",
@@ -399,8 +406,16 @@ def _sibling_position(conn, parent_id: str, after_id, block_id: str = "") -> tup
             "SELECT position FROM unified_blocks WHERE parent_id = ? AND id != ? "
             "ORDER BY position DESC LIMIT 1", (parent_id, block_id)).fetchone()
         lo, hi = (row[0] if row else None), None
+    return (lo, hi), None
+
+
+def _sibling_position(conn, parent_id: str, after_id, block_id: str = "") -> tuple:
+    """The one key in ``_sibling_gap``: ``(position, error)``."""
+    gap, error = _sibling_gap(conn, parent_id, after_id, block_id)
+    if error:
+        return None, error
     try:
-        return generate_key_between(lo, hi), None
+        return generate_key_between(*gap), None
     except Exception as e:
         return None, f"error: could not place the block: {e}"
 
@@ -482,6 +497,18 @@ def gamma_link(scope: dict, page_id: str, *, pdf_page: int = 0, line: int = 0, e
     if line:
         params["line"] = f"{line}-{end}" if end and end > line else str(line)
     return base + "&" + urlencode(params)
+
+
+def host_free(scope: dict, text: str) -> str:
+    """``text`` with the absolute links ``gamma_link`` hands an MCP
+    assistant made relative (``https://host/?ws=<id>&page=…`` →
+    ``/?page=…``), as the editor stores a pasted link of its own library
+    (frontend shared/model/gammaLinks.js ``relativeGammaLink``), so a note
+    keeps working when the library moves to another address. Another
+    workspace's links and web links stay as written; the chat's scope has
+    no ``link_base`` and its model writes relative links already."""
+    base = scope.get("link_base")
+    return text.replace(base + "&", "/?") if base and text else text
 
 
 def _where(scope: dict, page_id: str, **link) -> str:

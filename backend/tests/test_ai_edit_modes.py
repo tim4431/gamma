@@ -14,7 +14,14 @@ def test_join_block_text_rules():
     assert join_block_text("", "only", "append") == "only"
     # Paragraph-level constructs (or multi-line text) get a blank line.
     assert join_block_text("intro", "- a point", "append") == "intro\n\n- a point"
-    assert join_block_text("- a\n- b", "- c", "append") == "- a\n- b\n\n- c"
+    # ...but an item, a quote line or a table row meeting its own kind goes on
+    # with the run: one tight list, one quote, one table
+    assert join_block_text("- a\n- b", "- c", "append") == "- a\n- b\n- c"
+    assert join_block_text("1. one", "- [ ] two", "append") == "1. one\n- [ ] two"
+    assert join_block_text("> a", "> b", "append") == "> a\n> b"
+    assert join_block_text("| x | y |\n|---|---|\n| 1 | 2 |", "| 3 | 4 |", "append") == "| x | y |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
+    assert join_block_text("- a", "> quoted", "append") == "- a\n\n> quoted"
+    assert join_block_text("- b\n\nafter the list", "more", "append") == "- b\n\nafter the list\n\nmore"
     assert join_block_text("text", "## Heading", "prepend") == "## Heading\n\ntext"
     assert join_block_text("text\n\n", "\nmore\n", "append") == "text\nmore"
     assert join_block_text("$$x$$", "y", "append") == "$$x$$\n\ny"

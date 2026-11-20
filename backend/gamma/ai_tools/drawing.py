@@ -132,11 +132,11 @@ def _placed_picture(ws: str, conn, scope: dict, tool: str, surface, block_id: st
 def _placed_after(scope: dict, images) -> str:
     """What a placing call's answer says after it: to check the picture
     (when one is attached), and how the change is taken back — from the
-    reply in Gamma's chat; by the user in Gamma over MCP (``link_base``),
-    which has no reply to revert from and no delete_block."""
+    reply in Gamma's chat; over MCP (``link_base``), which has no reply, by
+    undo_change with the change id the adapter adds (gamma/mcp_changes.py)."""
     mcp = bool(scope.get("link_base"))
     check = (" A picture of the page as it is now is attached: check that it is where you meant"
-             + ("; if not, tell the user, who removes it in Gamma." if mcp
+             + ("; if not, undo_change takes it back to try again." if mcp
                 else ", and delete_block it to try again if not.")) if images else ""
     return check + ("" if mcp else " The user can revert it from the reply.")
 

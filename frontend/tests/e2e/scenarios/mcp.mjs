@@ -265,13 +265,20 @@ export async function mcpScenarios(env) {
       const declined = await change("Declined note", { action: "decline" });
       assert(declined.question && declined.result.isError && declined.result.content[0].text.startsWith("declined"), JSON.stringify(declined.result));
       assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note"]), "only the change allowed was made");
+      // A passage of several blocks is one paste, asked about once (`change` takes one question, then the result).
+      const pasted = await change("Pasted one\n\n- pasted two\n- pasted three", { action: "accept", content: { remember: false } });
+      assert(pasted.question?.message.startsWith("Asked agent wants to add 3 notes to “Asked page”. It adds 3 lines."),
+        pasted.question?.message);
+      assert(!pasted.result.isError && pasted.result.structuredContent.block_ids.length === 3, JSON.stringify(pasted.result));
+      assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note", "Pasted one", "- pasted two", "- pasted three"]));
       // "Don't ask again": this change goes through, and the next one is not asked about.
       const remembered = await change("Remembered note", { action: "accept", content: { remember: true } });
       assert(remembered.question && !remembered.result.isError, JSON.stringify(remembered.result));
       assertEq((await alice.api("/api/integrations/tokens")).tokens.find((t) => t.id === agent.id).asks, false);
       const unasked = await change("Unasked note", null);
       assert(!unasked.question && !unasked.result.isError, "no question once it changes without asking");
-      assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note", "Remembered note", "Unasked note"]));
+      assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note", "Pasted one", "- pasted two", "- pasted three",
+        "Remembered note", "Unasked note"]));
     } finally {
       await alice.api(`/api/integrations/tokens/${agent.id}`, { method: "DELETE" });
     }

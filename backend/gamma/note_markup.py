@@ -94,6 +94,18 @@ def ref_token(block_id: str, alias: str | None = None, bang: str = "", pipe: str
     return f"{bang}[[{block_id}{pipe + words if words and not bang else ''}]]"
 
 
+def link_target(url: str) -> str:
+    """``url`` as a markdown link's target: no space or parenthesis bare."""
+    return url.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
+
+
+def markdown_link(text: str, url: str) -> str:
+    """``[text](url)``, the shape a file chip and a link block hold: no
+    brackets in the text (the frontend's file-chip markdown drops them too)."""
+    text = re.sub(r"[\[\]]", "", text or "").strip() or url
+    return f"[{text}]({link_target(url)})"
+
+
 def ref_parts(token: str) -> tuple[str, str | None]:
     """An ``INLINE_RE`` ``ref`` or ``embed`` token — an id, or a title typed
     by hand that no page answered — as its target and the words it shows in

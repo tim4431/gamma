@@ -67,8 +67,8 @@ from .ai_tools.base import CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, 
 from .ai_tools.folders import TREE_DELETES
 from .ai_tools.notes import find_selection
 from .ai_tools.organizing import listed_pages
-from .ai_tools.registry import (MUTATING_TOOLS, approval_preview, run_agent_tool, settled_action, tool_action,
-                                tool_permission)
+from .ai_tools.registry import (MUTATING_TOOLS, STORING_TOOLS, approval_preview, run_agent_tool, settled_action,
+                                tool_action, tool_permission)
 from .ai_tools.web import skipped_fetch, unanswered_fetch
 from .logbuf import log
 
@@ -703,7 +703,9 @@ class ApprovalGate:
         self.stopped = stopped
 
     def asks(self, name: str) -> bool:
-        return self.scope["permissions"].get(tool_permission(name)) == "ask"
+        # A tool that only stores a file asks nobody: the note write that
+        # shows the file asks, with its picture on the card.
+        return name not in STORING_TOOLS and self.scope["permissions"].get(tool_permission(name)) == "ask"
 
     def run(self, name: str, call: dict, armed):
         """Yield the card event if there is one, then return

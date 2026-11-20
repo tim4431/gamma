@@ -236,6 +236,30 @@ def test_a_reverted_new_note_comes_back_in_its_place(notes):
     assert r.status_code == 409 and r.json()["conflict"] == "gone"
 
 
+def test_a_paste_of_several_notes_reverts_and_comes_back(notes):
+    """A create_block that pasted several blocks reverts as one change:
+    every block it made goes, and a redo brings them back under the same
+    ids in their place. Once someone typed in one of them the revert asks
+    first, and forced it goes through."""
+    c, ids = notes
+    paste = {"parent_id": ids["page"], "content": "# Pasted\nunder it\n\n- one\n  - nested", "after_id": ids["top"]}
+    _, action = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "create_block", paste)
+    made = action["block_ids"]
+    assert len(made) == 4 and len(action["revert"]["blocks"]) == 4
+    order = children(c, ids["page"])
+    assert _revert(c, action).status_code == 200
+    assert children(c, ids["page"]) == [ids["top"], ids["other"]]
+    assert _revert(c, action).json()["noop"] is True  # gone already
+    assert _revert(c, action, redo=True).status_code == 200
+    assert children(c, ids["page"]) == order and props(c, made[3])["content"] == "- nested"
+    assert _revert(c, action, redo=True).json()["noop"] is True  # back already
+    _type(c, made[3], "- nested, and my words")
+    r = _revert(c, action)
+    assert r.status_code == 409 and r.json()["conflict"] == "filled"
+    assert _revert(c, action, force=True).status_code == 200
+    assert children(c, ids["page"]) == [ids["top"], ids["other"]]
+
+
 def test_a_reverted_move_redoes_unless_moved_since(notes):
     c, ids = notes
     _, action = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "move_block",

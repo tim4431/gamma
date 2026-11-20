@@ -15,16 +15,18 @@ import secrets
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import ratelimit
-from ..auth import SESSION_COOKIE, require_personal_user_id, require_ws, ws_role
+from .. import mcp_changes, ratelimit
+from ..ai_revert import RevertError
+from ..auth import SESSION_COOKIE, actor_of, require_personal_user_id, require_ws, ws_role
 from ..computers import registry
 from ..db import connect_users_db
-from ..integrations import (ALL, TURN, comment_grant, create_token, edit_grant, grant, granted, named, set_asks,
-                            set_workspaces, token_digest)
+from ..integrations import (ALL, EDITING_ROLES, TURN, comment_grant, create_token, edit_grant, grant, granted, named,
+                            set_asks, set_deletes, set_workspaces, token_digest)
 from ..mcp_oauth import load, public_base, store
-from ..workspaces import list_for_user
+from ..workspaces import list_for_user, refuse_writes, role_of
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 DEVICE_SECONDS = 600
@@ -72,8 +74,10 @@ class Access(BaseModel):
 
 
 class AccessChange(Access):
-    # whether each change it makes asks first; left out, as it was
+    # whether each change it makes asks first, and whether it may delete
+    # notes where it edits; left out, as it was
     asks: bool | None = None
+    deletes: bool | None = None
 
 
 class TokenCreate(Access):
@@ -104,10 +108,10 @@ def list_tokens(request: Request, response: Response):
     with connect_users_db() as conn:
         # a turn's token is no connection: never listed (integrations.mint_turn)
         rows = conn.execute("SELECT id, name, created_at, expires_at, scope, workspace_id, workspaces, edits, asks, "
-                            "comments FROM integration_tokens WHERE user_id = ? AND scope != ? "
+                            "comments, deletes FROM integration_tokens WHERE user_id = ? AND scope != ? "
                             "ORDER BY created_at DESC", (user_id, TURN)).fetchall()
     tokens = [{**dict(zip(("id", "name", "created_at", "expires_at", "scope", "workspace_id"), r[:6])),
-               **_access(r[5], r[6], r[7], r[9]), "asks": bool(r[8])} for r in rows]
+               **_access(r[5], r[6], r[7], r[9]), "asks": bool(r[8]), "deletes": bool(r[10])} for r in rows]
     spaces = [{"id": w["id"], "name": w["name"], "personal": w["personal"], "default": w["default"], "role": w["role"]}
               for w in list_for_user(user_id) if not w["deleting"]]
     return {"tokens": tokens, "workspaces": spaces, "workspace_id": ws, "mcp_url": base + "/mcp",
@@ -143,7 +147,67 @@ def change_access(token_id: str, payload: AccessChange, request: Request):
                                                      payload.comments())
     if payload.asks is not None:
         set_asks(user_id, token_id, payload.asks)
+    if payload.deletes is not None:
+        set_deletes(user_id, token_id, payload.deletes)
     return {"id": token_id, "workspace_id": primary, **_access(primary, value, edits, comments)}
+
+
+def _token_workspaces(user_id: str, token_id: str) -> list[str]:
+    """The workspaces one of the account's connections reads that the
+    account can still open; 404 for a token not the account's."""
+    with connect_users_db() as conn:
+        row = conn.execute("SELECT workspace_id, workspaces FROM integration_tokens WHERE id = ? AND user_id = ? "
+                           "AND scope != ?", (token_id, user_id, TURN)).fetchone()
+    if not row:
+        raise HTTPException(404, "This connection is gone.")
+    found = granted(row[0], row[1])
+    mine = {w["id"] for w in list_for_user(user_id) if not w["deleting"]}
+    return [w for w in mine] if found == ALL else [w for w in found if w in mine]
+
+
+@router.get("/tokens/{token_id}/changes")
+def token_changes(token_id: str, request: Request, response: Response):
+    """The changes the connection made through MCP in the workspaces it
+    reads (gamma/mcp_changes.py), newest first, the latest 100: each one's
+    id, workspace, time, tool, summary, page and whether it was undone."""
+    user_id, _ws = _owner(request)
+    response.headers["Cache-Control"] = "no-store"
+    names = {w["id"]: w["name"] for w in list_for_user(user_id)}
+    found = [{"id": c["id"], "workspace_id": ws, "workspace": names.get(ws, ""), "at": c["at"], "tool": c["tool"],
+              "summary": c["summary"], "page_id": c["page_id"], "page_title": c["page_title"], "undone": c["undone"]}
+             for ws in _token_workspaces(user_id, token_id) for c in mcp_changes.listed(ws, token_id, 100)]
+    return {"changes": sorted(found, key=lambda c: c["at"], reverse=True)[:100]}
+
+
+class ChangeUndo(BaseModel):
+    workspace_id: str = Field(min_length=1, max_length=64)
+    force: bool = False
+
+
+@router.post("/tokens/{token_id}/changes/{change_id}/undo")
+def undo_token_change(token_id: str, change_id: str, payload: ChangeUndo, request: Request):
+    """Take back one change the connection made, as the person, the way the
+    chat's revert takes back its agent's (``ai_revert.revert_change``):
+    ``{page_id, noop}``. 409 ``{detail, conflict, preview?}`` when someone
+    changed it since (``force`` takes it back anyway) or it cannot go back;
+    404 for a change of another connection or gone; 403 where the account
+    no longer edits. Undone already, it answers ``noop``."""
+    user_id, _ws = _owner(request)
+    ws = payload.workspace_id
+    if ws not in _token_workspaces(user_id, token_id) or role_of(ws, user_id) not in EDITING_ROLES:
+        raise HTTPException(403, "You no longer edit that workspace.")
+    refuse_writes(ws)
+    change = mcp_changes.find(ws, change_id)
+    if not change or change["token_id"] != token_id:
+        raise HTTPException(404, "That change is gone.")
+    if change["undone"]:
+        return {"page_id": change["page_id"], "noop": True}
+    try:
+        return mcp_changes.undo(ws, change, actor=actor_of(request), force=payload.force)
+    except RevertError as e:
+        return JSONResponse(status_code=e.status, content={
+            "detail": e.detail, **({"conflict": e.conflict} if e.conflict else {}),
+            **({"preview": e.preview} if e.preview else {})})
 
 
 @router.delete("/tokens/{token_id}")

@@ -1035,6 +1035,32 @@ def new_block_id() -> str:
     return secrets.token_urlsafe(9)
 
 
+def tree_inserts(conn, parent: str, nodes, gap: tuple | None = None) -> list[dict]:
+    """The insert ops of block trees (``{id, content, properties,
+    children}``), parent first: the top ones in order under ``parent``,
+    between the keys ``gap`` names (``(lo, hi)``, either None for an
+    open end; without it after the last child), each subtree under its
+    root. A Zotero pull's note regions and an agent's paste
+    (ai_tools.notes create_block) are written this way."""
+    if not nodes:
+        return []
+    if gap is None:
+        gap = (conn.execute("SELECT MAX(position) FROM unified_blocks WHERE parent_id = ?", (parent,)).fetchone()[0],
+               None)
+    out = []
+
+    def add(under, node, position):
+        out.append({"op": "insert", "id": node["id"], "parent": under, "position": position,
+                    "content": node.get("content") or "", "props": node.get("properties") or {}})
+        kids = node.get("children") or []
+        for child, pos in zip(kids, generate_n_keys_between(None, None, len(kids)) if kids else ()):
+            add(node["id"], child, pos)
+
+    for node, position in zip(nodes, generate_n_keys_between(gap[0], gap[1], len(nodes))):
+        add(parent, node, position)
+    return out
+
+
 def folder_inserts(conn, paths, under: str = "", kids=None, *,
                    into_work: bool = False) -> tuple[list[dict], dict[tuple, str]]:
     """What filing pages under ``paths`` (each a list of names, from the top

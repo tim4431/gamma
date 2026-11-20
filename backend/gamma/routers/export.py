@@ -667,7 +667,7 @@ class _LogseqBuilder(_Builder):
 
 # A block under the import's "Attachments" heading that is one of Zotero's
 # other attachments again: a file chip or a web link, one markdown link
-# (imports._markdown_link) — its label, and its upload or its URL.
+# (note_markup.markdown_link) — its label, and its upload or its URL.
 _CHIP_RE = re.compile(r"\[([^\]\n]*)\]\((?:/api/uploads/([0-9a-fA-F]+\.[A-Za-z0-9]+)|(https?://[^\s)]+))\)")
 
 
