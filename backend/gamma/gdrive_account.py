@@ -4,23 +4,31 @@ backup tasks with *Copy to Google Drive* on send it their snapshots
 (gamma/snapshot_copies.py). Like the bucket, it is the server's, not an
 account's.
 
-A connection is made through a Google OAuth client of the "TVs and Limited
-Input devices" type, which each server's admin registers in their own
-Google Cloud project and saves in Settings → Backups (``set_client``;
-users.db ``settings`` key ``gdrive_client``, the secret encrypted). Gamma
-ships none and reads none from the environment. A token works only through
-the client it was made through, so an admin's change of client ends the
-connection (revoked) and any code waiting, and a connection made through
-another (a code answered just as the client changed) asks to be made
-again.
+A connection is made through Gamma's own Google OAuth clients
+(``config.GOOGLE_DRIVE_CLIENT`` and ``GOOGLE_DRIVE_DESKTOP_CLIENT``, asking
+for ``drive.file`` alone), so connecting is signing in to Google and
+allowing it: nobody sets anything up. A server may use clients of its own
+instead, saved from the command line (``manage.py gdrive-client
+[--desktop]``, ``set_client``; users.db ``settings`` keys ``gdrive_client``
+and ``gdrive_desktop_client``, the secrets encrypted), which the browser
+suite does for its stand-in Google. A token works only through the client it was made
+through (``_client_of``), so a change of client ends a connection made
+through the old one (revoked) and any code waiting.
 
-Connecting is Google's device flow (gamma/gdrive.py): ``start`` asks Google
-for a code, which the pane shows with Google's address; the person enters
-it there, on any device, and ``poll``, which the pane calls while the code
-is shown, asks Google at most once per the interval Google gave
-(``_pending``, in memory: one connection at a time, gone with the process
-or once Google's code expired). Nothing polls in the background: a code
-nobody enters just expires. Once Google says yes, the account's address is
+Connecting takes one of two ways (gamma/gdrive.py):
+
+- **Google's page** (``start_browser`` / ``finish_browser``), when Gamma is
+  opened on the server's own computer (the desktop app, a loopback
+  address): the browser goes to Google's authorization page and comes
+  back to the server's callback with a code, traded with its PKCE
+  verifier (``_browser``, in memory, by state, ``BROWSER_TTL``).
+- **A code** (Google's device flow, ``start`` / ``poll``) anywhere else:
+  ``start`` asks Google for a code, which the pane shows with Google's
+  address; the person enters it there, on any device, and ``poll``, which
+  the pane calls while the code is shown, asks Google at most once per the
+  interval Google gave (``_pending``, in memory: one connection at a time,
+  gone with the process or once Google's code expired). Nothing polls in
+  the background: a code nobody enters just expires. Once Google says yes, the account's address is
 read and the connection saved in users.db (``settings`` key ``gdrive``):
 the refresh token, encrypted with the data directory's key as the bucket's
 secret key is, the address and name, the folder's name, when, and the
@@ -31,25 +39,30 @@ in Drive. ``set_folder`` changes the folder new copies go to (the old one
 stays where it is).
 """
 
+import base64
+import hashlib
 import json
+import secrets
 import sqlite3
 import threading
 import time
 
 from cryptography.fernet import InvalidToken
 
-from . import gdrive
+from . import config, gdrive
 from .logbuf import log
 from .publisher_sessions import seal, unseal
 from .server_settings import _peek_raw, _set_raw
 
 SETTINGS_KEY = "gdrive"          # the connection
-CLIENT_KEY = "gdrive_client"     # the OAuth client an admin saved
+CLIENT_KEY = "gdrive_client"     # a client of the server's own for the code (manage.py gdrive-client)
+DESKTOP_KEY = "gdrive_desktop_client"  # ... and for Google's page (gdrive-client --desktop)
 DEFAULT_FOLDER = "Gamma backups"
 FOLDER_MAX = 120
 CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
 CLIENT_FIELD_MAX = 200
-NO_CLIENT = "Google Drive needs a Google OAuth client: an admin sets one up in Settings → Backups → Google Drive"
+NO_CLIENT = ("This build of Gamma has no Google app to sign in to Drive with: an admin can give the server one "
+             "with manage.py gdrive-client")
 
 _lock = threading.Lock()
 # The device flow in progress: {device_code, user_code, verification_url,
@@ -57,6 +70,10 @@ _lock = threading.Lock()
 # connections.
 _pending: dict | None = None
 _last_error = ""  # why the last connection did not complete, which ``status`` shows
+# Sign-ins on Google's page under way: state → {verifier, redirect_uri,
+# folder, oauth, expires_at}.
+_browser: dict[str, dict] = {}
+BROWSER_TTL = 600
 
 
 def _iso(at: float) -> str:
@@ -99,17 +116,40 @@ def _unseal(sealed, what: str) -> str:
 
 # --- the OAuth client ----------------------------------------------------------------
 
-def oauth_client() -> gdrive.OAuthClient | None:
-    """The client connections are made through, the one an admin saved;
-    None when there is none, or its secret no longer decrypts."""
-    saved = _read(CLIENT_KEY)
+def _client(key: str, gammas: tuple[str, str]) -> gdrive.OAuthClient | None:
+    """The server's own client saved under ``key``, else Gamma's; None
+    when there is neither (a build without one, and none saved or one whose
+    secret no longer decrypts)."""
+    saved = _read(key)
     client_id = saved.get("client_id")
     secret = _unseal(saved.get("client_secret"), "client secret")
-    return gdrive.OAuthClient(client_id, secret) if isinstance(client_id, str) and client_id and secret else None
+    if isinstance(client_id, str) and client_id and secret:
+        return gdrive.OAuthClient(client_id, secret)
+    return gdrive.OAuthClient(*gammas) if all(gammas) else None
+
+
+def oauth_client() -> gdrive.OAuthClient | None:
+    """The "TVs and Limited Input devices" client a code is asked through."""
+    return _client(CLIENT_KEY, config.GOOGLE_DRIVE_CLIENT)
+
+
+def browser_client() -> gdrive.OAuthClient | None:
+    """The "Desktop app" client of Google's page, on the server's own
+    computer."""
+    return _client(DESKTOP_KEY, config.GOOGLE_DRIVE_DESKTOP_CLIENT)
+
+
+def _client_of(conn: dict) -> gdrive.OAuthClient | None:
+    """The client a connection was made through, among those this server
+    has; None when it has it no longer."""
+    for oauth in (oauth_client(), browser_client()):
+        if oauth is not None and oauth.id == conn.get("client_id"):
+            return oauth
+    return None
 
 
 def _oauth() -> gdrive.OAuthClient:
-    """The saved client; DriveConfigError when there is none."""
+    """The client for a code; DriveConfigError when there is none."""
     oauth = oauth_client()
     if oauth is None:
         raise gdrive.DriveConfigError(NO_CLIENT)
@@ -117,8 +157,9 @@ def _oauth() -> gdrive.OAuthClient:
 
 
 def _check_client(client_id, secret) -> gdrive.OAuthClient:
-    """The client an admin pasted, trimmed. ValueError for one that cannot
-    be: an ID is one word ending in CLIENT_ID_SUFFIX, a secret one word."""
+    """A client given on the command line, trimmed. ValueError for one
+    that cannot be: an ID is one word ending in CLIENT_ID_SUFFIX, a secret
+    one word."""
     if not isinstance(client_id, str) or not isinstance(secret, str):
         raise ValueError("The client ID and secret must be text.")
     client_id, secret = client_id.strip(), secret.strip()
@@ -134,42 +175,36 @@ def _check_client(client_id, secret) -> gdrive.OAuthClient:
     return gdrive.OAuthClient(client_id, secret)
 
 
-def set_client(client_id, secret=None) -> dict:
-    """Save the OAuth client connections are made through. An empty
-    ``secret`` keeps the saved one, for the same client ID. ValueError for
-    an ID or secret that cannot be. The new ``status``."""
-    if not secret:
-        own = oauth_client()
-        if own is None or not isinstance(client_id, str) or own.id != client_id.strip():
-            raise ValueError("Paste the client secret.")
-        secret = own.secret
+def set_client(client_id, secret, *, desktop: bool = False) -> dict:
+    """Save a client of the server's own, used instead of Gamma's for the
+    code (or, ``desktop``, for Google's page): manage.py gdrive-client.
+    ValueError for an ID or secret that cannot be. The new ``status``."""
     oauth = _check_client(client_id, secret)
     with _lock:
-        _set_raw(CLIENT_KEY, json.dumps({"client_id": oauth.id, "client_secret": seal(oauth.secret)}))
+        _set_raw(DESKTOP_KEY if desktop else CLIENT_KEY,
+                 json.dumps({"client_id": oauth.id, "client_secret": seal(oauth.secret)}))
     _client_changed()
     return status()
 
 
-def remove_client() -> dict:
-    """Forget the client: Google Drive cannot be connected until another
-    is saved, and a connection is disconnected (revoked). The new
-    ``status``."""
+def remove_client(*, desktop: bool = False) -> dict:
+    """Forget the server's own client: Gamma's is used again, and a
+    connection made through the one forgotten is disconnected (revoked).
+    The new ``status``."""
     with _lock:
-        _set_raw(CLIENT_KEY, "")
+        _set_raw(DESKTOP_KEY if desktop else CLIENT_KEY, "")
     _client_changed()
     return status()
 
 
 def _client_changed() -> None:
-    """After an admin changed the client: a code waiting was asked for
-    through the old one and ends; a connection made through another than
-    the one now saved can no longer be renewed and is disconnected
-    (revoked)."""
+    """After the client changed: a code waiting was asked for through the
+    old one and ends; a connection made through another than the one now
+    in force can no longer be renewed and is disconnected (revoked)."""
     with _lock:
         _end()
-    oauth = oauth_client()
     conn = _saved()
-    if conn.get("refresh_token") and (oauth is None or conn.get("client_id") != oauth.id):
+    if conn.get("refresh_token") and _client_of(conn) is None:
         disconnect()
 
 
@@ -192,10 +227,9 @@ def _problem(conn: dict) -> str:
     """Why a saved connection cannot be used now, "" when it can."""
     if not conn.get("refresh_token"):
         return "Google Drive is not connected: an admin connects it in Settings → Backups"
-    oauth = oauth_client()
-    if oauth is None:
+    if oauth_client() is None and browser_client() is None:
         return NO_CLIENT
-    if conn.get("client_id") != oauth.id:
+    if _client_of(conn) is None:
         return "Google Drive was connected through another Google OAuth client: connect it again"
     return ""
 
@@ -212,20 +246,19 @@ def client(**kwargs) -> gdrive.Client:
     problem = _problem(conn)
     if problem:
         raise gdrive.DriveConfigError(problem)
-    return gdrive.Client(_oauth(), conn["refresh_token"], conn.get("folder") or DEFAULT_FOLDER, **kwargs)
+    return gdrive.Client(_client_of(conn), conn["refresh_token"], conn.get("folder") or DEFAULT_FOLDER, **kwargs)
 
 
 def status() -> dict:
-    """What the pane shows: ``{client_id, connected, email, name, folder,
-    connected_at, problem, pending, error}``. ``client_id``: the saved
-    OAuth client's ("" when there is none; its secret never leaves the
-    server); ``problem``: why the saved connection cannot be used ("" when it can,
+    """What the pane shows: ``{available, connected, email, name, folder,
+    connected_at, problem, pending, error}``. ``available``: there is a
+    Google app to sign in with (a code's, or the page's on this computer);
+    ``problem``: why the saved connection cannot be used ("" when it can,
     or there is none); ``pending``: the code to enter, ``{user_code,
     verification_url, expires_at, interval}``, while a connection waits;
     ``error``: why the last one did not complete, until the next one
     starts or Cancel."""
     conn = _saved()
-    oauth = oauth_client()
     with _lock:
         pending = _pending
         if pending and pending["expires_at"] <= time.time():
@@ -233,7 +266,7 @@ def status() -> dict:
             pending = None
         error = _last_error
     connected = bool(conn.get("refresh_token"))
-    return {"client_id": oauth.id if oauth else "", "connected": connected,
+    return {"available": oauth_client() is not None or browser_client() is not None, "connected": connected,
             "email": str(conn.get("email") or ""), "name": str(conn.get("name") or ""),
             "folder": str(conn.get("folder") or DEFAULT_FOLDER), "connected_at": conn.get("connected_at"),
             "problem": _problem(conn) if connected else "",
@@ -271,6 +304,58 @@ def cancel() -> dict:
     with _lock:
         _end()
     return status()
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def start_browser(folder: str, redirect_uri: str) -> str:
+    """Start signing in on Google's page, which comes back to
+    ``redirect_uri`` (the server's callback at a loopback address): the
+    page's address. ValueError for a folder that cannot be;
+    DriveConfigError without Gamma's "Desktop app" client."""
+    folder = check_folder(folder)
+    oauth = browser_client()
+    if oauth is None:
+        raise gdrive.DriveConfigError(NO_CLIENT)
+    state, verifier = secrets.token_urlsafe(24), secrets.token_urlsafe(48)
+    now = time.time()
+    with _lock:
+        _end()
+        for old in [k for k, v in _browser.items() if v["expires_at"] <= now]:
+            del _browser[old]
+        _browser[state] = {"verifier": verifier, "redirect_uri": redirect_uri, "folder": folder, "oauth": oauth,
+                           "expires_at": now + BROWSER_TTL}
+    challenge = _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
+    return gdrive.authorize_url(oauth, redirect_uri, state, challenge)
+
+
+def finish_browser(state: str, code: str = "", error: str = "") -> str:
+    """Google's page came back (the callback): the code traded and the
+    connection saved, replacing any. "" once connected, else why not, which
+    ``status``'s ``error`` says too."""
+    global _last_error
+    with _lock:
+        started = _browser.pop(state, None) if state else None
+    if started is None or started["expires_at"] <= time.time():
+        problem = "This sign-in expired or was already used: connect again."
+    elif error == "access_denied":
+        problem = "Google Drive access was not allowed."
+    elif error or not code:
+        problem = f"Google did not sign in ({error or 'no code'}): connect again."
+    else:
+        try:
+            answer = gdrive.exchange_code(started["oauth"], code, started["verifier"], started["redirect_uri"])
+        except (gdrive.DriveError, gdrive.DriveConfigError) as e:
+            answer = {"state": "failed", "error": str(e)}
+        if answer["state"] == "done":
+            problem = _connect(answer, started["folder"], started["oauth"])
+        else:
+            problem = answer.get("error") or "Google Drive access was not allowed."
+    with _lock:
+        _last_error = problem
+    return problem
 
 
 def poll() -> dict:

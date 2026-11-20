@@ -933,23 +933,24 @@ Library:
   the pane says of either store is
   [backupStores.js](../../frontend/src/settings/backupStores.js)): a
   folder in a Google account's My Drive that tasks may copy their
-  snapshots to as well, beside the bucket or instead. Without an OAuth
-  client its row reads "Not set up" with Set up…, which opens "Set up an
-  OAuth client": the three Google Cloud console pages to visit (each an
-  Open link), the client ID and the write-only secret ("secret set — type
-  to replace" once saved). With one, an "OAuth client" row names it, "<id>
-  · from your Google Cloud project", with Edit… (and Remove…, which asks
-  first). Each server's admin registers their own: Gamma ships none and
-  reads none from the environment. The connection's row above it reads
-  "Not connected" with Connect…, or the account's address with "Gamma
+  snapshots to as well, beside the bucket or instead. Nothing is set up
+  first: connecting is signing in to Google with Gamma's own app. Its row
+  reads "Not connected" with Connect…, or the account's address with "Gamma
   backups · backup tasks can copy their snapshots here", Test (the folder's
   item count and the account's storage, answered beside it) and Edit….
-  Connect… opens "Connect Google Drive": the folder's name, then Get a
-  code, after which the dialog shows Google's code in a copy box, a link
-  to Google's address, and "Waiting for Google…" while it polls; a yes
-  closes it ("Google Drive connected."), and a no or an expired code shows
-  why and offers the folder step again. A connection waiting for its code
-  reads "Waiting for the code" with Enter the code…. Edit… changes the
+  Where Gamma is opened on its own computer (the desktop app; the read's
+  `browser`), Connect… opens "Connect Google Drive" with Continue with
+  Google, a link drawn as the dialog's button to Google's page; once the
+  person allows there, the dialog sees the connection and closes, and
+  the tab Google sent back says "Google Drive is connected". Anywhere
+  else Connect… opens "Connect Google Drive" and asks Google for a code at
+  once: the code in a copy box, "Copy the code and open Google" (a link
+  drawn as the dialog's button: it copies the code and opens Google's
+  page), two steps (enter the code; choose the account and allow), and
+  "Waiting for Google…" while it polls; a yes closes it ("Google Drive
+  connected."), and a no or an expired code shows why with Get a new
+  code. A connection waiting for its code reads "Waiting for the code"
+  with Enter the code…. Edit… changes the
   folder (new copies go there) and holds Disconnect…, which asks first.
   A connection that cannot be used shows why under the rows, with
   Connect again…. A task's editor

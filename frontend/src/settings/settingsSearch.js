@@ -164,7 +164,7 @@ const entries = [
   e("backups", t("Restore a backup"), t("Saved snapshots"), t("A snapshot's Restore menu: replace or merge"), "restore replace merge snapshot roll back download", t("Saved snapshots")),
   admin(e("backups", t("Bucket"), null, t("AWS S3, Cloudflare R2, MinIO or another S3-compatible store, for backup tasks to copy their snapshots to"), "administration offsite off-site backup bucket S3 R2 Cloudflare AWS MinIO cloud remote storage replicate disaster recovery")),
   admin(e("backups", t("Cloud copies"), null, t("What the bucket and Google Drive hold, and the workspaces only the cloud has"), "administration restore cloud bucket drive copies lost disk disaster recovery fetch bring back download browse")),
-  admin(e("backups", t("Google Drive"), null, t("A folder in your Google Drive, for backup tasks to copy their snapshots to"), "administration offsite off-site backup google drive gdrive cloud remote storage oauth client id secret google cloud console disaster recovery")),
+  admin(e("backups", t("Google Drive"), null, t("A folder in your Google Drive, for backup tasks to copy their snapshots to"), "administration offsite off-site backup google drive gdrive cloud remote storage sign in connect account oauth disaster recovery")),
   e("maintenance", t("Library maintenance"), null, t("Storage, search index and metadata health"), "metadata health text index rebuild papers"),
   e("maintenance", t("Uploaded files"), t("Storage"), t("PDFs and images on the server"), "storage quota uploads space used disk"),
   e("users", t("Users"), null, t("Accounts, storage limits, sign-in, guests and reports"), "administration accounts limits personal workspaces"),
