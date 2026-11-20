@@ -292,7 +292,8 @@ def waiting_chats(request: Request):
 @router.post("/computers/chats/{turn_id}/claim")
 def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
     """``{run, agent}`` → ``{turn: {id, conversation_id, bucket, title,
-    text, selections, model, effort, speed, for, thread_id?, comment_id?},
+    text, selections, model, effort, speed, for, thread_id?, comment_id?,
+    skill?: {name, instructions}},
     history, about, dir: {kind, id}, seen, thread?, tools: {url, token} |
     null}`` (``far_turns.claim``, ``_tools``): the turn taken for the run
     ``run`` (it and its message ``running``) in one write, or held by that

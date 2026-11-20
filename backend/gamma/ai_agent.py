@@ -67,8 +67,8 @@ from .ai_tools.base import CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, 
 from .ai_tools.folders import TREE_DELETES
 from .ai_tools.notes import find_selection
 from .ai_tools.organizing import listed_pages
-from .ai_tools.registry import (MUTATING_TOOLS, STORING_TOOLS, approval_preview, run_agent_tool, settled_action,
-                                tool_action, tool_permission)
+from .ai_tools.registry import (MUTATING_TOOLS, STORING_TOOLS, approval_preview, replayed, run_agent_tool,
+                                settled_action, tool_action, tool_permission)
 from .ai_tools.web import skipped_fetch, unanswered_fetch
 from .logbuf import log
 
@@ -92,7 +92,7 @@ PREVIEW_TOOLS = frozenset({"edit_block", "create_block"})
 # The short arguments a step event repeats, for the label the chat shows
 # while a call runs ("Searching library for …"). Never a note's content.
 STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "source", "url",
-             "pdf_page", "mode", "question", "thread_id", "sheet_id", "format")
+             "pdf_page", "mode", "question", "thread_id", "sheet_id", "format", "name")
 
 # What the model hears for a call the user did not allow (with what they want
 # done instead, when they said it), or did not answer in time.
@@ -394,9 +394,10 @@ class AgentLoop:
         """Reopen the provider with this round's results. The valve on a
         long reply: once the rounds' results outgrow their budget the oldest
         become stubs, and a provider that still calls the prompt too long
-        gets one retry with only the last round's results — None instead
-        when the client left while it was refused."""
-        elide_live_results(self.conversation.messages)
+        gets one retry with only the last round's results, the skills
+        loaded in this reply elided too — None instead when the client left
+        while it was refused."""
+        elide_live_results(self.conversation.messages, replay=replayed)
         try:
             return self.open_round(self.conversation)
         except UpstreamError as e:
@@ -404,7 +405,8 @@ class AgentLoop:
                 raise
             if self._left():
                 return None
-            elide_live_results(self.conversation.messages, keep_rounds=1, budget=0)
+            elide_live_results(self.conversation.messages, keep_rounds=1, budget=0, keep_replayed=False,
+                               replay=replayed)
             log.info("[ai_agent] tool round too long for the provider, retrying with earlier results elided")
             return self.open_round(self.conversation)
 

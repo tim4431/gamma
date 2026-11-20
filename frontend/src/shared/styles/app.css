@@ -2524,8 +2524,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 /* --- chrome-style tabs --- */
 .tabStrip {
   /* The gap between tabs; the band under them the active tab fills to join
-     the page (below); a strip group's flared feet (stripGroupLine), as tall
-     as that band or taller, so they meet the tab. */
+     the page (below); the flare of a strip group's active tab
+     (.stripGroupOutline), the radius of a tab's top corners. */
   --tab-gap: 2px;
   --tab-band: 7px;
   --tab-foot: var(--radius-md);
@@ -2650,16 +2650,16 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 
 /* Chrome's tab groups (workspace/stripGroups.js, docs/dev/strip_groups.md,
    Chrome's measures in docs/research/chrome-strip-groups.md). A group's chip
-   is an item as tall as a tab holding a pill of the group's colour, 20 px
-   with Chrome's 6 px corners, its name in black or white, whichever reads
-   on the colour (--strip-group-ink); a square of the colour when it has no
-   name. While the group is open a 2 px line of the colour runs along the
-   strip's foot, where the active tab meets the page, from under the chip
-   to its last tab, and rises round the group's active tab as its outline,
-   which flares back into the line at its feet. Each item draws its own
-   stretch (.stripGroupLine), reaching over the gap to the next.
-   --strip-group and --strip-group-ink are set on the chip, the tabs, a
-   dot and a swatch (groupTint). */
+   is an item as tall as a tab holding the pill, the button: 20 px of the
+   group's colour with Chrome's 6 px corners, its name in black or white,
+   whichever reads on the colour (--strip-group-ink), a square when it has
+   no name. While the group is open a 2 px line of the colour runs along the
+   strip's foot, where the active tab meets the page, from under the pill to
+   the group's last tab: each item draws its stretch (.stripGroupLine) over
+   the gap to the next and a pixel into it, so the stretches meet without a
+   seam, only the group's two ends rounded. The group's active tab draws its
+   outline instead (.stripGroupOutline). --strip-group and --strip-group-ink
+   are set on the chip, the tabs, a dot and a swatch (groupTint). */
 .stripGroupChip {
   display: flex;
   align-items: center;
@@ -2688,9 +2688,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   white-space: nowrap;
 }
 .stripGroupPill.unnamed { width: 20px; padding: 0; }
-/* The keyboard's ring goes round the pill, not the tab-tall item. */
-.stripGroupChip:focus-visible { outline: none; }
-.stripGroupChip:focus-visible .stripGroupPill { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .stripGroupChip.dragging { opacity: 0.45; }
 .stripGroupDot {
   display: inline-block;
@@ -2706,43 +2703,47 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   position: absolute;
   bottom: calc(-1 * var(--tab-band));
   left: -1px;
-  right: calc(-1px - var(--tab-gap));
+  right: calc(-2px - var(--tab-gap));
   height: 2px;
-  border-radius: 1px;
   background: var(--strip-group);
   pointer-events: none;
 }
-.stripGroupChip .stripGroupLine { left: calc(var(--space-3) + 2px); right: calc(-1 * var(--tab-gap)); }
-.tab.groupEnd .stripGroupLine { right: var(--space-4); }
-/* The open group's active tab: its outline in the colour, 2 px as the
-   line (the border and an inset shadow, so nothing moves), its band to the
-   page narrowed inside it, and a foot each side: the corner of a box the
-   size of the flare, whose stroke comes down beside the band and turns out
-   into the line. */
-.tab.active:has(> .stripGroupLine) {
-  border-color: var(--strip-group);
-  box-shadow: inset 1px 1px 0 var(--strip-group), inset -1px 0 0 var(--strip-group);
+.stripGroupChip .stripGroupLine { left: calc(var(--space-3) + 2px); right: calc(-1px - var(--tab-gap)); border-radius: 1px 0 0 1px; }
+.tab.groupEnd .stripGroupLine { right: var(--space-4); border-radius: 0 1px 1px 0; }
+/* The open group's active tab: one outline of 2 px borders, over the tab
+   and its band (the tab's own border and the band's go clear): the tab's
+   top and sides down to --tab-foot above the strip's foot, then a foot each
+   side, a box --tab-foot square whose border carries the side on down and
+   turns out into the line as Chrome's tab flares. The three are borders on
+   the same columns, and the sides reach 2 px into the feet, through a
+   transparent bottom border the feet hang from: at a screen scale that puts
+   an edge inside a device pixel, sides that stopped where the feet start
+   would pale there, and a box with no bottom border leaks a sliver of its
+   colour along its bottom edge. */
+.tab:has(> .stripGroupOutline),
+.tab:has(> .stripGroupOutline)::after { border-color: transparent; }
+.stripGroupOutline {
+  position: absolute;
+  z-index: 1;
+  inset: -1px -1px calc(var(--tab-foot) - var(--tab-band) - 2px);
+  box-sizing: border-box;
+  border: 2px solid var(--strip-group);
+  border-bottom-color: transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  pointer-events: none;
 }
-.tab.active:has(> .stripGroupLine)::after { left: 1px; right: 1px; border: 0; }
-.tab.active .stripGroupLine {
-  left: calc(1px - var(--tab-foot));
-  right: calc(1px - var(--tab-foot));
-  height: var(--tab-foot);
-  border-radius: 0;
-  background: none;
-}
-.tab.active .stripGroupLine::before,
-.tab.active .stripGroupLine::after {
+.stripGroupOutline::before,
+.stripGroupOutline::after {
   content: "";
   position: absolute;
-  bottom: 0;
+  top: 100%;
   box-sizing: border-box;
   width: var(--tab-foot);
   height: var(--tab-foot);
   border: 0 solid var(--strip-group);
 }
-.tab.active .stripGroupLine::before { left: 0; border-width: 0 2px 2px 0; border-bottom-right-radius: var(--tab-foot); }
-.tab.active .stripGroupLine::after { right: 0; border-width: 0 0 2px 2px; border-bottom-left-radius: var(--tab-foot); }
+.stripGroupOutline::before { left: calc(-1 * var(--tab-foot)); border-width: 0 2px 2px 0; border-radius: 0 0 var(--tab-foot) 1px; }
+.stripGroupOutline::after { right: calc(-1 * var(--tab-foot)); border-width: 0 0 2px 2px; border-radius: 0 0 1px var(--tab-foot); }
 /* The editor under a chip: the name, then the nine colours as the
    palette's swatches (.colorRow, .colorBtn). */
 .stripGroupMenu { width: 284px; padding: var(--space-4) 0 var(--space-2); }
@@ -4474,6 +4475,13 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .pwField:has(> .aiKeyInput) { margin-bottom: 6px; }
 .setField .pwField { margin-bottom: 0; }
 .loginCard .pwField { margin-bottom: 12px; }
+/* Settings → Skills: a skill's name field with its fixed "/" before what
+   is typed, and a row's description kept to two lines (the rest is its
+   hover title). */
+.skillNameField { position: relative; display: block; }
+.skillNameField > .aiKeyInput { padding-left: 20px; }
+.skillNameField > .skillSlash { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: var(--fs-sm); pointer-events: none; }
+.skillRow .settingDesc { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 /* Status text: an error, a passed check. The line often also carries a
    muted hint class that is declared later (.settingsPaneHint, .aiProvDesc,
    .aiKeyCheck), so the pair outranks it. */
@@ -5110,6 +5118,18 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatMentionOption strong { display: block; font-size: var(--fs-xs); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatMentionOption small { display: block; font-size: var(--fs-2xs); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatMentionHint { border-top: 1px solid var(--border); }
+/* A skill's row in the "/" picker: "/name", its tag and argument hint over
+   its description, two lines at most. */
+.chatSkillOption { align-items: flex-start; }
+.chatSkillOption .slashMenuHead { align-items: center; }
+.chatSkillOption .slashMenuLabel { flex-shrink: 0; font-family: var(--font-mono); font-size: var(--fs-xs); }
+.chatSkillOption .uiTag { margin-left: 0; flex-shrink: 0; }
+.chatSkillOption .slashMenuName { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chatSkillOption .slashMenuHint {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  white-space: normal; overflow-wrap: anywhere;
+}
+.chatSkillNone { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }
 /* The key hints under a picker ("↑↓ choose · Enter …": Quick Open, the chat's
    page picker, the [[ picker, the slash menu) draw their arrows as text:
    never an emoji font's coloured arrows, with a symbol font behind Inter in
@@ -5318,6 +5338,37 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: 1.5;
   margin-top: 12px;
 }
+/* The page a server shows while it cannot open its library
+   (auth/StandbyPage.jsx): the sign-in card, wider for the settings'
+   Section and workspace rows inside (as an assistant's consent has them),
+   a line under each action, and the server's own words (steps, technical
+   details) in the small sizes. Layout only. */
+.loginCard.standbyCard { max-width: 460px; }
+.standbyCard a.uiBtn { text-decoration: none; } /* the update button is a link */
+.standbyCard .setRow { padding-left: 0; padding-right: 0; }
+.standbyHint {
+  margin: 0 0 20px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  text-align: center;
+}
+.standbyText {
+  margin: 0 0 14px;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-ui);
+}
+.standbySteps, .standbyDetails {
+  margin: 0 0 14px;
+  padding-left: 1.3em;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-ui);
+}
+.standbySteps li, .standbyDetails li { margin: 0 0 6px; overflow-wrap: anywhere; }
+.standbyDetails { margin: 8px 0 0; color: var(--text-muted); font-size: var(--fs-xs); }
+.standbyDisclosure { margin-top: 4px; }
 
 /* --- page header: title with category chips below, buttons at the right --- */
 .pageTitleMain {
@@ -5560,6 +5611,18 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border: 1px solid var(--border-subtle);
 }
 .chatMsgPdfs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; font-size: calc(var(--fs-2xs) * var(--text-scale, 1)); }
+/* The skill a user message ran (chat/skills.js), a chip ahead of its text;
+   an edited message's has the × that drops it. */
+.chatMsgSkillRow { display: flex; margin-bottom: var(--space-1); }
+.chatMsgSkill {
+  display: inline-flex; align-items: center; gap: 2px; margin-left: 0;
+  font-family: var(--font-mono); font-size: calc(var(--fs-2xs) * var(--text-scale, 1)); color: var(--accent);
+}
+.chatMsgSkillDrop {
+  display: inline-flex; align-items: center; justify-content: center; margin-right: -4px; padding: 1px;
+  border: none; border-radius: var(--radius-full); background: none; color: inherit; cursor: pointer;
+}
+.chatMsgSkillDrop:hover { background: var(--bg-hover); }
 /* A message the user steered into the reply while it ran (chat/chatQueue.js). */
 .chatMsgSteered {
   display: flex; align-items: center; gap: var(--space-2);

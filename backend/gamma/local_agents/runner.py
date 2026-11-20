@@ -1391,6 +1391,9 @@ class _ChatTurn:
             self.left_open = self.home.unsure
             return
         self._check_stop()  # stopped while it waited for a slot
+        skill = context.get("skill")
+        if skill is not None and skill["instructions"] is None:   # never run its arguments without it
+            self._fail(chats.SKILL_GONE.format(name=skill["name"]))
 
         # 1. what its route checked, checked again
         place = self.home.place(self, context)
@@ -1475,7 +1478,7 @@ class _ChatTurn:
             return prompt.build_chat(agent=self.agent, owner=owner, about=about, place=place,
                                      message=context["text"], selections=selections,
                                      earlier=earlier if with_earlier else None, ask=self.ask,
-                                     tools=self.gamma is not None)
+                                     tools=self.gamma is not None, skill=skill)
 
         # 4. the turn
         before = _snapshot(self.root)

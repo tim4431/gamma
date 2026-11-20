@@ -174,6 +174,7 @@ import { ROLE_LABEL, actingRole, workspaceMeta } from "../settings/workspaceRole
 import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage, cloudOutcomeInUrl } from "../auth/LoginPage";
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
+import { STANDBY_ERROR, StandbyPage } from "../auth/StandbyPage";
 import { TRANSLATE_LANGS, preloadPrefs, readPref, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
 import { TOPBAR, TOPBAR_ITEMS } from "./topbarItems.js";
 import { TOPBAR_ICONS } from "./topbarIcons.js";
@@ -628,7 +629,9 @@ export default function App() {
 // view as if its ?share= token were in the URL while the pretty address
 // stays in the address bar. Any other path there is the share view's "not
 // found". Everywhere else the app boots as before, with the server config it
-// read here (a ?share= link knows it is a share view without asking).
+// read here (a ?share= link knows it is a share view without asking). A
+// server that cannot open its library answers the config with its guidance,
+// and that page shows instead of the app (auth/StandbyPage.jsx).
 function PageHostGate() {
   const [boot, setBoot] = useState(() => (new URLSearchParams(window.location.search).get("share") ? {} : null));
   useEffect(() => {
@@ -636,7 +639,11 @@ function PageHostGate() {
     let active = true;
     (async () => {
       let config = null;
-      try { config = await (takeBootRead("config") || apiJson(`${API}/server-config`)); } catch {}
+      try {
+        config = await (takeBootRead("config") || apiJson(`${API}/server-config`));
+      } catch (e) {
+        if (active && e?.data?.error === STANDBY_ERROR) { setBoot({ standby: e.data }); return; }
+      }
       if (!active) return;
       if (!pageHostUser(config?.page_host, window.location.hostname)) { setBoot({ serverConfig: config }); return; }
       let found = null;
@@ -653,6 +660,7 @@ function PageHostGate() {
   }, [boot]);
   // The splash stays until the server's config is read.
   if (!boot) return <Splash />;
+  if (boot.standby) return <StandbyPage guide={boot.standby} />;
   return <LibraryApp publicPage={boot.publicPage || null} initialServerConfig={boot.serverConfig || null} />;
 }
 

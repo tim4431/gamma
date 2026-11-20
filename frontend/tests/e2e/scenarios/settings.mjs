@@ -5,6 +5,7 @@ import http from "node:http";
 import path from "node:path";
 import { TOPBAR } from "../../../src/app/topbarItems.js";
 import { VIEWER_TOOLS } from "../../../src/app/viewerToolItems.js";
+import { certificate } from "./https.mjs";
 import { closeEditor, editRow, newPageViaUi, same, tree } from "./notes.mjs";
 
 export async function settingsScenarios(env) {
@@ -1952,8 +1953,10 @@ export async function settingsScenarios(env) {
   // gamma/gdrive_account.py, docs/dev/debugging.md "Google Drive"): a
   // second server whose Google is the fake one (backend/tests/gdrive_fake.py
   // over HTTP, its device codes asking for a 2 s interval), so nothing
-  // reaches Google: Set up… saves the OAuth client the admin registered
-  // there. A code asked for and cancelled; another entered, which
+  // reaches Google, the app the fake knows given to the server as Gamma's
+  // own would be (manage.py gdrive-client). It is served over HTTPS, as a
+  // NAS opened from another computer is, so Connect… opens on a code,
+  // cancelled; another entered, which
   // the fake approves, closing the dialog; Test; a backup task copying its
   // snapshot into the folder, which Saved snapshots tags and, the snapshot
   // deleted, lists alone and deletes from Drive; the folder renamed; and
@@ -1983,16 +1986,18 @@ export async function settingsScenarios(env) {
       approve: () => fetch(`${base}/_fake/approve`, { method: "POST" }) };
   }
 
-  await step("settings: Google Drive is set up with an admin's OAuth client, connected with a code, tested, copied to by a backup task, read back in Saved snapshots and disconnected", async () => {
+  await step("settings: Google Drive is connected by signing in with a code, tested, copied to by a backup task, read back in Saved snapshots and disconnected", async () => {
     const google = await startFakeGoogle();
     const drive = new Server({ env: { GAMMA_GOOGLE_OAUTH_BASE: google.base, GAMMA_GOOGLE_API_BASE: google.base } });
     let ctx = null;
     try {
+      drive.tls = (await certificate(drive.dir, "tls")).tls;
       await drive.start();
       await drive.manage("create-user", "drive-admin", "drive-admin-pw");
       await drive.manage("set-admin", "drive-admin", "on");
+      await drive.manage("gdrive-client", "fake-client.apps.googleusercontent.com", "GOCSPX-fake");
       const admin = await new Account(drive, "drive-admin", "drive-admin-pw").login();
-      ctx = await admin.context(browser);
+      ctx = await admin.context(browser, { ignoreHTTPSErrors: true });
       await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
       const page = await openPage(ctx, drive.base);
       await page.waitForSelector(".folderNewBtn");
@@ -2005,35 +2010,21 @@ export async function settingsScenarios(env) {
       assertEq(sections.slice(at - 1, at + 2).join(" › "), "Bucket › Google Drive › Saved snapshots", "where the section sits");
       assertEq(await section.locator(".uiTag.admin").innerText(), "admin", "Google Drive is tagged an admin's");
 
-      // Set up…: the admin's own OAuth client, made in their Google Cloud project.
-      await row(page, "Not set up").getByRole("button", { name: "Set up…", exact: true }).click();
-      const clientDialog = page.getByRole("dialog", { name: "Set up an OAuth client", exact: true });
-      const pages = await clientDialog.getByRole("link").evaluateAll((els) => els.map((a) => new URL(a.href).pathname));
-      assertEq(pages.join(" "), "/apis/library/drive.googleapis.com /auth/audience /auth/clients/create", "the console's three pages");
-      await clientDialog.getByRole("textbox", { name: "Client ID", exact: true }).fill("fake-client.apps.googleusercontent.com");
-      await clientDialog.getByLabel("Client secret", { exact: true }).fill("GOCSPX-fake");
-      await clientDialog.getByRole("button", { name: "Save", exact: true }).click();
-      await clientDialog.waitFor({ state: "detached" });
-      assertEq(await row(page, "OAuth client").locator(".settingDesc").innerText(), "fake-client · from your Google Cloud project",
-        "the client row names the saved client");
-      assert(!JSON.stringify(await admin.api("/api/admin/gdrive")).includes("GOCSPX"), "the secret never reaches the browser");
-
-      // Connect…: the folder, then Google's code while the dialog waits; Cancel stops waiting.
+      // Connect…: Google's code at once, one button to copy it and open Google's page, while the
+      // dialog waits; Cancel stops waiting. Nothing to set up first.
+      assertEq(await page.locator('.settingsPane [data-setting="OAuth client"]').count(), 0, "no app to set up first");
       const connect = page.getByRole("dialog", { name: "Connect Google Drive", exact: true });
-      const code = connect.getByRole("textbox", { name: "Code", exact: true });
+      const code = connect.getByRole("textbox", { name: "Your code", exact: true });
       await row(page, "Not connected").getByRole("button", { name: "Connect…", exact: true }).click();
-      assertEq(await connect.getByRole("textbox", { name: "Folder", exact: true }).inputValue(), "Gamma backups", "the folder's default");
-      await connect.getByRole("button", { name: "Get a code", exact: true }).click();
       await code.waitFor();
       assertEq(await code.inputValue(), "ABCD-0001", "the code Google gave");
-      assertEq(await connect.getByRole("link", { name: /^Open www\.google\.com\/device/ }).getAttribute("href"),
-        "https://www.google.com/device", "the link to Google's page");
+      const openGoogle = connect.getByRole("link", { name: "Copy the code and open Google", exact: true });
+      assertEq(await openGoogle.getAttribute("href"), "https://www.google.com/device", "the button opens Google's page");
       await connect.getByText("Waiting for Google…", { exact: true }).waitFor();
       await connect.getByRole("button", { name: "Cancel", exact: true }).click();
       await connect.waitFor({ state: "detached" });
       assertEq((await admin.api("/api/admin/gdrive")).pending, null, "Cancel stops waiting on the server too");
       await row(page, "Not connected").getByRole("button", { name: "Connect…", exact: true }).click();
-      await connect.getByRole("button", { name: "Get a code", exact: true }).click();
       await code.waitFor();
       assertEq(await code.inputValue(), "ABCD-0002", "a new code");
       await google.approve();
@@ -2103,6 +2094,47 @@ export async function settingsScenarios(env) {
       await page.locator(".confirmModal").getByRole("button", { name: "Disconnect", exact: true }).click();
       await row(page, "Not connected").waitFor();
       assertEq((await google.state()).revoked, 1, "the token was revoked at Google");
+      assertNoProblems(page);
+    } finally {
+      await ctx?.close();
+      await drive.stop();
+      google.stop();
+    }
+  });
+
+  // Where Gamma runs on the computer it is opened on (the desktop app; the
+  // suite's servers are at 127.0.0.1), Connect… opens Google's page, no code:
+  // here the stand-in's, which allows at once and sends the browser back to
+  // the server's callback, which makes the connection; the dialog, waiting,
+  // sees it and closes.
+  await step("settings: where Gamma runs on this computer, Google Drive connects on Google's page, no code", async () => {
+    const google = await startFakeGoogle();
+    const drive = new Server({ env: { GAMMA_GOOGLE_OAUTH_BASE: google.base, GAMMA_GOOGLE_API_BASE: google.base,
+      GAMMA_GOOGLE_ACCOUNTS_BASE: google.base } });
+    let ctx = null;
+    try {
+      await drive.start();
+      await drive.manage("create-user", "page-admin", "page-admin-pw");
+      await drive.manage("set-admin", "page-admin", "on");
+      await drive.manage("gdrive-client", "--desktop", "fake-desktop.apps.googleusercontent.com", "GOCSPX-desktop");
+      const admin = await new Account(drive, "page-admin", "page-admin-pw").login();
+      ctx = await admin.context(browser);
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const page = await openPage(ctx, drive.base);
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      await row(page, "Not connected").getByRole("button", { name: "Connect…", exact: true }).click();
+      const connect = page.getByRole("dialog", { name: "Connect Google Drive", exact: true });
+      const go = connect.getByRole("link", { name: "Continue with Google", exact: true });
+      await go.waitFor();
+      assertEq(await connect.getByRole("textbox", { name: "Your code", exact: true }).count(), 0, "no code to enter");
+      const [tab] = await Promise.all([ctx.waitForEvent("page"), go.click()]);
+      await tab.getByText("Google Drive is connected", { exact: true }).waitFor({ timeout: 20000 });
+      assert(tab.url().startsWith(`${drive.base}/api/admin/gdrive/callback?`), `back at the server: ${tab.url()}`);
+      await tab.close();
+      await connect.waitFor({ state: "detached", timeout: 20000 });
+      await row(page, "someone@gmail.com").waitFor();
       assertNoProblems(page);
     } finally {
       await ctx?.close();

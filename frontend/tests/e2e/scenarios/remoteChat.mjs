@@ -229,8 +229,10 @@ export async function remoteChatScenarios(env) {
         const ready = `Codex on ${name}${folder ? ` · ${folder}` : ""}`;
         await until(async () => (await stripText(dock)) === ready, { what: `the strip reads ${ready}: ${await stripText(dock)}` });
         await dock.locator(".chatEmpty", { hasText: `it works in the synced folder's directory on ${name}.` }).waitFor();
-        assertEq(await dock.getByRole("textbox", { name: "Message Codex", exact: true }).getAttribute("placeholder"),
-          `Message Codex on ${name}…`, "the composer names the computer");
+        // the catalog of skills, once read, adds what "/" does
+        const composer = dock.getByRole("combobox", { name: "Message Codex", exact: true });
+        await until(async () => (await composer.getAttribute("placeholder")) === `Message Codex on ${name}… (/ skill)`,
+          { what: `the composer names the computer: ${await composer.getAttribute("placeholder")}` });
         assertEq(await dock.locator(".computerStripMenu").count(), 0, "no menu: Show in folder and the terminal need the computer itself");
         assertNoProblems(page);
       } finally { await ctx.close(); }
@@ -249,7 +251,7 @@ export async function remoteChatScenarios(env) {
         await chip.waitFor();
         await until(async () => (await chip.innerText()).includes("p. 1"), { what: `the chip names the page: ${await chip.innerText()}` });
         assert(!(await chip.innerText()).includes(".tex"), "and no source line: that needs the computer's disk");
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("tighten this sentence");
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("tighten this sentence");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.locator(".chatBubble.user", { hasText: "tighten this sentence" }).waitFor();
         assertEq(await dock.locator(".chatSelChips").count(), 0, "the passage went with the message");
@@ -295,7 +297,7 @@ export async function remoteChatScenarios(env) {
       await waitForPdf(page, 1);
       let dock = await codexSide(page);
       await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor();
-      await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("and the next one too");
+      await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("and the next one too");
       await dock.getByRole("button", { name: "Send", exact: true }).click();
       await dock.getByRole("button", { name: "Stop Codex", exact: true }).waitFor({ timeout: 10000 });
       await ctx.close(); // the tab goes; the turn does not
@@ -325,7 +327,7 @@ export async function remoteChatScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await codexSide(page);
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("rewrite the whole method");
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("rewrite the whole method");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         // running on the computer, not merely queued on the NAS: claimed there and Codex's turn started
         await until(async () => (await lastState()) === "running", { timeout: 20000, every: 250, what: "the turn claimed by the computer" });
@@ -523,7 +525,7 @@ export async function remoteChatScenarios(env) {
         await until(async () => (await stripLine(dock)) === `Codex on ${name}`, { what: `the strip names the computer: ${await stripText(dock)}` });
         assertEq(await shownPlace(dock), "Its own directory", "the computer offers no directory: one of its own, in the folder chip");
         await dock.locator(".chatEmpty", { hasText: `it works in an empty directory of its own on ${name}.` }).waitFor();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(LOOSE_ASK);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(LOOSE_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.locator(".chatBubble.ai", { hasText: "Commented:" }).waitFor({ timeout: 60000 });
         assertNoProblems(page);
@@ -569,7 +571,7 @@ export async function remoteChatScenarios(env) {
         await pop.waitFor({ state: "detached" });
         await dock.locator(".chatBubble.user", { hasText: TERMINAL.ask }).waitFor({ timeout: 30000 });
         await dock.locator(".chatBubble.ai", { hasText: TERMINAL.reply }).waitFor();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(SESSION_ASK);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(SESSION_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.locator(".chatBubble.ai", { hasText: SESSION_REPLY }).waitFor({ timeout: 60000 });
         pop = await history();
@@ -610,7 +612,7 @@ export async function remoteChatScenarios(env) {
         await until(async () => (await stripText(dock)).startsWith(`${name} is offline`)
           && (await stripText(dock)).endsWith("send this once it connects."),
         { what: `the strip says the computer is offline: ${await stripText(dock)}` });
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("are you there");
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("are you there");
         assertEq(await dock.getByRole("button", { name: "Send", exact: true }).isDisabled(), true, "the composer holds the message");
 
         // the computer back, on the same data: its channel announces, and the message goes and runs

@@ -22,7 +22,7 @@ const PANE_FILES = {
   keyboard: ["SettingsKeyboard.jsx"],
   agents: ["SettingsDialog.jsx", "SettingsAgents.jsx"],
   ai: ["SettingsDialog.jsx", "SettingsAi.jsx"],
-  assistant: ["SettingsDialog.jsx"],
+  assistant: ["SettingsDialog.jsx", "SettingsSkills.jsx"],
   tools: ["SettingsDialog.jsx", "AssistantTools.jsx", "OnlineSearch.jsx", "SettingsServerOptions.jsx"],
   integrations: ["SettingsIntegrations.jsx"],
   account: ["SettingsUsers.jsx", "SettingsSync.jsx", "SettingsMirrors.jsx", "SettingsCloudSignIn.jsx", "SettingsZotero.jsx"],

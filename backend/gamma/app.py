@@ -1,20 +1,18 @@
 """FastAPI application assembly: middleware, routers, startup maintenance, SPA serving."""
 
 import asyncio
-import mimetypes
 import os
 import ssl
 import sys
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import anyio
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
 from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, offsite, reports
-from . import standby, sync_engine, trash, upload_gc, version, workspaces, ws_backup, zotero_stream
+from . import spa, standby, sync_engine, trash, upload_gc, version, workspaces, ws_backup, zotero_stream
 from .annotations import listeners as annotation_listeners
 from .computers import channel as computer_channel
 from . import local_agents
@@ -60,6 +58,7 @@ from .routers import (
     reports as reports_router,
     search,
     shares,
+    skills as skills_router,
     sync,
     trash as trash_router,
     translate,
@@ -373,6 +372,7 @@ def create_app() -> FastAPI:
     app.include_router(ai_handoffs.router)
     app.include_router(chats.router)
     app.include_router(chats.history_router)
+    app.include_router(skills_router.router)
     app.include_router(prefs.router)
     app.include_router(notices.router)
     app.include_router(inbox_router.router)
@@ -413,87 +413,9 @@ def create_app() -> FastAPI:
     app.include_router(zotero_router.router)
     app.include_router(zotero_sync_router.router)  # importing it registers the Zotero link's clock
 
-    # Serve the built frontend (SPA) when GAMMA_STATIC_DIR is set.
-    # Registered last so all /api routes take precedence.
-    static_dir = Path(config.STATIC_DIR) if config.STATIC_DIR else None
-    if static_dir and static_dir.is_dir():
-        index_html = static_dir / "index.html"
-        # Pin browser-critical types instead of trusting the OS MIME table.
-        # Windows registry entries can label .mjs as text/plain, preventing
-        # Chromium from loading the PDF worker; slim images can lack types.
-        media_types = {
-            ".html": "text/html",
-            ".css": "text/css",
-            ".js": "text/javascript",
-            ".mjs": "text/javascript",
-            ".webmanifest": "application/manifest+json",
-            ".woff2": "font/woff2",
-        }
-
-        # The build writes a Brotli and a gzip copy beside every compressible
-        # file (frontend/vite.config.js); the first the request accepts is
-        # sent in the file's place.
-        precompressed = (("br", ".br"), ("gzip", ".gz"))
-
-        def accepted_codings(request: Request) -> set[str]:
-            """The content codings the request's Accept-Encoding names, less
-            those it refuses (``q=0``)."""
-            codings = set()
-            for item in request.headers.get("accept-encoding", "").lower().split(","):
-                name, _, q = item.partition(";")
-                try:
-                    if float(q.strip().removeprefix("q=") or 1) > 0:
-                        codings.add(name.strip())
-                except ValueError:
-                    pass
-            return codings
-
-        def static_file(file: Path, request: Request, cache_control: str):
-            """``file``, or its precompressed copy the request accepts, sent
-            with ``Content-Encoding`` and the file's own media type. A file
-            with a copy answers ``Vary: Accept-Encoding`` whichever goes out,
-            and each coding has an ETag of its own. A matching If-None-Match
-            gets a 304: Starlette's FileResponse sets an ETag but never
-            compares one, so without this every revalidation of an unhashed
-            file (index.html, favicons) carried the whole body."""
-            sent, coding, headers = file, "", {"Cache-Control": cache_control}
-            codings = accepted_codings(request)
-            for name, suffix in precompressed:
-                copy = file.with_name(file.name + suffix)
-                if copy.is_file():
-                    headers["Vary"] = "Accept-Encoding"
-                    if name in codings:
-                        sent, coding = copy, name
-                        break
-            st = sent.stat()
-            headers["ETag"] = f'"{st.st_mtime_ns:x}-{st.st_size:x}{"-" + coding if coding else ""}"'
-            if request.headers.get("if-none-match") == headers["ETag"]:
-                return Response(status_code=304, headers=headers)
-            if coding:
-                headers["Content-Encoding"] = coding
-            media_type = media_types.get(file.suffix.lower()) or mimetypes.guess_type(file.name)[0] or "text/plain"
-            return FileResponse(sent, media_type=media_type, headers=headers)
-
-        @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
-        async def spa(path: str, request: Request):
-            if "\x00" in path:  # a scanner's NUL byte: not a file, never a crash
-                raise HTTPException(status_code=404)
-            if request.method == "HEAD" and (path == "api" or path.startswith("api/")):
-                # an API route without HEAD answers 405, not the app's page
-                raise HTTPException(status_code=405, headers={"Allow": "GET"})
-            candidate = (static_dir / path).resolve()
-            # Path-traversal guard: only serve files inside the static dir
-            if path and candidate.is_file() and candidate.is_relative_to(static_dir.resolve()):
-                if path.startswith("assets/"):
-                    # Vite content-hashes these filenames (the pdf.js worker
-                    # among them) — safe to cache forever.
-                    return static_file(candidate, request, "public, max-age=31536000, immutable")
-                # An unhashed file changes in place on upgrade: the browser
-                # asks every time, and gets a 304 when it holds this version.
-                return static_file(candidate, request, "no-cache")
-            # index.html must revalidate every load, or clients keep referencing
-            # deleted hashed assets after a deploy.
-            return static_file(index_html, request, "no-cache")
+    # The built frontend (GAMMA_STATIC_DIR), registered last so every /api
+    # route takes precedence.
+    spa.serve(app)
 
     _startup_maintenance()
 

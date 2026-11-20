@@ -18,7 +18,7 @@ import io
 import re
 import zipfile
 
-from . import ai_pictures
+from . import ai_pictures, skills
 from .blocks_store import PATH_SEP, folder_path
 from .db import page_now
 from .documents.formats import IMAGE_EXTENSIONS
@@ -171,9 +171,15 @@ def _reply_text(text: str, assets: _Assets) -> str:
     return "\n".join(out)
 
 
+def _asked_text(message: dict) -> str:
+    """A person's message as the export writes it: ``/name args`` for one
+    that ran a skill (skills.display), else its text."""
+    return skills.display(skills.invocation(message.get("skill")), str(message.get("text") or "")).strip()
+
+
 def _message(message: dict, assets: _Assets) -> list[str]:
     user = message.get("role") == "user"
-    text = str(message.get("text") or "").strip()
+    text = _asked_text(message) if user else str(message.get("text") or "").strip()
     if user:
         head = "## You"
     else:
@@ -311,7 +317,7 @@ def _asked(message: dict) -> list[str]:
         if isinstance(passage, dict) and passage.get("text"):
             page = f" *(p. {passage['page']})*" if passage.get("page") else ""
             out += [f"> {' '.join(str(passage['text']).split())[:600]}{page}", ""]
-    text = str(message.get("text") or "").strip()
+    text = _asked_text(message)
     return out + ([text, ""] if text else [])
 
 

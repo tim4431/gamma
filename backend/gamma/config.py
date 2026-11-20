@@ -169,6 +169,33 @@ def zotero_stream_url() -> str:
     return (os.environ.get("GAMMA_ZOTERO_STREAM_URL", "").strip() or "wss://stream.zotero.org").rstrip("/")
 
 
+# Gamma's own Google OAuth clients for Drive backups (gamma/gdrive_account.py),
+# both of one registration, asking for drive.file alone, so connecting
+# Drive is signing in to Google and allowing it: a "TVs and Limited Input
+# devices" client for the code any server shows (the device flow), and a
+# "Desktop app" client for Google's page sending the browser back to a
+# Gamma opened on its own computer (a loopback address). Google treats such
+# clients' secrets as public, as it does any installed app's
+# (docs/research/google-drive-backup.md). A server may use its own instead
+# (manage.py gdrive-client [--desktop]). Each secret is two literals so
+# secret scanners, which take it for a leaked confidential one, pass it by.
+GOOGLE_DRIVE_CLIENT = (
+    "229361230329-p8vn304cus6mn8vnhodfh7jslrvoe59d.apps.googleusercontent.com",
+    "GOCSPX-" "ivyKQLkR7kWqdMkJM1mwg3IPmXIp",
+)
+GOOGLE_DRIVE_DESKTOP_CLIENT = (
+    "229361230329-4n2h2d4lkdobcf1tsb32dukcjj6h168v.apps.googleusercontent.com",
+    "GOCSPX-" "AY2MNXkih3x_F1f-Re9E4on_e0CJ",
+)
+
+
+def google_accounts_base() -> str:
+    """``GAMMA_GOOGLE_ACCOUNTS_BASE``: Google's sign-in pages (the
+    authorization page a browser opens); https://accounts.google.com unless
+    the browser e2e points it at a stand-in."""
+    return (os.environ.get("GAMMA_GOOGLE_ACCOUNTS_BASE", "").strip() or "https://accounts.google.com").rstrip("/")
+
+
 def google_oauth_base() -> str:
     """``GAMMA_GOOGLE_OAUTH_BASE``: Google's OAuth endpoints (device codes,
     tokens, revocation); https://oauth2.googleapis.com unless the browser

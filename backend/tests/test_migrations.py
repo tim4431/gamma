@@ -1142,16 +1142,13 @@ def test_newer_data_directory_is_refused(data_dir):
     guide = migrations.guidance(caught.value)
     assert guide["kind"] == "newer" and guide["title"] == "Gamma needs an update to open your library"
     assert guide["status"].startswith("Your library is safe")
-    # the way forward is to update this Gamma, in a server's words here; the commands and
-    # staying on this release are the folded-away technical lines
-    assert guide["steps"] == [migrations.UPDATE_STEPS["server"]]
-    assert any("docker compose pull" in line for line in guide["details"])
+    # the way forward is to update this Gamma, as it was installed; staying on this
+    # release is a folded-away technical line
+    assert guide["steps"] == [migrations.UPDATE_STEPS["checkout"]]  # a checkout run by hand (no stamped version)
     assert any("--restore" in line for line in guide["details"])
     # ...and the app serves that instead of its routes (gamma/standby.py, tests/test_standby.py)
     from fastapi.testclient import TestClient
     with TestClient(app_mod.create_app()) as client:
-        page = client.get("/")
-        assert page.status_code == 503 and guide["title"] in page.text and "<code>docker compose pull" in page.text
         assert client.get("/api/health").json()["details"] == guide["details"]
 
 

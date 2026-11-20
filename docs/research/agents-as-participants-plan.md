@@ -617,7 +617,7 @@ offers comes from the handlers ChatDock passes (edit, report and revert
 are Gamma AI's; Save to library reads either's text). `useComputerSide`
 holds what `ComputerChat.jsx` held, the strip is `ComputerStrip.jsx`, the
 composer is ChatDock's with what such an agent takes alone (the message
-and the PDF passages: `PaperMentionInput` gains `mentions` and `label`),
+and the PDF passages: `PaperMentionInput`, now `ChatComposerInput`, gains `mentions` and `label`),
 and `computer.css`'s rules are the chat's own in `app.css`;
 `ComputerChat.jsx`, `ComputerAsk.jsx` and `computer.css` are gone. History
 is one popover (`computerChat.historyRows`): `GET /chat/history` also

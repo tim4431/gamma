@@ -21,7 +21,7 @@ import { GammaNavContext } from "../shared/ui/Widgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { ActivityIcon, BookIcon, BotIcon, CheckIcon, CloudDownloadIcon, ExportIcon, EyeIcon, FilePlusIcon, FileTextIcon,
   FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, ImageIcon, LabelIcon, ListIcon, LocateIcon, MessageSquareIcon, PenIcon,
-  PencilIcon, PlusIcon, QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, TerminalIcon, TrashIcon, UndoIcon,
+  PencilIcon, PlusIcon, QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, SlashIcon, TerminalIcon, TrashIcon, UndoIcon,
   XIcon } from "../shared/ui/Icons";
 import { PathLink } from "../editor/PathLink.jsx";
 import { changeCount, changePlace, isChange, noteChangeText } from "./agentSteps";
@@ -33,7 +33,7 @@ import { WordDiff } from "./ApprovalCard";
 // server ran; a computer agent's steps are chips of kinds of their own
 // (`file`, `fileEdit`, `run`, `work`: chat/computer/computerChat.js
 // stepChip).
-export const ACTION_ICONS = { file: FileTextIcon, fileEdit: PencilIcon, run: TerminalIcon, work: ActivityIcon, rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, comment: MessageSquareIcon, resolve: CheckIcon, highlight: HighlightIcon, write: MessageSquareIcon, show: LocateIcon, export: ExportIcon, error: XIcon };
+export const ACTION_ICONS = { file: FileTextIcon, fileEdit: PencilIcon, run: TerminalIcon, work: ActivityIcon, rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, comment: MessageSquareIcon, resolve: CheckIcon, highlight: HighlightIcon, write: MessageSquareIcon, show: LocateIcon, skill: SlashIcon, export: ExportIcon, error: XIcon };
 
 // Take one change back, or with `redo` put a reverted one back, as its row
 // and the dialog do: POST /api/ai/revert → `{page_id, noop, kept?}`. A

@@ -62,6 +62,9 @@ const GUIDE_ASK = "Is night the right time?";
 const STEER_ASK = "tighten the method";
 const STEER_REPLY = "Tightened the method.";
 const STEER = "keep the equation numbers";
+// A message that runs the built-in skill /summarize: what it works on, and Codex's reply to it.
+const SKILL_ASK = "for a journal club";
+const SKILL_REPLY = "Summarized for the journal club.";
 const GUIDE_REPLY = "Night is right.";
 const GUIDE_ASK_2 = "Is day the right time to open?";
 const GUIDE_REPLY_2 = "Day is right.";
@@ -127,6 +130,7 @@ export async function localAgentScenarios(env) {
           body: LIB_QUESTION } }], delay: 0, typing: 0, chat: LIB_REPLY },
         [SESSION_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: SESSION_REPLY },
         [STEER_ASK]: { edits: [], ask: [], delay: 4, typing: 0, chat: STEER_REPLY },
+        [SKILL_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: SKILL_REPLY },
         [GUIDE_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: GUIDE_REPLY },
         [GUIDE_ASK_2]: { edits: [], ask: [], delay: 0, typing: 0, chat: GUIDE_REPLY_2 } } }),
   } });
@@ -605,7 +609,7 @@ export async function localAgentScenarios(env) {
         await dock.locator(".chatEmpty", { hasText: "Ask Codex about this file" }).waitFor();
         await selectOnPdf(page, 1, "The penalty");
         await dock.locator(".chatSelChips").getByText("PDF passage", { exact: true }).waitFor();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("tighten this sentence");
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("tighten this sentence");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.locator(".chatBubble.user", { hasText: "tighten this sentence" }).waitFor();
         assertEq(await dock.locator(".chatSelChips").count(), 0, "the passage went with the message");
@@ -639,7 +643,7 @@ export async function localAgentScenarios(env) {
       await waitForPdf(page, 1);
       let dock = await codexSide(page);
       await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor();
-      await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("and the next one too");
+      await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("and the next one too");
       await dock.getByRole("button", { name: "Send", exact: true }).click();
       await dock.getByRole("button", { name: "Stop Codex", exact: true }).waitFor({ timeout: 10000 });
       await ctx.close(); // the tab goes; the turn does not
@@ -667,7 +671,7 @@ export async function localAgentScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await codexSide(page);
-        const box = dock.getByRole("textbox", { name: "Message Codex", exact: true });
+        const box = dock.getByRole("combobox", { name: "Message Codex", exact: true });
         await box.fill(STEER_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).waitFor({ timeout: 10000 });
@@ -697,13 +701,39 @@ export async function localAgentScenarios(env) {
         "Codex heard it under its id");
     });
 
+    // A skill run in the chat (docs/dev/skills.md), picked from the menu and sent to Codex; what its
+    // prompt says of the skill is the backend's test (test_local_agents_skills.py).
+    await step("local-agents: a message that runs a skill goes to Codex with it, picked from the / menu, and the bubble shows its chip", async () => {
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await codexSide(page);
+        const box = dock.getByRole("combobox", { name: "Message Codex", exact: true });
+        await box.fill("/summ");
+        await page.getByRole("listbox", { name: "Skills" }).getByRole("option", { name: /summarize/ }).waitFor();
+        await box.press("Enter");
+        assertEq(await box.inputValue(), "/summarize ", "the menu's pick");
+        await box.pressSequentially(SKILL_ASK);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await dock.locator(".chatBubble.ai", { hasText: SKILL_REPLY }).waitFor({ timeout: 40000 });
+        assertEq((await dock.locator(".chatBubble.user").last().locator(".chatMsgSkill").innerText()).trim(), "/summarize",
+          "the bubble's chip");
+        await until(async () => (await conversation()).messages.at(-1).state === "done", { timeout: 20000, what: "the turn ends" });
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const asked = (await conversation()).messages.findLast((m) => m.role === "user");
+      assertEq(JSON.stringify(asked.skill), JSON.stringify({ id: "builtin:summarize", name: "summarize", args: SKILL_ASK }),
+        "the message posted and stored the skill it ran");
+    });
+
     await step("local-agents: Stop ends Codex's turn, and New chat keeps the conversation in History", async () => {
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
       try {
         await waitForPdf(page, 1);
         const dock = await codexSide(page);
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("rewrite the whole method");
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("rewrite the whole method");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).click({ timeout: 10000 });
         await dock.locator(".chatBubble.ai", { hasText: "(stopped)" }).waitFor({ timeout: 20000 });
@@ -731,7 +761,7 @@ export async function localAgentScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await codexSide(page);
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(message);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(message);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         const card = dock.locator(".chatAsk");
         await card.waitFor({ timeout: 20000 });
@@ -829,7 +859,7 @@ export async function localAgentScenarios(env) {
 
         const replies = dock.locator(".chatBubble.ai");
         const earlier = await replies.count();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("say it slowly");
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("say it slowly");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await until(async () => (await replies.count()) > earlier, { timeout: 10000, what: "the new turn's bubble" });
         // the reply grows: seen part-way before it is whole
@@ -890,7 +920,7 @@ export async function localAgentScenarios(env) {
         await page.getByRole("group", { name: "Works in" }).getByRole("menuitemradio", { name: "Notes", exact: true }).click();
         await dock.locator(".chatEmpty", { hasText: "it works in the directory you chose" }).waitFor();
         await until(async () => (await place.innerText()).trim() === "Notes", { what: "the chip names the pick" });
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("what is this paper about?");
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("what is this paper about?");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         // the reply in the chat's own transcript: its steps pill, its text, what it changed
         await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor({ timeout: 40000 });
@@ -955,7 +985,7 @@ export async function localAgentScenarios(env) {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
         await dock.locator(".computerStrip").waitFor();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(READ_ASK);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(READ_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         // the answer quotes the highlight and its note, which only Gamma's tools gave it
         const reply = dock.locator(".chatBubble.ai", { hasText: "From Gamma:" });
@@ -1000,7 +1030,7 @@ export async function localAgentScenarios(env) {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
         await dock.locator(".computerStrip").waitFor();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(COMMENT_ASK);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(COMMENT_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.locator(".chatBubble.ai", { hasText: "Commented:" }).waitFor({ timeout: 40000 });
         const called = heard().slice(before).find((e) => e.gamma === "comment");
@@ -1081,7 +1111,7 @@ export async function localAgentScenarios(env) {
         await pop.waitFor({ state: "detached" });
         await dock.locator(".chatBubble.user", { hasText: TERMINAL.ask }).waitFor({ timeout: 15000 });
         await dock.locator(".chatBubble.ai", { hasText: TERMINAL.reply }).waitFor();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(SESSION_ASK);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(SESSION_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.locator(".chatBubble.ai", { hasText: SESSION_REPLY }).waitFor({ timeout: 40000 });
         pop = await history();

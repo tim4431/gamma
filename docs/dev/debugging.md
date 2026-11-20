@@ -243,12 +243,23 @@ the other store's copy has been tried. The off-site rounds do not go to
 Drive.
 
 **Connecting.** Only an admin connects it, in Settings → Backups → Google
-Drive, and only an admin's tasks copy to it, as with the bucket. Connect…
-asks for the folder's name (`Gamma backups`; one name, no `/`) and starts
-Google's device flow: Google answers a code and its address
-(`google.com/device`), which the dialog shows. The person enters the code
-there on any device, signed in to the account to back up to, and allows
-access. While the dialog is open it posts `/api/admin/gdrive/poll`, which
+Drive, and only an admin's tasks copy to it, as with the bucket. Copies go
+to the folder `Gamma backups` (Edit… renames it). Where Gamma is opened on
+its own computer — the desktop app, or any server opened at a loopback
+address over plain HTTP — Connect… opens Google's authorization page
+(`POST /api/admin/gdrive/authorize`, Gamma's "Desktop app" client, PKCE):
+the person signs in, allows, and Google sends the browser back to
+`/api/admin/gdrive/callback` at that same loopback address, which needs no
+session (the desktop app's system browser has none): the state, used once
+within 10 minutes, names the sign-in, and the code is traded with its
+verifier. The dialog reads the section again every 2 s until the
+connection is there. Anywhere else Google sends a sign-in back only to an
+address registered in advance, so Connect… starts Google's device flow:
+Google answers a code and its address (`google.com/device`), which the
+dialog shows with one button that copies the code and opens the page. The
+person enters the code there on any device, signed in to the account to
+back up to, and allows access. While the dialog is open it posts
+`/api/admin/gdrive/poll`, which
 asks Google at most once per the interval Google gave (5 s, 5 more on each
 `slow_down`). No answer or a 5xx waits for the next interval. A refusal,
 a grant without `drive.file` (the person unticked it on the consent page)
@@ -265,26 +276,32 @@ one and revokes its token. Edit… changes the folder new copies go to
 (copies already in the old folder stay there) or disconnects, which
 revokes the token at Google and forgets it. The copies stay in Drive.
 
-**The OAuth client.** The scope is `drive.file` alone: Gamma sees and
-changes only the files it made, never the rest of the Drive. The client is
-of Google's "TVs and Limited Input devices" type, the one the device flow
-takes, whose secret Google does not treat as secret. Each server's admin
-registers their own in their Google Cloud project and saves it under Set
-up… (`gdrive_account.oauth_client`, handed to every `gdrive` call that
-needs it; users.db `settings` key `gdrive_client`, the secret encrypted as
-the token is and never returned). Gamma ships no client and reads none
-from the environment. With none, the section reads *Not set up* with Set
-up…, whose dialog links the three
-pages of the Google Cloud console to visit: enable the Drive API, publish
-the app, create the client. A refresh token works only with the client
-that made it, so a connection made through another client reads
-"connected through another Google OAuth client" and must be made again;
-saving another client or removing it disconnects at once (revoking the token) and ends a code waiting. The client's Google
-Cloud project must be *In production*: one still in *Testing* gets
+**The OAuth clients.** The scope is `drive.file` alone: Gamma sees and
+changes only the files it made, never the rest of the Drive. Gamma ships
+two clients of one registration: `config.GOOGLE_DRIVE_CLIENT`, of Google's
+"TVs and Limited Input devices" type, for the code, and
+`config.GOOGLE_DRIVE_DESKTOP_CLIENT`, a "Desktop app" one, for Google's
+page. Gamma's developer registered them once, in the Google Cloud project
+Gamma Cloud's Google sign-in uses, whose consent screen shows Gamma PDF,
+its logo, and gammapdf.com's privacy policy and terms. Google does not
+treat either secret as secret; each is two literals in the source so
+secret scanners pass it by. So an admin only signs in and allows it; a
+build without them reads *Not available*. A server may use clients of its
+own instead, given on the command line (`manage.py gdrive-client
+[--desktop] <id> <secret>`, `--remove` to go back; users.db `settings`
+keys `gdrive_client` and `gdrive_desktop_client`, the secrets encrypted as
+the token is), which the browser suite does for its stand-in Google
+(`gdrive_account.oauth_client` and `browser_client`, handed to every
+`gdrive` call that needs one). A refresh token works only with
+the client that made it, so a connection made through another client
+reads "connected through another Google OAuth client" and must be made
+again; a change of client disconnects at once (revoking the token) and
+ends a code waiting. The client's Google Cloud project must be *In
+production*: one still in *Testing* gets
 refresh tokens that expire after 7 days. A project without the Drive API
 enabled is refused with Google's own message, which links the page that
-enables it. `GAMMA_GOOGLE_OAUTH_BASE` and `GAMMA_GOOGLE_API_BASE` point at
-stand-ins for a test.
+enables it. `GAMMA_GOOGLE_ACCOUNTS_BASE`, `GAMMA_GOOGLE_OAUTH_BASE` and
+`GAMMA_GOOGLE_API_BASE` point at stand-ins for a test.
 
 **The folder.** A key's path is a folder path under the folder in My
 Drive's root: `snapshots/<ws>/<name>.zip` is `Gamma backups/snapshots/<ws>/
@@ -317,7 +334,13 @@ Google Drive again". Each is a `DriveError` (an OSError) or a
 in-memory Google (the device flow, tokens and revocation, Drive's queries,
 folders, resumable uploads with their 308s, downloads and deletes, with
 injected failures and a storage cap). The transport itself is tested
-against a local HTTP server. Nothing here was run against Google itself.
+against a local HTTP server. The browser suite runs the same stand-in
+over HTTP: the code on a server served over HTTPS, as a NAS opened from
+another computer is, and Google's page on one at 127.0.0.1. Against
+Google itself, Gamma's clients were tried once by hand: Google gave a
+code for the TV client; connecting on Google's page at 127.0.0.1 worked,
+and a backup task's copy went to Drive, was listed, restored as a new
+workspace, deleted, and the access revoked.
 
 #### The off-site rounds
 
@@ -1533,6 +1556,13 @@ The scenarios live in `tests/e2e/scenarios/`:
   [diagrams.md](diagrams.md).
 - `mentions.mjs`: paper search, keyboard and touch selection, reference limits,
   persistence, PDF receipts and textarea shrink after clearing context. Run with `--only mentions`.
+- `chatSkills.mjs`: the chat's "/" skills menu, a send carrying its skill with
+  the chip and its copy, dismissal and an unmatched `/word` sent as text,
+  *Manage skills…* opening Settings → AI → Chat at Your skills, a skill
+  made there and a built-in turned off reaching the menu without a reload,
+  a vanished skill restoring the draft, Retry and an unchanged edit posting
+  the skill again, the edit bubble's × dropping it ([skills.md](skills.md)).
+  Run with `--group chat-skills`.
 - `noteMentions.mjs`: the note editor's @ menu, its chips, Invite… and a reminder's
   card ([mentions.md](mentions.md)). Run with `--group note-mentions`.
 - `comments.mjs`: threads on a note, the page and a highlight from their
@@ -2042,6 +2072,12 @@ The scenarios live in `tests/e2e/scenarios/`:
   open on what they had; a theme change draws every colour in one frame;
   and under reduced motion each of them moves nothing and leaves no copy.
   `npm run e2e -- --only motion`.
+- `standby.mjs` ([migrations.md](migrations.md) "When the server cannot
+  open the library"): the iPad app's own server on a library a newer Gamma
+  stamped opens on the update page, not the app; its button opens
+  TestFlight, and its admin, signed in, saves every personal workspace
+  with Export all, followed until it downloads by itself. The server's second start skips `manage.py setup`
+  (`Server.start({setup: false})`), as the Docker entrypoint does. `--group standby`.
 - `i18n.mjs`: Settings → Language & translation → Interface language
   switches the interface to Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
