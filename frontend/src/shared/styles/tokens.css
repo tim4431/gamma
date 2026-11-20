@@ -264,6 +264,18 @@
   --bracket-err: #f14c4c;
   --bracket-active-bg: rgba(90, 140, 255, 0.28);
   --bracket-active-ring: rgba(140, 170, 255, 0.65);
+  /* The tab strip's groups (Chrome's nine, workspace/stripGroups.js): a
+     group's chip, its tabs' line and its dot, each the light tone on the
+     dark chrome. */
+  --strip-group-blue: #8ab4f8;
+  --strip-group-red: #f28b82;
+  --strip-group-yellow: #fdd663;
+  --strip-group-green: #81c995;
+  --strip-group-pink: #ff8bcb;
+  --strip-group-purple: #c58af9;
+  --strip-group-cyan: #78d9ec;
+  --strip-group-orange: #fcad70;
+  --strip-group-grey: #bdc1c6;
 }
 
 /* The light recipe: every surface steps from the ground toward the ink. */
@@ -309,6 +321,15 @@
   --bracket-err: #e51400;
   --bracket-active-bg: rgba(11, 89, 214, 0.12);
   --bracket-active-ring: rgba(11, 89, 214, 0.45);
+  --strip-group-blue: #1a73e8;
+  --strip-group-red: #d93025;
+  --strip-group-yellow: #e8a500;
+  --strip-group-green: #1e8e3e;
+  --strip-group-pink: #d01884;
+  --strip-group-purple: #9334e6;
+  --strip-group-cyan: #007b83;
+  --strip-group-orange: #e8710a;
+  --strip-group-grey: #80868b;
 }
 
 /* ---- The themes (THEMES in app/prefDefs.js; DARK_THEMES take the dark

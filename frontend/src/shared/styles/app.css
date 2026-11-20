@@ -2642,6 +2642,64 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .tabsMenuPin { display: inline-flex; color: var(--text-dim); flex-shrink: 0; }
 .tabsMenuRow .kindGlyph { flex-shrink: 0; }
 
+/* Chrome's tab groups (workspace/stripGroups.js, docs/dev/strip_groups.md):
+   a group's chip before its run, a tint of its colour around its name (a
+   dot when it has none), and a line of the colour along its tabs' foot,
+   which the active tab wears as its outline instead. --strip-group is the
+   group's colour token, set on the chip, its tabs and its dots. */
+.stripGroupChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  align-self: center;
+  max-width: 140px;
+  height: 22px;
+  padding: 0 var(--space-4);
+  margin-inline: var(--space-1);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--strip-group) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--strip-group) 60%, transparent);
+  color: var(--text-primary);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--dur-fast);
+}
+.stripGroupChip:hover { background: color-mix(in oklab, var(--strip-group) 36%, transparent); }
+.stripGroupChip.unnamed { width: 22px; padding: 0; }
+.stripGroupChip.unnamed::after,
+.stripGroupDot {
+  content: "";
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--strip-group);
+}
+.stripGroupDot { display: inline-block; }
+.stripGroupChip.dragging { opacity: 0.45; }
+.stripGroupName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* No divider between a chip and the first tab of its run. */
+.stripGroupChip + .tab::before { background: transparent; }
+.stripGroupLine {
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  background: var(--strip-group);
+  pointer-events: none;
+}
+.tab.active .stripGroupLine { display: none; }
+.tab.active.grouped,
+.tab.active.grouped::after { border-color: var(--strip-group); }
+/* The editor under a chip: the name, then the nine colours as the
+   palette's swatches (.colorRow, .colorBtn). */
+.stripGroupMenu { width: 284px; padding: var(--space-4) 0 var(--space-2); }
+.stripGroupMenu .aiKeyInput { display: block; width: auto; margin: 0 var(--space-4) var(--space-4); }
+.stripGroupMenu .colorRow { padding: 0 var(--space-4) var(--space-3); }
+.colorBtn.stripGroupSwatch { background: var(--strip-group); }
+
 /* --- modern topbar bits --- */
 .addPopover { min-width: 300px; }
 .shareCrumbs { display: flex; align-items: center; gap: 2px; white-space: nowrap; }

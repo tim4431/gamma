@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  activate, activeGroup, groupOf, groupsOf, isSingle, joinAll, moveTab, normalizeLayout, reconcile, removeGroup, removeTab,
+  activate, activeGroup, groupOf, groupsOf, isSingle, joinAll, moveTab, moveTabs, normalizeLayout, reconcile, removeGroup, removeTab,
   reorderGroup, resizeSplit, singleLayout, splitGroup, tabOrder,
 } from "../src/workspace/tabLayout.js";
 
@@ -91,6 +91,30 @@ test("a tab moved across groups becomes the target's active tab and leaves an em
   assert.deepEqual(groupsOf(re)[0].tabs, ["b", "a"]);
   assert.equal(groupsOf(re)[0].active, "a");
   assert.equal(moveTab(two, "zz", left.id, 0), two, "an unknown tab moves nothing");
+});
+
+test("several tabs moved together leave what is on screen as it was", () => {
+  // a b d on the left with a on screen, c on the right showing c
+  const two = splitGroup(singleLayout(["a", "b", "c", "d"], "a"), "g1", "right", "c");
+  const [left, right] = groupsOf(two);
+  // b and d go right: c stays on the right, a on screen on the left
+  const quiet = moveTabs(two, ["b", "d"], right.id);
+  assert.equal(shape(quiet.root), "row(a | c,b,d)");
+  assert.equal(groupsOf(quiet)[1].active, "c");
+  assert.equal(quiet.active, left.id);
+  // the page on screen among them: it goes on showing, in the pane it went to
+  const live = moveTabs(two, ["a", "b"], right.id);
+  assert.equal(shape(live.root), "row(d | c,a,b)");
+  assert.equal(live.active, groupsOf(live)[1].id);
+  assert.equal(activeGroup(live).active, "a");
+  // the left pane emptied goes
+  assert.ok(isSingle(moveTabs(two, ["a", "b", "d"], right.id)));
+  // tabs the target holds already stay where they are
+  assert.equal(shape(moveTabs(two, ["c", "b"], right.id).root), "row(a,d | c,b)");
+  // into a pane showing nothing: it shows the first of them
+  const empty = splitGroup(singleLayout(["a", "b"], "a"), "g1", "right");
+  const filled = moveTabs(empty, ["b"], groupsOf(empty)[1].id);
+  assert.equal(groupsOf(filled)[1].active, "b");
 });
 
 test("closing a tab shows the latest-viewed or the next tab; a group closed by its last tab gives its room away", () => {

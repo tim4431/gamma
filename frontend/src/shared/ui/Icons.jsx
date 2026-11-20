@@ -340,6 +340,14 @@ export const SplitRowsIcon = (p) => (
 export const OnePaneIcon = (p) => (
   <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /></Icon>
 );
+// Tabs gathered in a bracket, and the bracket gone: a tab group made and undone.
+export const TabGroupIcon = (p) => (
+  <Icon {...p}><path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" /><path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+    <path d="M7 21H5a2 2 0 0 1-2-2v-2" /><rect x="7" y="7" width="7" height="5" rx="1" /><rect x="10" y="12" width="7" height="5" rx="1" /></Icon>
+);
+export const UngroupIcon = (p) => (
+  <Icon {...p}><rect x="5" y="4" width="8" height="6" rx="1" /><rect x="11" y="14" width="8" height="6" rx="1" /></Icon>
+);
 export const MonitorIcon = (p) => (
   <Icon {...p}><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></Icon>
 );

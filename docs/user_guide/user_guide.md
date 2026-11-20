@@ -11,6 +11,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Notebooks](#notebooks) | Sheets of paper to write on |
 | [Follow links and translate](#follow-links-and-translate) | Citations, Back, translation in place |
 | [Notes](#notes) | Markdown and math that render as you type |
+| [Tab groups](#tab-groups) | Name and colour a run of tabs, collapse it, drag it whole |
 | [Pages side by side](#pages-side-by-side) | A paper in one pane, your notes in the other; split, drag, join |
 | [Outline and links between pages](#outline-and-links-between-pages) | Nesting, moving notes, `[[` links, `@` mentions and reminders |
 | [AI chat](#ai-chat) | Ask about the paper or a file, with clickable citations and line links; every AI service you can connect |
@@ -165,16 +166,26 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 - **Formatting bar**: select text in the note you are editing and a bar of tools opens above it: bold, italic, underline, strikethrough, code, equation, link, highlight and **Color**, which offers text colors and background tints. A pressed button shows what the selection already has; press it again to take that off. Escape puts the bar away. On a touch screen the same tools sit in the bar above the keyboard.
 - **Formatting keys** are Obsidian's: Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+K and so on. Underline and colors are written as the HTML that Obsidian and GitHub show. Rendered notes copy as rich text; math copies as LaTeX.
 
+## Tab groups
+
+Keep the tabs of one project together, as in Chrome: a group is a run of tabs behind a coloured chip with its name.
+
+- **Make one**: right-click a tab → **Add tab to new group**. The group's chip appears before the tab with its name ready to type and a colour to pick. Once there are groups, the same menu has **Add tab to group** with **New group** and each group; **Remove from group** takes a tab out. A pinned tab is in no group.
+- **Click the chip** to collapse the group into it, and again to open it. Collapsing the group of the page you are on opens the nearest tab outside it. Opening one of its pages from anywhere else (Ctrl+P, a link) opens the group again.
+- **Right-click the chip** to rename it, change its colour, **Ungroup** (the tabs stay), **Close group** (closes its tabs) or, with two panes, **Move group to the other pane**.
+- **Drag** a tab onto a group's tab to put it in that group, or past a tab outside the group to take it out; drag the chip to move the whole group.
+- Groups follow your tabs: every browser signed in to your account on this server shows them, collapsed or not.
+
 ## Pages side by side
 
 Read a paper on one side while you write up your notes on the other, each in a pane of its own with its own tabs.
 
-- **Split**: right-click a tab → **Split right**, or right-click an empty part of the top bar → **Split right**, and the page gets a pane of its own on the right, with its own tab strip. Or drag a tab onto the left or right side of the page: the half that lights up is where it lands. The screen splits once, into two panes: once split, right-click a tab → **Move to the other pane**, or drag it onto the other pane's page or strip. **Split right** and **Join tab groups** are in the command palette too.
+- **Split**: right-click a tab → **Split right**, or right-click an empty part of the top bar → **Split right**, and the page gets a pane of its own on the right, with its own tab strip. Or drag a tab onto the left or right side of the page: the half that lights up is where it lands. The screen splits once, into two panes: once split, right-click a tab → **Move to the other pane**, or drag it onto the other pane's page or strip. **Split right** and **Join panes** are in the command palette too.
 - **Only the pages split.** The Notes, Chat, Comments and Files windows stay where you docked them, beside the panes, at their own size.
 - **One pane is live**, the one with the coloured outline: the page you are working on, with its tools. The other pane shows its page as it is, with its highlights, handwriting and notes (or its file's code view or picture), where you left it and at its zoom. Click into it, or its tab, to work on it there: nothing moves, a click on a note opens that note with the cursor where you clicked, and a click in a code view opens the file at the same line; a drag that selects text in it leaves the pane as it is. Opening a page from the library, a link or Ctrl+P puts it in the live pane, and a page already open in the other pane brings that pane forward.
 - **Each pane has its own buttons**: Search, Share and the View menu sit at the right end of each pane's tabs and act on that pane's page. Pressing one in the other pane makes that pane live and opens it there in one go. Right-click a button → **Show on the top bar** or **Show in each pane** to choose where it goes; Add, Background tasks and the Inbox can move into the panes the same way, and the sync status always stays on the top bar.
 - **The Notes window** shows the notes of the paper on screen. While you write in a page of notes beside a paper, it keeps showing that paper's notes and highlights.
-- **Resize** by dragging the bar between the panes. Close a pane's last tab and the pane goes; **Join tab groups** (in a tab's menu, or a right-click on a pane's strip) puts every tab back in one strip. A tab alone in its strip splits off an empty pane, with the library in it, to pick a page for.
+- **Resize** by dragging the bar between the panes. Close a pane's last tab and the pane goes; **Join panes** (in a tab's menu, or a right-click on a pane's strip) puts every tab back in one strip. A tab alone in its strip splits off an empty pane, with the library in it, to pick a page for.
 - Your open tabs still follow your account. How they are arranged is this browser's, like your window layout; another device shows the same tabs in one strip until you split them there. A phone shows one page at a time.
 
 ## Outline and links between pages

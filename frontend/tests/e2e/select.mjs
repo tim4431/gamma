@@ -50,7 +50,7 @@ export const GROUPS = [
   { id: "vaults", files: ["vaults.mjs"], s: 42 },
   { id: "https", files: ["https.mjs"], s: 42 },
   { id: "quick-open", files: ["quickOpen.mjs"], s: 41 },
-  { id: "tab-groups", files: ["tabGroups.mjs"], s: 38 },
+  { id: "tab-groups", files: ["tabGroups.mjs"], s: 42 },
   { id: "publish", files: ["publish.mjs"], s: 37 },
   { id: "pdf-touch", files: ["pdfTouch.mjs"], s: 34 },
   { id: "inbox", files: ["inbox.mjs"], s: 33 },
@@ -137,6 +137,7 @@ export const RULES = [
   // the tab groups' pure model and the read view of a page in a group that is not live
   // (viewers: a code view read in a pane)
   ["frontend/src/workspace/tabLayout.js", ["tab-groups"]],
+  ["frontend/src/workspace/stripGroups.js", ["tab-groups"]], // the strip groups' rules (strip groups step)
   ["frontend/src/workspace/PagePane.jsx", ["tab-groups", "viewers"]],
   ["frontend/src/workspace/**", ALL], // the frames every page stands in
   ["frontend/src/main.jsx", ALL],
