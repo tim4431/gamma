@@ -408,6 +408,24 @@ test("a reload message refetches instead of applying, and the next load resumes"
   assert.equal(h.tree[1].content, "held", "the batch after the fetched seq applies on load");
 });
 
+test("a tree read before a batch this tab applied meanwhile is read again, never kept over it", async (t) => {
+  const h = setup(t, async () => ({ seq: 2, batches: [] }));
+  h.ops(batch(1, [{ op: "set", id: "b", content: "one" }]));
+  h.ops(batch(2, [{ op: "set", id: "b", content: "two" }], "p2"));
+  assert.equal(h.tree[1].content, "two");
+  // A refetch sent after batch 1, its answer read before batch 2 committed,
+  // comes back now: it lacks batch 2, which nothing would bring back.
+  h.tree = [block("a"), { ...block("b", "one"), position: "a1" }];
+  h.session.commit(h.tree, { isLoad: true, seq: 1 });
+  assert.deepEqual(h.reloads, ["page-a"], "the page is read again");
+  h.ops(batch(3, [{ op: "set", id: "a", content: "three" }]));
+  assert.equal(h.tree[0].content, "a", "a batch waits for that read");
+  h.tree = [block("a"), { ...block("b", "two"), position: "a1" }];
+  h.session.commit(h.tree, { isLoad: true, seq: 2 });
+  assert.deepEqual([h.tree[0].content, h.tree[1].content], ["three", "two"], "the read in, the batch after it applies");
+  assert.deepEqual(h.reloads, ["page-a"]);
+});
+
 test("presence: join, leave, a standalone cursor and the caret on a batch", (t) => {
   const h = setup(t, async () => ({}));
   h.message({ t: "hello", client: ME, seq: 0, peers: [] });
