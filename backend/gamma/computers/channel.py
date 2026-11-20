@@ -361,8 +361,10 @@ def state_of(link: dict) -> dict:
     server offers them to that account on its buckets
     (gamma/computers/registry.py), whether that server may answer what
     they ask (``asks``, the link's), the directories offered them
-    (``dirs``, ``offered``), and that it answers what that server asks of
-    its agents' sessions (``sessions``, ``_sessions``). A work folder's
+    (``dirs``, ``offered``), that it answers what that server asks of
+    its agents' sessions (``sessions``, ``_sessions``), and that it runs a
+    turn's skill with the instructions its claim carries (``skills``,
+    gamma/local_agents/home.py ``HttpChatHome.claim``). A work folder's
     vault also names its agent (``agent``) for an older server, which reads
     it from there."""
     vaults, agents = [], agent_folders(link)
@@ -373,7 +375,8 @@ def state_of(link: dict) -> dict:
             vaults[-1]["agent"] = agents[vault["folder_id"]][1]
     return {"computer": {"id": computer_id(link["remote_url"]), "name": computer_name()},
             "app": version.label()[:64], "vaults": vaults, "assistants": assistants(link),
-            "asks": bool(link.get("asks")), "dirs": offered(link), "sessions": True}
+            "asks": bool(link.get("asks")), "dirs": offered(link), "sessions": True,
+            "skills": True}
 
 
 def offered(link: dict) -> list[dict]:

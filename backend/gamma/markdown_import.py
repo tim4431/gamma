@@ -106,25 +106,36 @@ _UNDERLINE_RE = re.compile(r"=+|-+")
 _STACKED_RE = re.compile(r"^(?:(?:[-*+]|\d{1,4}[.)])[ \t]+)+")
 
 
-def parse_frontmatter(text: str, controls: bool = False):
+def parse_frontmatter(text: str, controls: bool = False, blocks: bool = False):
     """Return ``(fields, body)`` — YAML front matter is dropped and its
     top-level ``key: value`` lines are returned as a dict (keys lower-cased,
     a quoted value read as ``_fm_scalar`` does). A value is a string, or a list of strings for the two
     YAML list forms Obsidian's properties use — a flow list ``[a, b]`` and a
     block list (``key:`` followed by ``- item`` lines). Nested mappings and
     multi-line scalars are ignored. ``controls``: the vault's own reading
-    (``_fm_scalar``)."""
+    (``_fm_scalar``). ``blocks``: a SKILL.md's reading (gamma/skills.py),
+    which also takes a block scalar (``|`` kept lines, ``>`` folded, each
+    with its chomping and indentation marks) and drops a ``#`` comment
+    outside quotes, as hand-written YAML has them."""
     match = _FRONTMATTER_RE.match(text)
     if not match:
         return {}, text
     fields = {}
     pending = None    # key whose block-list items may follow
+    block = None      # (key, style, lines) of a block scalar being read
     for line in match.group(1).splitlines():
+        if block is not None:
+            if not line.strip() or line[:1].isspace():
+                block[2].append(line)
+                continue
+            fields[block[0]] = _fm_block(block[1], block[2])
+            block = None
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         item = _FM_ITEM_RE.match(line)
         if item and pending is not None:
-            fields[pending].append(_fm_scalar(item.group(1) or "", controls))
+            value = item.group(1) or ""
+            fields[pending].append(_fm_scalar(_fm_uncommented(value) if blocks else value, controls))
             continue
         if line[:1].isspace():
             continue
@@ -133,15 +144,50 @@ def parse_frontmatter(text: str, controls: bool = False):
             pending = None
             continue
         key, value = key.strip().lower(), value.strip()
+        if blocks:
+            value = _fm_uncommented(value)
         pending = None
-        if not value:
+        head = _FM_BLOCK_RE.match(value) if blocks else None
+        if head:
+            block = (key, head.group(1), [])
+        elif not value:
             fields[key] = []
             pending = key
         elif value.startswith("[") and value.endswith("]"):
             fields[key] = [_fm_scalar(v, controls) for v in _FM_FLOW_ITEM_RE.findall(value[1:-1]) if v.strip()]
         else:
             fields[key] = _fm_scalar(value, controls)
+    if block is not None:
+        fields[block[0]] = _fm_block(block[1], block[2])
     return fields, text[match.end():]
+
+
+# A block scalar's head: ``|`` or ``>``, then its chomping and indentation
+# marks, which a value read whole and trimmed has no use for.
+_FM_BLOCK_RE = re.compile(r"^([|>])(?:[+-]?[1-9]?|[1-9][+-])$")
+# A quoted value up to its closing quote (``''`` and a backslash escape
+# inside it), so a ``#`` within it is text.
+_FM_QUOTED_RE = re.compile(r"""^(?:"(?:[^"\\]|\\.)*+"|'(?:[^']|'')*+')""")
+
+
+def _fm_uncommented(value: str) -> str:
+    """``value`` without its ``#`` comment: a ``#`` at its start or after a
+    blank, outside a quoted value. A quote never closed is text."""
+    quoted = _FM_QUOTED_RE.match(value)
+    start = quoted.end() if quoted else 0
+    comment = re.search(r"(?:^|\s)#", value[start:])
+    return (value[:start + comment.start()] if comment else value).strip()
+
+
+def _fm_block(style: str, lines: list[str]) -> str:
+    """A block scalar's text, its lines' common indentation removed: ``|``
+    keeps the lines, ``>`` folds each paragraph's onto one."""
+    width = min((len(line) - len(line.lstrip()) for line in lines if line.strip()), default=0)
+    lines = [line[width:] for line in lines]
+    if style == "|":
+        return "\n".join(lines).strip()
+    paragraphs = re.split(r"\n[ \t]*\n", "\n".join(lines))
+    return "\n".join(" ".join(p.split()) for p in paragraphs if p.strip())
 
 
 # ``- item`` (indented or not) under a ``key:`` line

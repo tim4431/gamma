@@ -64,6 +64,7 @@ export const GROUPS = [
   { id: "recording", files: ["recording.mjs"], s: 27 },
   { id: "pen", files: ["pen.mjs"], s: 25 },
   { id: "mentions", files: ["mentions.mjs"], s: 24 },
+  { id: "chat-skills", files: ["chatSkills.mjs"], s: 24 },
   { id: "collab-soak", files: ["collabSoak.mjs"], s: 23 },
   { id: "ink-shapes", files: ["inkShapes.mjs"], s: 23 },
   { id: "folders", files: ["folders.mjs"], s: 23 },
@@ -94,7 +95,7 @@ export function shardOf(ids, k, n) {
 
 const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
-const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
+const CHAT = ["chat-navigation", "mentions", "chat-skills", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
 const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "pen", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
@@ -191,6 +192,13 @@ export const RULES = [
   ["frontend/src/editor/pathLinkContext.js", ["sub-pages", "notes-pdf-share", "explorer"]],
   // (text-search: a note's line link is a pill; text-anchors: a text range's row, its dot and its title)
   ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search", "text-anchors"]],
+  // skills in the chat (docs/dev/skills.md): the "/" menu's pure pieces and the catalog every composer reads
+  // (local-agents: a skill turn to Codex; settings: the Skills pane tells the catalog of its writes)
+  ["frontend/src/chat/skills.js", [...CHAT, "local-agents"]],
+  ["frontend/src/chat/useSkills.js", [...CHAT, "local-agents", "settings"]],
+  // the composer and its "@" and "/" pickers, Gamma AI's and the computer side's
+  ["frontend/src/chat/ComposerPicker.jsx", [...CHAT, "local-agents", "remote-chat"]],
+  ["frontend/src/chat/ChatComposerInput.jsx", [...CHAT, "local-agents", "remote-chat"]],
   // the chat's computer side: the strip, a turn of the agent on this computer, Stop, New chat and History
   // (remote-chat: the same on another server's page, run on the computer that keeps the work folder;
   // remote-asks: what it asks there, said to wait on that computer, no card)
@@ -219,6 +227,8 @@ export const RULES = [
   // Settings → AI → Agents: this computer's agents, and the servers it answers (remote-asks drives the desktop window's)
   ["frontend/src/settings/SettingsAgents.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link", "remote-asks"]],
   ["frontend/src/settings/answeredServers.js", ["settings", "remote-asks"]],
+  // Settings → Chat's skills sections, whose writes reach the chat's "/" menu
+  ["frontend/src/settings/SettingsSkills.jsx", ["settings", "chat-skills", "i18n"]],
   // ipad: Apple Pencil, under its host; android: the Stylus section and the server inside the app (SettingsServer.jsx)
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link"]],
   // the sync pill and its popover, the conflict cards: a clone's, a publication's, a Zotero link's
@@ -310,6 +320,13 @@ export const RULES = [
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
   // the AI client is the translated view's path to the model too
   ["backend/gamma/ai_client.py", [...CHAT, "settings", "ink-zoom", "translation"]],
+  // load_skill, the library agent's own pick of a skill (mcp: absent from its tools)
+  ["backend/gamma/ai_tools/skills.py", [...CHAT, "settings", "mcp"]],
+  // the skills' catalog, their rendering into a turn and their routes (local-agents, remote-chat: a skill
+  // turn's instructions in an agent's prompt, here and claimed from another server)
+  ["backend/gamma/skills.py", [...CHAT, "settings", "local-agents", "remote-chat"]],
+  ["backend/gamma/builtin_skills/**", ["chat-skills", "local-agents"]],
+  ["backend/gamma/routers/skills.py", ["chat-skills", "settings"]],
   // text-search: read_page by lines and search_library's file hits, over MCP
   ["backend/gamma/ai_tools/**", [...CHAT, "settings", "ink-zoom", "text-search"]],
   ["backend/gamma/ai_*.py", [...CHAT, "settings", "ink-zoom"]],

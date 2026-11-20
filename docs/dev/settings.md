@@ -12,7 +12,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`, with their groups, [strip_groups.md](strip_groups.md#where-it-is-kept)), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
 | Per account, done reminders | `users.db` `reminders_done`, a row per dismissed reminder (its key, the workspace it was last found in, when), written by `POST /api/reminders/done` and kept while the reminder exists ([mentions.md](mentions.md) "Reminders"); no pref, as there may be thousands (the `reminders-done` prefs key held them before migration step 39) | which of the account's reminders it has dismissed, in every browser |
-| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / Tavily / SearXNG / OpenAlex settings |
+| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)), and the account's own skills under the reserved `skills` key (`/api/ai/skills*`, never synced to Gamma Cloud, [skills.md](skills.md#storage)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / Tavily / SearXNG / OpenAlex settings, the account's skills |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
 | Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), the Google Drive connection (the `gdrive` key via `/api/admin/gdrive`, its refresh token encrypted the same way), the network proxy (the `proxy` key via `/api/admin/proxy`, its password encrypted the same way, [network_proxy.md](network_proxy.md)), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
 
@@ -711,7 +711,7 @@ AI:
   (`aiServiceTiles` in `settings/providerEditor.js`). Once a connection made from the
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
-- **Chat**: three sections. **Chat** holds the default reasoning effort,
+- **Chat**: five sections. **Chat** holds the default reasoning effort,
   the default speed, the follow-up while a reply runs (`chatFollowUpMode`,
   a Steer / Queue `Segmented`, [ai.md](ai.md#queue-and-steer)) and the
   snapshot-clearing switch. The effort menu
@@ -719,6 +719,20 @@ AI:
   ([ai.md](ai.md#reasoning-effort)). A speed reaches only models whose
   provider offers that service tier ([ai.md](ai.md#speed-service-tier)).
   **Prompts** is the accordion, with one Cancel / Save pair as its action.
+  **Your skills** and **Built-in skills**
+  ([SettingsSkills.jsx](../../frontend/src/settings/SettingsSkills.jsx))
+  are the instructions a chat message runs with `/name`. Your skills lists
+  the account's, each with Edit and Delete, with *Add skill* and *Import
+  SKILL.md…* on the rule; the editor is a `SubDialog` (name, description,
+  argument hint, instructions, and whether the assistant may use it on its
+  own) whose save names the version it read, so a change made elsewhere
+  meanwhile is a notice with *Load the newer version*, never overwritten.
+  Built-in skills lists the server's with View (and *Copy to your
+  skills*) and an on/off switch. A guest's sections are read-only. They
+  read the chat's own skill store, not the pane's reads, and every write
+  refreshes it once ([skills.md](skills.md#settings--ai--chat-the-skills-sections)).
+  `openSettings("skills")` (the "/" menu's *Manage skills…*, the card of a
+  skill gone before the send) opens this pane at Your skills.
   **Context size** holds the three text budgets and "Pictures per message"
   (the chat's picture budget, [ai.md](ai.md#pictures)), with the Standard /
   Larger / Custom preset as its action.
@@ -727,7 +741,9 @@ AI:
   `AssistantTools.jsx`). Rows explain library reading, web research and changes;
   each column's menu offers the Read library / Read & search / Ask before
   changes / Allow all presets. Web search, fetching and using connected
-  journal sign-ins have separate rows; the last of the changes, **Comments
+  journal sign-ins have separate rows, and so has **Use skills on its own**
+  (`skills`, whether the agent loads a skill by itself,
+  [skills.md](skills.md#load_skill-the-agent-loads-a-skill-itself)); the last of the changes, **Comments
   and highlights** (`comment`, Ask by default), is what the agent writes
   under its own name: comments, replies, resolves and highlights
   ([ai_tools.md](ai_tools.md) "comment / resolve / highlight"). Under the table, two switches:
@@ -1207,10 +1223,11 @@ one caption per pane. Picking one opens the pane and focuses the matching
 `tests/settingsSearch.test.mjs` fails when an entry's target is no
 `data-setting` its pane renders. The search box and the Keyboard filter
 carry their own × (the browser's is hidden).
-Three names open a pane at one of its sections, the targets of the bars'
-and the highlighters' settings rows: `topbar`, `viewer-tools` and
+Four names open a pane at one of its sections: the targets of the bars'
+and the highlighters' settings rows, `topbar`, `viewer-tools` and
 `highlighters` (Toolbars at the Top bar, Viewer tools or Text highlighters
-section). The strip's *Handwriting settings…* names the Handwriting pane
+section), and the chat's *Manage skills…*, `skills` (Chat at Your
+skills). The strip's *Handwriting settings…* names the Handwriting pane
 itself (`handwriting`). One table in `settingsNavigation.js` holds them:
 `resolveSettingsPane` gives the pane and `settingsSection` the row the
 dialog jumps to. Any other name is a pane's own. A link names one as
@@ -1271,7 +1288,10 @@ fading in only after a moment (`.loadingHint`; `Empty`'s and `LogBox`'s
 again to refresh it in place: a second visit is instant. Settings opened
 straight onto a pane (a notice, the chat's AI tiles) shows it at once, its
 reads starting together as it mounts. A test checks that every path a
-section reads is named in `PANE_READS` (`tests/settingsReads.test.mjs`).
+section reads through `useSettingsRead` is named in `PANE_READS`
+(`tests/settingsReads.test.mjs`). The Chat pane's skills sections are the
+exception: they read the chat's own skill store (`chat/useSkills.js`),
+which the "/" menu shares, so naming its path here would read it twice.
 At 150 ms of latency the Server pane, measured while it still held the
 sign-in, guests, storage-defaults and reports sections that are now in
 Users, made 8 requests in two waves and switched once, at 208 ms, with

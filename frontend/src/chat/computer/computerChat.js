@@ -110,10 +110,12 @@ const passages = (selections) =>
 // agent picked, the model, effort and speed, none sent when it is the
 // agent's default, and where a conversation that begins works (`dir`: an
 // offered directory's id, "" for one of its own; null, not sent, for the
-// conversation's own).
-export function turnBody(id, bucket, text, selections = [], choice = null) {
+// conversation's own), and the skill the message runs (`skill`: {id, name,
+// args}, chat/skills.js splitSkill; its text is then the arguments).
+export function turnBody(id, bucket, text, selections = [], choice = null, skill = null) {
   return {
     id, bucket, text: String(text || "").trim(), selections: passages(selections),
+    ...(skill ? { skill } : {}),
     ...(choice?.agent ? { agent: choice.agent } : {}),
     ...(choice?.model ? { model: choice.model } : {}), ...(choice?.effort ? { effort: choice.effort } : {}),
     ...(choice?.speed ? { speed: choice.speed } : {}),
@@ -325,14 +327,14 @@ export function turnChanges(message) {
 }
 
 // The person's message a failed turn answered, what Retry sends again
-// ({text, selections}); null when there is none or the turn is not the
-// conversation's newest.
+// ({text, selections, skill}: `skill` null for a message that ran none);
+// null when there is none or the turn is not the conversation's newest.
 export function retryOf(conversation, message) {
   const messages = conversation?.messages || [];
   const at = messages.indexOf(message);
   const asked = at > 0 ? messages[at - 1] : null;
-  if (message?.state !== "failed" || at !== messages.length - 1 || asked?.role !== "user" || !asked.text) return null;
-  return { text: asked.text, selections: asked.selections || [] };
+  if (message?.state !== "failed" || at !== messages.length - 1 || asked?.role !== "user" || !(asked.text || asked.skill)) return null;
+  return { text: asked.text || "", selections: asked.selections || [], skill: asked.skill || null };
 }
 
 // How a turn ended, when it did not answer: the reason it failed (the
@@ -604,12 +606,13 @@ export function stripLine(info, live = null, now = new Date()) {
   return { text: info.folder ? `${here} · ${info.folder}` : here, kind: "ready" };
 }
 
-// Whether a message can go now: something written, no turn of the
-// conversation still to end, and an agent that is not known to be unable
-// to run (the server refuses the rest, with its reason). Another computer
-// that is away takes none: the server queues nothing for it.
-export function canSend(info, conversation, text) {
-  return !!String(text || "").trim() && !liveTurn(conversation) && !info?.turn && !info?.paused
+// Whether a message can go now: something written or a skill to run
+// (`skill`), no turn of the conversation still to end, and an agent that
+// is not known to be unable to run (the server refuses the rest, with its
+// reason). Another computer that is away takes none: the server queues
+// nothing for it.
+export function canSend(info, conversation, text, skill = null) {
+  return (!!String(text || "").trim() || !!skill) && !liveTurn(conversation) && !info?.turn && !info?.paused
     && info?.ready !== false && !awayFrom(info);
 }
 
@@ -644,7 +647,8 @@ export function stepChip(step) {
 // The conversation in the shape the chat's transcript draws Gamma AI's in
 // (chat/ChatTranscript.jsx), `info` the strip's facts (the server's
 // `computer`, else the picked agent's: chat/agents.js stripFacts). A
-// person's message is {id, role: "user", text, passages: [{text, page}]};
+// person's message is {id, role: "user", text, passages: [{text, page}],
+// skill?} (`skill` the {id, name, args} it ran, its chip);
 // the agent's {id, role: "ai", turnId, label, text, partial, pill, actions,
 // asks, files, notice, threads, model, effort}: `partial` while its turn
 // is queued or running (the reply as it is typed), `pill` the steps pill's {label,
@@ -672,7 +676,9 @@ export function shownMessages(conversation, info) {
   const models = info?.models || [];
   const vault = info?.dir?.kind === "vault";
   return (conversation?.messages || []).flatMap((m) => {
-    if (m.role === "user") return [{ id: m.id, role: "user", text: m.text || "", passages: passagesOf(m.selections) }];
+    if (m.role === "user") {
+      return [{ id: m.id, role: "user", text: m.text || "", passages: passagesOf(m.selections), ...(m.skill ? { skill: m.skill } : {}) }];
+    }
     const live = isLive(m);
     const by = m.label || label;
     const model = models.find((x) => x.id === m.model)?.label || m.model || "";

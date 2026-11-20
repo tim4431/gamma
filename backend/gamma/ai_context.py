@@ -33,6 +33,7 @@ from .picture import is_picture, markdown_of, picture_page
 from .recording import recording_label
 from .search import index as text_index, indexer
 from .server_settings import can_store
+from .skills import turn_text as skill_turn
 from .storage import find_upload_file, put_upload
 from .text_box import box_page, is_text_box
 from .textnorm import normalize_text
@@ -656,15 +657,39 @@ def _omitted_calls(actions: list) -> str:
         f"{name} ×{count:,}" for name, count in counts.most_common()))
 
 
-def _elide_old_results(history: list) -> dict[int, set]:
+def _rendered_again(history: list, catalog: list, replay) -> dict[tuple, str]:
+    """The replayed results a tool renders again from the requester's
+    catalog (``replay(name)``, the registry's ``replayed``: a TOOLS entry
+    with a ``replay`` of its own, load_skill, whose saved action keeps only
+    a stub), ``{(history_index, action_index): text}``. Only a successful
+    call is rendered (a failed one replays its saved error), each as it
+    renders now, so a skill loaded again later leaves the earlier turn's
+    bytes as they were. These are outside TOOL_REPLAY_BUDGET and carry no
+    _REPLAYED_NOTE: they are instructions to follow, not a snapshot of the
+    library."""
+    out = {}
+    for i, item in enumerate(history):
+        actions = _replayable(item)
+        for j, action in list(enumerate(actions))[_first_replayed(actions):]:
+            tool = replay(action["tool"])
+            if tool and not action.get("error"):
+                out[(i, j)] = tool["replay"](catalog, action)
+    return out
+
+
+def _elide_old_results(history: list, rendered: dict | None = None) -> dict[int, set]:
     """Pick which replayed tool results keep their text: walk newest-first
-    under TOOL_REPLAY_BUDGET; everything older is elided. Returns
-    {history_index: {action_index, ...}} of the elided ones."""
+    under TOOL_REPLAY_BUDGET; everything older is elided. The results
+    rendered again (``rendered``, _rendered_again) neither count nor are
+    elided. Returns {history_index: {action_index, ...}} of the elided
+    ones."""
     elided: dict[int, set] = {}
     budget = TOOL_REPLAY_BUDGET
     for i in range(len(history) - 1, -1, -1):
         actions = _replayable(history[i])
         for j, action in reversed(list(enumerate(actions))[_first_replayed(actions):]):
+            if (i, j) in (rendered or {}):
+                continue
             budget -= len(str(action.get("result") or ""))
             if budget < 0:
                 elided.setdefault(i, set()).add(j)
@@ -688,20 +713,34 @@ def _result_size(message: dict) -> int:
 
 
 def elide_live_results(messages: list, keep_rounds: int = LIVE_KEEP_ROUNDS,
-                       budget: int = LIVE_RESULT_BUDGET) -> int:
+                       budget: int = LIVE_RESULT_BUDGET, keep_replayed: bool = True, replay=None) -> int:
     """Cut the oldest tool results of ``messages`` (the common turn list of
     a running reply, edited in place) down to ``budget`` chars, never the
     last ``keep_rounds`` rounds; a round is one run of consecutive tool
-    results. Returns how many results were elided (0 = nothing changed)."""
+    results. The results of a tool its replay renders again (``replay(name)``,
+    the registry's ``replayed``: load_skill, instructions the model is
+    following) are kept outside the budget, unless ``keep_replayed`` is
+    false (the agent loop's emergency retry), which elides them too, to
+    their entry's ``elided`` stub. Returns how many results were elided
+    (0 = nothing changed)."""
+    called = {call.get("id"): call.get("name") for message in messages
+              for call in message.get("tool_calls") or () if isinstance(call, dict)}
+    stubs: dict[int, str] = {}  # id(message) -> its stub, for a replayed tool's result
     rounds: list[list[dict]] = []
     previous_was_tool = False
     for message in messages:
-        is_tool = message.get("role") == "tool"
-        if is_tool and previous_was_tool:
-            rounds[-1].append(message)
-        elif is_tool:
-            rounds.append([message])
-        previous_was_tool = is_tool
+        if message.get("role") != "tool":
+            previous_was_tool = False
+            continue
+        if not previous_was_tool:
+            rounds.append([])
+        previous_was_tool = True
+        tool = replay(called.get(message.get("call_id"))) if replay else None
+        if tool and keep_replayed:
+            continue  # its round counts, its result stays
+        if tool:
+            stubs[id(message)] = tool.get("elided") or _ELIDED_RESULT
+        rounds[-1].append(message)
     total = sum(_result_size(m) for r in rounds for m in r)
     if total <= budget:
         return 0
@@ -710,10 +749,11 @@ def elide_live_results(messages: list, keep_rounds: int = LIVE_KEEP_ROUNDS,
         for message in round_:
             if total <= budget:
                 return elided
-            if message.get("content") == _ELIDED_RESULT and not message.get("images"):
+            stub = stubs.get(id(message), _ELIDED_RESULT)
+            if message.get("content") == stub and not message.get("images"):
                 continue
             total -= _result_size(message)
-            message["content"] = _ELIDED_RESULT
+            message["content"] = stub
             message.pop("images", None)
             elided += 1
     return elided
@@ -755,7 +795,7 @@ def build_messages(payload, context: str, with_tools: bool = False,
                    located: list | None = None, message_context: str = "",
                    drop_turns: int = 0, picture_lines: str = "",
                    files: list | None = None, quote_budget: int | None = None,
-                   date_line: str = "") -> list[dict]:
+                   date_line: str = "", skills: list | None = None, replay=None) -> list[dict]:
     """Build common chat messages, injecting context once before a user turn.
 
     With ``with_tools`` (an agent chat), each saved reply's tool calls are
@@ -787,7 +827,17 @@ def build_messages(payload, context: str, with_tools: bool = False,
     the newest turn it would change that turn when the next message replays
     it without the line, and that message would pay for the turn and its
     tool rounds again.
+    ``skills`` is the requester's skill catalog (gamma/skills.py
+    ``catalog``). A user turn that ran a skill (``skill: {id, name, args}``
+    on a history item, or the request's own ``skill``) reads its
+    instructions ahead of its text, rendered from that catalog by id on
+    every request (``skills.turn_text``), so the turn is the same bytes
+    while the skill stands and a conversation never stores them; a
+    replayed load_skill call gets them the same way (_rendered_again)
+    through ``replay``, the registry's ``replayed``, which the caller
+    passes since the registry imports this module.
     """
+    catalog = skills or []
     history = [h for h in (payload.history or []) if not h.get("error")]
     if drop_turns > 0:
         # The kept history opens on a question, never on a reply to one
@@ -795,12 +845,15 @@ def build_messages(payload, context: str, with_tools: bool = False,
         history = history[drop_turns:]
         while history and history[0].get("role") == "ai":
             history = history[1:]
-    elided = _elide_old_results(history) if with_tools else {}
+    rendered = _rendered_again(history, catalog, replay) if with_tools and replay else {}
+    elided = _elide_old_results(history, rendered) if with_tools else {}
     messages = []
     context_used = False
     for i, history_item in enumerate(history):
         role = "assistant" if history_item.get("role") == "ai" else "user"
         content = history_item.get("text", "")
+        if role == "user" and isinstance(history_item.get("skill"), dict):
+            content = skill_turn(history_item["skill"], content, catalog)
         thinking = reasoning_text(history_item.get("reasoning")) if role == "assistant" else {}
         if with_tools:
             actions = _replayable(history_item)
@@ -818,6 +871,9 @@ def build_messages(payload, context: str, with_tools: bool = False,
                     **({"reasoning": thinking} if thinking else {})})
                 thinking = {}
                 for j, a in enumerate(actions[first:], start=first):
+                    if (i, j) in rendered:
+                        messages.append({"role": "tool", "call_id": f"call_h{i}_{j}", "content": rendered[(i, j)]})
+                        continue
                     result = (_ELIDED_RESULT if j in elided.get(i, ())
                               else _REPLAYED_NOTE + str(a.get("result") or "(empty result)"))
                     kept = a.get("kept")
@@ -843,6 +899,9 @@ def build_messages(payload, context: str, with_tools: bool = False,
                          **({"files": list(files)} if head_turn and files else {}),
                          **({"images": list(sent["images"])} if sent and sent.get("images") else {})})
     content = final_prompt(payload, located, quote_budget)
+    invocation = getattr(payload, "skill", None)
+    if isinstance(invocation, dict):
+        content = skill_turn(invocation, content, catalog)
     head = f"{CONTEXT_INTRO}\n\n{context}" if context and not context_used else ""
     if message_context:
         head = (f"{head}\n\n---\n\n" if head else "") + f"{MESSAGE_CONTEXT_INTRO}\n\n{message_context}"

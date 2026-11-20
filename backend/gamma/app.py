@@ -62,6 +62,7 @@ from .routers import (
     reports as reports_router,
     search,
     shares,
+    skills as skills_router,
     sync,
     trash as trash_router,
     translate,
@@ -466,6 +467,7 @@ def create_app() -> FastAPI:
     app.include_router(ai_handoffs.router)
     app.include_router(chats.router)
     app.include_router(chats.history_router)
+    app.include_router(skills_router.router)
     app.include_router(prefs.router)
     app.include_router(notices.router)
     app.include_router(inbox_router.router)

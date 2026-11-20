@@ -296,7 +296,7 @@ function scanScript(code, file, hit) {
       if (literal(attrOf(open, "role")) === "menu") at("menu-role", open);
       // A text field's Enter.
       const ce = attrOf(open, "contentEditable");
-      // The shared wrappers (AutoGrowTextarea, PasswordInput, PaperMentionInput…)
+      // The shared wrappers (AutoGrowTextarea, PasswordInput, ChatComposerInput…)
       // hand their key handlers to a text field of their own.
       const editable = (name === "input" && TEXT_TYPES.has(inputType(open))) || name === "textarea"
         || /^[A-Z]\w*(?:Input|Textarea)$/.test(name)

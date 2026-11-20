@@ -111,7 +111,9 @@ export async function mentionScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("mentions: dismissal, empty results, duplicate references, and six-page limit", async () => {
+  await step("mentions: dismissal, empty results sending as typed, duplicate references, and six-page limit", async () => {
+    // What it sends would leave its six references on the conversation for the steps after.
+    const before = (await user.api(`/api/chats/${papers[2].id}`)).messages || [];
     const { ctx, page, input, requests } = await setup();
     try {
       await input.fill("@cavity");
@@ -123,8 +125,11 @@ export async function mentionScenarios(env) {
       await input.fill("");
       await input.fill("@no-such-paper-xyz");
       await page.getByText("No matching pages.", { exact: true }).waitFor();
+      // With no row to pick, Enter is the field's own: the text goes as typed (chat/ComposerPicker.jsx).
       await input.press("Enter");
-      assertEq(requests.length, 0);
+      await until(() => requests.length === 1);
+      assertEq(requests[0].prompt, "@no-such-paper-xyz", "a picker with no row sends the text as typed");
+      await page.locator(".chatBubble.ai", { hasText: "References received." }).waitFor();
       for (const paper of papers.slice(0, 6)) {
         await input.fill(`@${paper.content}`);
         await page.getByRole("option", { name: new RegExp(paper.content) }).click();
@@ -134,13 +139,16 @@ export async function mentionScenarios(env) {
       const disabled = page.getByRole("option", { name: /Thermal noise/ });
       assertEq(await disabled.getAttribute("aria-disabled"), "true");
       await input.press("Enter");
-      assertEq(requests.length, 0);
+      assertEq(requests.length, 1, "a listed row that cannot be added takes Enter: nothing is sent");
       await input.fill("@Cavity readout");
       await input.press("Tab");
       assertEq(await page.locator(".chatReferenceChip").count(), 6);
       assertEq(await input.inputValue(), "@“Cavity readout” ");
       assertNoProblems(page);
-    } finally { await ctx.close(); }
+    } finally {
+      await ctx.close();
+      await user.api(`/api/chats/${papers[2].id}`, { method: "PUT", body: { messages: before } });
+    }
   });
 
   await step("mentions: the picker lists and ranks like quick open — recents first, a label matches", async () => {

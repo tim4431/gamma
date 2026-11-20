@@ -4474,6 +4474,13 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .pwField:has(> .aiKeyInput) { margin-bottom: 6px; }
 .setField .pwField { margin-bottom: 0; }
 .loginCard .pwField { margin-bottom: 12px; }
+/* Settings → Skills: a skill's name field with its fixed "/" before what
+   is typed, and a row's description kept to two lines (the rest is its
+   hover title). */
+.skillNameField { position: relative; display: block; }
+.skillNameField > .aiKeyInput { padding-left: 20px; }
+.skillNameField > .skillSlash { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: var(--fs-sm); pointer-events: none; }
+.skillRow .settingDesc { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 /* Status text: an error, a passed check. The line often also carries a
    muted hint class that is declared later (.settingsPaneHint, .aiProvDesc,
    .aiKeyCheck), so the pair outranks it. */
@@ -5110,6 +5117,18 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatMentionOption strong { display: block; font-size: var(--fs-xs); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatMentionOption small { display: block; font-size: var(--fs-2xs); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatMentionHint { border-top: 1px solid var(--border); }
+/* A skill's row in the "/" picker: "/name", its tag and argument hint over
+   its description, two lines at most. */
+.chatSkillOption { align-items: flex-start; }
+.chatSkillOption .slashMenuHead { align-items: center; }
+.chatSkillOption .slashMenuLabel { flex-shrink: 0; font-family: var(--font-mono); font-size: var(--fs-xs); }
+.chatSkillOption .uiTag { margin-left: 0; flex-shrink: 0; }
+.chatSkillOption .slashMenuName { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chatSkillOption .slashMenuHint {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  white-space: normal; overflow-wrap: anywhere;
+}
+.chatSkillNone { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }
 /* The key hints under a picker ("↑↓ choose · Enter …": Quick Open, the chat's
    page picker, the [[ picker, the slash menu) draw their arrows as text:
    never an emoji font's coloured arrows, with a symbol font behind Inter in
@@ -5560,6 +5579,18 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border: 1px solid var(--border-subtle);
 }
 .chatMsgPdfs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; font-size: calc(var(--fs-2xs) * var(--text-scale, 1)); }
+/* The skill a user message ran (chat/skills.js), a chip ahead of its text;
+   an edited message's has the × that drops it. */
+.chatMsgSkillRow { display: flex; margin-bottom: var(--space-1); }
+.chatMsgSkill {
+  display: inline-flex; align-items: center; gap: 2px; margin-left: 0;
+  font-family: var(--font-mono); font-size: calc(var(--fs-2xs) * var(--text-scale, 1)); color: var(--accent);
+}
+.chatMsgSkillDrop {
+  display: inline-flex; align-items: center; justify-content: center; margin-right: -4px; padding: 1px;
+  border: none; border-radius: var(--radius-full); background: none; color: inherit; cursor: pointer;
+}
+.chatMsgSkillDrop:hover { background: var(--bg-hover); }
 /* A message the user steered into the reply while it ran (chat/chatQueue.js). */
 .chatMsgSteered {
   display: flex; align-items: center; gap: var(--space-2);

@@ -22,8 +22,10 @@ server's own agent), chosen when it starts: a turn in another directory or
 on another computer starts a new conversation (``begin``), as another agent
 does. Its messages are the
 person's (``{id, role: "user", text, selections: [{text, page, box}],
-at}``) and the agent's (``{id, role: "agent", agent, label, turn_id, state,
-text, steps, asks, changes, changed, built, error, fresh, model, effort, speed,
+at, skill?}``, ``skill`` the skill it ran, ``{id, name, args}``, ``args`` what
+followed "/name", which the text holds with any passages it quotes:
+gamma/skills.py) and the agent's (``{id, role: "agent",
+agent, label, turn_id, state, text, steps, asks, changes, changed, built, error, fresh, model, effort, speed,
 at, ended_at, waiting?}``, ``asks`` what its agent asks the person and waits
 for (a turn run on another computer's where that computer relays its asks,
 answered here through its run, ``far_turns.answer_run``), ``waiting`` such a turn's
@@ -59,7 +61,7 @@ import shutil
 import time
 from pathlib import Path
 
-from .. import config
+from .. import config, skills
 from ..blocks_store import load_props, new_block_id, write_lock
 from ..db import connect_pages_db, page_now
 from ..logbuf import log
@@ -77,6 +79,7 @@ MAX_STEERS = 20          # messages steered into one turn
 NOT_STEERED = "The agent is not taking messages now: this one goes as the next one."
 ENDED = ("done", "failed", "stopped")
 EARLIER = 6               # earlier messages a turn's prompt takes (runner._ChatTurn._work)
+SKILL_GONE = "The skill /{name} is no longer available, so the agent did not start."   # never the arguments alone
 
 _COLUMNS = ("id", "bucket", "dir", "user_id", "agent", "title", "messages", "version", "created_at", "updated_at",
             "archived_at", "thread_id", "owner", "computer")
@@ -414,14 +417,40 @@ def title_of(text: str) -> str:
     return line if len(line) <= TITLE_CHARS else line[:TITLE_CHARS - 1] + "…"
 
 
+def _said(message: dict) -> str:
+    """A message's text as an earlier message is shown: a person's that
+    ran a skill as ``/name args`` (``skills.display``), its instructions
+    never repeated."""
+    text = message.get("text") or ""
+    return skills.display(skills.invocation(message.get("skill")), text) if message.get("role") == "user" else text
+
+
 def earlier_of(messages: list[dict], at: int, person: dict) -> list[dict]:
     """The conversation's last ``EARLIER`` messages before the turn's
     (``at``), the person's own aside, as the prompt takes them: ``{role:
-    owner | agent, text}``; never one read from the CLI's session
-    (``from_session``, its own history: ``adopt``)."""
-    return [{"role": "owner" if m.get("role") == "user" else "agent", "text": m.get("text") or ""}
+    owner | agent, text}``, a skill's message as ``/name args``; never one
+    read from the CLI's session (``from_session``, its own history:
+    ``adopt``)."""
+    return [{"role": "owner" if m.get("role") == "user" else "agent", "text": _said(m)}
             for m in messages[:at] if m is not person and not m.get("from_session")
-            and (m.get("text") or "").strip()][-EARLIER:]
+            and _said(m).strip()][-EARLIER:]
+
+
+def skill_of(user_id: str, person: dict) -> dict | None:
+    """The skill the person's message ran as its turn's prompt takes it,
+    ``{name, instructions}``, the instructions rendered now from
+    ``user_id``'s catalog by the skill's id (gamma/skills.py: its
+    ``$ARGUMENTS`` the message's arguments, which the prompt's message
+    holds besides), ``instructions`` None when the catalog no longer holds
+    it (deleted or turned off since it was sent: the turn fails rather than
+    run without them); None for a message that ran none."""
+    invocation = skills.invocation(person.get("skill"))
+    if invocation is None:
+        return None
+    found = skills.find(skills.catalog(user_id, personal=True), invocation["id"])
+    if found is None:
+        return {"name": skills.safe_name(invocation), "instructions": None}
+    return {"name": found["name"], "instructions": skills.render(found, invocation["args"])}
 
 
 def _turn_of(conversation: dict, message_id: str) -> dict | None:
@@ -437,8 +466,10 @@ def _turn_of(conversation: dict, message_id: str) -> dict | None:
 def begin(ws: str, *, bucket: str, dir: str, user_id: str, link_id: str, agent: str, label: str, text: str,
           selections: list[dict], message_id: str = "", model: str = "", effort: str = "", speed: str = "",
           remote: bool = False, computer: str = "", computer_id: str = "", thread_id: str = "",
-          comment_id: str = "", agent_id: str = "", owner: str = "", resume: str = "") -> tuple[dict, dict, bool]:
-    """A turn begins: the person's message and the agent's ``queued`` one
+          comment_id: str = "", agent_id: str = "", owner: str = "", resume: str = "",
+          skill: dict | None = None) -> tuple[dict, dict, bool]:
+    """A turn begins: the person's message (with the ``skill`` it ran,
+    ``{id, name, args}``, its text the arguments) and the agent's ``queued`` one
     (with the ``model``, ``effort`` and ``speed`` the turn asks for, None
     for the agent's default) written in the bucket's active conversation, or with
     ``thread_id`` in the account's conversation of that comment thread
@@ -450,8 +481,8 @@ def begin(ws: str, *, bucket: str, dir: str, user_id: str, link_id: str, agent: 
     ``computer``) here (``computer_chat_runs``, ``queued``, with its
     ``agent``), in one step under the write lock → ``(the conversation, the
     agent's message, whether the turn is new)``. A conversation is started,
-    titled by the message, when the bucket (or the thread) has none, or
-    when its own works elsewhere than ``dir`` (``place_of``'s, or a far
+    titled by the message (``/name args`` for a skill's), when the bucket
+    (or the thread) has none, or when its own works elsewhere than ``dir`` (``place_of``'s, or a far
     seat's) or with another ``agent`` on another computer, or another
     ``owner``'s (the account whose agent it is, the turn's own but for a
     co-author's): that one is archived, so a conversation never changes its
@@ -481,8 +512,8 @@ def begin(ws: str, *, bucket: str, dir: str, user_id: str, link_id: str, agent: 
             _archive(conn, conversation)
             conversation = None
         if conversation is None:
-            conversation = _insert(conn, bucket=bucket, dir=dir, user_id=user_id, agent=agent, title=title_of(text),
-                                   now=now, thread_id=thread_id, owner=owner, computer=computer_id)
+            conversation = _insert(conn, bucket=bucket, dir=dir, user_id=user_id, agent=agent,
+                                   title=skills.title(skill, text), now=now, thread_id=thread_id, owner=owner, computer=computer_id)
             opener = get(conn, resume) if resume and thread_id else None
             session = store.conversation_of(resume) if opener is not None else None
             if (session is not None and busy(opener) is None and opener["user_id"] == user_id
@@ -492,7 +523,8 @@ def begin(ws: str, *, bucket: str, dir: str, user_id: str, link_id: str, agent: 
                                        session=session["session"], cwd=session["cwd"])
         turn_id = new_block_id()
         person = {"id": message_id or new_block_id(), "role": "user", "text": text, "selections": selections,
-                  "at": now, **({"comment_id": comment_id} if thread_id else {})}
+                  "at": now, **({"comment_id": comment_id} if thread_id else {}),
+                  **({"skill": skill} if skill else {})}
         reply = {"id": new_block_id(), "role": "agent", "agent": agent, "label": label, "turn_id": turn_id,
                  "state": "queued", "text": "", "steps": [], "asks": [], "changes": [], "changed": 0, "built": False,
                  "error": "", "fresh": False, "model": model or None, "effort": effort or None,

@@ -72,7 +72,8 @@
 /* Tips fade in where they stand: hovering along a row of buttons shows one
    after another, and a tip that grew would trail the pointer. The PDF
    selection popup (.plainTip), a note's selection toolbar (.selTools) and
-   the caret's popups ("/", [[, @, the LaTeX completion and preview) fade
+   the caret's popups ("/", [[, @, the LaTeX completion and preview, and
+   the chat composer's "@" and "/" pickers) fade
    in quickly, so typing never waits on one. A highlight's review card
    (.hlReviewCard) opens on a hover too. */
 .inkTooltip,
@@ -85,6 +86,7 @@
 .selTools,
 .refPopup,
 .slashMenu,
+.chatMentionPicker,
 .mathPreviewTip,
 .latexAcPopup {
   animation: fade-in var(--dur-fast);
