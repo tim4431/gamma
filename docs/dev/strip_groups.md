@@ -27,9 +27,8 @@ measures and rules, read from Chromium's source, are in
   line of its colour runs along the strip's foot, where the active tab
   meets the page, from under the chip to its last tab, and rises round the
   group's active tab as its outline, flaring back into the line at the
-  tab's feet as Chrome's does (in a pane's strip, which stands on the
-  head's border, it meets the outline square). A collapsed group is its
-  chip alone. The *All open tabs* list shows a grouped tab's dot.
+  tab's feet as Chrome's does (in a pane's strip the line runs along the
+  head's border). A collapsed group is its chip alone. The *All open tabs* list shows a grouped tab's dot.
 - **Collapse.** A click on the chip (Enter or Space on it) hides the
   group's tabs; the chip stays. Collapsing the group the strip's page is
   in opens first the nearest tab outside the group, after it first, then
@@ -180,20 +179,33 @@ scheme and white on the light one, but on the light yellow and orange
 choice Chrome's `GetColorWithMaxContrast` makes. `groupTint(color)` sets
 `--strip-group` and `--strip-group-ink` on a chip, a tab, a dot and a swatch.
 
-In app.css the chip is an item as tall as a tab (a drop and a drag take it
-as one, and its stretch of the line stands where the tabs' do) holding the
-20 px pill with Chrome's 6 px corners; the keyboard's ring goes round the
-pill. The line is 2 px with round ends, at the foot of the strip's band
-(`--tab-band`, the room under the tabs the active tab fills to join the
-page: the topbar's padding and border, or a pane head's border alone).
-Each item draws its stretch (`.stripGroupLine`), reaching over the gap
-(`--tab-gap`) to the next; the chip's starts under its pill, the last
-tab's (`.groupEnd`) stops short of its end. The open group's active tab
-wears the colour as its border and an inset shadow (2 px, nothing moves),
-its band narrowed inside them, and its stretch becomes two feet: the
-corners of boxes `--tab-foot` square whose stroke comes down beside the
-band and turns out into the line. A pane's strip has a 1 px band and a
-2 px foot, a square joint.
+In app.css the chip (`.stripGroupChip`) is an item as tall as a tab: a
+drop and a drag take it as one, and its stretch of the line stands where
+the tabs' do. It holds the pill (`.stripGroupPill`, 20 px with Chrome's
+6 px corners), which is the button: the keyboard reaches it and its ring
+goes round it, and it zooms with the Interface size as every control does
+while the item, like the tabs, does not, so the line under it stays level.
+
+The line is 2 px at the foot of the strip's band (`--tab-band`, the room
+under the tabs the active tab fills to join the page: the topbar's padding
+and border, or a pane head's border alone). Each item draws its stretch
+(`.stripGroupLine`) over the gap (`--tab-gap`) to the next and a pixel into
+it, square, so the stretches meet without a seam at any screen scale; the
+chip's starts under its pill, the last tab's (`.groupEnd`) stops short of
+its end, and those two ends are round.
+
+The open group's active tab draws `.stripGroupOutline` instead, one outline
+of 2 px borders laid over the tab and its band (`z-index` 1; the tab's own
+border and the band's go clear): its top and sides, the tab's top corners,
+down to `--tab-foot` above the strip's foot, then a foot each side
+(`::before`, `::after`), a box `--tab-foot` square whose border carries the
+side on down and turns out into the line, as Chrome's tab flares. The
+three are borders on the same columns. The sides reach 2 px into the feet,
+through a transparent bottom border the feet hang from: at a screen scale
+that puts an edge inside a device pixel (125 %, 150 %), sides that stopped
+where the feet start paled there, and the outline with no bottom border
+leaked a sliver of its colour along its bottom edge. The flare fits a pane's
+strip too, rising from the head's border into the tab.
 
 ## Tests
 
