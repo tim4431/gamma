@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import (agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_steer, ai_usage,
-                chatgpt_oauth, net_proxy, search_services, translate_engines)
+                chatgpt_oauth, fetch_handoff, net_proxy, search_services, translate_engines)
 from ..ai_client import (
     Alarm,
     CallRefused,
@@ -1580,6 +1580,9 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
             # (gamma/fetch_handoff.py), whose delivered PDFs fetch_paper and
             # fetch_url read.
             "handoff_user": personal,
+            # The requests this reply's fetch_paper calls asked for: a reply
+            # its client left lets them go (ai_chat's agent_ndjson).
+            "handoffs": [],
             # Whether such a fetch waits on its card inside this reply
             # (ai_agent.PaperWait): the prompt tells the model which it is.
             "paper_wait": bool(payload.paper_wait and can_ask and personal),
@@ -2055,6 +2058,14 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     finally:
                         if steering:
                             steering.close()
+                        # A reply its client left (Stop, a dropped connection)
+                        # lets go of the paper requests it asked for, as the
+                        # card's Dismiss does: nobody waits on them now, so
+                        # Background tasks and Gamma Connector leave them.
+                        # One the user's browser already delivered stays.
+                        if stopped.is_set():
+                            for rid in scope["handoffs"]:
+                                fetch_handoff.dismiss(scope["handoff_user"], rid)
 
                 return WatchedStream(keepalive_lines(agent_ndjson(), "ai_chat", abandoned=stopped, inbox=inbox),
                                      stopped, media_type="application/x-ndjson")

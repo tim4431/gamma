@@ -29,6 +29,8 @@ import ChatQueue from "./ChatQueue.jsx";
 import { noteReview } from "./noteReview.js";
 import { GRANTS_KEY, conversationId, grantsIn, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
+import { letGoOf, stoppedRequests } from "./fetchHandoff.js";
+import { connectorTab } from "../shared/lib/connector.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
 import { addUsage, contextUsed, conversationUsage, fmtTokens, usageDetail } from "./tokenUsage";
@@ -58,7 +60,7 @@ import { formatOf } from "../documents/formats.js";
 import ChipPreview from "./ChipPreview.jsx";
 import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
 import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, EyeIcon, FileIcon,
-  HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteIcon, QuoteMarkIcon, SearchIcon,
+  HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteMarkIcon, SearchIcon,
   SettingsIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
@@ -152,7 +154,7 @@ function useModelInfo(modelId) {
 // attached — it rides along because of where the cursor is — with a dashed
 // border; `kind` is the modifier class (isCursor / isBlock / isNote /
 // isInk; none for a PDF passage).
-const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteIcon, block: OutlineIcon, ink: PenIcon, quote: QuoteMarkIcon };
+const SEL_CHIP_ICONS = { cursor: TextCursorIcon, selection: HighlightIcon, passage: QuoteMarkIcon, block: OutlineIcon, ink: PenIcon, quote: QuoteMarkIcon };
 
 export function SelChip({ kind, icon, label, note, file = "", cut, auto = false, text, title, onRemove, removeTitle }) {
   const Glyph = SEL_CHIP_ICONS[icon];
@@ -1666,6 +1668,18 @@ export default function ChatDock({
       if (allActions.some(isChange)) guideEvents.emit("chat.changed");
     } catch (err) {
       const stopped = err?.name === "AbortError";
+      if (stopped) {
+        // Stop lets go of the paper requests the reply asked for, as each
+        // card's Dismiss would (the server does too as the reply ends):
+        // Background tasks drops them, Gamma Connector closes a tab it kept
+        // for one, and the cards under the reply say so.
+        for (const id of stoppedRequests(allActions, handoffs)) {
+          apiJson(`${API}/ai/handoffs/${encodeURIComponent(id)}/stop`, { method: "POST" }).catch(() => {});
+          connectorTab(id, "close");
+        }
+        actions = letGoOf(actions);
+        before.forEach((m, i) => { if (m.actions) before[i] = { ...m, actions: letGoOf(m.actions) }; });
+      }
       // fetch's own TypeError ("Failed to fetch", or the body reader's
       // "network error") means the connection to the server was lost, not
       // that the provider failed — the server says that in-band.
