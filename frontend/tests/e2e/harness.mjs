@@ -155,8 +155,10 @@ export class Server {
     return stdout;
   }
   // `port`: the one it had (a server started again at its address, with
-  // another certificate); a free one otherwise.
-  async start({ port = 0 } = {}) {
+  // another certificate); a free one otherwise. `setup` false leaves out
+  // manage.py's setup and options, as the Docker entrypoint does for a data
+  // directory the server will refuse (a newer Gamma's: standby.mjs).
+  async start({ port = 0, setup = true } = {}) {
     if (this.serveApp && !fs.existsSync(path.join(DIST, "index.html"))) throw new Error("frontend/dist is missing: run `npm run build` first");
     if (path.isAbsolute(PYTHON) && !fs.existsSync(PYTHON)) throw new Error(`backend venv python not found at ${PYTHON}`);
     fs.mkdirSync(this.dataDir, { recursive: true });
@@ -164,8 +166,10 @@ export class Server {
     // replaces dist/ and would otherwise 500 every page load until it ends.
     const dist = path.join(this.dir, "dist");
     if (this.serveApp) fs.cpSync(DIST, dist, { recursive: true });
-    await this.manage("setup");
-    await this.manage("set-option", ...Object.entries(this.options).flat().map(String));
+    if (setup) {
+      await this.manage("setup");
+      await this.manage("set-option", ...Object.entries(this.options).flat().map(String));
+    }
     this.port = port || await freePort();
     this.agent = null;
     const log = fs.openSync(this.logPath, "a");

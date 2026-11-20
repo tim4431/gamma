@@ -65,7 +65,7 @@ import pytest
 
 from conftest import account_of, fresh_client, login, make_folder, make_page, make_user, thread_on
 from fake_agents import read_log, requests_in, script_agent, serve_mcp, settle_probes, use_fakes
-from gamma import agents, config, folder_links, gamma_sync, integrations, pdf_meta, storage, workspaces
+from gamma import agents, config, folder_links, gamma_sync, integrations, pdf_meta, skills, storage, workspaces
 from gamma.blocks_store import new_block_id
 from gamma.computers import channel, registry, sessions as computer_sessions
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
@@ -731,6 +731,24 @@ def test_the_makers_message_there_runs_here_and_its_reply_is_written_there(lab, 
     assert store.get_turn(turn_id) is None                                 # never a turn of this server's
     there = _run_there(lab, turn_id)
     assert (there["state"], there["run"], there["holder"]) == ("done", home.chat_run_id(turn_id), f.token["id"])
+
+
+def test_a_skill_message_there_runs_here_with_the_instructions_that_server_rendered(lab, nas):
+    f = _made(lab, nas, "RC skill")
+    f.turn.once()                                                          # its announce says it runs skills
+    made = skills.create(lab.user, skills.clean_fields("rch-tighten", "Tighten a passage.", "",
+                                                       "Tighten $ARGUMENTS.\n\n```\nkeep this\n```", True))
+    try:
+        _say(lab.owner, f.page, "the abstract", skill={"id": made["id"], "name": "rch-tighten", "args": "the abstract"})
+        f.turn.once()
+        assert runner.wait_idle(60)
+        assert _reply(lab, f.page)["state"] == "done"
+        text, message = _told(nas.log)
+        assert message["message"] == "the abstract"
+        section = text.split("## The skill /rch-tighten\n", 1)[1].split("## The message\n", 1)[0]
+        assert "Tighten the abstract." in section and "``​`\nkeep this" in section
+    finally:
+        skills.update(lab.user, lambda value: value["skills"].clear())
 
 
 def test_a_message_steered_there_reaches_the_turn_here_once_and_joins_its_message_there(lab, nas, monkeypatch):

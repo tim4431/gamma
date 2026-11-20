@@ -21,8 +21,12 @@ export const STRIP_GROUP_COLORS = [
 const COLORS = STRIP_GROUP_COLORS.map(([name]) => name);
 export const MAX_GROUP_TITLE = 40;
 // A colour's look on a chip, a tab, a dot or a swatch: the component-local
-// --strip-group the CSS paints with.
-export const groupTint = (color) => ({ "--strip-group": `var(--strip-group-${color})` });
+// --strip-group the CSS paints with, and --strip-group-ink, the chip's name
+// on it (tokens.css: a colour's own where the scheme names one).
+export const groupTint = (color) => ({
+  "--strip-group": `var(--strip-group-${color})`,
+  "--strip-group-ink": `var(--on-strip-group-${color}, var(--on-strip-group))`,
+});
 
 // A stored group as it is kept: an id, a title, a known colour, collapsed
 // only when true. Null for what is not one.

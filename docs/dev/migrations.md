@@ -56,19 +56,25 @@ workspace's files), `db.SCHEMA_VERSION` and `db.WS_VERSION_BASE`,
    thing `app.create_app` does, before any table is opened. A data
    directory that is *ahead* of the binary (`NewerDataError`), older than
    `MIN_UPGRADABLE` (`TooOldDataError`) or whose upgrade failed is not
-   served: the server comes up with one page instead
-   (`app._blocked_app`), the same guidance at every address and as a 503
-   JSON under `/api`, built by `migrations.guidance()` and printed by
-   `manage.py migrate` too. The guidance is `{title, status, summary,
-   steps, fallback}`: `status` is the calm line that comes first (the
-   data is intact; the other workspaces are served), `steps` the way
-   forward, `fallback` the folded-away other way. For data a newer Gamma
-   wrote, the way forward is to update this one (`docker compose pull`,
-   the newer desktop release); restoring that Gamma's pre-upgrade
-   snapshot to stay on this release is the fallback. For data below the
-   floor it names the release to run once (below, "Below the floor").
-   Serving a page rather than exiting
-   keeps a restarting container from looping on a log line nobody reads.
+   served: the server comes up as the standby app instead
+   (`gamma/standby.py`, "When the server cannot open the library" below),
+   the guidance as a 503 JSON under `/api`, which the app's own page shows at
+   every address, built by `migrations.guidance()` and printed by `manage.py
+   migrate` too. The guidance is `{kind, title, status, summary, steps,
+   fallback, details}`: `kind` is `newer`, `too_old`, `workspace` or
+   `failed`; `status` is the calm line that comes first (the data is
+   intact; the other workspaces are served), `steps` the way forward,
+   `fallback` the folded-away other way, `details` the technical lines the
+   page folds away. For data a newer Gamma wrote, the way forward is to
+   update this one, in one sentence for how it was installed
+   (`migrations.UPDATE_STEPS` by `version.channel()`: TestFlight, the
+   Android APK, the desktop app's updater, its two stores, a Docker image,
+   a checkout); the schema numbers and, on a Docker server or a checkout,
+   restoring the newer Gamma's pre-upgrade snapshot to stay on this
+   release are its `details`. For data below the floor it names
+   the release to run once (below, "Below the floor"). Serving a page
+   rather than exiting keeps a restarting container from looping on a log
+   line nobody reads.
    `db.connect_users_db()` refuses an outdated file too (`SchemaOutdated`), so
    no code path can read old shapes with new assumptions. That refusal
    covers every `manage.py` command but `migrate`, which is why the Docker
@@ -164,6 +170,82 @@ has been changed. Raising the floor again is one commit: delete the steps
 below it, their frozen schema statements and their tests, move
 `MIN_UPGRADABLE`, and point `UPGRADE_VIA` at the newest image that still
 has them. Do it once your own deployments have passed the new floor.
+
+## When the server cannot open the library
+
+`standby.standby_app(guide)` is what `create_app` returns when the runner
+refuses. It never opens a database the way the app does: no router, no
+background round, and never `db.connect_users_db`, which would apply this
+build's schema statements to a newer file. What it reads goes through
+`standby._reading`, a `query_only` connection, with queries that name only
+columns every release has had; a file that answers them otherwise counts
+as not known. Its responses carry the app's baseline security headers
+(`auth._apply_security_headers` lives in the middleware it lacks).
+
+Every `/api` path answers the guidance as a 503 JSON (`error:
+data_directory_not_upgradable`, the shells' health rule), and every other
+address the app's own shell (`spa.serve`, the built frontend's files and
+`index.html`, as the app serves them). The app's first read, the server's
+config, gets that 503, and `PageHostGate` shows `auth/StandbyPage.jsx`
+instead of mounting the app: the page follows [ui-design.md](ui-design.md)
+"Sign-in and status pages" (`AuthShell`, the app's buttons and boxes, the
+account's theme and language). A server without a frontend build (a
+checkout run by hand, whose page is Vite's) answers the guidance in a plain
+page. A library too old to upgrade, or an upgrade that stopped, shows the
+guidance's own words for whoever runs the server. For a library a newer
+Gamma wrote (`kind` `newer`):
+
+- **The page** leads with the calm line (a `LoginNotice`), a one-line lead
+  and one primary button to where Gamma is updated, by how it was
+  installed: the 503's `install` (`version.install_info`, the dashboard's
+  build fields) carries `channel` (`version.channel`: the server's
+  `GAMMA_UPDATES`, the system for the mobile apps, a stamped version for
+  Docker), which the page words with Settings → Server's Updates row
+  (`shared/lib/updates.js`): TestFlight on the iPad (`itms-beta://`, which
+  the shell hands to the system), the releases page for the Android APK
+  and a GitHub desktop install (whose line names the app's own updater,
+  which a server's page cannot start), the Microsoft Store's updates page,
+  the Mac App Store's listing. A Docker server or a checkout gets no
+  button, only the line its admin acts on (pull the image, build the
+  branch, update the checkout). Under a "Can't update right now?" rule
+  comes the copy to save, and the schema numbers, the build, the data
+  folder and a server's restore route fold under Technical details.
+- **Sign-in.** `GET /api/session` (200 `{user, default_workspace: "",
+  workspaces: [], standby: true}`) and `POST /api/login` keep the app's
+  contract, so the desktop, iPad and Android shells sign their seeded
+  account in as on any start and their users never see a form; a browser
+  gets one. The login is checked as `routers/auth.login` checks it (the
+  same rate limits, never a guest or an account without a password) and
+  kept in this process's memory under the cookie `gamma_standby`; the
+  app's own `session` cookie is recognised too, read and never written.
+  Nothing is written to `users.db`.
+- **Save a copy.** As Settings → Workspaces offers it, with its widgets
+  (`Section`, `Row`, `ActionMenu`): the admin's own workspaces under
+  Personal and Shared, each with Export (Everything or Databases only),
+  and Export all on Personal, every personal workspace's export in one zip
+  (`ws_backup.write_bundle`, which Export all's job writes too). The page
+  reads `GET /api/standby` (`{user, admin, workspaces, export}`); `POST
+  /api/standby/export` makes the copy in a thread (`standby.Export`, with
+  `ws_backup.zip_files` and the names read here), reported in a
+  workspace-export job's shape so the page shows it as Settings shows one
+  (`TaskBlock`), then downloads it from `GET /api/standby/export/file`
+  through `saveUrl`, the browser's download or the iPad's and Android's
+  own save. The copy lives in this process's temp folder until the next
+  one. An up-to-date Gamma restores each export from Settings →
+  Workspaces → Data. A member is told to ask an admin: the newer files
+  may hold tables of each member's own, or rules on who sees what, that
+  this build does not know, while an admin holds the files already. On a
+  device's own server the seeded account is the admin.
+
+Going back to the newer Gamma's pre-upgrade snapshot stays the operator's
+route under Technical details on a server (`manage.py backups --restore`,
+server stopped), and is no button: rewinding a library restarts its links
+(published pages, Zotero, offline copies, folders on disk) from the older
+state and brings back what was revoked since. `tests/test_standby.py`
+covers the guidance on each channel, the app's shell and the plain page,
+the sign-in writing nothing, a member, and an admin's copies (one
+workspace's and Export all's) restoring in a current Gamma; the browser
+suite's `standby` group the page itself.
 
 ## Versions
 

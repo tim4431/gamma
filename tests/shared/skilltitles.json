@@ -1,0 +1,13 @@
+{
+  "about": "How a chat message that ran a skill reads outside the model's turn (docs/dev/skills.md 'Titles and exports'): gamma/skills.py display and title, frontend/src/chat/skills.js skillText and skillTitle. display is the whole message as Copy message, the export and an agent's earlier messages show it: '/name', then a space and the text, or a blank line and the text when it opens with a quoted passage; the text alone without a skill. title is a conversation's name when the user never gave one: the first non-blank line that is not a quote, after '/name' when the message ran a skill, its blanks folded to one space and cut to 80 characters.",
+  "cases": [
+    {"skill": null, "text": "What does Fig. 2 show?", "display": "What does Fig. 2 show?", "title": "What does Fig. 2 show?"},
+    {"skill": null, "text": "> a passage\n\nWhy?", "display": "> a passage\n\nWhy?", "title": "Why?"},
+    {"skill": {"id": "builtin:summarize", "name": "summarize", "args": ""}, "text": "", "display": "/summarize", "title": "/summarize"},
+    {"skill": {"id": "builtin:summarize", "name": "summarize", "args": "the methods"}, "text": "", "display": "/summarize", "title": "/summarize"},
+    {"skill": {"id": "builtin:summarize", "name": "summarize", "args": "the methods"}, "text": "the methods", "display": "/summarize the methods", "title": "/summarize the methods"},
+    {"skill": {"id": "builtin:review", "name": "review", "args": "the methods"}, "text": "> a passage\n\nthe methods", "display": "/review\n\n> a passage\n\nthe methods", "title": "/review the methods"},
+    {"skill": {"id": "builtin:explain", "name": "explain", "args": ""}, "text": "> only a passage", "display": "/explain\n\n> only a passage", "title": "/explain"},
+    {"skill": {"id": "x1", "name": "journal-club", "args": "a  b"}, "text": "a  b\nsecond line", "display": "/journal-club a  b\nsecond line", "title": "/journal-club a b"}
+  ]
+}

@@ -19,7 +19,7 @@ from ..ai_context import DEPRECATED_TOOLS, canonical_tool
 from ..db import connect_pages_db
 from ..jobs import error_text
 from ..logbuf import log
-from . import annotations, commenting, drawing, folders, library, notes, organizing, pages, reading, viewing, web
+from . import annotations, commenting, drawing, folders, library, notes, organizing, pages, reading, skills, viewing, web
 from .base import READ_CHARS_DEFAULT, _ARG_CAP, _DETAIL_CAP, _read_cap, ensure_tally, notes_seen
 
 # One entry per tool, each family's beside its executors: wire spec, Settings
@@ -28,7 +28,7 @@ from .base import READ_CHARS_DEFAULT, _ARG_CAP, _DETAIL_CAP, _read_cap, ensure_t
 # that changes something, the preview its approval card shows
 # (approval_preview). The order is the one the model and an MCP client list.
 TOOLS = [*reading.TOOLS, *annotations.TOOLS, *viewing.TOOLS, *library.TOOLS, *web.TOOLS, *organizing.TOOLS,
-         *folders.TOOLS, *notes.TOOLS, *commenting.TOOLS, *drawing.TOOLS, *pages.TOOLS]
+         *folders.TOOLS, *notes.TOOLS, *commenting.TOOLS, *drawing.TOOLS, *pages.TOOLS, *skills.TOOLS]
 _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
 # Deprecated names stay dispatchable (never offered) so a model copying an
 # old name out of replayed history is still served, not refused.
@@ -69,9 +69,23 @@ def available(scope: dict) -> frozenset:
     TOOLS entry it meets — a web engine for search_web, a second agent for
     read_paper (only a live chat on a provider connection has one), the app
     for show_page and export (a streamed chat whose client shows pages and
-    downloads files: ``app``, routers/ai.py ``_chat_scope``)."""
+    downloads files: ``app``, routers/ai.py ``_chat_scope``), and a skill
+    the assistant may load on its own for load_skill (``skills``, the
+    request's catalog)."""
     return frozenset({"web_engine"} if scope.get("web_engine") else ()) | frozenset(
-        {"helper"} if scope.get("delegates") else ()) | frozenset({"app"} if scope.get("app") else ())
+        {"helper"} if scope.get("delegates") else ()) | frozenset({"app"} if scope.get("app") else ()) | frozenset(
+        {"skills"} if any(s.get("model") for s in scope.get("skills") or ()) else ())
+
+
+def replayed(name: str) -> dict | None:
+    """The TOOLS entry of a tool whose calls render their own result again
+    on a later request (``replay(catalog, action) -> str``: load_skill,
+    whose saved action keeps only a stub), else None. ai_context replays
+    them outside the replay budget and keeps their results within a reply
+    (``elide_live_results``), except on the emergency retry, which leaves
+    the entry's ``elided`` stub."""
+    tool = _BY_NAME.get(canonical_tool(name or ""))
+    return tool if tool and tool.get("replay") else None
 
 
 def tool_permission(name: str) -> str:
@@ -263,7 +277,11 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
         # show it (settled_action).
         return result, {**settled_action(name, args, result), **took}
     images = action.pop("images", None)
-    chip = tool_action(action["kind"], action["summary"], name, args, result,
+    # An executor may keep another copy of its result on the chip than the
+    # model got (``result`` on its action): load_skill saves a stub, never
+    # the instructions, into a conversation others may read.
+    saved = action.pop("result", result)
+    chip = tool_action(action["kind"], action["summary"], name, args, saved,
                        error=bool(action.get("error")),
                        **{k: v for k, v in action.items()
                           if k not in ("kind", "summary", "error")}, **took)

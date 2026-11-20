@@ -31,7 +31,9 @@
   background: var(--bg-page);
   flex-shrink: 0;
 }
-.tabGroupHead .tabStrip { padding-top: 3px; }
+/* Its tabs stand on the head's border, the band the active tab fills to the
+   page (app.css .tabStrip): a strip group's line runs along that border. */
+.tabGroupHead .tabStrip { padding-top: 3px; --tab-band: 1px; }
 /* The topbar items placed in the panes, at the strip's end: the topbar's
    own buttons (.topbar, as the phone's bottom bar keeps it), without the
    bar's frame. A pane that is not live holds buttons standing in for them,

@@ -988,7 +988,8 @@ version), each workspace's own ones when it is first opened after the
 upgrade or by the background walk after startup (its `pages.db` has a
 `user_version` of its own; a new workspace is stamped current). A
 directory this build cannot upgrade (newer, or below `MIN_UPGRADABLE`) is
-not served: the server shows one page saying what to run instead.
+not served: the server shows one page saying what to do instead
+(`gamma/standby.py`).
 `db.connect_users_db()` raises
 `SchemaOutdated` on an old file so nothing reads it with new assumptions;
 a workspace whose own step fails answers a 503 with the guidance while the

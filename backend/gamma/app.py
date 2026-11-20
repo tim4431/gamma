@@ -1,22 +1,18 @@
 """FastAPI application assembly: middleware, routers, startup maintenance, SPA serving."""
 
 import asyncio
-import html
-import mimetypes
 import os
-import re
 import ssl
 import sys
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import anyio
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
 from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, offsite, reports
-from . import sync_engine, trash, upload_gc, version, workspaces, ws_backup, zotero_stream
+from . import spa, standby, sync_engine, trash, upload_gc, version, workspaces, ws_backup, zotero_stream
 from .annotations import listeners as annotation_listeners
 from .computers import channel as computer_channel
 from . import local_agents
@@ -62,6 +58,7 @@ from .routers import (
     reports as reports_router,
     search,
     shares,
+    skills as skills_router,
     sync,
     trash as trash_router,
     translate,
@@ -136,7 +133,7 @@ def _upgrade_data_directory() -> dict | None:
     when it is current, else the guidance for the person running the
     server: the directory is newer than this build, older than it can
     upgrade, or a step failed. The server then serves that guidance
-    (``_blocked_app``) instead of exiting, so a container that restarts on
+    (``standby.standby_app``) instead of exiting, so a container that restarts on
     its own shows the page at the usual address rather than looping on a
     message in its log."""
     try:
@@ -146,104 +143,13 @@ def _upgrade_data_directory() -> dict | None:
         log.error(f"[startup] {guide['title']}: {guide['summary']}")
         for n, step in enumerate(guide["steps"], 1):
             log.error(f"[startup]   {n}. {step}")
+        for line in guide["details"]:
+            log.error(f"[startup]   - {line}")
         return guide
     if done["applied"]:
         log.info(f"[startup] data directory upgraded from schema version {done['from']} "
                  f"to {done['to']} ({', '.join(done['applied'])}); snapshot: {done['backup']}")
     return None
-
-
-# A page of its own: it is served when the app cannot start, before the
-# frontend build and its theme tokens are involved, so its light and dark
-# palettes are spelled out here rather than taken from the design system.
-_BLOCKED_PAGE = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · Gamma</title>
-<style>
-  :root {{ color-scheme: light dark; --fg: #1f2328; --muted: #59636e; --bg: #f6f8fa; --card: #ffffff;
-           --line: #d0d7de; --accent: #3a7bd5; --code: #eff2f5; --ok-bg: #dafbe1; --ok-fg: #1a7f37; }}
-  @media (prefers-color-scheme: dark) {{
-    :root {{ --fg: #e6edf3; --muted: #9198a1; --bg: #0f1115; --card: #16181d; --line: #2d333b;
-             --accent: #5b9bf0; --code: #22262d; --ok-bg: #12341f; --ok-fg: #56d364; }}
-  }}
-  body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box;
-         font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }}
-  main {{ width: 100%; max-width: 600px; }}
-  .brand {{ margin: 0 4px 12px; color: var(--muted); font-size: .85rem; font-weight: 600; letter-spacing: .02em; }}
-  .card {{ background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 28px 28px 24px;
-          box-shadow: 0 1px 2px rgba(0,0,0,.04); }}
-  .status {{ display: inline-flex; align-items: center; gap: 7px; margin: 0 0 14px; padding: 3px 11px 3px 9px;
-            border-radius: 999px; background: var(--ok-bg); color: var(--ok-fg); font-size: .8rem; font-weight: 600; }}
-  .status::before {{ content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }}
-  h1 {{ font-size: 1.3rem; line-height: 1.3; margin: 0 0 10px; letter-spacing: -.01em; overflow-wrap: anywhere; }}
-  p {{ margin: 0 0 20px; color: var(--muted); }}
-  h2 {{ font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }}
-  ol {{ margin: 0; padding: 0; list-style: none; counter-reset: step; }}
-  ol li {{ position: relative; padding-left: 34px; margin: 0 0 12px; counter-increment: step; }}
-  ol li::before {{ content: counter(step); position: absolute; left: 0; top: 1px; width: 22px; height: 22px;
-                  border-radius: 50%; background: var(--accent); color: #fff; font-size: .75rem; font-weight: 700;
-                  display: grid; place-items: center; }}
-  details {{ margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }}
-  summary {{ cursor: pointer; color: var(--muted); font-weight: 600; font-size: .9rem; }}
-  details ul {{ margin: 10px 0 0; padding-left: 1.2em; color: var(--muted); }} details li {{ margin: 6px 0; }}
-  code {{ font: .88em/1.4 ui-monospace, Consolas, monospace; padding: 1px 5px; border-radius: 5px;
-          background: var(--code); overflow-wrap: anywhere; }}
-  a {{ color: var(--accent); }}
-  .meta {{ margin: 14px 4px 0; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }}
-</style></head>
-<body><main>
-<div class="brand">Gamma</div>
-<div class="card">
-<div class="status">{status}</div>
-<h1>{title}</h1>
-<p>{summary}</p>
-<h2>What to do</h2>
-<ol>{steps}</ol>
-{fallback}
-</div>
-<p class="meta">Gamma {build} · data directory <code>{data_dir}</code> · snapshots in <code>{backups_dir}</code> ·
-<a href="https://github.com/tim4431/gamma/blob/main/docs/dev/migrations.md">how upgrades work</a></p>
-</main></body></html>
-"""
-_FALLBACK = """<details><summary>{lead}</summary><ul>{steps}</ul></details>"""
-
-
-def _guide_html(text: str) -> str:
-    """Guidance text as HTML: escaped, `code` spans marked up, bare
-    https:// addresses made links."""
-    def plain(part: str) -> str:
-        return re.sub(r"https://[^\s<>\"']*[^\s<>\"'.,;:)]", lambda m: f'<a href="{m[0]}">{m[0]}</a>', part)
-    parts = html.escape(text).split("`")
-    return "".join(f"<code>{p}</code>" if i % 2 else plain(p) for i, p in enumerate(parts))
-
-
-def _blocked_app(guide: dict) -> FastAPI:
-    """The app served while the data directory cannot be upgraded by this
-    build: one page with the guidance at every address, and a 503 with the
-    same text as JSON under /api, so a browser, a script and the desktop
-    shell all learn what to do. The page leads with the calm line (the
-    data is intact) and the way forward, and folds the other way away.
-    Nothing else runs: no routers, no background rounds, nothing that
-    would open the databases."""
-    app = FastAPI(title="Gamma PDF Annotator", docs_url=None, redoc_url=None, openapi_url=None)
-    fallback = guide["fallback"]
-    page = _BLOCKED_PAGE.format(
-        title=html.escape(guide["title"]), status=html.escape(guide["status"]), summary=_guide_html(guide["summary"]),
-        steps="".join(f"<li>{_guide_html(s)}</li>" for s in guide["steps"]),
-        fallback=_FALLBACK.format(lead=html.escape(fallback["lead"]),
-                                  steps="".join(f"<li>{_guide_html(s)}</li>" for s in fallback["steps"]))
-        if fallback["steps"] else "",
-        build=html.escape(version.label()), data_dir=html.escape(guide["data_dir"]),
-        backups_dir=html.escape(guide["backups_dir"]))
-    body = {"error": "data_directory_not_upgradable", "build": version.label(), **guide}
-
-    @app.api_route("/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
-    def blocked(path: str):  # awaits nothing: a def, off the event loop
-        if path == "api" or path.startswith("api/"):
-            return JSONResponse(body, status_code=503, headers={"Retry-After": "60"})
-        return HTMLResponse(page, status_code=503, headers={"Retry-After": "60"})
-
-    return app
 
 
 def _startup_maintenance():
@@ -388,7 +294,7 @@ def create_app() -> FastAPI:
         raise SystemExit(1)
     guide = _upgrade_data_directory()
     if guide:
-        return _blocked_app(guide)
+        return standby.standby_app(guide)
     mcp = LazyMCP()
     @asynccontextmanager
     async def lifespan(app):
@@ -466,6 +372,7 @@ def create_app() -> FastAPI:
     app.include_router(ai_handoffs.router)
     app.include_router(chats.router)
     app.include_router(chats.history_router)
+    app.include_router(skills_router.router)
     app.include_router(prefs.router)
     app.include_router(notices.router)
     app.include_router(inbox_router.router)
@@ -506,87 +413,9 @@ def create_app() -> FastAPI:
     app.include_router(zotero_router.router)
     app.include_router(zotero_sync_router.router)  # importing it registers the Zotero link's clock
 
-    # Serve the built frontend (SPA) when GAMMA_STATIC_DIR is set.
-    # Registered last so all /api routes take precedence.
-    static_dir = Path(config.STATIC_DIR) if config.STATIC_DIR else None
-    if static_dir and static_dir.is_dir():
-        index_html = static_dir / "index.html"
-        # Pin browser-critical types instead of trusting the OS MIME table.
-        # Windows registry entries can label .mjs as text/plain, preventing
-        # Chromium from loading the PDF worker; slim images can lack types.
-        media_types = {
-            ".html": "text/html",
-            ".css": "text/css",
-            ".js": "text/javascript",
-            ".mjs": "text/javascript",
-            ".webmanifest": "application/manifest+json",
-            ".woff2": "font/woff2",
-        }
-
-        # The build writes a Brotli and a gzip copy beside every compressible
-        # file (frontend/vite.config.js); the first the request accepts is
-        # sent in the file's place.
-        precompressed = (("br", ".br"), ("gzip", ".gz"))
-
-        def accepted_codings(request: Request) -> set[str]:
-            """The content codings the request's Accept-Encoding names, less
-            those it refuses (``q=0``)."""
-            codings = set()
-            for item in request.headers.get("accept-encoding", "").lower().split(","):
-                name, _, q = item.partition(";")
-                try:
-                    if float(q.strip().removeprefix("q=") or 1) > 0:
-                        codings.add(name.strip())
-                except ValueError:
-                    pass
-            return codings
-
-        def static_file(file: Path, request: Request, cache_control: str):
-            """``file``, or its precompressed copy the request accepts, sent
-            with ``Content-Encoding`` and the file's own media type. A file
-            with a copy answers ``Vary: Accept-Encoding`` whichever goes out,
-            and each coding has an ETag of its own. A matching If-None-Match
-            gets a 304: Starlette's FileResponse sets an ETag but never
-            compares one, so without this every revalidation of an unhashed
-            file (index.html, favicons) carried the whole body."""
-            sent, coding, headers = file, "", {"Cache-Control": cache_control}
-            codings = accepted_codings(request)
-            for name, suffix in precompressed:
-                copy = file.with_name(file.name + suffix)
-                if copy.is_file():
-                    headers["Vary"] = "Accept-Encoding"
-                    if name in codings:
-                        sent, coding = copy, name
-                        break
-            st = sent.stat()
-            headers["ETag"] = f'"{st.st_mtime_ns:x}-{st.st_size:x}{"-" + coding if coding else ""}"'
-            if request.headers.get("if-none-match") == headers["ETag"]:
-                return Response(status_code=304, headers=headers)
-            if coding:
-                headers["Content-Encoding"] = coding
-            media_type = media_types.get(file.suffix.lower()) or mimetypes.guess_type(file.name)[0] or "text/plain"
-            return FileResponse(sent, media_type=media_type, headers=headers)
-
-        @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
-        async def spa(path: str, request: Request):
-            if "\x00" in path:  # a scanner's NUL byte: not a file, never a crash
-                raise HTTPException(status_code=404)
-            if request.method == "HEAD" and (path == "api" or path.startswith("api/")):
-                # an API route without HEAD answers 405, not the app's page
-                raise HTTPException(status_code=405, headers={"Allow": "GET"})
-            candidate = (static_dir / path).resolve()
-            # Path-traversal guard: only serve files inside the static dir
-            if path and candidate.is_file() and candidate.is_relative_to(static_dir.resolve()):
-                if path.startswith("assets/"):
-                    # Vite content-hashes these filenames (the pdf.js worker
-                    # among them) — safe to cache forever.
-                    return static_file(candidate, request, "public, max-age=31536000, immutable")
-                # An unhashed file changes in place on upgrade: the browser
-                # asks every time, and gets a 304 when it holds this version.
-                return static_file(candidate, request, "no-cache")
-            # index.html must revalidate every load, or clients keep referencing
-            # deleted hashed assets after a deploy.
-            return static_file(index_html, request, "no-cache")
+    # The built frontend (GAMMA_STATIC_DIR), registered last so every /api
+    # route takes precedence.
+    spa.serve(app)
 
     _startup_maintenance()
 

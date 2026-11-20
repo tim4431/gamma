@@ -28,13 +28,14 @@ import pytest
 
 from conftest import account_of, fresh_client, login, make_folder, make_page, make_user, mark_work_folder, \
     token_for, work_props
-from gamma import agents, workspaces
+from gamma import agents, skills, workspaces
 from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page
 from gamma.computers import registry
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.local_agents import chats, far_turns
 from gamma.ops import STALE, OpError
+from gamma.routers.local_agents import OLDER_SKILLS
 from gamma.work_folders import takeover
 
 MAKER, EDITOR, STRANGER = "ccx_maker", "ccx_editor", "ccx_stranger"
@@ -340,6 +341,34 @@ def test_the_claim_is_keyed_by_the_run(lab, pc):
     _announce(lc, _kept(lab), name="LAPTOP", computer_id="ccx-laptop")
     r = lc.post(f"/api/computers/chats/{turn}/write", json={"run": "run-1", "seq": 9, "fields": {"text": "x"}})
     assert r.status_code == 404
+
+
+def test_a_skill_turn_goes_with_its_instructions_to_a_computer_that_runs_skills_alone(lab, pc):
+    made = skills.create(account_of(MAKER), skills.clean_fields("ccx-tighten", "Tighten a passage.", "",
+                                                                "Tighten $ARGUMENTS.", True))
+    ran = {"id": made["id"], "name": "ccx-tighten", "args": "the abstract"}
+    try:
+        # an older app would run the arguments without the instructions
+        assert _say(lab, "the abstract", skill=ran, status=409)["detail"] == OLDER_SKILLS.format(computer="TIM-PC")
+        _ok(pc.c.post("/api/computers/announce", json={"computer": {"id": "ccx-pc", "name": "TIM-PC"}, "app": "v9",
+                                                       "vaults": [_kept(lab)], "assistants": CODEX, "skills": True}))
+        turn = _say(lab, "the abstract", skill=ran)["turn"]["id"]
+        claimed = _claim(pc, turn)["turn"]
+        assert (claimed["text"], claimed["title"]) == ("the abstract", "/ccx-tighten the abstract")
+        assert claimed["skill"] == {"name": "ccx-tighten", "instructions": "Tighten the abstract."}
+        _write(pc, turn, 1, state="done", text="Tightened.")
+        # a message without one carries none
+        second = _claim(pc, _say(lab, "And the title.")["turn"]["id"], run="run-2")
+        assert "skill" not in second["turn"]
+        _write(pc, second["turn"]["id"], 1, run="run-2", state="done", text="Done.")
+        # deleted before the computer took it: the turn fails here, nothing runs there
+        third = _say(lab, "the conclusion", skill={**ran, "args": "the conclusion"})["turn"]["id"]
+        skills.remove(account_of(MAKER), made["id"], None)
+        gone = chats.SKILL_GONE.format(name="ccx-tighten")
+        assert _claim(pc, third, run="run-3", status=409)["detail"] == gone
+        assert (_reply(lab)["state"], _reply(lab)["error"]) == ("failed", gone)
+    finally:
+        skills.update(account_of(MAKER), lambda value: value["skills"].clear())
 
 
 def test_a_turn_whose_agent_changed_fails_at_the_announce(lab, pc):

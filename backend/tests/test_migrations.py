@@ -1139,19 +1139,16 @@ def test_newer_data_directory_is_refused(data_dir):
     with pytest.raises(migrations.NewerDataError) as caught:
         migrations.ensure_current()
     guide = migrations.guidance(caught.value)
-    assert guide["title"] == "This data was last opened by a newer Gamma"
-    assert guide["status"].startswith("Your data is intact")
-    # the way forward is to update this Gamma; staying on it is the folded-away alternative
-    assert any("docker compose pull" in step for step in guide["steps"])
-    assert not any("--restore" in step for step in guide["steps"])
-    assert any("--restore" in step for step in guide["fallback"]["steps"])
-    # ...and the app serves that instead of its routes
+    assert guide["kind"] == "newer" and guide["title"] == "Gamma needs an update to open your library"
+    assert guide["status"].startswith("Your library is safe")
+    # the way forward is to update this Gamma, as it was installed; staying on this
+    # release is a folded-away technical line
+    assert guide["steps"] == [migrations.UPDATE_STEPS["checkout"]]  # a checkout run by hand (no stamped version)
+    assert any("--restore" in line for line in guide["details"])
+    # ...and the app serves that instead of its routes (gamma/standby.py, tests/test_standby.py)
     from fastapi.testclient import TestClient
     with TestClient(app_mod.create_app()) as client:
-        page = client.get("/")
-        assert page.status_code == 503 and guide["title"] in page.text and guide["fallback"]["lead"] in page.text
-        assert '<a href="https://github.com/tim4431/gamma/releases">' in page.text
-        assert client.get("/api/health").json()["fallback"] == guide["fallback"]
+        assert client.get("/api/health").json()["details"] == guide["details"]
 
 
 def test_a_failed_step_is_explained_with_its_snapshot(data_dir, monkeypatch):

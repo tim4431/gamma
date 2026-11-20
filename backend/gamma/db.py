@@ -1996,7 +1996,11 @@ USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "
                             # gamma/zotero_account.py PREF_KEY: the connected
                             # Zotero account, its API key sealed; never served
                             # by /api/prefs, never in the synced profile.
-                            "zotero-account"})
+                            "zotero-account",
+                            # gamma/skills.py PREF_KEY: the account's own
+                            # skills; only routers/skills.py reads or writes
+                            # it, never synced to Gamma Cloud.
+                            "skills"})
 
 
 def pref_scope(key: str, ws: str) -> str:

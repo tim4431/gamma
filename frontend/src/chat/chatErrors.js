@@ -1,7 +1,10 @@
 // What a failed chat request says, per failure kind. The server names the
 // kind (ai_client.failure_kind: not_configured, allowance, auth, blocked,
 // rate, overloaded, unreachable, bad_endpoint, too_long, other) on the HTTP error
-// and on the stream's error line; a connection probe adds "no_model" (an
+// and on the stream's error line; "skill" is a message whose skill is gone
+// (deleted or turned off since the chat read the catalog: the 400 of
+// gamma/routers/ai.py, whose message goes back in the composer); a
+// connection probe adds "no_model" (an
 // entry with no model picked); "network" is the browser losing Gamma
 // itself; "agent" is a computer agent's turn that failed, whose computer
 // says why in its own sentence (`said`, chat/computer/computerChat.js
@@ -12,12 +15,13 @@
 // `fix` names the card's main action (ChatDock turns it into a button):
 // connect / own_key open Settings → Connections, key / signin / connection
 // open the failing connection's own form, proxy opens Settings → Network
-// proxy (an admin's), new_chat starts over. `switchModel`
-// says another model could get around the failure.
+// proxy (an admin's), new_chat starts over, skills opens Settings → Chat at
+// Your skills. `switchModel` says another model could get around the
+// failure.
 import { t } from "../shared/i18n/i18n.js";
 
 export const FAILURE_KINDS = ["not_configured", "allowance", "auth", "blocked", "rate", "overloaded",
-  "unreachable", "bad_endpoint", "too_long", "no_model", "network", "other"];
+  "unreachable", "bad_endpoint", "too_long", "no_model", "network", "skill", "other"];
 
 export function failureCopy(kind, { provider = "", auth = "key", said = "" } = {}) {
   const name = provider || t("The AI service");
@@ -89,6 +93,12 @@ export function failureCopy(kind, { provider = "", auth = "key", said = "" } = {
       };
     case "network":
       return { headline: t("Lost the connection to Gamma"), text: t("The browser lost its connection to the Gamma server. Check your network, then retry.") };
+    case "skill":
+      return {
+        headline: t("That skill is no longer available"),
+        text: t("It was deleted or turned off after the chat listed it. Pick a skill again with /, or send the message without one."),
+        fix: "skills",
+      };
     default:
       return { headline: t("The AI request failed"), text: t("{provider} returned an error; the details are below.", { provider: name }), switchModel: true };
   }
@@ -104,6 +114,7 @@ export function fixLabel(fix) {
     connection: t("Edit connection"),
     proxy: t("Network proxy"),
     new_chat: t("New chat"),
+    skills: t("Manage skills…"),
   }[fix] || "";
 }
 

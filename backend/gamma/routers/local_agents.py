@@ -61,9 +61,10 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import local_agents
+from .. import local_agents, skills
 from ..auth import require_personal_user_id, require_ws
 from .shell import from_shell, shell_strict
 
@@ -472,6 +473,8 @@ class TurnBody(BaseModel):
     # where a conversation that starts works: an offered directory's id, "" for one of its own; none (null)
     # for the active conversation's own (the work folder a bucket is in decides for itself)
     dir: str | None = Field(default=None, max_length=64)
+    # the skill the message runs, ``{id, name, args}`` (gamma/skills.py), ``text`` its arguments; none for none
+    skill: dict | None = None
 
 
 class BucketBody(BaseModel):
@@ -492,6 +495,11 @@ class SteerBody(BaseModel):
     id: str = ""
     text: str = ""
     selections: list | None = None
+    skill: dict | None = None   # refused: a message that runs a skill is a turn of its own
+
+
+SKILL_STEERS = "A message that runs a skill goes as a turn of its own."
+OLDER_SKILLS = "Update Gamma on {computer} to run skills there."
 
 
 MAX_NOTE = 2000   # characters of what a decline tells the agent
@@ -649,6 +657,22 @@ def _refused(e) -> HTTPException:
     return HTTPException(status_code=e.status, detail=e.detail)
 
 
+def _skill_of(raw, user_id: str) -> dict | None:
+    """The skill a turn's message runs, as the person's message keeps it:
+    ``skills.invocation``'s ``{id, name, args}``, the id one of the
+    account's catalog (its own and the built-ins it keeps on: the routes
+    here are a signed-in account's), the name the catalog's now; None for
+    none. ``skills.SkillGone`` for one the catalog does not hold (deleted
+    or turned off since the chat read it)."""
+    invocation = skills.invocation(raw)
+    if invocation is None:
+        return None
+    found = skills.find(skills.catalog(user_id, personal=True), invocation["id"])
+    if found is None:
+        raise skills.SkillGone(invocation)
+    return {**invocation, "name": found["name"]}
+
+
 def _computer(ws: str, user_id: str, place: dict, conversation: dict | None, agent: str = "") -> dict:
     """What the strip says: ``{agent, label, ready, problem, models, folder,
     paused, turn, session, folder_id, dir, grants, lent}``, ``agent`` the one
@@ -787,9 +811,13 @@ def start_turn(body: TurnBody, request: Request):
     state}}``, the turn's agent the one picked (``agent``, an agent the
     account turned on here), else the account's first (``_agent_of``); an
     active conversation of another agent is archived and a new one begun. A
-    repeated ``id`` (the person's message's) answers the turn it made. 400
-    for no text or too long a one, a ``dir`` no directory offered here has,
-    and a model, an effort or a speed the agent did not list
+    repeated ``id`` (the person's message's) answers the turn it made. A
+    message may run a skill of the account's (``skill``, ``{id, name,
+    args}``, ``text`` the message, which may then be none: ``_skill_of``),
+    kept on the person's message; its instructions are read at the turn's
+    start (``chats.skill_of``). 400 ``{detail, kind: "skill"}`` for a skill
+    the account no longer has; 400 for no text (and no skill) or too long a
+    one, a ``dir`` no directory offered here has, and a model, an effort or a speed the agent did not list
     (``catalog.refused_choice``); 409 while a turn of the conversation is
     queued or running, while the account has no agent on here, or not the
     one picked (one another account lends it counts: ``_agent_of``), one
@@ -804,14 +832,18 @@ def start_turn(body: TurnBody, request: Request):
 
     ws, user_id, place, far, conversation = _seat(request, body.bucket, body.dir, body.agent)
     text = body.text.strip()
-    if not text:
+    try:
+        skill = _skill_of(body.skill, user_id)
+    except skills.SkillGone as e:
+        return JSONResponse(status_code=400, content={"detail": str(e), "kind": "skill"})
+    if not text and skill is None:   # a skill run with no arguments is a message
         raise HTTPException(status_code=400, detail="Write a message first.")
     if len(text) > chats.MAX_TEXT:
         raise HTTPException(status_code=400, detail=f"A message is at most {chats.MAX_TEXT} characters.")
     if body.id and not chats.MESSAGE_ID.match(body.id):
         raise HTTPException(status_code=400, detail="That message id is not one Gamma makes.")
     if far is not None:
-        return _far_turn_started(ws, user_id, far, body, text, conversation)
+        return _far_turn_started(ws, user_id, far, body, text, conversation, skill)
     if body.dir and place["kind"] == "own":
         raise HTTPException(status_code=400, detail="No directory offered on this computer has that id.")
     named = _named(body.agent)[0]
@@ -839,7 +871,7 @@ def start_turn(body: TurnBody, request: Request):
                                                link_id=link["id"] if link is not None else "", agent=name,
                                                label=label, text=text, selections=chats.selections_of(body.selections),
                                                message_id=body.id, model=model, effort=effort, speed=speed,
-                                               owner=row["set_by"])
+                                               owner=row["set_by"], skill=skill)
     except chats.ChatError as e:
         raise _refused(e) from None
     if new:
@@ -865,12 +897,15 @@ def _may_write(ws: str, user_id: str, label: str) -> None:
         raise HTTPException(status_code=403, detail=refused)
 
 
-def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: str, conversation: dict | None) -> dict:
+def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: str, conversation: dict | None,
+                      skill: dict | None) -> dict:
     """``start_turn`` for an agent on another computer (``far``): refused
     while that computer is offline (no turn is queued for one away), and
     the same checks against what it last announced (the work folder paused
     there; its agent known not ready; the model, the effort and the speed
-    among the ones it offers; the directory among those it offers, ``far_dir``), the
+    among the ones it offers; the directory among those it offers, ``far_dir``;
+    a skill run only on a computer that says it runs them, ``registry.runs_skills``:
+    an older one would run the arguments without the instructions), the
     turn written here to wait for it (``chats.begin`` ``remote``, the
     conversation with that computer's agent) and the computer woken
     (``chat``): it takes the turn over its channel."""
@@ -880,6 +915,8 @@ def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: st
     name, label, computer = far["agent"], far["label"], far["computer"]
     if not far["online"]:
         raise HTTPException(status_code=409, detail=far_turns.OFFLINE.format(computer=computer))
+    if skill is not None and not registry.runs_skills(far["token_id"]):
+        raise HTTPException(status_code=409, detail=OLDER_SKILLS.format(computer=computer))
     if far["paused"]:
         raise HTTPException(status_code=409,
                             detail=f"The synced folder is paused on {computer}: {label} starts once it syncs again.")
@@ -898,7 +935,7 @@ def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: st
                                                agent=name, label=label, text=text,
                                                selections=chats.selections_of(body.selections), message_id=body.id,
                                                model=model, effort=effort, speed=speed, remote=True, computer=computer,
-                                               computer_id=far["computer_id"], owner=far["user_id"])
+                                               computer_id=far["computer_id"], owner=far["user_id"], skill=skill)
     except chats.ChatError as e:
         raise _refused(e) from None
     if new:
@@ -937,7 +974,8 @@ def steer_turn(turn_id: str, body: SteerBody, request: Request):
     """``{id, text, selections}``: a message the person steers into their
     turn while its agent works (docs/dev/ai.md "Queue and Steer") →
     ``{steered: true}`` once it is handed to the agent, which takes it in
-    at its next step (the message's ``steers`` then say where). A turn that
+    at its next step (the message's ``steers`` then say where); never one
+    that runs a skill (``skill``: 409, a turn of its own). A turn that
     runs on another computer keeps it for that computer to take
     (``far_turns.steer_run``) and wakes it. Only the account whose conversation
     it is steers it, never the agent's owner reading a co-author's. 400 for
@@ -948,11 +986,13 @@ def steer_turn(turn_id: str, body: SteerBody, request: Request):
     from ..computers import registry
     from ..local_agents import chats, far_turns, runner
 
+    user_id = require_personal_user_id(request, SESSION_ONLY)
+    if body.skill is not None:   # the chat queues it as the next turn
+        raise HTTPException(status_code=409, detail=SKILL_STEERS)
     item = chats.steer_of(body.model_dump())
     if item is None:
         raise HTTPException(status_code=400, detail="Write a message first, of at most "
                                                     f"{chats.MAX_TEXT} characters.")
-    user_id = require_personal_user_id(request, SESSION_ONLY)
     turn = _local_turn(turn_id)
     if turn is None:
         ws, conversation, _ = _far_turn(request, turn_id)
