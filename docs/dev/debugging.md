@@ -1533,6 +1533,13 @@ The scenarios live in `tests/e2e/scenarios/`:
   [diagrams.md](diagrams.md).
 - `mentions.mjs`: paper search, keyboard and touch selection, reference limits,
   persistence, PDF receipts and textarea shrink after clearing context. Run with `--only mentions`.
+- `chatSkills.mjs`: the chat's "/" skills menu, a send carrying its skill with
+  the chip and its copy, dismissal and an unmatched `/word` sent as text,
+  *Manage skills…* opening Settings → AI → Chat at Your skills, a skill
+  made there and a built-in turned off reaching the menu without a reload,
+  a vanished skill restoring the draft, Retry and an unchanged edit posting
+  the skill again, the edit bubble's × dropping it ([skills.md](skills.md)).
+  Run with `--group chat-skills`.
 - `noteMentions.mjs`: the note editor's @ menu, its chips, Invite… and a reminder's
   card ([mentions.md](mentions.md)). Run with `--group note-mentions`.
 - `comments.mjs`: threads on a note, the page and a highlight from their

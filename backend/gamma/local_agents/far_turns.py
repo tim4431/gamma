@@ -321,10 +321,13 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, computer_id: str,
     agent with that computer: the row and its message ``running``, in one
     step under the write lock → ``{turn: {id, conversation_id, bucket,
     title, text, selections, model, effort, speed, for: {id, username},
-    thread_id?, comment_id?}, history, about, dir, seen, thread?}``:
+    skill?, thread_id?, comment_id?}, history, about, dir, seen, thread?}``:
     ``for`` the account the turn is for (``user_id`` itself, or a
     co-author: the route checks it is one the agent serves), the
-    conversation's title, the person's message, the conversation's earlier
+    conversation's title, the person's message, the skill it ran with its
+    instructions rendered here from that account's catalog (``{name,
+    instructions}``, ``chats.skill_of``: the computer need not have it), the
+    conversation's earlier
     messages as the turn's prompt takes them (``[{role: owner | agent,
     text}]``, the last ``EARLIER``), what it is about (``about``: its path
     in the work folder where it is in one), where its agent works
@@ -333,7 +336,8 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, computer_id: str,
     ``threads.entry_of``, with its PDF place, from which the computer finds
     its source line). The same run taking it again (a retry) is answered
     again. A turn whose bucket is gone, or is no longer in the work folder
-    its conversation works in, fails. ChatError 404 for no turn of that
+    its conversation works in, or whose skill was deleted since it was
+    sent, fails. ChatError 404 for no turn of that
     computer's, 409 when another run holds it, it is no longer queued, or it
     is another agent's (left queued)."""
     from ..work_folders.marks import Tree
@@ -370,11 +374,15 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, computer_id: str,
             raise chats.ChatError(409, f"This turn is for {reply.get('label') or 'another agent'}.")
         found = chats.about(conn, row["bucket"])
         where = dir_of(Tree.read(conn), conversation)
+        person = next((m for m in reversed(messages[:at]) if m.get("role") == "user"), None) or {}
+        skill = chats.skill_of(row["user_id"], person)
         if found is None:
             refusal = "What this conversation is about is gone."
         elif where["kind"] == "vault" and found["w"] != where["id"]:
             refusal = ("This page is no longer a file of the synced folder." if found["kind"] == "page"
                        else "This folder is no longer in the synced folder.")
+        elif skill is not None and skill["instructions"] is None:
+            refusal = chats.SKILL_GONE.format(name=skill["name"])
         else:
             refusal = ""
         if refusal:
@@ -391,7 +399,6 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, computer_id: str,
                          (holder, run, now, computer, computer, turn_id))
             reply = {**reply, "state": "running"}
             chats._save(conn, conversation, [*messages[:at], reply, *messages[at + 1:]])
-        person = next((m for m in reversed(messages[:at]) if m.get("role") == "user"), None) or {}
         earlier = chats.earlier_of(messages, at, person)
         thread = threads.entry_of(ws, conn, conversation["thread_id"], places=True) if conversation["thread_id"] else None
     with connect_users_db() as users:
@@ -399,7 +406,7 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, computer_id: str,
     turn = {"id": turn_id, "conversation_id": row["conversation_id"], "bucket": row["bucket"],
             "title": conversation["title"], "text": person.get("text") or "", "selections": person.get("selections") or [],
             "model": reply.get("model") or "", "effort": reply.get("effort") or "", "speed": reply.get("speed") or "",
-            "for": {"id": row["user_id"], "username": username}}
+            "for": {"id": row["user_id"], "username": username}, **({"skill": skill} if skill else {})}
     out = {"turn": turn, "history": earlier, "about": found, "dir": where, "seen": page_now()}
     if conversation["thread_id"]:
         turn.update(thread_id=conversation["thread_id"], comment_id=person.get("comment_id") or "")

@@ -17,6 +17,7 @@ import { t } from "../../shared/i18n/i18n.js";
 import { askShellWatching } from "../../vault/useVault.js";
 import { stripFacts } from "../agents.js";
 import { readLocalAgents } from "../useLocalAgents.js";
+import { refreshSkills } from "../useSkills.js";
 import { noteDirUsed, usedDirs } from "./usedDirs.js";
 import {
   AWAY_POLL_MS, POLL_MS, SOURCES_MAX, TEXT_MAX, answerBody, askPath, awayFrom, canSend, chatPath, emptyLine, isRemote,
@@ -112,10 +113,12 @@ export const computerExportPath = (id) => `${API}/local-agents/chat/history/${en
 //   error         why it could not be read, "" once it was; reload()
 //                 reads it again
 //   busy          an action is on its way
-//   send(text, selections, choice) → whether the turn was made, `choice`
-//   the conversation's {model, effort} (computerChat.modelChoice) and, for
-//   a conversation that begins, `dir` where it works (computerChat
-//   workPlace); answer(turnId, askId, decision, note) answers what the turn
+//   send(text, selections, choice, skill) → whether the turn was made,
+//   `choice` the conversation's {model, effort} (computerChat.modelChoice)
+//   and, for a conversation that begins, `dir` where it works (computerChat
+//   workPlace), `skill` the one the message runs ({id, name, args}, null
+//   for none; one the server no longer has reads the catalog again,
+//   chat/useSkills.js); answer(turnId, askId, decision, note) answers what the turn
 //   asks, throwing a refusal for the card to say; steer(turnId, item) hands
 //   a queued message to the running turn, throwing the refusal; stop(turnId) and
 //   newChat() do what they say and read the conversation again;
@@ -229,10 +232,13 @@ export function useComputerChat(pageId, agent, setStatus, shown = null) {
   }, [load]);
 
   const label = state.computer?.label || known;
-  const send = useCallback((text, selections, choice = null) => act(async (page, key) => {
+  const send = useCallback((text, selections, choice = null, skill = null) => act(async (page, key) => {
     if (!turnId.current) turnId.current = makeId();
-    const body = turnBody(turnId.current, page, text, selections, { ...choice, agent: agentOf(key) });
-    const answer = await apiJson(`${API}/local-agents/chat/turns`, post(body));
+    const body = turnBody(turnId.current, page, text, selections, { ...choice, agent: agentOf(key) }, skill);
+    const answer = await apiJson(`${API}/local-agents/chat/turns`, post(body)).catch((err) => {
+      if (err?.data?.kind === "skill") refreshSkills();
+      throw err;
+    });
     turnId.current = "";
     keep(key, answer.conversation || null);
   }, (message) => t("Couldn't send to {agent}: {message}", { agent: label, message })), [act, keep, label]);
@@ -311,10 +317,11 @@ const places = new Map();
 //               server says is queued for it before the conversation shows
 //               it; "" for none, `working` while there is one (New chat and
 //               History's other conversations wait for it)
-//   ready(text) whether `text` can go now; queues(text) whether it could
-//               wait for the turn under way (the chat's queue);
-//               send(text, passages?) → whether the turn was made, with a
-//               queued message's passages or the composer's
+//   ready(text, skill?) whether `text` (or the skill alone) can go now;
+//               queues(text) whether it could wait for the turn under way
+//               (the chat's queue); send(text, passages?, skill?) →
+//               whether the turn was made, with a queued message's
+//               passages or the composer's, and the skill it runs
 //   retry(row)  Retry for the failed turn the transcript's row draws (its
 //               `turnId`), null when it is not the newest or nothing could
 //               go now
@@ -386,15 +393,15 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], here =
   const stopId = liveTurn(conversation)?.turn_id || chat.computer?.turn?.turn_id || "";
   // Off until the conversation was read: one that failed may hold a turn.
   const landed = chat.read && !chat.error;
-  const ready = (text) => landed && !shown && !chat.busy && canSend(info, conversation, text);
+  const ready = (text, skill = null) => landed && !shown && !chat.busy && canSend(info, conversation, text, skill);
   // Whether a message could wait for the turn under way (the chat's queue).
   const queues = (text) => landed && !shown && !!String(text || "").trim();
 
   // `passages` a queued message's (chat/chatQueue.js), else the
   // composer's, which a sent message takes off it.
-  async function send(text, passages = null) {
-    if (!ready(text)) return false;
-    const sent = await chat.send(String(text).slice(0, TEXT_MAX), passages || pdfSelections, how());
+  async function send(text, passages = null, skill = null) {
+    if (!ready(text, skill)) return false;
+    const sent = await chat.send(String(text || "").slice(0, TEXT_MAX), passages || pdfSelections, how(), skill);
     if (sent) {
       if (!passages) setPdfSelections([]);
       // A first turn's picks are its conversation's now: a new chat starts
@@ -409,12 +416,12 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], here =
   }
 
   // Retry on a failed turn, the newest: the person's message again, with
-  // its passages, while a message could go.
+  // its passages and the skill it ran, while a message could go.
   const retry = (row) => {
     const again = retryOf(conversation, (conversation?.messages || [])
       .find((m) => m.role === "agent" && m.turn_id === row?.turnId));
-    if (!again || !ready(again.text)) return null;
-    return () => chat.send(again.text, again.selections, how());
+    if (!again || !ready(again.text, again.skill)) return null;
+    return () => chat.send(again.text, again.selections, how(), again.skill);
   };
 
   // A changed file's link opens it (PathLink): its path is the work

@@ -112,6 +112,12 @@ holds the archived ones (`id, bucket, title, messages, created_at,
 updated_at`). Routes: `gamma/routers/chats.py`, prefixes `/api/chats` (the
 active conversation) and `/api/chat-history` (the archive).
 
+`messages` is the client's JSON. A user message that ran a skill keeps
+`skill: {id, name, args}`, its `text` the arguments, and never the skill's
+instructions: every request renders them again from the requester's
+catalog by id, so a member's private skill stays theirs in a shared
+workspace's chat ([skills.md](skills.md)). Its title is `skills.title`'s, `/name` then the message's first line that is not a quote ([skills.md](skills.md#titles-and-exports)).
+
 - **New chat** (+ in the header) archives the conversation: it POSTs
   `/chat-history/archive` `{bucket, messages, title, updated_at}`, which
   files it into history, clears the active row and answers with the entry's
@@ -227,7 +233,8 @@ sent ([ai.md](ai.md#exporting-the-context)).
 - **The transcript.** An `# title` heading, then a line naming whose chat it
   is ("AI chat of “Paper” · 14 messages · exported …"), then one section
   per message. `## You` lists the message's pictures, its attached PDFs,
-  the pages put in context and the text as typed. `## AI · model · effort`
+  the pages put in context and the text as typed (`/name args` for one
+  that ran a skill, `skills.display`). `## AI · model · effort`
   shows the selection pictures the model got, then **Steps** (each tool
   chip's summary, with the picture a view or ink chip expands to), then the
   reply's Markdown. A failed reply is one line with its error, and a reply

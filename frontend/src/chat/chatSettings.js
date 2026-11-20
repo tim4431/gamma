@@ -16,6 +16,7 @@ const CATALOG = [
   ["view", "library"],
   ["search", "library"],
   ["show", "library"],
+  ["skills", "library"],
   ["web_search", "web"],
   ["web_read", "web"],
   ["publisher_cookies", "web"],
@@ -36,10 +37,11 @@ const GROUP = Object.fromEntries(CATALOG.map(([key, group]) => [key, group]));
 export const permGroup = (key) => GROUP[key] || "library";
 const changesLibrary = (key) => GROUP[key] === "edit";
 // Using journal sign-ins is part of fetching a document, not a call of its
-// own to approve: it is on or off. Every other permission takes all three,
-// the deletions too: each records what its revert needs, so whether one asks
-// first is the user's call.
-const STATES_OF = { publisher_cookies: ["allow", "off"] };
+// own to approve: it is on or off. So is using skills on its own: loading
+// one changes nothing, and the user wrote what it says. Every other
+// permission takes all three, the deletions too: each records what its
+// revert needs, so whether one asks first is the user's call.
+const STATES_OF = { publisher_cookies: ["allow", "off"], skills: ["allow", "off"] };
 export const permStates = (key) => STATES_OF[key] || PERM_STATES;
 export const defaultPerm = (key) => (changesLibrary(key) ? "ask" : "allow");
 

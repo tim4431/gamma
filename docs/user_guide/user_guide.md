@@ -224,7 +224,18 @@ Open the chat from the **View menu (≡) → AI Chat**. Gamma has no AI of its o
 - Select part of a note and ask for a change: the assistant rewrites only that selection.
 - **Select text in the chat itself** to talk about it: the bar under the selection has a button for each action, and a right-click on the selection offers the same as a menu. **Ask about this** quotes it into your next message, ahead of your question; **Copy** copies it as Markdown, formulas included; **Create note** (the menu's **As it is**) puts the passage at the end of the open page's notes (in a folder's or the library's chat it becomes a page of its own), and **Structured note** (the menu's **Structured by AI**) has the chat's model rewrite it into headings and bullet points first, adding nothing, without a turn in the conversation.
 - **While a reply runs**, Enter (or the send button) steers: your message goes into the reply at once, which takes it in at its next step. **Ctrl+Enter** (⌘↩ on a Mac) queues it instead: it waits above the box and goes when the reply ends, and its **Steer** hands it to the reply later. Settings → AI → Chat → **Follow-up while a reply runs** swaps them: on **Queue**, Enter queues and Ctrl+Enter steers.
+- **Type / to run a skill**: a set of instructions you keep for one kind of request, such as summarizing a paper ([Skills](#skills)).
 - Each paper and folder keeps its own conversation. **New chat** starts over and keeps the old one in History; Alt+click it to throw the old one away.
+
+### Skills
+
+A skill is a set of instructions for one kind of request: summarize a paper, review it as a referee would, explain a passage. Instead of writing the same request each time, type **/** at the start of the message and pick one. The menu lists the skills by name with what each is for, and typing filters it, by the name or by a word of its description; ↑↓ choose, Enter or Tab inserts, Esc closes. What you write after the name is what the skill works on: `/summarize for a journal club`, `/explain equation 3 for a first-year student`. Without anything after it, the skill works from the conversation.
+
+- **Three come with Gamma**: `/summarize`, `/review` and `/explain`. Turn any of them off in **Settings → AI → Chat**, under **Built-in skills**, or **View** one and **Copy to your skills** to change it: your copy, under the same name, replaces it.
+- **Your own skills**: **Add skill** under **Your skills** in the same pane, or **Import SKILL.md…** to bring in a skill written for Claude Code, Codex or any tool that follows the [Agent Skills](https://agentskills.io/specification) format. Give it a name (lowercase letters, digits and hyphens), a description that says when it is for, and the instructions. Where the instructions say `$ARGUMENTS`, what you write after the name goes in; either way the assistant reads your message after them. Your skills are yours alone: in a shared workspace, the others see that your message ran `/name`, never its instructions.
+- **The assistant can pick one itself.** In a chat with tools, the assistant knows the names and descriptions of your skills and loads one when your request fits it; the reply's steps then say *Loaded skill summarize*. A skill you only want to run yourself has **The assistant may use it on its own** turned off, and **Settings → AI → Tool usage → Use skills on its own** turns this off for every skill.
+- **Codex and Claude Code** on your computer run your skills from **/** too.
+- A message that runs a skill is never steered into a running reply: it waits in the queue and goes as a message of its own. **Edit** keeps the skill, with a × to drop it.
 
 ### AI services you can connect
 
@@ -269,6 +280,7 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | View pages and handwriting | `view_pdf_page`, `view_ink`, `view_image` | Look at figures, tables, scanned pages, your handwriting and the pictures in your notes and on your pages |
 | Search library | `search_library` | Find text in your notes, PDFs and text files |
 | Show pages | `show_page` | Open a page for you at a PDF page, a passage or a note: at once on the page the chat is beside, else when the reply ends |
+| Use skills on its own | `load_skill` | Load one of your [skills](#skills) when a request fits it (Allow or Off) |
 | **Web research** | | |
 | Search online | `search_papers`, `related_papers`, `search_web` | Find papers on Crossref, arXiv and OpenAlex and follow their citations; search the web for current facts, documentation and news, by date or on one site, through your AI connection, Brave Search, Tavily or SearXNG (Tool usage → Online search) |
 | Fetch documents | `fetch_paper`, `fetch_url`, `read_paper` | Read a paper by DOI, arXiv id or URL, or any web page as text, without saving it; a paper behind a paywall or sign-in is handed to your browser |

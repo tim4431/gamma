@@ -36,6 +36,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
+from .. import skills
 from ..auth import require_ws, resolve_ws, share_scope
 from ..blocks_store import FOLDERS
 from ..chat_export import export_file
@@ -103,13 +104,11 @@ def _first_user_text(messages: list) -> str:
 
 
 def derive_title(messages: list) -> str:
-    """The first user message's first line, quotes stripped, for a
-    conversation the user never named."""
-    for line in _first_user_text(messages).splitlines():
-        line = line.strip()
-        if line and not line.startswith(">"):
-            return _clean_title(line[:TITLE_MAX])
-    return ""
+    """The first user message's title (skills.title: its first line that is
+    no quote, after ``/name`` when it ran a skill), for a conversation the
+    user never named, as the chat's header shows it."""
+    first = next((m for m in messages or [] if isinstance(m, dict) and m.get("role") == "user"), {})
+    return skills.title(skills.invocation(first.get("skill")), _first_user_text(messages))
 
 
 def _preview(messages: list) -> str:

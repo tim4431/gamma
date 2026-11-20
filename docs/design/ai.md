@@ -212,10 +212,24 @@ conversation. Gamma AI chats belong to the workspace: its members can read them,
 and they are in its backups. A viewer's chat stays in their tab, marked
 *Not saved*.
 
+## Skills
+
+A skill is instructions you keep for one kind of request, run by starting
+a message with its `/name`; what follows the name is what it works on.
+Its instructions are never stored in the conversation: each message names
+the skill, and Gamma reads its instructions again from the skills of the
+person asking. So a skill you edit applies from then on, the model is
+told when a skill an earlier message ran is gone, and in a shared workspace the others
+see that you ran `/name` but never what it says. The assistant may load a
+skill itself when a request fits it, only one you let it use on its own.
+Skills are `SKILL.md` files, the format Claude Code and Codex read, so one
+written for them imports as it is.
+
 ## Behind this page
 
 - [AI](../dev/ai.md), [AI tools](../dev/ai_tools.md), [AI context](../dev/ai_context.md),
-  [Chat history](../dev/chat_history.md).
+  [Chat history](../dev/chat_history.md), [Skills](../dev/skills.md).
 - [Local agents](../dev/local_agents.md), [MCP](../dev/mcp.md).
 - [AI permissions](../research/ai-permissions.md),
-  [Agents as participants](../research/agents-as-participants.md).
+  [Agents as participants](../research/agents-as-participants.md),
+  [Skills in the chat](../research/chat-skills.md).
