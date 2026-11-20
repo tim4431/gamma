@@ -137,9 +137,11 @@ All state is SQLite + files on disk under a data directory (env
     [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)), the
     Google Drive connection (`gdrive`: `{refresh_token, email, name, folder,
     connected_at, client_id}` as JSON, the token encrypted the same way, ""
-    once disconnected) and the OAuth client an admin saved for it
-    (`gdrive_client`: `{client_id, client_secret}`, the secret encrypted
-    the same way, "" once removed;
+    once disconnected) and Google apps of the server's own for it, in
+    place of Gamma's (`gdrive_client`, the code's, and
+    `gdrive_desktop_client`, the page's: `{client_id, client_secret}`, set
+    by `manage.py gdrive-client [--desktop]`, the secret encrypted the
+    same way, "" once removed;
     [debugging.md](debugging.md#google-drive)), this server's Zotero app
     (`zotero_app`: `{client_key, client_secret}`, the secret encrypted the
     same way, "" once removed; [zotero_sync.md](zotero_sync.md)) and the

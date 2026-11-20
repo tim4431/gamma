@@ -21,6 +21,8 @@ Usage:
   python manage.py set-access <workspace-id> <private|public> [viewer|editor]
   python manage.py sweep-guests [--all]            # delete expired guest accounts now (--all: every guest)
   python manage.py set-option <name> <value> ...   # server options of Settings (gamma/server_options.py)
+  python manage.py gdrive-client [--desktop] <id> <secret>  # this server's own Google app for Drive, in place of Gamma's
+  python manage.py gdrive-client [--desktop] --remove       # back to Gamma's
   python manage.py setup                           # idempotent: missing personal workspaces + workspace files
   python manage.py migrate [--status] [--dry-run] [--global-only]
                                                    # upgrade the data directory (also runs at server start),
@@ -193,6 +195,31 @@ def sweep_guests(everyone=False):
     sweeper does it every 10 minutes); ``--all`` deletes every guest."""
     gone = guests.delete_expired(everyone=everyone)
     print(f"Deleted {len(gone)} guest account(s)" + (f": {', '.join(gone)}" if gone else "."))
+
+
+def gdrive_client(args):
+    """A Google OAuth client of this server's own for Drive backups, in
+    place of Gamma's: the "TVs and Limited Input devices" one a code is
+    asked through, or with ``--desktop`` the "Desktop app" one of Google's
+    page on this computer (drive.file); ``--remove`` goes back to Gamma's.
+    A change of client disconnects Drive."""
+    from gamma import gdrive_account
+
+    desktop = "--desktop" in args
+    args = [a for a in args if a != "--desktop"]
+    try:
+        if args == ["--remove"]:
+            gdrive_account.remove_client(desktop=desktop)
+            print("Google Drive uses Gamma's app again.")
+        elif len(args) == 2:
+            gdrive_account.set_client(args[0], args[1], desktop=desktop)
+            print("Google Drive uses this server's own app.")
+        else:
+            print("Usage: python manage.py gdrive-client [--desktop] <client-id> <client-secret> | --remove")
+            sys.exit(1)
+    except ValueError as e:
+        print(e)
+        sys.exit(1)
 
 
 def set_options(args):
@@ -601,6 +628,8 @@ def main():
         sweep_guests(everyone="--all" in args)
     elif cmd == "set-option":
         set_options(args)
+    elif cmd == "gdrive-client":
+        gdrive_client(args)
     elif cmd == "setup":
         setup()
     else:

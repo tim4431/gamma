@@ -11,10 +11,11 @@ Read from the code (`backend/gamma/`, `backend/app.py`, `manage.py`,
 What was decided: everything a person might want to change moved into
 Settings, except what the public demo, the account server (and its fleet)
 and the share host set for themselves, which are the unattended services
-the rule allows. Moved: Google Drive's OAuth client (Settings → Backups →
-Google Drive, [google-drive-backup.md](google-drive-backup.md)) and the
-Zotero app (Settings → Server → Zotero sign-in), each server's admin
-registering their own; and the feature settings below ("Moved into
+the rule allows. Moved: Google Drive's OAuth client (now Gamma's own,
+shipped with the code, so connecting Drive is signing in;
+[google-drive-backup.md](google-drive-backup.md)) and the Zotero app
+(Settings → Server → Zotero sign-in, each server's admin registering
+their own); and the feature settings below ("Moved into
 Settings"), now server options (`gamma/server_options.py`, one users.db
 record, `manage.py set-option` for a script or the browser suite). The
 overrides were not limited to hosted containers, as first proposed: the

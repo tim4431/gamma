@@ -28,7 +28,7 @@ from urllib.parse import urlsplit
 
 import bcrypt
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, gdrive, gdrive_account, guests,
@@ -41,9 +41,10 @@ from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatG
 from .zotero import CALLBACK_PATH as ZOTERO_CALLBACK_PATH, oauth_base as zotero_oauth_base
 from ..db import account_name, account_names, connect_users_db
 from ..logbuf import tail as _log_tail
-from .. import version
+from .. import html_page, version
 from ..seed import create_account
 from ..server_settings import (
+    LOOPBACK_HOSTS,
     QUOTA_MB_MAX,
     QUOTA_MB_MIN,
     GUEST_TTL_MAX,
@@ -485,9 +486,7 @@ def delete_bucket_snapshot(ws: str, name: str, request: Request, store: str = "b
 
 
 # --- Google Drive (gamma/gdrive_account.py) ------------------------------------
-# Settings → Backups → Google Drive: the OAuth client connections are made
-# through (/client, which each server's admin registers at Google) and
-# the server's connection, made by Google's device flow. Connect answers
+# Settings → Backups → Google Drive: the server's connection, made by Google's device flow. Connect answers
 # the code to enter; while it is shown the pane posts /poll, which asks
 # Google at most once per Google's interval; the GET
 # (``gdrive_account.status``) also answers the code while one waits. The
@@ -499,11 +498,6 @@ class DriveConnectRequest(BaseModel):
 
 class DriveFolderRequest(BaseModel):
     folder: str
-
-
-class DriveClientRequest(BaseModel):
-    client_id: str
-    client_secret: str = ""   # empty keeps the saved secret of the same client
 
 
 def _drive_call(fn, *args):
@@ -518,13 +512,58 @@ def _drive_call(fn, *args):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+def _gdrive_callback(request: Request) -> str:
+    """Where Google's page sends the browser back: this server's callback
+    at the address the page itself was opened at, when that is a loopback
+    one over plain HTTP (the desktop app, a server opened on its own
+    computer) and the build has Gamma's "Desktop app" client; "" anywhere
+    else, where the pane connects with a code."""
+    url = request.url
+    if url.scheme != "http" or (url.hostname or "").strip("[]") not in LOOPBACK_HOSTS \
+            or gdrive_account.browser_client() is None:
+        return ""
+    return f"http://{url.netloc}/api/admin/gdrive/callback"
+
+
 @router.get("/gdrive")
 def get_gdrive(request: Request):
-    """``{client_id, connected, email, name, folder, connected_at,
+    """``{available, connected, email, name, folder, connected_at,
     problem, pending: {user_code, verification_url, expires_at, interval}
-    | null, error}``."""
+    | null, error, browser}``; ``browser``: Connect… opens Google's page
+    here rather than showing a code."""
     require_admin(request)
-    return gdrive_account.status()
+    return {**gdrive_account.status(), "browser": bool(_gdrive_callback(request))}
+
+
+class DriveAuthorizeRequest(BaseModel):
+    folder: str = gdrive_account.DEFAULT_FOLDER
+
+
+@router.post("/gdrive/authorize")
+def authorize_gdrive(payload: DriveAuthorizeRequest, request: Request):
+    """Start signing in on Google's page: ``{url}``, the page to open; it
+    comes back to ``/gdrive/callback``. 400 where Gamma is not opened on
+    the server's own computer (connect with a code there)."""
+    require_admin(request)
+    callback = _gdrive_callback(request)
+    if not callback:
+        raise HTTPException(status_code=400, detail="Google's page signs in only where Gamma is opened on the server's "
+                                                    "own computer: connect with a code instead.")
+    return {"url": _drive_call(gdrive_account.start_browser, payload.folder, callback)}
+
+
+@router.get("/gdrive/callback", response_class=HTMLResponse)
+def gdrive_callback(state: str = "", code: str = "", error: str = ""):
+    """Google's page comes back here, in whatever browser it opened in (the
+    system browser of the desktop app, which has no session): the state,
+    unguessable and used once, names the sign-in an admin started. A page
+    that says how it went; the pane, polling, sees the connection."""
+    problem = gdrive_account.finish_browser(state[:128], code[:2048], error[:100])
+    if problem:
+        return HTMLResponse(html_page.page("Google Drive was not connected", problem), headers=html_page.headers())
+    return HTMLResponse(html_page.page("Google Drive is connected",
+                                       "Backups can go to your Drive now. Close this tab and go back to Gamma."),
+                        headers=html_page.headers())
 
 
 # Sync defs from here: each may call Google.
@@ -564,22 +603,6 @@ def disconnect_gdrive(request: Request):
     Drive."""
     require_admin(request)
     return gdrive_account.disconnect()
-
-
-@router.put("/gdrive/client")
-def set_gdrive_client(payload: DriveClientRequest, request: Request):
-    """Save the OAuth client connections are made through (another than
-    the one saved disconnects): the GET's answer; 400 for one that cannot
-    be."""
-    require_admin(request)
-    return _drive_call(gdrive_account.set_client, payload.client_id, payload.client_secret)
-
-
-@router.delete("/gdrive/client")
-def remove_gdrive_client(request: Request):
-    """Forget the OAuth client, disconnecting: the GET's answer."""
-    require_admin(request)
-    return _drive_call(gdrive_account.remove_client)
 
 
 @router.post("/gdrive/test")
