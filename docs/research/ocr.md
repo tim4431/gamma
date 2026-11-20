@@ -7,8 +7,13 @@ search and the translated view were so poor on scans, and what to build. The
 note records what was measured, the three repairs tried and why one was
 picked. A second stage, real OCR, was then measured against a transcribed
 truth: which engine, what it costs on each platform, when it beats a scan's
-own layer, and a design that follows, whose server part is built. A
-third, a vision model for scanned equations, is left open. The mechanics
+own layer, and a design that follows, whose server part is built. A third
+stage measured how to find a scan's formulas and read them as LaTeX:
+- a layout model finds them well enough for the translated view;
+- of ten local readers, a 0.9B OCR model, GLM-OCR, reads them best, and
+  comes closest to a frontier model's single pass.
+
+None of the third stage is built. The mechanics
 as built are in [dev/pdf_loading.md](../dev/pdf_loading.md) (the text
 layer, and the recognized words in the viewer),
 [dev/documents.md](../dev/documents.md#text-extraction) (the server's text,
@@ -542,7 +547,8 @@ engine, and 56.6% wrong in the existing layers.
     separates the two groups: 98–99% on the good layers, 82–90% where OCR
     helps. Hänsch, Holstein and Kitagawa share 92–95% and gain little. The
     threshold rests on 12 pages.
-- **No engine reads display equations.** They stay with Stage 3.
+- **No engine reads display equations.** They stay with
+  [Stage 3](#stage-3-formulas-on-scanned-pages).
 
 ### Where each engine can run
 
@@ -566,6 +572,9 @@ equations, and they are a Stage 3 question:
   reported by the models' own authors.
 - The models small enough for a CPU have 0.9–1.2 billion parameters, and no
   CPU time per page has been published for them.
+
+[Stage 3](#stage-3-formulas-on-scanned-pages) measured the small ones that
+llama.cpp runs, on formula crops, on the CPU and the GPU.
 
 ### A design that follows
 
@@ -664,6 +673,461 @@ out, since its PDF is only in a developer's own library.
 - Fraktur: the Annalen page is set in Antiqua.
 - A render above 300 dpi, or at the scan's own resolution.
 
+## Stage 3: formulas on scanned pages
+
+Measured in November 2026, before anything was built: how to find the
+formulas on a scanned page, how well local models and a hosted one read them
+as LaTeX, what that costs, and whether a bad reading can be told from a good
+one.
+
+### Two jobs, not one
+
+A scan's formulas need two different things.
+
+- **Where the formulas are.** The translated view needs only this. Its
+  formula rules ([dev/translation.md](../dev/translation.md#formulas)) pick
+  a formula's runs by their font (CMMI, newtx and the like), their
+  characters, or their place as a sub- or superscript. The viewer hands
+  the translation a scan's text repaired: each printed line is one band at
+  one size, in the layer's own text font, or in Gamma's own font for
+  recognized words. So no run is a sub- or superscript and no font rule
+  applies. Only a run that is mostly Greek or symbols counts as math, with
+  the digits and operators between two such runs. The rest of a formula
+  goes to the model as garbled prose.
+
+  If the page's formula regions were known, a run inside one would count
+  as math, as on a born-digital PDF:
+  - inside a sentence, it becomes a `{vN}` token, drawn as a crop of the
+    page;
+  - a display line whose words are all formula stays untranslated, rather
+    than being translated as garbled words.
+
+  No LaTeX is needed for that.
+- **What the formulas say.** The chat, MCP, copy and search read text, and
+  for them a formula's garbled words are worse than nothing. They need LaTeX.
+
+### Pages and truth
+
+- **Regions.** 69 pages at 300 dpi in grey from seven scans: Lounis p3–15,
+  Holstein and Primakoff p2–16, Kitagawa p1–6, Feshbach p3–34, NACA p9,
+  J. Phys. Radium p33 (1961) and Annalen p3 (1834). As in Stage 2, the
+  marking and the transcriptions below were done by a model reading
+  full-resolution tiles. Every display equation was marked from tiles of
+  the page with a 100 px grid, under written rules:
+  - the box holds the body and leaves out the equation number;
+  - there is one entry per numbered equation, and rows that share a number
+    are one entry.
+
+  The boxes were then snapped to the ink. That gave 359 displays, 289 of
+  them numbered and 71 of several rows.
+- **LaTeX of the real scans.** 152 of those displays, sampled across the
+  papers. They were transcribed twice under written conventions (amsmath;
+  `\mathrm` for upright names; primes as `'`); the second pass never saw
+  the first. The two readings agreed on 126. The other 26 were settled by
+  rendering both readings beside the crop. The normalizer of the time was
+  used; the final one, below, counts 130 agreements. Scored against the
+  settled truth, the two passes alone are at 0.005 NED each (the token
+  edit distance of Measures; 95% and 90% exact). That is a ceiling rather
+  than an accuracy, since an error both passes made cannot show.
+- **LaTeX of synthetic scans.** 191 display equations from eight arXiv
+  physics papers (1997–2013). Each was rendered alone in a Times-like font
+  at the width of a journal column, then degraded into an old bi-level
+  scan:
+  - ink spread or thinned, on 111 of the 191;
+  - a rotation up to 0.6°;
+  - blur and a noisy threshold;
+  - on 67 (35%), a JBIG2-like loss of resolution that breaks thin
+    strokes;
+  - specks and pinholes.
+
+  The source LaTeX is the exact truth. None of the eight papers is under a
+  Creative Commons licence, so the set stays private.
+- **Inline formulas.** No truth was made. They were looked at by eye on
+  Lounis p6, and read and timed on the 53 that PP-DocLayoutV3 boxed at a
+  score of 0.5 or more on Lounis p6 and p8.
+
+### Measures
+
+- **Finding.** A found box matches a marked display when the two boxes'
+  intersection over their union (IoU) is at least 0.5, greedily, best
+  first. The scores are:
+  - recall, precision and F1, their harmonic mean;
+  - how many displays a finder's boxes cover by at least half, joined or
+    split;
+  - how many printed equation numbers a box swallowed, which would make a
+    reader read the number into the formula.
+- **Reading.** NED, the normalized edit distance, is the edit distance
+  between the token sequences over the truth's length (capped at 1; 0 is
+  perfect). Exact is the share of identical sequences. Both sides are first
+  stripped of what does not change the print:
+  - sizing (`\left`, `\big`) and spacing;
+  - the wrappers for upright text (`\mathrm`, `\operatorname`, `\text`);
+  - braces that group nothing;
+  - the spellings of an array or a matrix (`\left(\begin{array}{c}` is
+    `\begin{pmatrix}`);
+  - plain TeX's spellings (`{a \over b}` is `\frac{a}{b}`, `{\bf AB}` is
+    `\mathbf{AB}`);
+  - the order of a sub- and superscript (`x^2_M` is `x_M^2`);
+  - synonyms (`\dfrac` for `\frac`, `\le` for `\leq`, `\overrightarrow`
+    for `\vec`).
+
+  Each rule came from readings that print the same as their truth but were
+  scored as errors:
+  - Without the array rule, GLM-OCR's habit of wrapping every multi-row
+    display in `\begin{array}{l}` doubled its NED.
+  - Without the script and `\over` rules, the synthetic set's NEDs were
+    nearly twice as high: its arXiv sources write `x^2_M`.
+
+  A test of pairs that must and must not come out equal guards the
+  normalizer. An ink IoU between the two renders was computed as well. It
+  ranked the readers inconsistently (Pix2Text first on the synthetic set),
+  so it is not used.
+- **Times.** Engine calls on the decoded crop or page after one warm-up, on
+  the same Ryzen 9 9900X (one thread, and the runtime's default of 12) and
+  an RTX 4070 SUPER.
+  - Every engine was first timed on three pages or five crops.
+  - The candidates were timed again on an otherwise idle machine, one at a
+    time: the 13 Lounis pages, the 30 Lounis displays of the real sample,
+    and the 53 inline crops.
+  - The full runs' own times are not used. Renders and other runs beside
+    them doubled some.
+
+### Finding formulas
+
+Every model finder ran through ONNX Runtime 1.32 on the CPU. A display
+counts if its class is the model's display-formula class, at a score of
+0.5 or more.
+
+| Finder | Licence | Size | Recall | Precision | F1 | Covered | Numbers swallowed | s/page, one thread / 12 |
+|---|---|---|---|---|---|---|---|---|
+| PP-DocLayoutV3 (RapidAI's ONNX) | Apache-2.0 | 130.5 MB | 0.936 | 0.933 | 0.935 | 350/359 | 2/289 | 1.18 / 0.54 |
+| the same, fp16 weights | Apache-2.0 | 65.3 MB | 0.936 | 0.933 | 0.935 | 350/359 | 2/289 | 1.18 / 0.53 |
+| the same, int8 MatMul | Apache-2.0 | 108.7 MB | 0.944 | 0.939 | 0.942 | 349/359 | 3/289 | – |
+| DocLayout-YOLO DocStructBench | AGPL-3.0 | 75 MB | 0.933 | 0.920 | 0.927 | 345/359 | 1/289 | 1.33 / 0.37 |
+| PP-DocLayout_plus-L | Apache-2.0 | 130 MB | 0.855 | 0.895 | 0.875 | 342/359 | 1/289 | 0.81 / 0.22 |
+| Tesseract's lines and layout rules | – | – | 0.552 | 0.520 | 0.535 | 223/359 | 0/289 | – |
+
+The rules in the last row are the cheapest way: a line ending in an
+equation number after a wide gap, or an indented line that reads poorly or
+holds math characters.
+
+PP-DocLayoutV3 was timed on the 13 Lounis pages on an idle machine, and the
+others on three pages. The fp16 weights are no faster on a CPU. The
+process's working set peaked at about 1.0 GB with either file.
+
+- **PP-DocLayoutV3 finds nearly every display**, and alone gives what
+  translation needs. It finds equation numbers as a class of their own
+  (286 boxes at 0.5 against 289 numbers), and inline formulas as another.
+- **By paper it is perfect on Lounis** (58 of 58, no false box) and on
+  J. Phys. Radium (16 of 16). Its recall is 0.98 on Feshbach and 0.94 on
+  NACA.
+- **About half of Holstein's misses are the marking convention.** Its
+  recall there is 0.83, 14 of 81 displays unmatched:
+  - 6 are rows that share one number, which it boxes one by one; for
+    translation each row is still a formula region;
+  - 5 are boxes that join two displays;
+  - the rest are two misses and one box too loose.
+- **Nine displays of 359 were missed:**
+  - the two tables of chemical formulas on the 1834 Annalen page;
+  - two on Kitagawa p4, one on Feshbach p8 and one on Holstein p6;
+  - three found only in part: another on Feshbach p8, and two multi-row
+    displays of which it boxed some rows.
+- **No box was off on its own.** Of its 360 boxes, two lay less than 60%
+  on marked displays: one joined two Holstein displays and the text line
+  between them, and one was only taller than its display.
+- **fp16 weights halve the file and change nothing.** int8 for the
+  transformer's matrix products changes little in size; the convolutions
+  stay fp32.
+- **Inline formulas are found as well**, though without truth to score
+  them. On Lounis p6 its 28 boxes (all scored 0.3 or more; one takes in
+  "H, z") cover |f⟩, S_fi, (E_i − H + iη)⁻¹, G_ee(z) = ⟨φ_e|G(z)|φ_e⟩ and
+  the like:
+  - It missed one |i⟩, a bare H and an ω.
+  - It left the upright V and the S of "S-matrix" unboxed.
+  - It boxed nothing that is not math, and left cross-references such as
+    "(3.2)" alone. Across Lounis it gave 450 inline boxes at 0.3, up to 56 a page,
+  and 392 at 0.5. The rapid-layout and PaddleX pipelines
+  drop an inline box inside a text box, so that filter has to be off to
+  keep them.
+
+### Reading formulas
+
+The display crops, cut with an 8 px margin, went to every reader as they
+are, and every reader decoded greedily. The vision-language models ran
+through llama.cpp b12359 (MIT) with what their model cards give:
+- "Formula Recognition:" for GLM-OCR and PaddleOCR-VL;
+- "Convert formula to LaTeX." for Granite-Docling;
+- the image alone for LightOnOCR-2;
+- dots.ocr's text-only prompt, "Extract the text content from this image."
+
+LightOnOCR-2 and dots.ocr answer in Markdown, so their code fences and `$`
+delimiters were stripped. LightOnOCR-2's card samples at temperature 0.2.
+
+| Reader | Licence | Size | Real NED | Real exact | Synthetic NED | Synthetic exact | Compiles (real) | GPU s/crop |
+|---|---|---|---|---|---|---|---|---|
+| GLM-OCR (0.9B, Q8_0 GGUF) | MIT | 1,435 MB | **0.037** | **53%** | 0.028 | 63% | 99% | 0.49 |
+| PaddleOCR-VL 1.6 (GGUF) | Apache-2.0 | 1,818 MB | 0.067 | 51% | 0.042 | 53% | 89% | 0.38 |
+| LightOnOCR-2-1B (Q8_0 GGUF) | Apache-2.0 | 1,089 MB | 0.067 | 41% | 0.045 | 51% | 100% | 0.31 |
+| dots.ocr (Q8_0 GGUF) | MIT | 3,239 MB | 0.103 | 39% | 0.080 | 42% | 80% | 0.47 |
+| Granite-Docling 258M | Apache-2.0 | 522 MB | 0.124 | 28% | 0.217 | 15% | 91% | 0.74 |
+| PP-FormulaNet plus-M (MinerU's ONNX) | Apache-2.0 | 594 MB | 0.153 | 33% | 0.105 | 30% | 91% | – |
+| TexTeller 3 (PyTorch) | Apache-2.0 | 1.19 GB | 0.173 | 35% | 0.130 | 27% | 95% | – |
+| Pix2Text MFR 1.5 (ONNX) | MIT | 120 MB | 0.186 | 17% | 0.116 | 33% | 95% | – |
+| PP-FormulaNet plus-S (converted here) | Apache-2.0 | 334 MB | 0.252 | 16% | 0.162 | 19% | 57% | – |
+| rapid_latex_ocr (pix2tex) | MIT | 179 MB | 0.375 | 10% | – | – | 72% | – |
+| Claude Opus 5.5, one pass (hosted) | – | – | – | – | **0.020** | **75%** | – | – |
+
+- **The GPU times** are over the 152 real crops.
+- **The hosted model.** Six agents each read about 32 synthetic crops once,
+  with no rendering or checking, as a product would ask once. Their
+  transcripts show one Read of each crop and nothing else.
+- **Two leaders of the published benchmark trail here.**
+  - LightOnOCR-2 and dots.ocr lead olmOCR-Bench's old-scan math, at 85.6
+    and 85.5 against GLM-OCR's 68.3 (each figure as published).
+  - That benchmark scores whole pages of public-domain textbooks, and these
+    are crops of physics journals.
+  - Chandra, which leads it, was not run: its weights' licence caps the
+    user's revenue and forbids competing with its maker's API. olmOCR-2
+    was not run either, being a 7B model.
+
+On the CPU, timed on an idle machine one reader at a time (a stray process
+held about 3 of the 24 logical cores throughout):
+
+| Reader | s/display (30 Lounis displays), one thread / 12 | s/inline formula (53), one thread / 12 | Peak memory |
+|---|---|---|---|
+| GLM-OCR | 4.6 (at most 19.7) / 1.56 | 1.05 / 0.38 | 1.9 GB (llama-server) |
+| PaddleOCR-VL 1.6 | 6.5 / 1.59 | – | 2.0 GB |
+| LightOnOCR-2-1B | 4.7 / 1.43 | 9.8 / 4.0 (median 1.05 / 0.35) | 2.3 GB, 3.1 GB on the inline crops |
+| dots.ocr | 11.2 / 3.06 | 1.92 / 0.56 | 3.5 GB |
+| PP-FormulaNet plus-M | 1.31 / 0.87 | – | 0.9 GB |
+
+The others were timed only on five crops of Lounis p8, three of them wide
+(one thread / 12):
+- Granite-Docling: 20.8 / 4.83 s;
+- TexTeller: 8.40 / 6.04 s;
+- Pix2Text: 3.62 / 1.46 s;
+- PP-FormulaNet plus-S: 0.70 / 0.39 s;
+- pix2tex: 6.0 s on 12 threads over its full run (median 0.8, at most 46).
+
+On the 30 displays the CPU readings of GLM-OCR, PaddleOCR-VL and plus-M
+score the same as on the GPU (GLM-OCR 0.007, 26 exact).
+
+By paper, on the real crops:
+
+| Reader | Lounis | NACA | Holstein | Kitagawa | Feshbach | J. Phys. Radium | Annalen |
+|---|---|---|---|---|---|---|---|
+| GLM-OCR | 0.007 (26 of 30 exact) | 0.017 | 0.024 | 0.024 | 0.070 | 0.075 | 0.138 |
+| PaddleOCR-VL 1.6 | 0.069 | 0.015 | 0.033 | 0.009 | 0.058 | 0.265 | 0.141 |
+| LightOnOCR-2-1B | 0.058 | 0.042 | 0.077 | 0.014 | 0.082 | 0.101 | 0.132 |
+| dots.ocr | 0.174 | 0.176 | 0.050 | 0.014 | 0.093 | 0.102 | 0.186 |
+
+What the readers get wrong:
+- the "fi" ligature of a subscript read as "n" (S_fn, T_n̂);
+- the vector arrows of the 1961 French print, which PaddleOCR-VL reads as
+  a row of their own (`\rightarrow \\ \alpha`);
+- `\left| … \right|` bars invented around a crop;
+- script and Fraktur capitals read as one another (Feshbach's ℋ as 𝔎, or
+  as `\mathcal{J}\mathcal{C}` by LightOnOCR-2);
+- bold lost or added;
+- a second row dropped (LightOnOCR-2 on NACA);
+- plain text for LaTeX. dots.ocr's text mode answered 10 of the 152 real
+  crops in Unicode (`H = H₀ + V`, `ħω`) and two in HTML `<sub>`.
+
+The small readers also write malformed LaTeX: plus-S's `\mathbf_{n}` and
+unbalanced braces.
+
+On inline crops GLM-OCR takes 0.08 s on the GPU and about 17 output tokens.
+By eye, of the first 24 on Lounis p6:
+- 16 are exact;
+- 5 more are right but took in a neighbour's comma or bracket from the
+  crop's margin;
+- 3 are misread: the fi ligature (S_fn) and two with invented bars.
+
+LightOnOCR-2 ran away on 9 of the 53 inline crops, writing "H_0, H_1, H_2,
+…" up to its 1,024-token cap. That accounts for its inline mean of 9.8 s
+against a median of 1.05 s.
+
+### Telling a bad reading
+
+A reading is bad here when its NED is over 0.25. Several signals a product
+could compute without the truth were tried for whether they rank good
+readings (NED ≤ 0.10) above bad ones. The measure is the AUC, the chance
+that a good reading scores above a bad one; 0.5 is chance.
+
+| Signal | AUC, GLM-OCR / PaddleOCR-VL / plus-M (real) | What it is |
+|---|---|---|
+| Agreement with another reader | 0.73 / 0.89 / 0.98 | 1 − the token edit distance to the nearest of the other nine local readers' readings |
+| The render against the crop | 0.57 / 0.63 / 0.81 | ink IoU of the reading's render, scaled to the crop's ink |
+| Aspect ratio | 0.40 / 0.61 / 0.72 | the two ink boxes' width over height |
+| Compiles | 0.50 / 0.51 / 0.57 | – |
+| A repeated 4-gram | 0.37 / 0.36 / 0.65 | the share of tokens in a loop |
+
+- **On the real crops, agreement ranks the best readers' readings best**:
+  0.73 for GLM-OCR, 0.89 for PaddleOCR-VL. The render and the aspect ratio
+  help only the weaker readers, plus-M among them (0.81). A render looks
+  too unlike a 1950s typeface for the comparison with the crop to tell
+  much, and nearly every reading compiles.
+- **On the synthetic set the best readers are too rarely wrong to rank.**
+  GLM-OCR has one bad reading of 191, Claude two and PaddleOCR-VL three.
+  On the real set GLM-OCR has six, so its AUCs also rest on few cases.
+- **Loops are rare, and a repetition rule flags good readings.**
+  - GLM-OCR and PaddleOCR-VL never looped within 1,024 tokens.
+  - LightOnOCR-2 looped once on a display and on 9 of the 53 inline crops.
+  - dots.ocr looped once.
+  - Granite-Docling ran 7 of the 343 crops to the cap.
+  - PP-FormulaNet plus-M looped on 4 real crops (24–30 s each), and pix2tex
+    on wide crops (up to 46 s).
+
+  A formula repeats itself (|φ_e⟩ … |φ_e⟩), so the 18 GLM-OCR readings with
+  half their tokens in a repeated 4-gram average 0.02 NED. A cap on the
+  length of a reading, relative to its crop's width, stops a loop without
+  judging the rest.
+- **As a guard, a second reader keeps what both say.** GLM-OCR checked by
+  PaddleOCR-VL, both sets together (343 crops, 7 of GLM-OCR's readings
+  bad):
+
+  | Keep where the two differ by at most | Kept | NED of the kept | Bad readings kept | NED of the flagged |
+  |---|---|---|---|---|
+  | nothing | 49% | 0.011 | 0 | 0.052 |
+  | 5% | 71% | 0.017 | 1 | 0.069 |
+  | 10% | 84% | 0.023 | 3 | 0.079 |
+  | 20% | 94% | 0.029 | 4 | 0.088 |
+  | everything | 100% | 0.032 | 7 | – |
+
+  The guard doubles the time spent reading. At a 5% difference it keeps
+  71% of the readings at about half the error (0.017 against 0.032), and
+  flags 6 of the 7 bad ones. LightOnOCR-2 as the checker does about as well
+  (71% kept, 0.017).
+
+### A hosted model's cost
+
+No API key was at hand, so token counts are estimates from the pricing
+documentation (November 2026), not counted.
+- **An image** costs about one token per 28 × 28 pixels. A larger one is
+  scaled down to at most 2,576 px on the long side and about 4,800 tokens
+  (some 3.75 megapixels), whichever comes first. A 300-dpi page reaches
+  that cap, so a whole page is about 4,800. The 152 display crops come to
+  150 image tokens on average (median 80, at most 1,300), and an inline
+  crop to about 9 (at most 36).
+- **A reading** writes about 80–110 tokens for a display and 17 for an
+  inline formula, the local models' means, before any thinking. Claude
+  Opus 5.5 cannot turn thinking off, only lower its effort. It costs $4 in
+  and $20 out per million tokens; Sonnet 5.5 costs $2 and $10, and Haiku
+  5.5 $0.10 and $0.50.
+- **Per formula**, with about 50 tokens of prompt, Opus 5.5 comes to about
+  $0.003 a display and $0.0006 an inline formula, Sonnet 5.5 to half that.
+  Haiku 5.5 comes to a fortieth of Opus, but its accuracy on these crops
+  was not measured.
+- **Per paper**, Lounis's 58 displays come to $0.12–0.16 with Opus 5.5,
+  and its 450 inline boxes (at a score of 0.3; 392 at 0.5) to about $0.27.
+- **Per page**, a page sent whole costs about $0.02 in and, with its text
+  written out, $0.04–0.06 out.
+- **The pictures leave the server.** The crops or pages go to whoever the
+  person's AI provider is.
+
+### What the numbers say
+
+- **Finding comes first, and it is solved.** PP-DocLayoutV3, under
+  Apache-2.0 and with fp16 weights of 65.3 MB:
+  - covered 97.5% of the displays by at least half (recall 0.936 at IoU
+    0.5), all of Lounis's;
+  - found the inline formulas too;
+  - costs about a second a page on one core, less than Tesseract's 1.8–3.7
+    s a page in Stage 2.
+- **For translation, that is enough.** A formula region's words become a
+  formula token, drawn as a crop of the page, and a display stays
+  untranslated rather than being translated as garbled words. No reader's
+  LaTeX is involved, so no reading error can reach the translated view.
+- **GLM-OCR reads best of the ten local readers, and comes closest to a
+  frontier model's single pass.**
+  - On the synthetic scans it is at 0.028 NED and 63% exact, against Opus
+    5.5's 0.020 and 75%.
+  - On the real ones it is at 0.037; the next, PaddleOCR-VL and
+    LightOnOCR-2, are at 0.067.
+  - On Lounis it read 26 of 30 displays exactly.
+  - It is a 1.4 GB download, MIT licensed, and runs through llama.cpp in
+    1.9 GB of memory.
+  - Per display: 4.6 s on one core, 1.6 s on 12 threads.
+  - Per inline formula: 1.05 s and 0.38 s.
+  - Lounis's 58 displays take 4.5 minutes on one core, and its 450 inline
+    boxes (392 at a score of 0.5) another 7–8. A NAS core is perhaps two to
+    three times slower (not measured).
+- **A published benchmark did not predict the order.** LightOnOCR-2 and
+  dots.ocr lead old-scan math on olmOCR-Bench, as published. Here they
+  make twice and three times GLM-OCR's error on the real scans, and
+  LightOnOCR-2 runs away on inline crops.
+- **The dedicated formula readers are well behind.** PP-FormulaNet,
+  Pix2Text and TexTeller make four to seven times GLM-OCR's error on both
+  sets, and pix2tex ten times on the real scans.
+- **There is no cheap guard.** A second reader's agreement catches most
+  bad readings: checked by PaddleOCR-VL, 6 of GLM-OCR's 7 over both sets.
+  It doubles the cost. GLM-OCR is rarely wrong to begin with, once in the
+  191 synthetic scans, and the page's crop stays the authority wherever a
+  person sees the formula.
+
+### A design that follows
+
+Not built.
+- **Regions with the recognized text.** The server's run (`pdf_ocr.run`)
+  draws every scan page at 300 dpi for PP-DocLayoutV3.
+  - That includes the pages it does not recognize. Today, once the sample
+    of three layered pages reads well, the run skips the file's other
+    layered pages; those still need their regions.
+  - It stores the page's display and inline boxes beside its words, or
+    beside nothing for a page that keeps its layer.
+  - A change to the boxes takes a new stamp, so the readers' caches let go
+    of the old view.
+  - The number boxes are kept too, for a later use such as linking "(3.2)"
+    to its equation.
+  - The finder needs ONNX Runtime and the fp16 model, 65.3 MB, too large
+    for the repo, so it would be fetched once or put in the Docker image.
+    ONNX Runtime 1.32's wheels are 27.8 MB on Linux x86_64, 23.2 MB on
+    arm64, 16.7 MB on Windows and 22.5 MB on Apple Silicon (about 51 MB
+    installed on Windows). There is none for Intel Macs, and none for the
+    apps on PyPI.
+  - The window's run (`ocr-tab`, for the apps and servers without the
+    engine) finds no regions until onnxruntime-web is measured.
+- **The viewer marks the words.** `pageText` flags an item whose box lies
+  mostly inside a display or inline region (`math: true`), `textRuns`
+  carries the flag onto its run, and `pdfMath.isMathRun` takes it before
+  its font rules. The formula becomes a token, and a line that is all
+  formula stays untranslated.
+  - The overlay's crop (`TransMath`) has to be cut at the region's box, not
+    at the words' box (`spanBox`). The words' box is the repaired line band,
+    which Stage 1 found off the ink on some layers (Feshbach's baseline,
+    NACA's small type, skew).
+  - An equation number stays text. It lies outside the display's box (the
+    finder swallowed 2 of 289), and `pdfMath` takes no run of digits and
+    brackets set apart from a formula.
+- **LaTeX as an option.** A run of its own (a job kind beside `ocr`) sends
+  each display's crop, and optionally each inline one's, to a reader:
+  - GLM-OCR through llama.cpp's server where the person installed it, a
+    download of about 1.5 GB with the engine (25 MB zipped for the CPU),
+    using 1.9 GB of memory while it reads;
+  - or the AI provider the person set up.
+
+  It keeps `{box, latex, reader}` per region.
+- **Where the LaTeX goes.** `pdf_text`'s readers give a region's LaTeX in
+  place of its words, `$$…$$` for a display and `$…$` inline, so the chat,
+  MCP and search read the formula. Copying a selection that covers a whole
+  formula copies its LaTeX. The translated view keeps drawing crops.
+- **Guards.** Cap a reading's length by its crop's width, so a loop ends
+  early. Where both readers are installed, keep a reading the second one
+  agrees with and mark the rest as uncertain to the chat. In the viewer,
+  the crop is always what is shown.
+
+### Not measured
+
+- **Other hardware**: a NAS, onnxruntime-web in a window, the apps.
+- **Inline readings against a truth.**
+- **A hosted model on the real scans.** Their truth was made by the same
+  kind of model, which would make the comparison circular.
+- **Whole-page reading by a vision-language model.** It gives LaTeX
+  without a separate finder; Granite-Docling read Lounis p8 whole in 4 s on
+  the GPU, but where its LaTeX sits on the page was not scored.
+- **GLM-OCR at a smaller quantization than Q8_0.**
+- **Fraktur formulas.**
+
 ## Still open
 
 ### Stage 2: what is left to build
@@ -690,26 +1154,35 @@ Left:
 The threshold for replacing a layer rests on 12 pages and should be
 checked on more.
 
-### Stage 3: a vision model for scanned math
+### Stage 3: formulas on scanned pages
 
-Every OCR engine measured above got 47–57% of the characters of display
-equations wrong, and the formula rules ([dev/translation.md](../dev/translation.md))
-read fonts a scan does not have. Translating a scanned equation-heavy paper
-well probably means sending the page picture to a vision model with the
-text, through the AI provider the person has set up.
+Measured, with a design ([Stage 3](#stage-3-formulas-on-scanned-pages)).
+Nothing of it is built. Left:
 
-The open questions:
-- how a model's LaTeX is placed on the page;
-- what it costs per page;
-- how to catch what such models are known to get wrong on old print:
-  - characters repeated until the output runs out, on 19th-century
-    newspapers ([Bourne 2025](https://arxiv.org/html/2502.14901));
-  - letters and diacritics added that the page does not have, on
-    18th-century print ([Levchenko 2025](https://arxiv.org/html/2510.06743));
-  - Nougat looping on scanned pages
-    ([Blecher et al.](https://arxiv.org/html/2308.13418v1)).
+- **Formula regions with the recognized text**: PP-DocLayoutV3 in the
+  server's run, the regions stored per page, and the viewer marking the
+  words inside them as math for the translated view. This is the part that
+  fixes translation, and the one to build first.
+- **LaTeX as an option**: GLM-OCR through llama.cpp, or the person's AI
+  provider, for the chat, MCP, copy and search.
+- **What was not measured**: a NAS, the window and the apps, inline
+  readings against a truth, and a hosted model on the real scans.
 
-Not designed or measured.
+The field's known failures on old print were looked for:
+- characters repeated until the output runs out, on 19th-century
+  newspapers ([Bourne 2025](https://arxiv.org/html/2502.14901));
+- Nougat looping on scanned pages
+  ([Blecher et al.](https://arxiv.org/html/2308.13418v1));
+- letters and diacritics added that the page does not have
+  ([Levchenko 2025](https://arxiv.org/html/2510.06743)).
+
+On crops, GLM-OCR and PaddleOCR-VL never looped. The others that did:
+- LightOnOCR-2, on 9 of 53 inline crops;
+- Granite-Docling, on 7 of 343 crops;
+- PP-FormulaNet plus-M, dots.ocr and pix2tex, on a few.
+
+Invented content showed as small additions: bars around a formula, a
+`\boxed{}` from TexTeller.
 
 ### Smaller items
 
@@ -730,9 +1203,10 @@ Not designed or measured.
 
 ## Rebuilding the study
 
-The harness for both stages is [tools/ocr-study](../../tools/ocr-study/README.md).
-The corpus and the transcribed truth cannot be committed, because most of
-the pages are under copyright. To rebuild them:
+The harness for the three stages is [tools/ocr-study](../../tools/ocr-study/README.md).
+The corpus, the transcribed truth and the synthetic equations cannot be
+committed: most of the pages are under copyright, and so are the arXiv
+papers the equations come from. To rebuild them:
 
 1. **Corpus.** The public scans: HAL jpa-00247657; the Internet Archive
    items `bstj27-3-379`, `journal-de-physique-1963_1961-03_22_3`,
@@ -776,7 +1250,27 @@ the pages are under copyright. To rebuild them:
 10. **Score** with the measures of Stage 2. The best-substring edit distance
     is a row-vectorized dynamic program; a pure-Python one is too slow for
     page-length texts.
+11. **Stage 3 pages**: render the 69 pages at 300 dpi in grey. Mark every
+    display equation from tiles with a labelled 100 px grid, under written
+    rules, then snap each box to the ink.
+12. **Stage 3 truth**:
+    - sample the displays and transcribe each twice under written LaTeX
+      conventions, settling disagreements by rendering both readings
+      beside the crop;
+    - build the synthetic set from arXiv sources: one equation a page,
+      rendered at column width and degraded with a recorded seed.
+13. **Finders and readers**:
+    - the finders through ONNX Runtime;
+    - the dedicated readers through ONNX Runtime or PyTorch;
+    - the vision-language models through llama.cpp's server with the
+      prompts from their model cards.
 
-The 46-page evaluation takes about 1.2 s, the truth 13 s. Stage 2's engines
-take about 40 minutes over the 15 pages, its scoring about two minutes per
-engine.
+    Run them one at a time, then again with one thread. Time the CPU on an
+    idle machine: renders and other runs beside it doubled some times.
+14. **Score** the regions by IoU and coverage. Score the LaTeX by token edit
+    distance after the normalization above. Test the normalizer on pairs
+    that must and must not come out equal before trusting a score.
+
+Stage 3's renders take about 20 minutes with six pdflatex at a time. The
+readers take about an hour on the CPU, mostly pix2tex and TexTeller, and
+about 10 minutes on the GPU.
