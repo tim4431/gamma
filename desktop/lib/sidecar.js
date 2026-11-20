@@ -105,7 +105,7 @@ async function healthy(url, timeoutMs = 1500) {
     if (r.ok) return true;
     // A server whose data directory it cannot upgrade is up too: it answers
     // every request with a 503 carrying its guidance, and the window shows
-    // that page (backend/gamma/app.py _blocked_app).
+    // that page (backend/gamma/standby.py).
     if (r.status !== 503) return false;
     const body = await r.json().catch(() => null);
     return body?.error === 'data_directory_not_upgradable';

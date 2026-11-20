@@ -367,6 +367,8 @@ def migrate(status_only: bool = False, dry_run: bool = False, global_only: bool 
                 print(guide["fallback"]["lead"])
                 for step in guide["fallback"]["steps"]:
                     print(f"  - {step}")
+            for line in guide["details"]:
+                print(f"  - {line}")
             sys.exit(2)
         if not dry_run:
             print(f"Snapshot of the databases before the upgrade: {result['backup']}")

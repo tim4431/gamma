@@ -224,8 +224,8 @@ final class LocalServerStartTests: XCTestCase {
         XCTAssertTrue(up, "/api/health answered \(status)")
         // Up by the desktop's rule, but standing aside: a data directory
         // this build cannot upgrade (a newer build ran on this simulator,
-        // usually). That server answers every /api call with the same 503
-        // (gamma/app.py _blocked_app), so nothing below can run.
+        // usually). That server answers its API with the same 503 (all but
+        // the sign-in, gamma/standby.py), so nothing below can run.
         if up, status == 503 {
             throw XCTSkip("the data directory cannot be upgraded by this build (data_directory_not_upgradable), so every API call answers 503 and the PDF part cannot run: delete the simulator's Documents/Gamma/local to run it")
         }

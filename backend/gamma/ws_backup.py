@@ -126,16 +126,30 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
     the bytes written so far of the estimated total. Returns the manifest."""
     from . import workspaces  # local: workspaces imports seed, which imports db
 
+    info = workspaces.get(ws) or {}
+    owner = workspaces.personal_owner(ws)
+    with connect_users_db() as conn:
+        names = account_names(conn, [owner, by])
+    named = {"workspace_name": info.get("name", ""), "kind": info.get("kind", ""),
+             "user": names.get(owner) or next(  # whose it is
+                 (m["username"] for m in workspaces.members(ws) if m["role"] == "owner"), ""),
+             "exported_by": names.get(by, "")}
+    return zip_files(ws, dest, named, uploads=uploads, label=label, progress=progress, scheduled=scheduled,
+                     task_id=task_id, auto=auto)
+
+
+def zip_files(ws: str, dest: Path, named: dict, *, uploads: bool = True, label: str = "", progress=None,
+              scheduled: bool = False, task_id: str = "", auto: bool = False) -> dict:
+    """The zip ``write_zip`` writes, from the workspace's files alone:
+    ``named`` gives the manifest's ``workspace_name``, ``kind``, ``user``
+    and ``exported_by``, which ``write_zip`` reads from users.db and the
+    standby page from a users.db it may only read (gamma/standby.py)."""
     progress = progress or jobs.no_progress
     root = ws_dir(ws)
     db_files = [root / n for n in ("pages.db", "data.db") if (root / n).exists()]
     estimate = storage.usage(ws) if uploads else 0
     done, total = 0, sum(_size(f) for f in db_files) + estimate
     progress(done=done, total=total, unit="bytes")
-    info = workspaces.get(ws) or {}
-    owner = workspaces.personal_owner(ws)
-    with connect_users_db() as conn:
-        names = account_names(conn, [owner, by])
     checks, stored, missing = {}, [], []
     # strict_timestamps=False: an upload dated before 1980 goes in as 1980 (backups.stream_zip)
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as z:
@@ -169,11 +183,7 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
         manifest = {
             "format": FORMAT,
             "workspace": ws,
-            "workspace_name": info.get("name", ""),
-            "kind": info.get("kind", ""),
-            "user": names.get(owner) or next(  # whose it is
-                (m["username"] for m in workspaces.members(ws) if m["role"] == "owner"), ""),
-            "exported_by": names.get(by, ""),
+            **named,
             "exported_at": page_now(),
             "label": label,
             "scheduled": scheduled,
