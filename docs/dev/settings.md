@@ -780,12 +780,15 @@ AI:
   provider mints — or token), what it reads ("Reads A, B", all workspaces, or
   read and write for a token's workspace), where it comments ("comments in
   Lab", "comments everywhere"), where it edits notes ("edits notes in Lab",
-  "edits notes wherever you edit") and "changes without asking" once it no
-  longer asks first, the connected and expiry dates, an
-  icon-only **Choose workspaces** (read connections) that opens
+  "edits notes wherever you edit"), "may delete notes" and "changes
+  without asking" once it no longer asks first, the connected and expiry
+  dates, an icon-only **Changes** on a connection that edits (what it
+  changed, each with Undo: `ConnectionChanges`, [mcp.md](mcp.md) "Undoing a
+  change"), an icon-only **Choose workspaces** (read connections) that opens
   the checklist under the row, with View, Comment or Edit on each workspace
-  ticked, **Ask me before each change it makes** once one is Edit, and Save
-  and Cancel, and an icon-only
+  ticked, **Ask me before each change it makes** and **May delete notes**
+  (off unless turned on; saved off once no workspace is Edit) once one is
+  Edit, and Save and Cancel, and an icon-only
   Disconnect. **Tokens (advanced)**, folded, makes a token by hand: its name,
   its scope as a `Segmented` (read for assistants and scripts, at the levels
   its checklist gives each workspace; read and write for an offline copy of

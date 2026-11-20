@@ -128,7 +128,7 @@ export default function McpConsent({ requestId, userCode }) {
   // What the connection may do, as the choices above stand: one line each.
   const can = [
     [EyeIcon, t("Read pages, notes, highlights, and PDF text.")],
-    editing ? [PenIcon, t("Create, edit and move notes in the workspaces marked Edit. Never deletes anything, or changes pages, folders or settings.")] : null,
+    editing ? [PenIcon, t("Make pages, and create, edit and move notes with their pictures and files, in the workspaces marked Edit. Deletes nothing unless you allow it later in Settings, and changes no folders or settings.")] : null,
     editing ? [ShieldIcon, asks ? t("Asks you before each change, in the assistant's own window; one that cannot ask changes nothing.")
       : t("Changes notes without asking you first.")] : null,
     commenting ? [MessageSquareIcon, t("Comment, reply, resolve and highlight in the workspaces marked Comment or Edit, under its own name.")] : null,

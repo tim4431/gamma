@@ -893,6 +893,17 @@ def test_an_asking_tool_is_never_batched(org):
         ["read_page"], ["fetch_paper"], ["read_page"]]
 
 
+def test_storing_a_picture_asks_nobody(org):
+    """With note changes on Ask, clip_region, which only stores a picture,
+    shows no card: the note write that embeds it does, with the picture on
+    it."""
+    from gamma.ai_agent import ApprovalGate
+
+    _, ids = org
+    gate = ApprovalGate(ids["ws"], {"type": "folder", "folder": "", "permissions": {"block_edit": "ask"}}, "someone")
+    assert not gate.asks("clip_region") and gate.asks("create_block")
+
+
 # --- a helper's status -----------------------------------------------------------
 
 def test_a_helper_says_what_it_is_doing_while_its_call_runs(org, monkeypatch):

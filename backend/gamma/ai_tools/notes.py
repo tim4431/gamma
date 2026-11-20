@@ -1,28 +1,30 @@
 """The note tools: edit_block (replace, append, prepend, patch or a
-selection), create_block, move_block, delete_block (a deletion the user can
-revert), and clip_region, which stores a picture of part of a PDF page or
-of the user's handwriting for the notes to embed."""
+selection), create_block (a paste: Markdown made into blocks as the
+editor's Paste as → Blocks makes them), move_block, delete_block (a
+deletion the user can revert), and clip_region, which stores a picture of
+part of a PDF page or of the user's handwriting for the notes to embed."""
 
 import json
 import re
-import secrets
 
 from ..ai_pictures import ink_picture_url, parse_box, picture_url_of_page, render_region, store_picture
 from ..ai_context import is_text_document
-from ..blocks_store import block_kind, block_to_dict, fetch_subtree, write_lock
+from ..blocks_store import block_kind, block_to_dict, fetch_subtree, new_block_id, tree_inserts, write_lock
 from ..documents.model import is_pdf, page_document
 from ..highlights import is_ink
-from ..ops import after_commit, apply_ops, move_across_pages
+from ..markdown_import import md_to_blocks
+from ..ops import MAX_OPS, after_commit, apply_ops, move_across_pages
 from ..notebook import is_sheet
 from ..paste_math import dollar_math, paste_math
 from ..picture import is_picture, normalize_picture
 from ..storage import exists as _upload_exists, upload_refs
 from ..text_box import is_text_box
 from .base import (_DELETE_REVERT_MAX, _TRUNCATED_MARK, _excerpt, _load_scoped_block, _load_scoped_page,
-                   _sibling_position, note_pictures, notes_seen, text_diff)
+                   _sibling_gap, _sibling_position, host_free, note_pictures, notes_seen, text_diff)
 
 
 _BLOCK_CONTENT_MAX = 100_000
+_PASTE_LINES = 50  # the new blocks a paste's answer lists, one line each
 
 
 def _plan_clip_region(conn, scope: dict, args: dict):
@@ -103,9 +105,11 @@ def _run_clip_region(conn, ws: str, scope: dict, args: dict):
     url = stored["url"]
     text = (f"ok — stored a {stored['width']}×{stored['height']} px picture of {plan['what']} of "
             f'"{plan["title"]}" as {url}. Put it in a note with create_block or edit_block as a markdown '
-            f"image line of its own: ![<a short caption>]({url}). The user sees it in the chat as well "
-            "when you embed the same line in your reply.")
+            f"image line of its own: ![<a short caption>]({url}).")
+    if not scope.get("link_base"):  # the chat's, not an MCP assistant's
+        text += " The user sees it in the chat as well when you embed the same line in your reply."
     return text, {"kind": "clip", "page_id": plan["page_id"], "title": plan["title"], "url": url, "picture": url,
+                  "upload": url,
                   **({"pdf_page": plan["pdf_page"]} if plan.get("pdf_page") else {}),
                   **({"block_id": plan["block_id"]} if plan.get("block_id") else {}),
                   "summary": f"Clipped a picture of {plan['what'][:40]} in “{plan['title'][:50]}”"}
@@ -171,13 +175,25 @@ EDIT_MODES = ("replace", "append", "prepend", "patch", "selection")
 # Lines that start a paragraph-level construct: heading, list item, quote,
 # table row, fence, display math, rule.
 _BLOCKY_LINE = re.compile(r"^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|\$\$|---)")
+# The lines a run of continues on the next line: a list's items, a quote's
+# lines, a table's rows.
+_RUN_LINE = (("list", re.compile(r"^\s*([-*+]|\d+[.)])\s")), ("quote", re.compile(r"^\s*>")),
+             ("table", re.compile(r"^\s*\|")))
+
+
+def _run_kind(line: str) -> str:
+    return next((kind for kind, line_re in _RUN_LINE if line_re.match(line)), "")
 
 
 def join_block_text(existing: str, addition: str, mode: str) -> str:
     """Existing block text plus an addition, appended or prepended on its own
     line — with a blank line between when either side is a paragraph-level
-    construct or multi-line, so markdown keeps rendering as intended.
-    Mirrored in frontend editor/BlockTree.jsx (the streamed preview of an append)."""
+    construct or multi-line, so markdown keeps rendering as intended, but
+    where the line the two meet at is a list item, a quote line or a table
+    row on both sides the addition continues that run on the next line, as
+    the editor's paste at this level does (a tight list, one quote, one
+    table). Mirrored in frontend editor/BlockTree.jsx (the streamed preview
+    of an append)."""
     existing = existing.rstrip("\n")
     addition = addition.strip("\n")
     if not existing:
@@ -186,6 +202,9 @@ def join_block_text(existing: str, addition: str, mode: str) -> str:
         head, tail = addition, existing
     else:
         head, tail = existing, addition
+    run = _run_kind(head.rsplit("\n", 1)[-1])
+    if run and run == _run_kind(tail.split("\n", 1)[0]):
+        return head + "\n" + tail
     blank = ("\n" in head or "\n" in tail
              or _BLOCKY_LINE.match(tail) or _BLOCKY_LINE.match(head))
     return head + ("\n\n" if blank else "\n") + tail
@@ -271,6 +290,7 @@ def _plan_edit_block(conn, scope: dict, args: dict):
     content = args.get("content")
     if not isinstance(content, str):
         return None, "error: content must be a string (the block's markdown)"
+    content = host_free(scope, content)  # this library's links stored relative, as create_block's
     # read_block shows a picture as its ![caption](url) line, but the block's
     # text is the caption alone: that line written back would put the image
     # Markdown into the caption.
@@ -355,7 +375,8 @@ def missing_uploads(scope: dict, content: str, before: str = "") -> str:
     """The error for a block text that names a stored file the workspace
     does not hold ("" when every ``/api/uploads/`` reference exists, or
     was in the block already): a model may only embed the URLs it was
-    given — a picture's label line, clip_region's result, read_block."""
+    given — a picture's label line, clip_region's result, read_block, and
+    over MCP upload_file's."""
     ws = scope.get("ws")
     if not ws or "/api/uploads/" not in (content or ""):
         return ""
@@ -363,9 +384,11 @@ def missing_uploads(scope: dict, content: str, before: str = "") -> str:
     missing = sorted(n for n in upload_refs(content, {}) if n not in had and not _upload_exists(ws, n))
     if not missing:
         return ""
+    given = ("clip_region's or upload_file's result, read_block's text; store a file of your own with "
+             "upload_file first" if scope.get("link_base")
+             else "a picture's label line, clip_region's result, read_block's text")
     return ("error: no such stored file: " + ", ".join(f"/api/uploads/{n}" for n in missing)
-            + " — embed only picture URLs you were given (a picture's label line, clip_region's "
-            "result, read_block's text); never invent an upload name")
+            + f" — embed only the URLs you were given ({given}); never invent an upload name")
 
 
 MAX_CARD_PICTURES = 6  # pictures an approval card shows of a written text
@@ -419,52 +442,130 @@ def _run_edit_block(conn, ws: str, scope: dict, args: dict):
              "revert": revert})
 
 
+def _paste_tree(content: str, split: bool) -> list:
+    """The blocks a create_block's content makes (``{content, children}``):
+    the editor's Paste as → Blocks split (markdown_import.md_to_blocks, the
+    parser of POST /api/markdown-blocks) — a heading holding what follows
+    it, list items nesting by indentation, a paragraph, table, quote, fence
+    or $$ math one block — or, with ``split`` off, the content as one
+    block; an empty content one empty block."""
+    nodes = md_to_blocks(content) if split else []
+    return nodes or [{"content": "" if split else content, "children": []}]
+
+
+def _tree_size(nodes) -> int:
+    return sum(1 + _tree_size(n["children"]) for n in nodes)
+
+
+def _outline(nodes, depth: int = 0) -> list[str]:
+    """The paste's blocks as lines, each block's text indented two spaces
+    a level, as the approval card and Gamma's MCP question show them."""
+    out = []
+    for node in nodes:
+        out += ["  " * depth + line for line in (node["content"] or "").split("\n")]
+        out += _outline(node["children"], depth + 1)
+    return out
+
+
 def _plan_create_block(conn, scope: dict, args: dict):
-    """``((parent, page_id, page_title, content, position), None)``, or
-    ``(None, answer)`` for a call that cannot add the block."""
+    """``(plan, None)``: the ``parent`` on its page (``page_id``,
+    ``title``), the written ``content`` (math in dollars, this server's
+    links host-free), the block trees it makes (``nodes``, ``count`` of
+    them) and the ``gap`` between sibling keys they go in, ``after_id``'s
+    (``first`` when it is the parent's own id); ``(None, answer)`` for a
+    call that cannot add them."""
     loaded, error = _load_scoped_block(conn, scope, args.get("parent_id"))
     if error:
         return None, error.replace("no such block", "no such parent block")
     parent, page_id, page_title = loaded
-    content = dollar_math(str(args.get("content") or ""))  # math in dollars, as edit_block's
+    content = dollar_math(host_free(scope, str(args.get("content") or "")))  # math in dollars, as edit_block's
     if len(content) > _BLOCK_CONTENT_MAX:
-        return None, f"error: content too long (>{_BLOCK_CONTENT_MAX} chars)"
+        return None, (f"error: content too long (>{_BLOCK_CONTENT_MAX} chars) — paste it in parts, each part "
+                      "after_id the last block the one before made")
     if error := missing_uploads(scope, content):
         return None, error
-    position, error = _sibling_position(conn, parent["id"], args.get("after_id"))
+    nodes = _paste_tree(content, args.get("split") not in (False, "false"))
+    count = _tree_size(nodes)
+    if count > MAX_OPS:
+        return None, (f"error: that makes {count} blocks, and one call pastes at most {MAX_OPS} — paste it in "
+                      "parts, each part after_id the last block the one before made")
+    gap, error = _sibling_gap(conn, parent["id"], args.get("after_id"))
     if error:
         return None, error
-    return (parent, page_id, page_title, content, position), None
+    return {"parent": parent, "page_id": page_id, "title": page_title, "content": content, "nodes": nodes,
+            "count": count, "gap": gap, "first": str(args.get("after_id") or "") == parent["id"]}, None
 
 
 def _preview_create_block(conn, scope: dict, args: dict):
+    # `diff`: the blocks' texts as lines, indented by depth (one block: its
+    # text as written); `count` the blocks, `after` the sibling they follow
+    # or `first`; the pictures and files the paste shows, counted.
     plan, answer = _plan_create_block(conn, scope, args)
     if not plan:
         return None, answer
-    parent, page_id, page_title, content, _ = plan
-    return {"page_id": page_id, "title": page_title,
+    parent, page_id, content = plan["parent"], plan["page_id"], plan["content"]
+    after = "" if plan["first"] or not args.get("after_id") else conn.execute(
+        "SELECT content FROM unified_blocks WHERE id = ?", (str(args["after_id"]),)).fetchone()[0]
+    pictures = {url for _, url in note_pictures(content)}
+    text = content if plan["count"] == 1 else "\n".join(_outline(plan["nodes"]))
+    return {"page_id": page_id, "title": plan["title"],
             "parent": "" if parent["id"] == page_id else _excerpt(parent["content"]),
-            "diff": text_diff("", content), **_preview_pictures(content)}, None
+            "count": plan["count"], **({"first": True} if plan["first"] else {"after": _excerpt(after)} if after else {}),
+            "picture_count": len(pictures), "file_count": len(upload_refs(content, {})) - len(pictures),
+            "diff": text_diff("", text), **_preview_pictures(content)}, None
 
 
 def _run_create_block(conn, ws: str, scope: dict, args: dict):
+    # Planned under the write lock: the gap is read and its keys minted
+    # there, so a block someone adds at that spot meanwhile lands beside the
+    # paste, never inside it.
+    write_lock(conn)
     plan, answer = _plan_create_block(conn, scope, args)
     if not plan:
+        conn.rollback()
         return answer, None
-    parent, page_id, page_title, content, position = plan
-    block_id = secrets.token_urlsafe(9)
-    # The block is the account's (the op's actor); the agent that made it is
+    parent, page_id, page_title = plan["parent"], plan["page_id"], plan["title"]
+    # Each block is the account's (the op's actor); the agent that made it is
     # said beside it (scope "agent", agents.stamp: Gamma AI's, a connection's).
     made = {"agent": scope["agent"]} if scope.get("agent") else {}
-    after_commit(ws, conn, apply_ops(
-        conn, page_id, [{"op": "insert", "id": block_id, "parent": parent["id"],
-                         "position": position, "content": content, "props": made}],
-        actor=scope.get("actor", ""), client="ai"))
-    notes_seen(scope)[block_id] = content  # the model wrote it: a later replace starts from it
-    return (f"ok — created block [{block_id}]",
-            {"kind": "create", "page_id": page_id, "block_id": block_id,
-             "title": page_title, "summary": f"Added a note in “{page_title[:60]}”",
-             "revert": {"after": content, "parent": parent["id"], "position": position}})
+
+    def with_ids(node):
+        return {"id": new_block_id(), "content": node["content"], "properties": dict(made),
+                "children": [with_ids(c) for c in node["children"]]}
+
+    roots = [with_ids(n) for n in plan["nodes"]]
+    result = apply_ops(conn, page_id, tree_inserts(conn, parent["id"], roots, plan["gap"]),
+                       actor=scope.get("actor", ""), client="ai")
+    after_commit(ws, conn, result)
+    made_ops = [op for op in result["ops"] if op.get("op") == "insert"]
+    seen = notes_seen(scope)
+    for op in made_ops:
+        seen[op["id"]] = op.get("content") or ""  # the model wrote it: a later replace starts from it
+    first = made_ops[0]
+    action = {"kind": "create", "page_id": page_id, "block_id": first["id"], "title": page_title}
+    if len(made_ops) == 1:
+        return (f"ok — created block [{first['id']}]",
+                {**action, "summary": f"Added a note in “{page_title[:60]}”",
+                 "revert": {"after": first.get("content") or "", "parent": parent["id"],
+                            "position": first.get("position")}})
+    # A paste of several blocks records every block it made, parent first,
+    # as a deletion does: its revert deletes them again (gamma/ai_revert.py).
+    record = [[op["id"], op["parent"], op.get("position"), op.get("content") or "", json.dumps(op.get("props") or {})]
+              for op in made_ops]
+    revert = {"blocks": record} if len(json.dumps(record)) <= _DELETE_REVERT_MAX else None
+    depth = {parent["id"]: -1}
+    lines = []
+    for op in made_ops:
+        depth[op["id"]] = depth[op["parent"]] + 1
+        lines.append("  " * depth[op["id"]] + f"[{op['id']}] " + _excerpt(op.get("content") or "(empty)", 60))
+    shown = lines[:_PASTE_LINES] + ([f"… and {len(lines) - _PASTE_LINES} more (read_block shows them)"]
+                                    if len(lines) > _PASTE_LINES else [])
+    under = "" if parent["id"] == page_id else f" under “{_excerpt(parent['content'], 60)}”"
+    text = (f"ok — added {len(made_ops)} blocks{under} in “{page_title[:60]}”"
+            + ("" if revert else " (too large to record for a revert)") + ":\n" + "\n".join(shown))
+    return text, {**action, "block_ids": [op["id"] for op in made_ops],
+                  "summary": f"Added {len(made_ops)} notes in “{page_title[:60]}”",
+                  **({"revert": revert} if revert else {})}
 
 
 def _plan_move_block(conn, scope: dict, args: dict):
@@ -496,6 +597,10 @@ def _plan_move_block(conn, scope: dict, args: dict):
     if parent["id"] == block["parent_id"] and args.get("after_id") in (block["id"], None) \
             and position == block["position"]:
         return None, "ok — the block is already there"
+    if parent["id"] == block["parent_id"] and args.get("after_id") == parent["id"] and conn.execute(
+            "SELECT id FROM unified_blocks WHERE parent_id = ? ORDER BY position LIMIT 1",
+            (parent["id"],)).fetchone()[0] == block["id"]:
+        return None, "ok — the block is already first"
     return {"block": block, "src_page_id": src_page_id, "src_title": src_title, "parent": parent,
             "page_id": page_id, "page_title": page_title, "position": position}, None
 
@@ -641,19 +746,25 @@ TOOLS = [
         "spec": {
             "name": "create_block",
             "description": (
-                "Add a new note block. `parent_id` is a page id (top-level note) or a "
-                "block id (nested child); `after_id` optionally names the sibling to "
-                "insert after (default: last). One block is one paragraph, list item, "
-                "heading or table. Start a list item with `- `, `1. ` or `- [ ] `; "
-                "plain text is a paragraph. For several items, create several blocks. "
-                "Returns the new block's id."),
+                "Paste Markdown into the notes as new blocks, as the editor's Paste as → Blocks does: "
+                "a heading holds what follows it, list items (`- `, `1. `, `- [ ] `) nest by "
+                "indentation, and a paragraph, table, quote, code fence or $$ math stays one block. "
+                "One call per paste, at most 500 blocks and 100,000 characters. `parent_id` is a page "
+                "id (top-level notes) or a block id (nested under it); `after_id` names the sibling to "
+                "land after, or the parent_id itself to land first (default: last). `split: false` "
+                "keeps the whole content in one block. A mention of another note is [[block_id]], a "
+                "live copy of it ![[block_id]]; a picture or file is the Markdown line the tool that "
+                "stored it returned. Returns the new blocks' ids."),
             "parameters": {
                 "type": "object",
                 "properties": {"parent_id": {"type": "string"},
                                "content": {"type": "string",
-                                           "description": "the block's markdown; math as $…$ "
+                                           "description": "the Markdown to paste; math as $…$ "
                                                           "inline, $$…$$ display"},
-                               "after_id": {"type": "string"}},
+                               "after_id": {"type": "string"},
+                               "split": {"type": "boolean",
+                                         "description": "false keeps the whole content in one block "
+                                                        "(default true: the blocks the Markdown makes)"}},
                 "required": ["parent_id", "content"],
             },
         },
@@ -666,8 +777,8 @@ TOOLS = [
             "description": (
                 "Move a note block (with its children) under a new parent. "
                 "`parent_id` is a page id or block id this chat can reach; `after_id` "
-                "optionally names the sibling to land after (default: last). "
-                "Highlight blocks can move only within their own page."),
+                "optionally names the sibling to land after, or the parent_id itself to go "
+                "first (default: last). Highlight blocks can move only within their own page."),
             "parameters": {
                 "type": "object",
                 "properties": {"block_id": {"type": "string"},
@@ -696,7 +807,8 @@ TOOLS = [
         },
     },
     {
-        "perm": "block_edit", "kind": "clip", "scopes": ("folder", "page"), "mutating": True,
+        # It only stores a file: the note write that shows it asks (STORING_TOOLS).
+        "perm": "block_edit", "kind": "clip", "scopes": ("folder", "page"), "mutating": True, "stores": True,
         "run": _run_clip_region, "preview": _preview_clip_region,
         "spec": {
             "name": "clip_region",

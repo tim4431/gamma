@@ -40,6 +40,11 @@ MUTATING_TOOLS = {t["spec"]["name"] for t in TOOLS if t["mutating"]}
 # highlight), offered where the account may comment (``can_comment``), not
 # only where it edits, and over MCP at the Comment level (gamma/mcp_server.py).
 WRITING_TOOLS = frozenset(t["spec"]["name"] for t in TOOLS if t.get("commenting"))
+# The tools that only store a file for a note to show (clip_region's
+# picture), changing no note: they ask nobody, in the chat (ApprovalGate)
+# and over MCP, since the note write that shows the file asks with it in
+# view.
+STORING_TOOLS = frozenset(t["spec"]["name"] for t in TOOLS if t.get("stores"))
 # The tools whose answer is a picture: a model that reads text only gets
 # neither (routers/ai.py, _chat_tools).
 PICTURE_TOOLS = frozenset({"view_pdf_page", "view_ink", "view_image"})

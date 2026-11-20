@@ -1,6 +1,7 @@
 """PDF / image / generic file uploads (content-hash deduped), a PDF's upload
 in parts, and upload serving."""
 
+import io
 import json
 import threading
 import time
@@ -9,15 +10,18 @@ from collections import OrderedDict
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, share_scope
-from .. import linked_files, pdf_meta, upload_parts
+from .. import linked_files, mcp_upload, pdf_meta, upload_parts
 from ..blocks_store import load_props
 from ..db import connect_pages_db
-from ..documents.formats import (ALLOWED_IMAGE_TYPES, IMAGE_EXTENSIONS, IMAGE_MEDIA_TYPES, INLINE_EXTENSIONS,
-                                 SANDBOXED_EXTENSIONS, extension_of, media_type, stored_extension)
+from ..documents.formats import (ALLOWED_IMAGE_TYPES, IMAGE_EXTENSIONS, INLINE_EXTENSIONS, SANDBOXED_EXTENSIONS,
+                                 media_type, upload_extension)
 from ..documents.model import page_document, stored_name, upload_url
+from ..integrations import still_edits
 from ..server_settings import workspace_quota
+from ..workspaces import refuse_writes
 from ..storage import (
     UPLOAD_REF_RE,
     display_filename,
@@ -128,6 +132,52 @@ def discard_upload_parts(token: str, request: Request):
     return {"ok": True}
 
 
+# --- an MCP assistant's file (gamma/mcp_upload.py) -----------------------------------
+# An assistant with a shell sends a file of its computer with the command
+# upload_file answered: one PUT of the raw bytes, the one-time ticket in a
+# header, never in the URL, which access logs keep. The ticket is the only
+# authority here: no session, and a bearer token on the request is ignored
+# (an integration token's own /api writes stay refused).
+
+@router.put("/agent-uploads")
+async def agent_upload(request: Request):
+    """Store the file an MCP connection's ticket was minted for
+    (``upload_file``) → ``{url, name, size, already_existed, markdown}``,
+    ``markdown`` the line a note shows it with. It goes through an upload in
+    parts' session, so the extension, the quota (507), the content (400)
+    and the open uploads (429) are checked as for a large file. 404 for a
+    ticket unknown, used or expired, or whose connection may no longer edit
+    the workspace; 411 without a Content-Length, 413 past
+    ``upload_parts.PART_BYTES_MAX``."""
+    ticket = mcp_upload.redeem(request.headers.get(mcp_upload.HEADER, ""))
+    if ticket is None or not await run_in_threadpool(still_edits, ticket.token_id, ticket.ws):
+        raise HTTPException(status_code=404, detail="no such upload ticket")
+    length = request.headers.get("content-length", "")
+    if not length.isdigit():
+        raise HTTPException(status_code=411, detail="the upload needs a Content-Length")
+    size = int(length)
+    if size > upload_parts.PART_BYTES_MAX:
+        raise HTTPException(status_code=413,
+                            detail=f"one upload holds at most {upload_parts.PART_BYTES_MAX // upload_parts.MB} MB")
+    refuse_writes(ticket.ws)
+    session = await run_in_threadpool(upload_parts.start, ticket.ws, size, ticket.name, "file")
+    try:
+        held = bytearray()
+        async for chunk in request.stream():
+            held += chunk
+            if len(held) >= upload_parts.MB:
+                await run_in_threadpool(upload_parts.append, session, session.received, io.BytesIO(bytes(held)))
+                held.clear()
+        if held:
+            await run_in_threadpool(upload_parts.append, session, session.received, io.BytesIO(bytes(held)))
+        filename, already_existed = await run_in_threadpool(upload_parts.finish, session)
+    except BaseException:
+        upload_parts.discard(session)
+        raise
+    return {"url": upload_url(filename), "name": ticket.name, "size": size, "already_existed": already_existed,
+            "markdown": mcp_upload.markdown_line(ticket.name, filename)}
+
+
 @router.post("/upload-image")
 def upload_image(request: Request, file: UploadFile = File(...)):
     # Share editors' images land in the page's workspace (and count against
@@ -165,14 +215,10 @@ def upload_file(request: Request, file: UploadFile = File(...)):
     ws = require_ws_writer(request)
     link_ratelimit(request, "upload", LINK_UPLOADS_PER_5_MIN, 300)
     name = display_filename(file.filename, "file")
-    if file.content_type in ALLOWED_IMAGE_TYPES:
-        own = extension_of(name)
-        ext = own if IMAGE_MEDIA_TYPES.get(own) == file.content_type else IMAGE_EXTENSIONS[file.content_type]
-    else:
-        try:
-            ext = stored_extension(name)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        ext = upload_extension(name, file.content_type or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if ext == ".ink":
         # the path a mirror pushes a drawing by: stored only when it is a
         # version 2 drawing (a version 1 one means the pusher must update)

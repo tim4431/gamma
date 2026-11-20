@@ -381,7 +381,7 @@ def test_no_cookie_fallback_and_transport_guards(client, connection):
     assert rpc(client, item["token"], "tools/list", host="attacker.example").status_code == 421
     assert client.post("/mcp", headers={"Origin": "https://attacker.example", "Authorization": "Bearer " + item["token"]}).status_code == 403
     r = client.post("/mcp", headers={"Host": "localhost", "Authorization": "Bearer " + item["token"],
-        "Content-Type": "application/json", "Accept": "application/json, text/event-stream"}, content=" " * 65537)
+        "Content-Type": "application/json", "Accept": "application/json, text/event-stream"}, content=" " * (1024 * 1024 + 1))
     assert r.status_code == 413
 
 
@@ -653,7 +653,8 @@ def test_a_connection_edits_notes_only_where_it_may(client, connection):
         assert not drawn["isError"], drawn
         said = drawn["content"][0]["text"]
         assert "drew a rectangle on the page of paper of “Lab notes”" in said
-        assert "from the reply" not in said and "delete_block" not in said and "removes it in Gamma" in said
+        assert "from the reply" not in said and "delete_block" not in said and "undo_change takes it back" in said
+        assert drawn["structuredContent"]["change_id"] in said
         assert any(part["type"] == "image" for part in drawn["content"]), "it sees what it drew"
         with connect_pages_db(lab) as conn:
             parent, raw = conn.execute("SELECT parent_id, properties FROM unified_blocks WHERE id = ?",
@@ -690,6 +691,220 @@ def test_a_connection_edits_notes_only_where_it_may(client, connection):
         for gone in (lab, owned):
             if gone:
                 workspaces.delete(gone)
+
+
+PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+
+
+def _put(client, secret, body, **headers):
+    return client.put("/api/agent-uploads", content=body, headers={"X-Gamma-Upload": secret, **headers})
+
+
+def test_an_editing_connection_pastes_and_stores_files_for_its_notes(client, anon, connection, monkeypatch):
+    """Where a connection edits, a Markdown passage is one create_block of
+    several blocks (their ids as data), and a file gets in as a drop does:
+    upload_file mints a one-time command that a shell sends the file with,
+    answered with the line a note shows it by, which the paste then writes.
+    The ticket is the command's only authority, works once, and not after
+    the connection's Edit is taken away; the token itself still writes
+    nothing on /api."""
+    from gamma import mcp_upload, upload_parts
+
+    c, ws, item = connection
+    token = item["token"]
+    patch = lambda **body: c.patch(f"/api/integrations/tokens/{item['id']}", json=body)  # noqa: E731
+    page = _page_with_note(c, ws, "Paste target", "McpExisting")
+    refused = call(client, token, "upload_file", {"name": "f.png"})
+    assert refused["isError"] and "may only read" in refused["content"][0]["text"]
+    assert patch(workspaces=[ws], edit_workspaces=[ws], asks=False).status_code == 200
+    tools = {t["name"]: t for t in rpc(client, token, "tools/list").json()["result"]["tools"]}
+    assert tools["upload_file"]["annotations"]["openWorldHint"] is True
+    # a passage of several blocks, one call; a body past the old 64 KiB cap
+    pasted = call(client, token, "create_block", {"parent_id": page["id"], "content": "## Results\nIt works.\n\n- a\n- b"})
+    assert not pasted["isError"], pasted
+    assert len(pasted["structuredContent"]["block_ids"]) == 4
+    long = call(client, token, "create_block", {"parent_id": page["id"], "content": "长" * 60_000})
+    assert not long["isError"], long
+    # a file of this computer, sent with the command it answers
+    minted = call(client, token, "upload_file", {"name": "./figures/fig2.png"})
+    assert not minted["isError"], minted
+    ticket = minted["structuredContent"]["ticket"]
+    assert "curl" in minted["content"][0]["text"] and ticket in minted["content"][0]["text"]
+    sent = _put(client, ticket, PNG)
+    assert sent.status_code == 200, sent.text
+    picture = sent.json()
+    assert picture["name"] == "fig2.png" and picture["markdown"] == f"![]({picture['url']})"
+    assert _put(client, ticket, PNG).status_code == 404, "a ticket works once"
+    data = call(client, token, "upload_file", {"name": "data.csv"})["structuredContent"]["ticket"]
+    chip = _put(client, data, b"x,y\n1,2\n").json()
+    assert chip["markdown"] == f"[data.csv]({chip['url']})"
+    shown = call(client, token, "create_block", {"parent_id": page["id"], "content": f"{picture['markdown']}\n\n{chip['markdown']}"})
+    assert not shown["isError"], shown
+    # refused: an executable, a wrong or expired ticket, more than the room, a connection no longer editing
+    assert call(client, token, "upload_file", {"name": "setup.exe"})["isError"]
+    assert _put(client, "not-a-ticket", PNG).status_code == 404
+    monkeypatch.setattr(mcp_upload, "TICKET_TTL_S", -1)
+    expired = call(client, token, "upload_file", {"name": "late.png"})["structuredContent"]["ticket"]
+    assert _put(client, expired, PNG).status_code == 404
+    monkeypatch.undo()
+    monkeypatch.setattr(upload_parts, "PART_BYTES_MAX", 4)
+    large = call(client, token, "upload_file", {"name": "big.png"})["structuredContent"]["ticket"]
+    assert _put(client, large, PNG).status_code == 413
+    monkeypatch.undo()
+    revoked = call(client, token, "upload_file", {"name": "after.png"})["structuredContent"]["ticket"]
+    assert patch(workspaces=[ws], edit_workspaces=[]).status_code == 200
+    assert _put(client, revoked, PNG).status_code == 404
+    assert upload_parts.open_count(ws) == 0
+    up = anon.post("/api/upload-file", headers={"Authorization": f"Bearer {token}"},
+                     files={"file": ("f.png", PNG, "image/png")})
+    assert up.status_code == 403, "the token itself still writes nothing"
+
+
+def test_upload_file_fetches_a_public_file(client, connection, monkeypatch):
+    """With a url, Gamma fetches the file through the SSRF guard and stores
+    it under the type its bytes say, without the person's publisher
+    cookies; a private address and a web page are refused."""
+    from gamma import mcp_upload, publisher_sessions, web_fetch
+
+    c, ws, item = connection
+    token = item["token"]
+    assert c.patch(f"/api/integrations/tokens/{item['id']}", json={"workspaces": [ws], "edit_workspaces": [ws]}).status_code == 200
+    private = call(client, token, "upload_file", {"url": "http://127.0.0.1/figure.png"})
+    assert private["isError"] and "not public" in private["content"][0]["text"]
+    seen = []
+
+    def fake(url, headers, timeout=30):
+        seen.append(publisher_sessions.current_user.get())
+        if "page" in url:
+            return web_fetch.Response(url, "text/html; charset=utf-8", b"<html></html>", {}, False)
+        return web_fetch.Response(url, "application/octet-stream", PNG, {}, False)
+
+    monkeypatch.setattr(mcp_upload.web_fetch, "read_bounded", fake)
+    stored = call(client, token, "upload_file", {"url": "https://img.example/render?id=3"})
+    assert not stored["isError"], stored
+    assert stored["structuredContent"]["upload"].endswith(".png")
+    assert stored["structuredContent"]["markdown"] == f"![]({stored['structuredContent']['upload']})"
+    page = call(client, token, "upload_file", {"url": "https://example.org/page"})
+    assert page["isError"] and "web page" in page["content"][0]["text"]
+    assert seen == [None, None], "no publisher cookies"
+
+
+def test_storing_asks_nobody_and_a_read_only_server_changes_nothing(client, connection, monkeypatch):
+    """A connection that asks first stores a figure of a PDF without a
+    question (the note that embeds it asks), and a hosted server its plan
+    made read-only refuses every change before anyone is asked."""
+    from gamma import hosted
+
+    c, ws, item = connection
+    token = item["token"]
+    assert c.patch(f"/api/integrations/tokens/{item['id']}", json={"workspaces": [ws], "edit_workspaces": [ws]}).status_code == 200
+    page = _pdf_page(c, "Asks paper")
+    clipped = call(client, token, "clip_region", {"page_id": page["id"], "pdf_page": 1})
+    assert not clipped["isError"], clipped
+    line = f"![Fig]({clipped['structuredContent']['upload']})"
+    unasked = call(client, token, "create_block", {"parent_id": page["id"], "content": line})
+    assert unasked["isError"] and "cannot show its question" in unasked["content"][0]["text"]
+    monkeypatch.setattr(hosted, "read_only", lambda: "This server is read-only.")
+    for name, args in (("create_block", {"parent_id": page["id"], "content": "x"}),
+                       ("clip_region", {"page_id": page["id"], "pdf_page": 1}),
+                       ("upload_file", {"name": "f.png"})):
+        refused = call(client, token, name, args)
+        assert refused["isError"] and refused["content"][0]["text"] == "This server is read-only.", name
+
+
+def test_a_connection_undoes_its_own_changes(client, connection):
+    """Every change a connection makes is journaled under a change id its
+    answer names: undo_change takes it back once, only that connection's,
+    and stops, saying what would be lost, when someone changed it since;
+    the person sees the same changes under its row in Settings and undoes
+    them there. create_page makes a page, and its undo moves it away."""
+    c, ws, item = connection
+    token = item["token"]
+    other = c.post("/api/integrations/tokens", json={"name": "Other"}).json()
+    try:
+        for t in (item, other):
+            assert c.patch(f"/api/integrations/tokens/{t['id']}",
+                           json={"workspaces": [ws], "edit_workspaces": [ws], "asks": False}).status_code == 200
+        page = _page_with_note(c, ws, "Undo target", "McpUndoNote")
+        note = _child(ws, page["id"], "McpUndoNote")
+        made = call(client, token, "create_block", {"parent_id": page["id"], "content": "## Pasted\nunder it"})
+        first = made["structuredContent"]["change_id"]
+        assert f'undo_change(change_id="{first}")' in made["content"][0]["text"]
+        edited = call(client, token, "edit_block", {"block_id": note, "content": "McpAppended", "mode": "append"})
+        second = edited["structuredContent"]["change_id"]
+        listed = call(client, token, "list_changes", {})["structuredContent"]["changes"]
+        assert [x["change_id"] for x in listed] == [second, first] and not any(x["undone"] for x in listed)
+        theirs = call(client, other["token"], "undo_change", {"change_id": second})
+        assert theirs["isError"] and "No change of this connection" in theirs["content"][0]["text"]
+        undone = call(client, token, "undo_change", {"change_id": second})
+        assert not undone["isError"], undone
+        assert _text(ws, note) == "McpUndoNote"
+        assert "undone already" in call(client, token, "undo_change", {"change_id": second})["content"][0]["text"]
+        # someone typed in the paste since: it stops, and goes only when forced
+        pasted = made["structuredContent"]["block_ids"]
+        assert c.put(f"/api/blocks/{pasted[1]}", json={"content": "under it, and my words"}).status_code == 200
+        stopped = call(client, token, "undo_change", {"change_id": first})
+        assert stopped["isError"] and "force: true" in stopped["content"][0]["text"]
+        assert _text(ws, pasted[0]) == "## Pasted"
+        assert not call(client, token, "undo_change", {"change_id": first, "force": True})["isError"]
+        assert _text(ws, pasted[0]) is None and _text(ws, pasted[1]) is None
+        # a page made, which the person undoes from the connection's changes in Settings
+        new = call(client, token, "create_page", {"title": "McpMadePage"})
+        assert not new["isError"], new
+        made_page = new["structuredContent"]["page_id"]
+        changes = c.get(f"/api/integrations/tokens/{item['id']}/changes").json()["changes"]
+        assert changes[0]["summary"] == "Made the page “McpMadePage”"
+        assert [x["undone"] for x in changes] == [False, True, True]
+        r = c.post(f"/api/integrations/tokens/{item['id']}/changes/{changes[0]['id']}/undo", json={"workspace_id": ws})
+        assert r.status_code == 200, r.text
+        with connect_pages_db(ws) as conn:
+            assert conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (made_page,)).fetchone()[0] != "root"
+        assert c.post(f"/api/integrations/tokens/{other['id']}/changes/{changes[0]['id']}/undo",
+                      json={"workspace_id": ws}).status_code == 404, "another connection's change is not its"
+    finally:
+        c.delete(f"/api/integrations/tokens/{other['id']}")
+
+
+def test_deleting_notes_is_allowed_on_its_own(client, connection):
+    """A connection that edits deletes nothing until the person allows that
+    on its row; then delete_block is offered, and the deletion is undone
+    like any change. The permission rides on editing."""
+    c, ws, item = connection
+    token = item["token"]
+    patch = lambda **body: c.patch(f"/api/integrations/tokens/{item['id']}", json=body)  # noqa: E731
+    assert patch(workspaces=[ws], edit_workspaces=[ws], asks=False).status_code == 200
+    page = _page_with_note(c, ws, "Delete target", "McpDoomedNote")
+    note = _child(ws, page["id"], "McpDoomedNote")
+    tools = {t["name"] for t in rpc(client, token, "tools/list").json()["result"]["tools"]}
+    assert "delete_block" not in tools and {"undo_change", "list_changes", "create_page"} <= tools
+    refused = call(client, token, "delete_block", {"block_id": note})
+    assert refused["isError"] and "May delete notes" in refused["content"][0]["text"]
+    assert patch(workspaces=[ws], edit_workspaces=[ws], deletes=True).status_code == 200
+    row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["id"] == item["id"])
+    assert row["deletes"] is True
+    tools = {t["name"]: t for t in rpc(client, token, "tools/list").json()["result"]["tools"]}
+    assert tools["delete_block"]["annotations"]["destructiveHint"] is True
+    gone = call(client, token, "delete_block", {"block_id": note})
+    assert not gone["isError"], gone
+    assert _text(ws, note) is None
+    assert not call(client, token, "undo_change", {"change_id": gone["structuredContent"]["change_id"]})["isError"]
+    assert _text(ws, note) == "McpDoomedNote"
+    assert patch(workspaces=[ws], edit_workspaces=[]).status_code == 200
+    assert "delete_block" not in {t["name"] for t in rpc(client, token, "tools/list").json()["result"]["tools"]}
+
+
+def test_the_question_names_a_page_made_and_a_deletion():
+    from gamma.integrations import Connection
+    from gamma.mcp_server import _question
+
+    codex = Connection("u", ["ws"], "read", "t", "Codex (OAuth)", "tim", ("ws",))
+    assert _question(codex, "create_page", {"title": "Reading list", "to": "Physics"}, "") == \
+        "Codex wants to make the page “Reading list” in Physics."
+    deleted = _question(codex, "delete_block", {"title": "Paper", "what": "note", "children": 2,
+                                                "diff": [["del", "Old idea"]]}, "")
+    assert deleted.splitlines()[0] == ("Codex wants to delete a note in “Paper” with the 2 notes under it. "
+                                       "undo_change can bring it back.")
+    assert "− Old idea" in deleted
 
 
 def test_a_release_build_names_its_plugin_version():
@@ -739,6 +954,16 @@ def test_the_question_shows_a_change_line_by_line():
     assert added == "Codex wants to add a note to “Paper”, under “Methods”. It adds 1 line.\n\n+ A note"
     long = _question(codex, "create_block", {"title": "P", "diff": text_diff("", "\n".join(f"line {i}" for i in range(60)))}, "")
     assert long.count("\n+ ") == QUESTION_LINES and long.endswith("… and 36 more lines")
+    # a paste of several blocks: how many, where, what it shows, its pictures and files by name
+    pasted = _question(codex, "create_block", {"title": "Paper", "parent": "Methods", "count": 3, "after": "We measured…",
+                       "picture_count": 1, "file_count": 1, "diff": text_diff(
+                           "", "## Setup\n  ![Fig. 2|300](/api/uploads/ab.png)\n  - [data.csv](/api/uploads/cd.csv)")}, "")
+    assert pasted.splitlines()[0] == ("Codex wants to add 3 notes to “Paper”, under “Methods”, after “We measured…”. "
+                                      "It adds 3 lines, 1 picture and 1 file.")
+    assert "\n+   [picture: Fig. 2]\n+   - [file: data.csv]" in pasted
+    first = _question(codex, "create_block", {"title": "Paper", "count": 2, "first": True,
+                                              "diff": text_diff("", "a\nb")}, "")
+    assert first.splitlines()[0] == "Codex wants to add 2 notes to “Paper”, at the top. It adds 2 lines."
 
 
 def _events(response):

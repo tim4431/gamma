@@ -2395,6 +2395,18 @@ def _v68_far_chats(ws: str, pages: sqlite3.Connection, data) -> None:
                 pages.execute("UPDATE computer_chats SET computer = ? WHERE id = ?", (found[0], conversation_id))
 
 
+def _v70_integration_deletes(conn: sqlite3.Connection) -> None:
+    """``integration_tokens`` gains ``deletes``: whether a connection that
+    may edit notes may also delete them (gamma/mcp_server.py
+    ``DELETE_TOOLS``), which the person allows on its row in Settings; 0 on
+    every token so far, so no grant made before gains it. Re-runnable: the
+    column is added only where ``_columns()`` lacks it. No workspace is
+    touched."""
+    if "deletes" not in _columns(conn, "integration_tokens"):
+        conn.execute("ALTER TABLE integration_tokens ADD COLUMN deletes INTEGER NOT NULL DEFAULT 0")
+    conn.commit()
+
+
 def _v69_far_answers(ws: str, pages: sqlite3.Connection, data) -> None:
     """What a far turn's agent asks is answered here where its computer
     relays its asks (step 4.3 of docs/research/agents-as-participants-plan.md,
@@ -2442,6 +2454,7 @@ STEPS = [
     (66, "agent_ids", _v66_inbox_agents),
     (67, "computer_asks", _v67_computer_asks),
     (68, "far_chats", _v68_computer_dirs),
+    (70, "integration_deletes", _v70_integration_deletes),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

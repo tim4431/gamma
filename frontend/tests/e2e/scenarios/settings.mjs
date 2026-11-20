@@ -745,6 +745,7 @@ export async function settingsScenarios(env) {
       const secret = page.getByRole("textbox", { name: "New integration token" });
       await secret.waitFor();
       assert((await secret.inputValue()).startsWith("gamma_"));
+      const codexToken = await secret.inputValue();
       let connections = await user.api("/api/integrations/tokens");
       assertEq(connections.tokens.length, 1);
       assertEq(JSON.stringify(connections.tokens[0].workspaces), JSON.stringify([user.ws, second.id]));
@@ -795,6 +796,30 @@ export async function settingsScenarios(env) {
       assertEq(JSON.stringify(connections.tokens[0].edit_workspaces), JSON.stringify([user.ws]));
       assertEq(connections.tokens[0].asks, false);
       await page.getByText(/edits notes in .* · changes without asking/).waitFor();
+      // Deleting notes is its own permission, off until ticked
+      await page.getByRole("button", { name: "Choose workspaces", exact: true }).click();
+      const deleting = page.getByRole("checkbox", { name: /May delete notes/ });
+      assert(!await deleting.isChecked(), "a connection that edits deletes nothing yet");
+      await deleting.check();
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await deleting.waitFor({ state: "detached" });
+      assertEq((await user.api("/api/integrations/tokens")).tokens[0].deletes, true);
+      await page.getByText(/edits notes in .* · may delete notes/).waitFor();
+      // A change it makes through MCP is listed under its row, and undone there
+      const target = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Settings undo page" } });
+      const pasted = await fetch(`${server.base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${codexToken}`,
+        "Content-Type": "application/json", Accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2025-11-25" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_block",
+        arguments: { parent_id: target.id, content: "Pasted one\n\nPasted two" } } }) }).then((r) => r.json());
+      assert(!pasted.result.isError && pasted.result.structuredContent.change_id, JSON.stringify(pasted.result));
+      await page.getByRole("button", { name: "Changes", exact: true }).click();
+      const change = page.getByText("Added 2 notes in “Settings undo page”", { exact: true });
+      await change.waitFor();
+      await page.getByRole("button", { name: "Undo", exact: true }).click();
+      await page.getByText("Undone", { exact: true }).waitFor();
+      assertEq((await user.api(`/api/blocks/${target.id}/children`)).children.length, 0, "the paste is gone");
+      await page.getByRole("button", { name: "Changes", exact: true }).click();
+      await change.waitFor({ state: "detached" });
       // Separate authorizations can have the same name. Revoking one must
       // leave the other visible, without claiming the assistant lost access.
       const duplicate = await user.api("/api/integrations/tokens", { method: "POST", body: { name: "Codex test" } });

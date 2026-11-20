@@ -44,7 +44,7 @@ from ..ops import (MAX_CONTENT, MAX_OPS, after_commit, after_commits, apply_batc
                    props_patch)
 from ..markdown_import import MAX_MARKDOWN_BYTES, TooManyBlocks, md_to_blocks
 from ..markdown_zip_import import import_markdown_zip, markdown_page
-from ..note_markup import obsidian_image_sizes
+from ..note_markup import link_target, markdown_link, obsidian_image_sizes
 from ..note_app_import import import_note_apps
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_text import GlyphPages, quote_under
@@ -1707,18 +1707,6 @@ def _zotero_store_file(ws, zf, extra) -> str:
         return store_file_stream(ws, src, extra["ext"])[0]
 
 
-def _link_target(url: str) -> str:
-    """``url`` as a markdown link's target: no space or parenthesis bare."""
-    return url.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
-
-
-def _markdown_link(text: str, url: str) -> str:
-    """``[text](url)``, the shape a file chip and a link block hold: no
-    brackets in the text (the frontend's file-chip markdown drops them too)."""
-    text = re.sub(r"[\[\]]", "", text or "").strip() or url
-    return f"[{text}]({_link_target(url)})"
-
-
 def _zotero_extras(conn, ws, zf, item, block_id, created, doc_id, held, report) -> tuple[list, str | None]:
     """The item's ``extras`` as the blocks its page gets under
     "Attachments": a file chip per file, stored here (outside any
@@ -1752,9 +1740,9 @@ def _zotero_extras(conn, ws, zf, item, block_id, created, doc_id, held, report) 
         if extra["key"] in keys or (doc_id and extra.get("digest") == doc_id):
             continue
         if "url" in extra:
-            if _link_target(extra["url"]) in text:
+            if link_target(extra["url"]) in text:
                 continue
-            content = _markdown_link(extra["title"], extra["url"])
+            content = markdown_link(extra["title"], extra["url"])
             text += "\n" + content  # two links to one URL make one link
         else:
             try:
@@ -1767,7 +1755,7 @@ def _zotero_extras(conn, ws, zf, item, block_id, created, doc_id, held, report) 
             if name in names:
                 continue
             names.add(name)  # two attachments of one file make one chip
-            content = _markdown_link(extra["name"], upload_url(name))
+            content = markdown_link(extra["name"], upload_url(name))
         blocks.append({"content": content, "properties": {ATTACHMENT_KEY: extra["key"]}})
     return blocks, heading
 
