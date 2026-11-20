@@ -151,7 +151,10 @@ export async function motionScenarios(env) {
       const seen = await glides(page);
       for (const key of ["moving mv2", "moving under:mv2", "moving mv3", "moving tail"]) assert(seen.includes(key), `${key} glides: ${seen}`);
       assert(!seen.some((g) => /^moving (mv0|mv1|mv2c\d)$/.test(g)), `the rows above stay, and the children travel with theirs: ${seen}`);
-      assertEq(seen.filter((g) => g.startsWith("entering ") && !/ (mv|under:)/.test(g)).length, 1, `the new row fades in: ${seen}`);
+      // The seeded rows by their ids whole, a body by its key: the new row's
+      // id is random and may begin with "mv" itself (mv_rMlbZhhH6 did).
+      const seeded = (key) => /^mv(\d|2c\d)$/.test(key) || key.startsWith("under:");
+      assertEq(seen.filter((g) => g.startsWith("entering ") && !seeded(g.slice("entering ".length))).length, 1, `the new row fades in: ${seen}`);
       await arrived(rowOf(page, "mv3"));
       assertEq(await page.locator("[data-moving], [data-entering]").count(), 0, "every glide has landed");
       // Tab: the row glides into its new place; its new parent's body does not fade it
