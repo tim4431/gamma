@@ -22,10 +22,26 @@ def _next(sock, kind):
     raise AssertionError(f"no {kind} message")
 
 
-def _open(tab, page_id, ws):
-    sock = tab.websocket_connect(f"/api/ws/page/{page_id}?ws={ws}&client=tab")
+def _connect(tab, page_id, ws, client):
+    sock = tab.websocket_connect(f"/api/ws/page/{page_id}?ws={ws}&client={client}")
     sock.__enter__()
     assert sock.receive_json()["t"] == "hello"
+    return sock
+
+
+def _open(tab, page_id, ws):
+    """A tab's socket on the page, past its handshake. After the hello the
+    server checks the peer's access once more (routers/collab.py), and a page
+    trashed before that check closes the socket (4403) instead of telling it,
+    as on a loaded runner: a cursor the socket sends reaching a second tab
+    shows the check passed (the room relays only from there)."""
+    sock = _connect(tab, page_id, ws, "tab")
+    watch = _connect(tab, page_id, ws, "watch")
+    try:
+        sock.send_json({"t": "cursor", "block": page_id})
+        _next(watch, "cursor")
+    finally:
+        watch.__exit__(None, None, None)
     return sock
 
 
