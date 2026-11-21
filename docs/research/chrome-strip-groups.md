@@ -76,9 +76,10 @@ collapsed; the active tab's outline in the colour, its feet flaring into
 the line; Ctrl+← / →; the focus ring round the pill.
 
 Adapted: Gamma's tabs do not overlap and have square bottom corners, so the
-flare is drawn by one outline over the active tab (its top and sides and
-two corner boxes for the feet, `--tab-foot`, the 8 px radius of a Gamma
-tab's top corners rather than Chrome's 12), and the line is a stretch per
+flare is drawn by one outline over the active tab (its top and sides, and
+for each foot a quarter ring with the tab's fill beyond it, under the flare,
+where Chrome's tab shape fills too; `--tab-foot`, the 8 px radius of a
+Gamma tab's top corners rather than Chrome's 12), and the line is a stretch per
 item reaching over the 2 px gap between tabs instead of one path. A pane's
 strip stands on its head's border, so there the line runs along the border
 and the flare rises from it into the tab. The name is ellipsed rather than
@@ -88,7 +89,9 @@ Drawn first from a 1 px border and a 1 px inset shadow with separate feet,
 the outline came apart at a fractional screen scale (125 %, 150 %): the
 pieces rounded to different device pixels and left a tick where the side
 met the foot. Borders alone on shared edges, overlapping where they meet,
-keep together at any scale.
+keep together at any scale. Without the fill under the flare the two feet
+differed: the line's stretch before the tab reaches over the gap into it,
+under the left flare, and the one after starts beyond the right.
 
 Left: the hover card, the shrinking collapse (the tabs sink out as any
 closed tab does), the saved groups and their sync icon, the attention
