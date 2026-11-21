@@ -31,7 +31,7 @@ async function load({ native, standalone = false, before } = {}) {
 // message port `gammaAndroidHost`.
 const ANDROID_HOST_JS = fs.readFileSync(new URL("../../android/app/src/main/assets/shell/host.js", import.meta.url), "utf8");
 const ANDROID_INFO = { haptics: true, hold: true, ink: true, inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"],
-  openFiles: true, pencil: true, pencilGestures: ["tap", "squeeze"], platform: "android", save: true, shellBar: true, version: "0.1.0" };
+  keepAwake: true, openFiles: true, pencil: true, pencilGestures: ["tap", "squeeze"], platform: "android", save: true, shellBar: true, version: "0.1.0" };
 // Native's end of that port: JSON strings both ways. A post is answered on
 // a later turn with `answer(msg)`'s value, or its throw as an error reply;
 // `send(msg)` is a message from native, resolving with what the page posts
@@ -72,7 +72,7 @@ const runAndroidScript = (window, port) => {
 // host.js hands them over as declared, and the web acts on every one but
 // inkLooks, which only says what the shell's live line can draw.
 const FLAGS = { ink: true, inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"], hold: true, pencil: true,
-  pencilPhases: true, pencilRoll: true, haptics: true, openFiles: true, shellBar: true, editMenu: true };
+  pencilPhases: true, pencilRoll: true, haptics: true, openFiles: true, shellBar: true, editMenu: true, keepAwake: true };
 function stub(fields) {
   const native = { platform: "ipad", version: "0.2.0", ...FLAGS, ...fields };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));
@@ -209,8 +209,8 @@ test("the host's flags are read as declared, and a flag it leaves out is no capa
   const { host } = await load({ native: stub() });
   const h = host.nativeHost();
   for (const [flag, value] of Object.entries(FLAGS)) assert.deepEqual(h[flag], value, flag);
-  const { host: older } = await load({ native: stub({ inkLooks: undefined, hold: undefined, pencilPhases: undefined, haptics: undefined, openFiles: undefined, shellBar: undefined, editMenu: undefined }) });
-  for (const flag of ["inkLooks", "hold", "pencilPhases", "haptics", "openFiles", "shellBar", "editMenu"]) assert.ok(!older.nativeHost()[flag], `an older shell: no ${flag}`);
+  const { host: older } = await load({ native: stub({ inkLooks: undefined, hold: undefined, pencilPhases: undefined, haptics: undefined, openFiles: undefined, shellBar: undefined, editMenu: undefined, keepAwake: undefined }) });
+  for (const flag of ["inkLooks", "hold", "pencilPhases", "haptics", "openFiles", "shellBar", "editMenu", "keepAwake"]) assert.ok(!older.nativeHost()[flag], `an older shell: no ${flag}`);
 });
 
 test("hold and squeeze from native: answered by their listeners, and at once with nothing on a page without one", async () => {
@@ -235,4 +235,96 @@ test("hold and squeeze from native: answered by their listeners, and at once wit
   // the web's haptic goes out like any other message, with its reply
   assert.deepEqual(await host.postToHost({ type: "haptic", kind: "snap", at: { x: 10, y: 20 } }), { taken: true });
   assert.deepEqual(posted.at(-1), { type: "haptic", kind: "snap", at: { x: 10, y: 20 } });
+});
+
+// The browser's screen wake lock (navigator.wakeLock) and a document that
+// can be hidden and shown: `held` the locks not given back, `lose()` the
+// browser letting them go as it hides the page.
+function wakeLockPage() {
+  const page = { asked: 0, held: new Set(), listeners: new Set(), visibilityState: "visible" };
+  globalThis.document = {
+    documentElement: { setAttribute() {} },
+    get visibilityState() { return page.visibilityState; },
+    addEventListener: (type, fn) => { if (type === "visibilitychange") page.listeners.add(fn); },
+    removeEventListener: (type, fn) => { if (type === "visibilitychange") page.listeners.delete(fn); },
+  };
+  Object.defineProperty(globalThis.navigator, "wakeLock", {
+    configurable: true,
+    value: {
+      request: async (type) => {
+        assert.equal(type, "screen");
+        page.asked++;
+        if (page.visibilityState !== "visible") throw new DOMException("hidden", "NotAllowedError");
+        const gone = new Set();
+        const lock = { release: async () => { page.held.delete(lock); }, addEventListener: (t, fn) => { if (t === "release") gone.add(fn); } };
+        lock.lose = () => { page.held.delete(lock); for (const fn of gone) fn(); };
+        page.held.add(lock);
+        return lock;
+      },
+    },
+  });
+  page.show = (visible) => {
+    page.visibilityState = visible ? "visible" : "hidden";
+    if (!visible) for (const lock of [...page.held]) lock.lose();
+    for (const fn of [...page.listeners]) fn();
+  };
+  return page;
+}
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("keepAwake: a shell that declares it is told, once a change", async () => {
+  const { host, posted } = await load({ native: stub({ keepAwake: true }) });
+  host.keepAwake(true);
+  host.keepAwake(true);
+  host.keepAwake(false);
+  host.keepAwake(false);
+  assert.deepEqual(posted, [{ type: "keepAwake", on: true }, { type: "keepAwake", on: false }]);
+});
+
+test("keepAwake: elsewhere the screen wake lock, asked again each time the page is shown, given back at the end", async () => {
+  try {
+    const { host } = await load();
+    const doc = wakeLockPage();
+    host.keepAwake(true);
+    host.keepAwake(true);
+    await settle();
+    assert.equal(doc.asked, 1);
+    assert.equal(doc.held.size, 1);
+    // hidden, the browser lets the lock go; shown again, it is asked for again
+    doc.show(false);
+    assert.equal(doc.held.size, 0);
+    doc.show(true);
+    await settle();
+    assert.equal(doc.asked, 2);
+    assert.equal(doc.held.size, 1);
+    host.keepAwake(false);
+    await settle();
+    assert.equal(doc.held.size, 0);
+    assert.equal(doc.listeners.size, 0);
+    // asked while hidden: refused, then had once shown
+    doc.visibilityState = "hidden";
+    host.keepAwake(true);
+    await settle();
+    assert.equal(doc.held.size, 0);
+    doc.show(true);
+    await settle();
+    assert.equal(doc.held.size, 1);
+    // let go before the lock came: it is given back as it comes
+    host.keepAwake(false);
+    host.keepAwake(true);
+    host.keepAwake(false);
+    await settle();
+    assert.equal(doc.held.size, 0);
+  } finally {
+    delete globalThis.navigator.wakeLock;
+  }
+});
+
+test("keepAwake: with neither a shell that keeps the screen on nor a wake lock, nothing happens", async () => {
+  const { host, posted } = await load({ native: stub({ keepAwake: undefined }) });
+  host.keepAwake(true);
+  host.keepAwake(false);
+  assert.deepEqual(posted, [], "an older shell is not told");
+  const { host: browser } = await load();
+  assert.doesNotThrow(() => { browser.keepAwake(true); browser.keepAwake(false); });
 });

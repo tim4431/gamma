@@ -30,7 +30,7 @@ from .ai_client import CallRefused
 from .db import connect_pages_db, safe_doc_id
 from .documents.model import page_document, pdf_file_hash, stored_name
 from .logbuf import log
-from .pdf_text import extract_text, outline
+from .pdf_text import extract_text, opening_is_scan, outline
 from .storage import find_upload_file
 from .translate import Kept
 from .translate_engines import TRANSLATE_LANGS
@@ -69,10 +69,23 @@ _LANG_NOTES = {
 }
 
 
-def system_prompt(lang: str, brief: str = "") -> str:
+# The rule a request whose texts come from a scan's OCR layer adds (the
+# viewer's `ocr`, frontend/src/pdf/pageText.js): an old scan's layer misreads
+# letters, and the model reads through them better than it copies them.
+_OCR_RULE = (
+    "The texts were read by OCR from a scanned page and may hold misread characters: digits or "
+    "symbols for letters, lost accents, words split or run together (\"ph4nom+ne\" for "
+    "\"phénomène\", \"Rksum4\" for \"Résumé\"). Translate what the author wrote, reading through such "
+    "errors, and never carry them into the translation; the other rules hold as they are.")
+
+
+def system_prompt(lang: str, brief: str = "", ocr: bool = False) -> str:
     """The translation system prompt for a TRANSLATE_LANGS code, with the
-    paper's rendered brief (``render_brief``) after the rules."""
+    paper's rendered brief (``render_brief``) after the rules; ``ocr`` adds
+    the rule for text read from a scan's OCR layer."""
     rules = _RULES.replace("{lang}", TRANSLATE_LANGS[lang])
+    if ocr:
+        rules += f"\n- {_OCR_RULE}"
     note = _LANG_NOTES.get(lang)
     if note:
         rules += f"\n- {note}"
@@ -302,6 +315,17 @@ class Paper:
             text = self.head
         return sections, text[:BRIEF_TEXT_CHARS]
 
+    def scanned(self) -> bool:
+        """Whether the stored file's opening text (``material``) was read
+        from a scan's OCR layer; False without a stored file or when the file
+        cannot be read."""
+        if not self.path:
+            return False
+        try:
+            return opening_is_scan(self.path, BRIEF_TEXT_CHARS)
+        except Exception:  # noqa: BLE001 — the brief is made either way
+            return False
+
 
 def _about(meta) -> str:
     if not isinstance(meta, dict):
@@ -408,9 +432,16 @@ def cache_key(user_id: str, ws: str, paper: Paper, lang: str) -> str:
     return hashlib.sha256(f"{user_id}\x00{ws}\x00{paper.source}\x00{lang}\x00translate".encode()).hexdigest()[:32]
 
 
-def brief_messages(paper: Paper, lang: str) -> tuple[str, list]:
+_BRIEF_OCR_RULE = (
+    "\n- The text was read by OCR from a scanned paper and may hold misread characters. Read through "
+    "them: write every term, symbol and name as the author spelled it, never as misread.")
+
+
+def brief_messages(paper: Paper, lang: str, ocr: bool = False) -> tuple[str, list]:
     """The brief call's system prompt and user turn; raises ValueError for a
-    paper with no text to read (a scanned file and no head)."""
+    paper with no text to read (a scanned file without an OCR layer and no
+    head). ``ocr``: the viewer read the head it sent from a scan's OCR layer;
+    a stored file's opening pages are checked here (``Paper.scanned``)."""
     sections, text = paper.material()
     if not text.strip():
         raise ValueError("the paper has no text to make a brief from")
@@ -422,7 +453,11 @@ def brief_messages(paper: Paper, lang: str) -> tuple[str, list]:
     if sections:
         parts.append("Outline:\n" + "\n".join(sections))
     parts.append(f"Opening text:\n{text}")
-    return _BRIEF_PROMPT.replace("{lang}", TRANSLATE_LANGS[lang]), [{"role": "user", "content": "\n\n".join(parts)}]
+    # A stored file says itself whether its opening pages are a scan's OCR
+    # layer; a head the viewer sent comes with the viewer's word (`ocr`).
+    ocr = ocr or paper.scanned()
+    system = _BRIEF_PROMPT.replace("{lang}", TRANSLATE_LANGS[lang]) + (_BRIEF_OCR_RULE if ocr else "")
+    return system, [{"role": "user", "content": "\n\n".join(parts)}]
 
 
 def _strings(value, limit: int, width: int = 160) -> list:

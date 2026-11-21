@@ -4,8 +4,9 @@ import XCTest
 @testable import Gamma
 
 /// The shell's rules that need no web view: what the address field accepts,
-/// which navigations stay in the app, and the theme's colours. Then the ones
-/// that need a web view: the keyboard's accessory bar and the edit menu.
+/// which navigations stay in the app, the theme's colours and the screen kept
+/// on while the page asks. Then the ones that need a web view: the
+/// keyboard's accessory bar and the edit menu.
 final class ServerAddressTests: XCTestCase {
     func testABareHostMeansHTTPS() {
         XCTAssertEqual(ServerAddress.parse("  gamma.example.org \n"), URL(string: "https://gamma.example.org"))
@@ -73,6 +74,28 @@ final class CSSColorTests: XCTestCase {
         XCTAssertNil(rgba("red"))
         XCTAssertNil(rgba("#12345"))
         XCTAssertNil(rgba("#gggggg"))
+    }
+}
+
+final class ScreenAwakeTests: XCTestCase {
+    @MainActor
+    func testTheScreenStaysOnOnlyWhileThePageAsksAndTheAppIsInFront() {
+        var disabled: [Bool] = []
+        let awake = ScreenAwake { disabled.append($0) }
+        awake.page(asks: true)
+        XCTAssertEqual(disabled.last, true)
+        awake.app(inFront: false)
+        XCTAssertEqual(disabled.last, false, "the background lets the screen sleep")
+        awake.app(inFront: true)
+        XCTAssertEqual(disabled.last, true, "and the return keeps it on again")
+        awake.page(asks: false)
+        XCTAssertEqual(disabled.last, false, "the page's word ends it")
+        awake.page(asks: true)
+        awake.pageGone()
+        XCTAssertEqual(disabled.last, false, "so does a new document, or the page's process ending")
+        awake.app(inFront: false)
+        awake.app(inFront: true)
+        XCTAssertEqual(disabled.last, false, "nothing asked: the return leaves the timer on")
     }
 }
 

@@ -181,6 +181,21 @@ def forget(ws: str, doc_id: str) -> int:
         return 0
 
 
+def forget_briefs(ws: str, doc_id: str) -> int:
+    """Drop one document's kept briefs, in every language and model, and
+    keep its translations: what a change of the document's text calls for
+    (its scanned pages' text recognized, gamma/pdf_ocr.py). A brief is made
+    from the paper's opening text, so it goes; a kept paragraph is found by
+    its source text, so the ones whose text did not change are still right
+    and the others simply miss. How many briefs went."""
+    try:
+        with connect_data_db(ws) as conn:
+            return conn.execute("DELETE FROM pdf_translation_briefs WHERE doc_id = ?", (doc_id,)).rowcount
+    except Exception as e:  # noqa: BLE001 — derived data
+        log.warning(f"[translate_store] forgetting {doc_id}'s briefs failed: {e}")
+        return 0
+
+
 def purge(conn, live_docs) -> int:
     """Drop the kept translations and briefs of documents not in
     ``live_docs``, on the caller's data.db connection (search.index.purge_unused

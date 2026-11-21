@@ -140,7 +140,7 @@ export function fakeShell(options = {}) {
   }
   const native = { platform: "ipad", version: "0.2.0", ink: true,
     inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"],
-    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, openFiles: true, shellBar: true, editMenu: true, ...flags };
+    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, openFiles: true, shellBar: true, editMenu: true, keepAwake: true, ...flags };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));
   window.gammaNative = native;
   window.webkit = { messageHandlers: { gamma: { postMessage: (msg) => {
@@ -159,7 +159,7 @@ export const ANDROID_UA = "Mozilla/5.0 (Linux; Android 15; SM-X920 Build/AP3A.24
 // vibrator plays the haptics).
 export const ANDROID_HOST_JS = fs.readFileSync(path.join(ROOT, "android/app/src/main/assets/shell/host.js"), "utf8");
 export const ANDROID_INFO = { haptics: true, hold: true, ink: true, inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"],
-  openFiles: true, pencil: true, pencilGestures: ["tap", "squeeze"], platform: "android", save: true, shellBar: true, version: "0.1.0" };
+  keepAwake: true, openFiles: true, pencil: true, pencilGestures: ["tap", "squeeze"], platform: "android", save: true, shellBar: true, version: "0.1.0" };
 
 // The Android app's shell on a context: the port's stand-in, then the app's
 // script with its HostInfo in place of __GAMMA_HOST_INFO__ (as

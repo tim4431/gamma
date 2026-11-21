@@ -132,6 +132,44 @@ def test_the_brief_request_makes_the_brief_and_every_chunk_carries_it(eve, monke
     assert len(calls["brief"]) == 1
 
 
+def test_the_brief_of_a_scan_reads_through_ocr_errors(eve, monkeypatch):
+    # The viewer says the job's first page is a scan read from its OCR
+    # layer; the brief's rules then say to spell terms as the author did.
+    c, _ = eve
+    systems = []
+
+    def fake(messages, system, entry, rt, **kw):
+        systems.append(system)
+        return BRIEF
+
+    monkeypatch.setattr("gamma.routers.translate._call_ai", fake)
+    for name, ocr in (("scan-brief", True), ("plain-brief", False)):
+        assert _brief(c, page_id=_paper(c, name), ocr=ocr)[-1] == {"ready": True}
+    scan, plain = systems
+    assert scan.startswith(BRIEF_SYSTEM) and plain.startswith(BRIEF_SYSTEM)
+    assert "read by OCR from a scanned paper" in scan and "OCR" not in plain
+
+
+def test_a_stored_scan_makes_its_brief_with_the_ocr_rule_unasked(eve, monkeypatch):
+    # A stored file's opening pages are checked on the server: a job started
+    # on a born-digital cover page sends no `ocr`, and the brief still reads
+    # through the OCR errors of the scanned pages after it.
+    from ocr_fixtures import scan_pdf
+
+    c, _ = eve
+    systems = []
+
+    def fake(messages, system, entry, rt, **kw):
+        systems.append(system)
+        return BRIEF
+
+    monkeypatch.setattr("gamma.routers.translate._call_ai", fake)
+    up = c.post("/api/uploads", files={"file": ("scan.pdf", scan_pdf(), "application/pdf")}).json()
+    page = c.post(f"/api/blocks/by-doc/{up['doc_id']}", json={"default_title": "A scanned paper"}).json()["id"]
+    assert _brief(c, page_id=page)[-1] == {"ready": True}
+    assert "read by OCR from a scanned paper" in systems[0]
+
+
 def test_the_translation_request_never_makes_the_brief(eve, monkeypatch):
     c, _ = eve
     page = _paper(c, "never-makes")

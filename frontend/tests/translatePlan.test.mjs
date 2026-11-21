@@ -361,6 +361,16 @@ test("chunks close at their unit or character limit and carry the edges' context
   assert.deepEqual(chunks.map((c) => c.texts.length), [2, 1]);
   assert.deepEqual(chunks[0].context, { before: "before 0", after: "after 1", section: "section 0" });
   assert.deepEqual(chunkUnits([unit(1300, 0), unit(1300, 1), unit(10, 2)], { maxChars: 2500 }).map((c) => c.texts.length), [2, 1]);
+  const scanned = chunkUnits([unit(10, 0), { ...unit(10, 1), ocr: true }, unit(10, 2)], { maxUnits: 2 });
+  assert.deepEqual(scanned.map((c) => c.context.ocr), [true, undefined], "a chunk with a unit read by OCR says so, and only it");
+});
+
+test("a unit with a block read from a scan's OCR layer says so", () => {
+  const block = (text, ocr) => ({ text, src: text, translate: true, x1: 50, x2: 300, y1: 100, y2: 112, size: 10, nLines: 1,
+    lines: [{ x1: 50, x2: 300, y1: 100, y2: 112 }], ...(ocr && { ocr: true }) });
+  const plan = (ocr) => createPlanner({ paras: (pn) => (pn === 1 ? [block("A paragraph read from a scan of an old paper.", ocr)] : null) }).planPage(1);
+  assert.equal(plan(true)[0].ocr, true);
+  assert.equal("ocr" in plan(false)[0], false, "a born-digital unit carries no flag");
 });
 
 test("a request's fields name the paper, whether it waits for the brief and whether the server may keep it", () => {
@@ -371,6 +381,8 @@ test("a request's fields name the paper, whether it waits for the brief and whet
   assert.deepEqual(requestFields(), { wait_brief: true, keep: true }, "by default a request waits for the brief and may be kept");
   assert.deepEqual(requestFields({ pageId: "p", fresh: true }), { page_id: "p", wait_brief: true, keep: true, fresh: true },
     "a text asked for afresh says so");
+  assert.deepEqual(requestFields({ pageId: "p", ocr: true }), { page_id: "p", wait_brief: true, keep: true, ocr: true },
+    "a text read from a scan's OCR layer says so");
 });
 
 const unit2 = (parts, tokens = []) => ({ parts, targets: parts.map((_, k) => ({ pn: 1, i: k })), tokens });

@@ -227,6 +227,29 @@ def test_translate_prompt_names_the_language_and_the_break_marker(carol, monkeyp
     assert "into Japanese" in seen["system"]
     assert "{br}" in seen["system"] and "{lang}" not in seen["system"]
     assert "<sN>" in seen["system"]
+    assert "OCR" not in seen["system"]
+
+
+def test_translate_prompt_reads_through_ocr_errors_when_asked(carol, monkeypatch):
+    # A chunk the viewer read from a scan's OCR layer says so; the rule goes
+    # into the system prompt, before the language's own note, and nothing
+    # in the user turn changes.
+    seen = []
+
+    def fake(messages, system, entry, rt, **kw):
+        seen.append((system, messages))
+        return segmented(texts_of(messages))
+
+    monkeypatch.setattr("gamma.routers.translate._call_ai", fake)
+    for ocr in (True, False):
+        r = carol.post("/api/ai/translate", json={
+            "texts": [f"Rksum4 of an old scan, ocr {ocr}"], "lang": "zh-CN", "ocr": ocr})
+        assert r.status_code == 200, r.text
+    (with_ocr, turn_ocr), (without, turn_plain) = seen
+    assert "read by OCR from a scanned page" in with_ocr
+    assert with_ocr.index("read by OCR") < with_ocr.index("full-width punctuation")
+    assert "read by OCR" not in without
+    assert turn_ocr[-1]["content"].replace("True", "False") == turn_plain[-1]["content"]
 
 
 def test_translate_sends_the_context_and_asks_again_without_the_neighbours(carol, monkeypatch):

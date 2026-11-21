@@ -1,0 +1,3 @@
+# The default working directory ($OCR_STUDY_DIR): the corpus, renders,
+# engine outputs and transcriptions. Most of the pages are under copyright.
+/.work/

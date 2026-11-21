@@ -12,7 +12,8 @@ cursor; ``publish`` sends a message to every peer and is safe to call from
 the event loop AND from threadpool code (the sync AI chat endpoint runs the
 agent's tools there): sends are always scheduled on the loop the sockets
 live on. ``publish_account`` sends to one account's sockets in every room
-(the Inbox's content-free nudge).
+(the Inbox's content-free nudge), ``publish_file`` to the tabs that may
+show a stored file (its recognized text changed).
 
 Presence is never persisted. Document changes never travel over the socket
 towards the server — writes are ``POST /api/pages/{id}/ops`` (gamma/ops.py),
@@ -182,6 +183,28 @@ def publish_account(user_id: str, message: dict) -> None:
         _schedule(_send_each(targets, json.dumps(message)))
     except Exception as e:  # never let a nudge break the write
         log.warning(f"[collab] account nudge failed: {e}")
+
+
+def publish_file(ws: str, page_ids, message: dict) -> None:
+    """Send ``message`` about a stored file of workspace ``ws`` to the tabs
+    that may show it: everyone in the rooms of ``page_ids`` (the pages
+    showing the file, highlight_relocate ``pages_showing``), share visitors
+    included, and the members' peers in the workspace's other rooms (a
+    member's tab shows the file in a split pane or a dock, with one socket,
+    its focused page's). A share visitor of another page hears nothing: a
+    socket learns nothing of a page its share does not reach. Content-free
+    (the recognized text's ``{t: "ocr", doc_id, stamp}``): a tab reads what
+    changed over HTTP by the file's own rule. Sent as ``publish_account``
+    sends; safe from anywhere, a no-op without targets."""
+    pages = set(page_ids)
+    targets = [(room, peer) for key, room in list(_rooms.items()) if key[0] == ws
+               for peer in list(room.peers.values()) if key[1] in pages or not peer.token]
+    if not targets:
+        return
+    try:
+        _schedule(_send_each(targets, json.dumps(message)))
+    except Exception as e:  # never let a nudge break the work that sent it
+        log.warning(f"[collab] file nudge failed: {e}")
 
 
 async def _send_each(targets: list, text: str) -> None:

@@ -110,14 +110,17 @@ export function sweepRuns() {
 // scenarios/https.mjs); a scenario may change it between two starts.
 // The server options a test server starts with (gamma/server_options.py,
 // set by manage.py set-option before it starts): nothing goes out to the
-// paper registries or models.dev. A scenario's `options` add to them.
+// paper registries or models.dev (OFFLINE), and no scan an upload stores is
+// recognized by itself (gamma/ocr_auto.py; scenarios/scanLayer.mjs turns it
+// on for its automatic steps). A scenario's `options` add to them.
 const OFFLINE = { metadata_lookup: "off", model_catalog: "off" };
+const NO_AUTO_OCR = { ocr_auto: "off" };
 
 export class Server {
   constructor({ env = {}, options = {}, static: serveApp = true, tls = null } = {}) {
     servers.push(this);
     this.env = env;
-    this.options = { ...OFFLINE, ...options };
+    this.options = { ...OFFLINE, ...NO_AUTO_OCR, ...options };
     this.serveApp = serveApp;
     this.tls = tls;
     this.agent = null;

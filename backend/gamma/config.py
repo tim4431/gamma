@@ -274,6 +274,43 @@ def demo_override() -> bool:
     return _env_on("GAMMA_DEMO")
 
 
+# --- Text recognition (gamma/ocr_engine.py, gamma/pdf_ocr.py) -----------------
+
+def tessdata_dir() -> Path:
+    """Where the text recognition models are: ``GAMMA_TESSDATA_DIR`` (the
+    Docker image's /app/tessdata, the desktop bundle's), else a tessdata
+    folder beside the gamma package: backend/tessdata, where the repository
+    keeps them, outside the package so they ride their own layer of the
+    image, and the mobile apps' copy beside their gamma/ (Android's source
+    set, the iPad's build-python.sh), which their server sends the window
+    that reads the pages (ocr_engine ``capability``). Read when asked."""
+    return Path(os.environ.get("GAMMA_TESSDATA_DIR", "").strip() or Path(__file__).resolve().parent.parent / "tessdata")
+
+
+def ocr_override() -> bool | None:
+    """``GAMMA_OCR``: True or False when it says on or off (1/true/yes/on,
+    0/false/no/off), as a hosted container's environment turns text
+    recognition on (docs/dev/hosted.md) or the desktop's engine check does;
+    None when it is unset or says neither. Elsewhere an admin sets it in
+    Settings → Server → Text recognition (gamma/server_options.py
+    ``ocr_enabled``). Read when asked, so a test can turn it either way."""
+    raw = os.environ.get("GAMMA_OCR", "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return None
+
+
+def ocr_in_window() -> bool:
+    """``GAMMA_OCR_ENGINE=window``: this server reads no text itself, as on
+    the mobile apps, and leaves every reading to the window that asks
+    (ocr_engine ``capability``), for tests and development on a machine
+    with the engine. Any other value, or none, changes nothing. Read when
+    asked."""
+    return os.environ.get("GAMMA_OCR_ENGINE", "").strip().lower() == "window"
+
+
 def sync_interval_s() -> int:
     """Seconds between mirror sync rounds (gamma/sync_engine.py); 0 turns
     the background loop off (the API's "sync now" still works)."""

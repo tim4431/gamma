@@ -138,6 +138,50 @@ with the ngx_brotli module). It then also owns the backend's other static
 rules: `index.html` for any path that is no file, `/assets/*` cached
 `public, max-age=31536000, immutable`, everything else `no-cache`.
 
+### Text recognition
+
+Recognize text in this PDF ([documents.md](documents.md#recognized-text))
+needs nothing beyond `requirements.txt`: the `tesserocr` wheel carries
+Tesseract and Leptonica, and the models are in `backend/tessdata`. The
+wheels exist for Linux (amd64, arm64), Windows and macOS 15 or later. On
+an older macOS the requirement's marker (`sys_platform != "darwin" or
+platform_release >= "24"`, Darwin 24 being macOS 15) skips tesserocr, so
+`pip install -r requirements.txt` still succeeds there and the server
+runs without the engine. The apps' server has none either
+(`requirements-mobile.txt` leaves it out). Where recognition is on and the
+models are there, a server without the engine leaves the reading to the
+window that asks (tesseract.js, `ocr.where` `window` in
+`/api/server-config`); without the models it reports no `ocr` and offers
+no Recognize text. Read when asked:
+
+- `GAMMA_OCR`: `on` or `off` (also 1/0, true/false, yes/no), over the
+  admin's switch (Settings → Server → Text recognition, the server option
+  `ocr`, on by default). Unset, recognition is off on a hosted container
+  and in demo mode whatever the switch says.
+- `GAMMA_OCR_ENGINE=window`: a server with the engine reads no text itself
+  and leaves every reading to the window, as the apps do. Any other value
+  changes nothing. The scan-layer browser group sets it for the window
+  path.
+- The automatic recognition of a scan uploaded with no text (`ocr_auto`)
+  and how many files are recognized at once (`ocr_workers`) are server
+  options, set in the same Settings section or by `manage.py set-option`.
+  The backend's `conftest.py` makes `ocr_auto` off by default and the
+  browser harness starts every server with it off; the tests of the
+  automatic runs turn it on (`server_option`, a scenario's `options`).
+- `GAMMA_TESSDATA_DIR`: another models folder (the Docker image's
+  `/app/tessdata`, the desktop bundle's).
+- `OMP_THREAD_LIMIT`: set to 1 unless the environment sets it (the Docker
+  image and the desktop app do): a Tesseract built with OpenMP starts a
+  thread per core otherwise, which measured slower.
+
+The backend's real-engine tests skip without tesserocr; the others use the
+fake engine of `tests/ocr_fake.py`, and the window's tests play the window
+over the routes. With recognition on, the server checks its engine at
+startup on a thread (`ocr_engine.start_check`); a test that patches the
+engine calls `ocr_engine.reset()`, which waits for that check. The desktop bundle's own check is
+`gamma-server --check-ocr`
+([desktop/docs/architecture.md](../../desktop/docs/architecture.md)).
+
 ### Snapshots and copies in a bucket
 
 Gamma always works on the files in its data directory. An S3-compatible
@@ -1762,6 +1806,38 @@ The scenarios live in `tests/e2e/scenarios/`:
   focus kept on the button through the card's hiding, and the lost card's
   steps on one line on a 360 px phone in English and Chinese
   ([highlight_relocation.md](highlight_relocation.md)).
+- `scanLayer.mjs` (`--group scan-layer`): a scan's OCR layer repaired
+  ([pdf_loading.md](pdf_loading.md#a-scans-text-layer)) on a paper made in
+  the test (`tests/e2e/scanPdf.mjs`): a born-digital cover, then a picture
+  under a flipped, ink-sized layer of one paragraph. The cover's spans are
+  pdf.js's own; the scan's sit on the print, a band a line, tiling it; a drag
+  across a line selects it and its highlight lies on it; Ctrl+F marks a word
+  where it is printed; the scan's translation sends the paragraph as one
+  text with `ocr`, the cover's without. Then the server's text recognition
+  with the real engine ([documents.md](documents.md#recognized-text)), on
+  a printed scan under a garbled layer (`printed_scan_pdf` of
+  `backend/tests/ocr_fixtures.py`, built through the backend Python): the
+  Document menu's Recognize text in this PDF, its Background tasks row and
+  summary, and the job's result; the text layer of recognized words, each
+  over its printed word; Ctrl+F finding a word only the recognition read;
+  a highlight made before the run taking the recognized line as its quote
+  and a heavily garbled one keeping its own, both in place; the metadata
+  popover's text cell after the run, the menu row gone then; Forget the
+  recognized text…, asked first (Cancel forgets nothing), its summary and
+  row, then the garbled layer and the old quote back, the highlights in
+  place, Ctrl+F finding the garbled word and Recognize text offered again;
+  and the row and the popover's prompt for a scan with no layer. Then a
+  second account's tab open on a shared workspace's scan reading the
+  recognized words, and later its own layer again, from the page socket's
+  `ocr`, without a reload; the window path against a server with
+  `GAMMA_OCR_ENGINE=window` (the row's title, the `ocr-tab` row done with
+  its summary, the file's engine `tesseract.js 7.0.0`, every request to
+  that server, the spans over their printed words, Ctrl+F); and on a
+  server with the option `ocr_auto` on a 40-page picture-only scan
+  recognized by itself (the workspace's job, its row, its summary on the
+  page shown) and Settings → Server → Text recognition's rows, its
+  automatic switch saved off and on. The harness starts every other
+  server with `ocr_auto` off.
 - `translation.mjs`: a two-column page whose paragraph runs over the column
   break: the request carries one text with `{br}`, the formulas and the
   citation marker as tokens, the page and the section; the reply fills both

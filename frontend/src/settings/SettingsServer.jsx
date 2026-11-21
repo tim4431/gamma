@@ -4,7 +4,9 @@
 // online services it asks and the largest file a work folder keeps
 // (SettingsServerOptions.jsx), on a hosted container the plan its limits come
 // from (HostedPlan), the shared AI provider every account may use
-// (SettingsAi.jsx), the shared workspaces (SettingsWorkspacesAdmin.jsx), the
+// (SettingsAi.jsx), on a server that recognizes text itself whether it reads
+// the scans uploaded with no text (SettingsTextRecognition.jsx), the shared
+// workspaces (SettingsWorkspacesAdmin.jsx), the
 // database check, whole-data-directory snapshots (SettingsBackups.jsx
 // ServerBackups) and the scrubbed server log with a level filter.
 // Who may come in and what they may keep — the storage defaults every account
@@ -27,6 +29,7 @@ import { OnlineServicesSettings, WorkFolderSettings } from "./SettingsServerOpti
 import { CloudSignInSettings } from "./SettingsCloudSignIn";
 import { GuestSettings } from "./SettingsGuests";
 import { SharedAiProviderSettings } from "./SettingsAi";
+import { TextRecognitionSettings } from "./SettingsTextRecognition";
 import { ContentReports } from "./SettingsReports";
 import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, CloudIcon, DatabaseIcon, ExternalLinkIcon, ServerIcon,
   UsersIcon } from "../shared/ui/Icons";
@@ -53,6 +56,7 @@ export function ServerSettings({ value, onBucket }) {
       <WorkFolderSettings setStatus={value.setStatus} />
       <HostedPlan setStatus={value.setStatus} onSynced={() => value.refreshQuota?.()} />
       <SharedAiProviderSettings setStatus={value.setStatus} confirm={value.confirm} />
+      <TextRecognitionSettings setStatus={value.setStatus} />
       <WorkspacesAdmin value={value} />
       <Section title={t("Databases")}>
         <DatabaseCheck tasks={value.tasks} />

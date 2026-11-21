@@ -8,7 +8,7 @@ Positions are deliberately not stored: the viewer finds a PDF hit's text
 again with pdf.js when the hit is opened, and a file hit names its line
 (gamma/search/hits.py)."""
 
-from .. import jobs, pdf_meta, storage
+from .. import jobs, pdf_meta, pdf_ocr, storage
 from ..db import connect_data_db, connect_pages_db
 from ..documents import text
 from ..logbuf import log
@@ -58,7 +58,11 @@ def _path_of(ws: str, doc: Doc):
 
 def index_doc(ws: str, doc: Doc) -> tuple[str, list, dict] | None:
     """A document's text, extracted and ready to store: ``(hash, [(unit,
-    text)], {format, lines, truncated})``, or None for "record nothing".
+    text)], {format, lines, truncated})`` and, for a PDF, ``ocr_stamp``:
+    the stamp of the text recognized on its scanned pages that the readers
+    read before the extraction ("" for none, gamma/pdf_ocr.py ``stamp``),
+    so the store leaves out a text an apply overtook meanwhile
+    (index.store_docs); or None for "record nothing".
     A file that fails to read is recorded with no text, so a broken file
     isn't re-parsed on every search, but for a linked file out of reach
     (``reads_through``): nothing is said of its bytes then, so nothing is
@@ -70,6 +74,9 @@ def index_doc(ws: str, doc: Doc) -> tuple[str, list, dict] | None:
     with it, and the documents stay missing, for a later search to index
     once the reader loads."""
     units, meta, read = [], {"format": doc.format, "lines": 0, "truncated": False}, False
+    # Before the text is read: a recognition applied after this reads as another stamp at the store.
+    stamp = {"ocr_stamp": pdf_ocr.stamp(ws, doc.hash)} if doc.format == "pdf" else {}
+    meta.update(stamp)
     try:
         path = _path_of(ws, doc)
         if path:
@@ -77,7 +84,7 @@ def index_doc(ws: str, doc: Doc) -> tuple[str, list, dict] | None:
                 pdf_meta.ensure(ws, doc.hash)  # the viewer's manifest, while the file is at hand anyway
             found = text.extract(path, doc.format, name=_name_of(ws, doc) if doc.format == "text" else "")
             units = [(u.no, u.text) for u in found.units]
-            meta = {"format": doc.format, "lines": found.lines, "truncated": found.truncated}
+            meta = {"format": doc.format, "lines": found.lines, "truncated": found.truncated, **stamp}
             read = True
     except ImportError:
         raise

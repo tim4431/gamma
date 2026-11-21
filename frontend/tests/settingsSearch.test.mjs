@@ -31,7 +31,7 @@ const PANE_FILES = {
   maintenance: ["SettingsDialog.jsx"],
   users: ["SettingsUsers.jsx", "SettingsServer.jsx", "SettingsCloudSignIn.jsx", "SettingsGuests.jsx", "SettingsReports.jsx"],
   server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsZoteroApp.jsx", "SettingsServerOptions.jsx", "SettingsAi.jsx",
-    "SettingsWorkspacesAdmin.jsx", "SettingsBackups.jsx"],
+    "SettingsTextRecognition.jsx", "SettingsWorkspacesAdmin.jsx", "SettingsBackups.jsx"],
   proxy: ["SettingsProxy.jsx"],
   diagnostics: ["SettingsDialog.jsx"],
 };
@@ -90,6 +90,10 @@ test("labels that hold the query come first; hints and synonyms find the rest", 
   const zotero = searchSettings("zotero", all).map((r) => `${r.pane}/${r.label}`);
   assert.deepEqual(zotero.slice(0, 1), ["account/Zotero"]);
   assert.ok(zotero.includes("workspaces/Clones and Zotero links"), zotero.join(", "));
+  // the Server pane's text recognition rows, the switch of recognition itself first
+  const ocr = searchSettings("ocr", all).map((r) => r.label);
+  assert.deepEqual(ocr.slice(0, 3), ["Recognize text in scanned PDFs", "Recognize scans automatically", "Files recognized at once"]);
+  assert.equal(searchSettings("text recognition", all)[0]?.section, "Text recognition");
 });
 
 test("an admin-only section is found only by admins (the Server pane is theirs alone)", () => {

@@ -30,8 +30,17 @@ for var in [name for name in os.environ if name.startswith(("GAMMA_S3_", "GAMMA_
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import dataclasses
+
 import pytest
 from fastapi.testclient import TestClient
+
+from gamma import server_options
+
+# No scan an upload stores is recognized by itself unless a test turns it on
+# (server_option("ocr_auto", True)): the option's default, in every data
+# directory a test makes, and what the server_option fixture goes back to.
+server_options.OPTIONS["ocr_auto"] = dataclasses.replace(server_options.OPTIONS["ocr_auto"], default=False)
 
 
 S3_TEST_BUCKET = "gamma-test"

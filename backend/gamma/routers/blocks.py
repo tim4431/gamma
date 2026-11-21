@@ -45,7 +45,7 @@ from ..blocks_store import (
     valid_block_id,
     write_lock,
 )
-from .. import cloud_auth, comments, trash, upload_gc
+from .. import cloud_auth, comments, ocr_auto, trash, upload_gc
 from ..db import connect_pages_db, page_now
 from ..documents.model import document_props
 from ..json_response import OrjsonResponse
@@ -367,17 +367,24 @@ def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: Reques
     # app and the extension, and "Open as document" on a PDF file block) — a
     # write, so it requires a real session (never the ?share= read principal).
     # A new page filed in a work folder is refused (``create_page``: a PDF is
-    # its vault's to bring there).
+    # its vault's to bring there). A page made here is a person's upload: a
+    # scan of it with no text may be recognized by itself (gamma/ocr_auto.py).
     ws = require_ws(request, write=True)
+    actor = actor_of(request)
     with connect_pages_db(ws) as conn:
+        write_lock(conn)  # the lookup and the create as one step: one page per file
+        created = page_for_doc(conn, doc_id) is None
         try:
-            return get_or_create_doc_page(
+            page = get_or_create_doc_page(
                 conn, doc_id, payload.default_title, payload.source_url, payload.original_filename,
-                folder=payload.folder or "", ws=ws, actor=actor_of(request))
+                folder=payload.folder or "", ws=ws, actor=actor)
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid doc_id")
         except OpError as e:
             return op_refusal(e)
+    if created:
+        ocr_auto.consider(ws, doc_id, page["id"], actor)
+    return page
 
 
 def _not_found(conn, block_id: str) -> JSONResponse:

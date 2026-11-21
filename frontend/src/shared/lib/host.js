@@ -15,7 +15,8 @@
 // the app), shellBar (its own bar above the page
 // can be hidden, and `shellBar` sets and reports it), save (it takes the
 // files the web saves, shared/lib/saveFile.js), editMenu (it turns its own
-// edit menu over a selection off while the page says, `editMenu`)} — a
+// edit menu over a selection off while the page says, `editMenu`),
+// keepAwake (it keeps the screen on while the page says, `keepAwake`)} — a
 // `receive(msg)` stub that queues what native sends until this module
 // takes over, and, where the shell's transport is not WebKit's reply
 // handler, `post(msg)`, a promise of native's reply (Android's:
@@ -27,10 +28,13 @@
 // The messages: the web posts `claim` (the ink layer), `theme` (the colour,
 // the scheme and the theme's name) and `haptic` (App), `files`, `fileData`
 // and `fileDone` (transfers/openedFiles.js), `shellBar`
-// (app/useShellBar.js), `editMenu` (the PDF viewer), and `save`, `saveData`,
-// `saveDone` and `saveUrl` (saveFile.js); native sends `stroke` and `hold`
-// (the ink layer), `pencil` and `squeeze` (App), `filesOpened`
-// (openedFiles.js) and `shellBar`.
+// (app/useShellBar.js), `editMenu` (the PDF viewer), `save`, `saveData`,
+// `saveDone` and `saveUrl` (saveFile.js), and `keepAwake` ({on}: the screen
+// kept on, or let sleep again, while the window recognizes a scan's text,
+// pdf/ocrRuns.js through `keepAwake` below; the iPad turns its idle timer
+// off, Android sets its window's keep-screen-on flag); native sends
+// `stroke` and `hold` (the ink layer), `pencil` and `squeeze` (App),
+// `filesOpened` (openedFiles.js) and `shellBar`.
 // Feature code asks nativeHost() for a capability, sends with postToHost and
 // listens with onHostMessage; nothing else in the app knows a host exists.
 // In a browser every answer here is "no host".
@@ -93,6 +97,54 @@ function receive(msg) {
 export function onHostMessage(type, fn) {
   handlers.set(type, fn);
   return () => { if (handlers.get(type) === fn) handlers.delete(type); };
+}
+
+// The screen kept on (`on`) or let sleep again, for work that goes on only
+// while the page is in front (a scan's pages read in the window,
+// pdf/ocrRuns.js, its one caller: a second `true` changes nothing, and one
+// `false` lets the screen sleep). A host that declares `keepAwake` is told
+// (`{type: "keepAwake", on}`); elsewhere the browser's screen wake lock is
+// asked for, and asked again each time the page is shown, since the browser
+// lets it go whenever the page is hidden. Where neither exists the screen
+// sleeps as it would.
+let awake = false;
+let lock = null;   // the wake lock held, a WakeLockSentinel
+let asking = null; // a request on its way
+export function keepAwake(on) {
+  if (!!on === awake) return;
+  awake = !!on;
+  if (nativeHost()?.keepAwake) {
+    postToHost({ type: "keepAwake", on: awake }).catch(() => {});
+    return;
+  }
+  const doc = globalThis.document;
+  if (awake) {
+    doc?.addEventListener?.("visibilitychange", askAgain);
+    askLock();
+    return;
+  }
+  doc?.removeEventListener?.("visibilitychange", askAgain);
+  const held = lock;
+  lock = null;
+  held?.release?.()?.catch?.(() => {});
+}
+
+function askAgain() {
+  if (globalThis.document?.visibilityState === "visible") askLock();
+}
+
+function askLock() {
+  const wakeLock = globalThis.navigator?.wakeLock;
+  if (!awake || lock || asking || typeof wakeLock?.request !== "function") return;
+  asking = Promise.resolve().then(() => wakeLock.request("screen")).then((held) => {
+    // let go meanwhile: what came is given back at once
+    if (!awake) {
+      held?.release?.()?.catch?.(() => {});
+      return;
+    }
+    lock = held;
+    held?.addEventListener?.("release", () => { if (lock === held) lock = null; });
+  }, () => {}).finally(() => { asking = null; });
 }
 
 // At load: mark <html> for CSS (data-shell for either shell; data-host as

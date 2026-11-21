@@ -109,12 +109,22 @@ function follow(host, source, url, st, row, hint) {
   // asked for again (its menu's Translate again) whose new text did not come
   // keeps the one it had, and says so. "Try again" runs that job in the
   // viewer, so it is offered while the document is on screen; a stop because
-  // there is no AI provider (503) offers the settings instead.
+  // there is no AI provider (503) offers the settings instead. One halted
+  // because the PDF's text changed under it (`halted: "text"`: a recognition
+  // or a forget of its recognized text, anyone's) says so, and its Try
+  // again translates the new text.
+  const onScreen = () => host().screenUrl === url;
+  const again = (run) => (onScreen() ? { label: t("Try again"), run: () => { if (onScreen()) run(); } } : undefined);
+  if (st.halted === "text") {
+    h.updateTask(row.task, { state: "cancelled", info: t("stopped: this PDF's text changed") });
+    row.task = null;
+    h.setStatus(t("The translation stopped because this PDF's text changed — translate again to go on with its new text."),
+      again(() => host().rerun()));
+    return;
+  }
   const left = st.error == null ? st.untranslated || 0 : 0;
   const unchanged = st.error == null ? st.unchanged || 0 : 0;
   const finished = st.progress >= 0.999;
-  const onScreen = () => host().screenUrl === url;
-  const again = (run) => (onScreen() ? { label: t("Try again"), run: () => { if (onScreen()) run(); } } : undefined);
   // A job that did not do what it was asked ends as failed in the list, not
   // with a success's check: one that stopped, and one on a paragraph whose new
   // text did not come.

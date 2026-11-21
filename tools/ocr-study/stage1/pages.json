@@ -1,0 +1,17 @@
+{
+ "note": "Stage 1 sample: 4 pages per scan with an OCR layer (3 text pages and 1 math-, table- or reference-heavy page) and 6 Siegman pages. Pages are 1-based. 'show' names the pages whose first 12 segmentation blocks eval.mjs prints.",
+ "files": {
+  "lounis":   {"pages": {"2": "text", "4": "text", "12": "text", "8": "math"}},
+  "hansch":   {"pages": {"2": "text", "3": "text", "4": "text", "1": "math"}},
+  "holstein": {"pages": {"2": "text", "12": "text", "15": "text", "8": "math"}},
+  "kitagawa": {"pages": {"1": "text", "4": "text", "5": "text", "3": "math"}},
+  "feshbach": {"pages": {"3": "text", "4": "text", "27": "text", "20": "math"}},
+  "naca":     {"pages": {"15": "text", "17": "text", "21": "text", "9": "math"}},
+  "kollin":   {"pages": {"2": "text", "3": "text", "4": "text", "5": "math"}},
+  "jdp":      {"pages": {"12": "text", "44": "text", "55": "text", "33": "math"}},
+  "physrev":  {"pages": {"8": "text", "24": "text", "70": "text", "76": "math"}},
+  "annalen":  {"pages": {"10": "text", "11": "text", "13": "text", "3": "math"}},
+  "siegman":  {"pages": {"99": "text", "197": "text", "852": "text", "1081": "text", "164": "math", "1049": "math"}}
+ },
+ "show": ["lounis-p2", "kitagawa-p4"]
+}

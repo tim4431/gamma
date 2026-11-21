@@ -10,6 +10,15 @@ page count, outline, title guess, glyphs) as it does from the text walk, so
 the search index, the manifest (pdf_meta) and the highlight import, which
 keep an unreadable file's empty answer for good, store nothing and read the
 file once it loads.
+On a scanned page under an invisible OCR layer, whose words MuPDF often
+reads as a line each, the page text and the glyph walk put the lines of
+one visual row back together (gamma/pdf_scan.py).
+A stored PDF whose scanned pages had their text recognized
+(gamma/pdf_ocr.py, the Document menu's Recognize text) is read with the
+recognized words on those pages, by every reader here that takes a path:
+the page text, the glyphs under a highlight, the brief's scan test and the
+title guess (``_ocr_view``; each reader's ``ocr=False`` reads the file's own
+layer instead). Bytes have no recognized text.
 Used by the AI context builder, metadata lookup, /pdf-text-status, the
 search indexer, the manifest walk and the highlight import, so extraction
 fixes land once.
@@ -30,8 +39,10 @@ import threading
 import zlib
 from collections import OrderedDict
 from contextlib import contextmanager
+from statistics import median
 from typing import NamedTuple
 
+from . import pdf_scan
 from .logbuf import log
 
 # Sentinel the AI context builder hands to the model when extraction raised.
@@ -44,6 +55,10 @@ PDF_EXTRACT_FAILED = "(PDF text extraction failed)"
 # file, so a cap that actually bites silently hides content. It exists only
 # to stop a pathological file from parsing forever.
 MAX_PAGES = 5000
+
+# Recognized words are kept in this many parts of the page as shown, each
+# way (gamma/pdf_ocr.py): x of its width, y of its height, top-left origin.
+OCR_UNITS = 10000
 
 # PyMuPDF's documentation says it is not thread-safe: running it on several
 # threads "may cause incorrect behaviour or even crash Python itself". Sync
@@ -103,7 +118,8 @@ _lock = _MuPdfLock()
 # not "ﬁ"; search folds them anyway, and the AI and the metadata regexes
 # read plain letters better). TEXT_DEHYPHENATE stays off: an end-of-line
 # hyphen stays as written — search re-joins the words (gamma/textnorm.py)
-# and the AI reads the page as it is. Lines end in "\n". _RAWDICT_FLAGS is the
+# and the AI reads the page as it is. Lines end in "\n" (on a scanned page
+# the lines of one visual row are joined with a space: _text). _RAWDICT_FLAGS is the
 # glyph walk's: without TEXT_PRESERVE_IMAGES, which would copy every
 # image's bytes into the dictionary (a second on an image-heavy page) for
 # boxes nobody reads.
@@ -241,7 +257,63 @@ def user_unit(page) -> float:
 
 
 def _text(page) -> str:
-    return page.get_text("text", flags=_TEXT_FLAGS) or ""
+    """The text of one page: MuPDF's plain text, each of its lines ending
+    in "\\n". On a scanned page under an invisible OCR layer
+    (``pdf_scan.is_scan_page``) MuPDF often cuts a printed line into a line a
+    word or a few, so there the lines of one visual row (``pdf_scan.rows``) are
+    joined with a space in place of the "\\n" between them. Nothing else
+    changes: the order is MuPDF's, every character stays where it was, and
+    the text is as long as before, so an offset into it (a read_page
+    continuation, an excerpt's end) means the same place either way. The
+    rows come from the lines of the same TextPage the plain text is read
+    from; when those lines, joined with "\\n", are not that text exactly,
+    the plain text is kept."""
+    textpage = page.get_textpage(flags=_TEXT_FLAGS)
+    text = page.get_text("text", textpage=textpage) or ""
+    read = []  # the text dictionary, built once if the scan check needs it
+
+    def blocks():
+        if not read:
+            read.append(page.get_text("dict", textpage=textpage)["blocks"])
+        return read[0]
+
+    if not text or not pdf_scan.is_scan_page(page, blocks):
+        return text
+    lines, boxes = [], []
+    for block in blocks():
+        for line in block.get("lines", ()):
+            lines.append("".join(span["text"] for span in line["spans"]))
+            boxes.append(line["bbox"])
+    if "".join(line + "\n" for line in lines) != text:
+        return text
+    out = [lines[0]]
+    for line, new_row in zip(lines[1:], pdf_scan.rows(boxes)):
+        out.append("\n" if new_row else " ")
+        out.append(line)
+    out.append("\n")
+    return "".join(out)
+
+
+def _ocr_view(src):
+    """The recognized text of the stored PDF at ``src`` as the readers here
+    read it (gamma/pdf_ocr.py ``view_of``: its stamp, its live pages, each
+    page's lines and text), or None: bytes, a file without any, a path that
+    is no stored PDF. pdf_ocr is imported on the first call: it reads
+    data.db through gamma.db, which nothing else here needs. Never called
+    under ``_lock``. Each reader resolves it once per call (once per
+    GlyphPages)."""
+    if not isinstance(src, (str, os.PathLike)):
+        return None
+    from . import pdf_ocr  # local: pdf_ocr imports this module
+
+    return pdf_ocr.view_of(src)
+
+
+def _ocr_arg(ocr: bool) -> dict:
+    """``ocr`` as a keyword for ``iter_page_texts``, given only when it is
+    off: tests stand in for iter_page_texts with a function of the
+    arguments it had before recognized text."""
+    return {} if ocr else {"ocr": False}
 
 
 # --- The page-text cache -----------------------------------------------------
@@ -253,8 +325,11 @@ def _text(page) -> str:
 # is kept here: per file, the pages read so far (a head read fills the head
 # only; the next window goes on from there), bounded by characters across
 # files and dropped least recently used. The key carries the file's size
-# and mtime, so a file rewritten in place is read again. Bytes sources (an
-# uploaded PDF in a chat message) are never cached.
+# and mtime, so a file rewritten in place is read again, and the stamp of
+# its recognized text when the reader reads that (``_ocr_view``), so the
+# text recognized later is read at once; a reader of the file's own layer
+# and a file without recognized text share the key without a stamp. Bytes
+# sources (an uploaded PDF in a chat message) are never cached.
 TEXT_CACHE_CHARS = 32_000_000   # about 32–128 MB of Python strings
 TEXT_CACHE_FILES = 64
 
@@ -274,16 +349,18 @@ _text_cache_chars = 0
 _text_cache_lock = threading.Lock()
 
 
-def _text_key(src):
-    """The cache key of a path source: ``(absolute path, size, mtime)``;
-    None for bytes or a path that cannot be read."""
+def _text_key(src, view=None):
+    """The cache key of a path source: ``(absolute path, size, mtime,
+    stamp)``, the stamp the recognized text's (``view``, the reader's
+    ``_ocr_view``) or None for the file's own layer; None for bytes or a
+    path that cannot be read."""
     if not isinstance(src, (str, os.PathLike)):
         return None
     try:
         st = os.stat(src)
     except OSError:
         return None
-    return (os.path.abspath(os.fspath(src)), st.st_size, st.st_mtime_ns)
+    return (os.path.abspath(os.fspath(src)), st.st_size, st.st_mtime_ns, view.stamp if view is not None else None)
 
 
 def _text_entry(key):
@@ -298,7 +375,11 @@ def _text_entry(key):
 
 
 def _text_remember(key, total: int) -> _TextEntry:
-    """A new entry for ``key`` (or the one another thread made meanwhile)."""
+    """A new entry for ``key`` (or the one another thread made meanwhile).
+    One with a recognized text's stamp drops the file's entries of other
+    stamps: that text is no longer what anyone reads, and a book being
+    recognized would otherwise crowd the cache with one entry a run."""
+    global _text_cache_chars
     entry = _TextEntry(total)
     if key is None:
         entry.cached = False
@@ -308,9 +389,27 @@ def _text_remember(key, total: int) -> _TextEntry:
         if existing is not None:
             _text_cache.move_to_end(key)
             return existing
+        if key[3] is not None:
+            for old in [k for k in _text_cache if k[0] == key[0] and k[3] not in (None, key[3])]:
+                victim = _text_cache.pop(old)
+                victim.cached = False
+                _text_cache_chars -= victim.chars
         _text_cache[key] = entry
         _text_evict_locked()
         return entry
+
+
+def _cached_total(src) -> int | None:
+    """The page count of a path the cache holds an entry of, whichever
+    text it holds; None when it holds none."""
+    key = _text_key(src)
+    if key is None:
+        return None
+    with _text_cache_lock:
+        for other, entry in _text_cache.items():
+            if other[:3] == key[:3]:
+                return entry.total
+    return None
 
 
 def _text_store(entry: _TextEntry, i: int, text: str) -> None:
@@ -345,7 +444,8 @@ def text_cache_clear() -> None:
         _text_cache_chars = 0
 
 
-def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1, cache: bool = True):
+def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1, cache: bool = True,
+                    ocr: bool = True):
     """Yield per-page text for pages ``start_page``..``max_pages`` (1-based).
     src is a path str or PDF bytes. Takes the lock per page, never across
     the walk (nor while the consumer holds a page's text). A page read
@@ -353,23 +453,40 @@ def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1, cache:
     file is opened at the first page that is not there. ``cache=False``
     reads past the cache and leaves nothing in it (the search indexer's
     walk over a library would otherwise push out the papers being read).
-    Raises as ``_open`` does when the file will not open."""
-    key = _text_key(src) if cache else None
+    A page whose text was recognized (``_ocr_view``, resolved once per
+    call, cache or not) yields the recognized text without MuPDF reading
+    it, and a file whose every page was recognized is never opened;
+    ``ocr=False`` reads the file's own layer on every page (the
+    recognition's comparison with it). Raises as ``_open`` does when the
+    file will not open."""
+    yield from _page_texts(src, max_pages, start_page, cache, _ocr_view(src) if ocr else None)
+
+
+def _page_texts(src, max_pages: int, start_page: int, cache: bool, view):
+    """``iter_page_texts`` with its recognized text resolved: ``view``, or
+    None for the file's own layer."""
+    key = _text_key(src, view) if cache else None
     entry = _text_entry(key)
     pdf = None  # the document, once opened
     try:
         if entry is None:
-            pdf = _open(src)
-            with _lock:
-                total = len(pdf)
+            if view is not None:
+                total = view.total  # the count the run read the same file's pages by
+            else:
+                pdf = _open(src)
+                with _lock:
+                    total = len(pdf)
             entry = _text_remember(key, total)
         _warn_truncated(entry.total, max_pages)
         for i in range(max(0, start_page - 1), min(entry.total, max_pages)):
             text = entry.pages[i]
             if text is None:
-                if pdf is None:
-                    pdf = _open(src)
-                text = _read_page(pdf, i, _text)
+                if view is not None and i + 1 in view.pages:
+                    text = view.text(i + 1)
+                if text is None:
+                    if pdf is None:
+                        pdf = _open(src)
+                    text = _read_page(pdf, i, _text)
                 _text_store(entry, i, text)
             yield text
     finally:
@@ -378,19 +495,105 @@ def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1, cache:
                 pdf.close()
 
 
-def extract_pages(src, max_pages: int = MAX_PAGES, cache: bool = True) -> list[str]:
-    """All page texts as a list (the search indexer's shape)."""
-    return list(iter_page_texts(src, max_pages, cache=cache))
+def opening_is_scan(src, char_limit: int) -> bool:
+    """Whether a page of the PDF's opening text, the pages ``extract_text``
+    reads for ``char_limit`` characters, is a scan read from its OCR layer
+    (``pdf_scan.is_scan_page``) or from the words recognized on its picture
+    (``_ocr_view``: Tesseract still misreads about one character in a
+    hundred). A paper's brief made from such text is told so
+    (gamma/translate_context.py). The texts come from the cache; the check
+    takes the lock once a page, and a recognized page needs none."""
+    view = _ocr_view(src)
+    pdf = None  # opened for the first page with text that was not recognized
+    try:
+        chars = 0
+        for i, text in enumerate(_page_texts(src, MAX_PAGES, 1, True, view)):
+            if text.strip():
+                if view is not None and i + 1 in view.pages:
+                    return True
+                if pdf is None:
+                    pdf = _open(src)
+                if _read_page(pdf, i, pdf_scan.is_scan_page):
+                    return True
+            chars += len(text)
+            if chars >= char_limit:
+                return False
+        return False
+    finally:
+        if pdf is not None:
+            with _lock:
+                pdf.close()
+
+
+def page_kinds(src, max_pages: int = MAX_PAGES):
+    """Yield ``(page_no, kind)`` for each page of the PDF ``src`` in turn
+    (1-based): "scan" for a scanned picture under an invisible OCR layer
+    (``pdf_scan.is_scan_page``), "picture" for one without a layer
+    (``pdf_scan.is_picture_page``), "" for any other page. What a text
+    recognition run reads first (gamma/pdf_ocr.py). One page a turn of the
+    lock, with one text dictionary for both rules, built only when one
+    needs it. Raises as ``_open`` does when the file will not open."""
+    pdf = _open(src)
+    try:
+        with _lock:
+            total = len(pdf)
+        _warn_truncated(total, max_pages)
+        for i in range(min(total, max_pages)):
+            yield i + 1, _read_page(pdf, i, _page_kind)
+    finally:
+        with _lock:
+            pdf.close()
+
+
+def _page_kind(page) -> str:
+    """``page_kinds``'s read of one page."""
+    read = []
+
+    def blocks():
+        if not read:
+            read.append(page.get_text("dict", flags=0)["blocks"])
+        return read[0]
+
+    if pdf_scan.is_scan_page(page, blocks):
+        return "scan"
+    return "picture" if pdf_scan.is_picture_page(page, blocks) else ""
+
+
+def layer_texts(src, page_nos):
+    """Yield ``(page_no, text)`` of the PDF ``src``'s own text (never its
+    recognized one: ``iter_page_texts(ocr=False)``'s reading) for each of
+    ``page_nos`` (1-based) in turn, "" for a page the file does not have:
+    the file opened once, at the first page, and those pages alone read,
+    one a turn of the lock, past the page-text cache. What a text
+    recognition run compares each page it recognizes with
+    (gamma/pdf_ocr.py), the pages of a book in one walk. Raises as
+    ``_open`` does when the file will not open."""
+    pdf = _open(src)
+    try:
+        with _lock:
+            total = len(pdf)
+        for page_no in page_nos:
+            yield page_no, _read_page(pdf, page_no - 1, _text) if 1 <= page_no <= total else ""
+    finally:
+        with _lock:
+            pdf.close()
+
+
+def extract_pages(src, max_pages: int = MAX_PAGES, cache: bool = True, ocr: bool = True) -> list[str]:
+    """All page texts as a list (the search indexer's shape); ``ocr`` as
+    for ``iter_page_texts``."""
+    return list(iter_page_texts(src, max_pages, cache=cache, **_ocr_arg(ocr)))
 
 
 def extract_text(src, char_limit: int, empty_page_cap: int = 50,
-                 start_page: int = 1, label_pages: bool = False) -> str:
+                 start_page: int = 1, label_pages: bool = False, ocr: bool = True) -> str:
     """Concatenated text for AI context. Stops early once char_limit is
     gathered, or after empty_page_cap consecutive textless pages — a scanned
     book shouldn't cost a full parse just to learn it has no text.
     start_page (1-based) skips the pages before it, so a read can jump
-    straight to where a search hit landed."""
-    return extract_text_pages(src, char_limit, empty_page_cap, start_page, label_pages)[0]
+    straight to where a search hit landed. ``ocr`` as for
+    ``iter_page_texts``."""
+    return extract_text_pages(src, char_limit, empty_page_cap, start_page, label_pages, ocr)[0]
 
 
 
@@ -403,12 +606,12 @@ def page_label(page_no, continued: bool = False) -> str:
     return f"[PDF page {page_no}{'; continued' if continued else ''}]\n"
 
 def extract_text_pages(src, char_limit: int, empty_page_cap: int = 50,
-                       start_page: int = 1, label_pages: bool = False) -> tuple[str, int]:
+                       start_page: int = 1, label_pages: bool = False, ocr: bool = True) -> tuple[str, int]:
     """extract_text plus how many PDF pages the text spans (counted from
     start_page, empty pages included) — what the chat's coverage report
     tells the user: "pages 1–9 of 22"."""
     parts, total, empties, pages = [], 0, 0, 0
-    for t in iter_page_texts(src, start_page=start_page):
+    for t in iter_page_texts(src, start_page=start_page, **_ocr_arg(ocr)):
         pages += 1
         if t.strip():
             empties = 0
@@ -496,6 +699,32 @@ def _largest_type_lines(page, max_chars: int) -> str:
                 continue
             x, y = line.get("bbox", (0, 0, 0, 0))[:2]
             lines.append((max(sizes), y, x, text))
+    return _largest_type(lines, max_chars)
+
+
+def _largest_recognized_lines(lines, max_chars: int) -> str:
+    """``_largest_type_lines`` of a page whose text was recognized
+    (gamma/pdf_ocr.py lines, in Tesseract's reading order): a line's size is
+    the height of the tallest box among its words with a letter, in the
+    page's own units (the rules compare sizes only), as a printed line's is
+    its largest letters'; its place in the order is Tesseract's; the rest
+    is the same rules. Tesseract's boxes hug each word's ink, so a word
+    without ascender or descender is short: the median of a title's words
+    put its two lines 10% apart (measured), and its tallest word, which has
+    both, puts them within the 3% the rule allows."""
+    out = []
+    for k, line in enumerate(lines):
+        text = " ".join(word[0] for word in line)
+        if sum(c.isalpha() for c in text) < 2:
+            continue
+        heights = [word[4] - word[2] for word in line if any(c.isalpha() for c in word[0])]
+        out.append((float(max(heights)), k, 0, text))
+    return _largest_type(out, max_chars)
+
+
+def _largest_type(lines, max_chars: int) -> str:
+    """The rules of ``_largest_type_lines`` over its ``(size, y, x,
+    text)`` lines."""
     sizes = sorted({round(size, 1) for size, _, _, _ in lines}, reverse=True)
     tried, above = 0, float("inf")  # the sizes passed over are above `above`
     while sizes and tried < 3:
@@ -515,13 +744,20 @@ def _largest_type_lines(page, max_chars: int) -> str:
     return ""
 
 
-def title_guess(src, max_chars: int = 300) -> str:
+def title_guess(src, max_chars: int = 300, ocr: bool = True) -> str:
     """The first page's largest-type lines (``_largest_type_lines``): what
     a metadata lookup queries Crossref with before the text head, whose
     reading order starts with a running header, a journal banner or a
-    "Downloaded from" line as often as with the title. "" when the file
-    cannot be read or has no pages or no text; ImportError when PyMuPDF
-    does not load. Takes the lock like every other read."""
+    "Downloaded from" line as often as with the title. A first page whose
+    text was recognized (``_ocr_view``; ``ocr=False`` reads the layer) is
+    read from its recognized lines without opening the file
+    (``_largest_recognized_lines``). "" when the file cannot be read or has
+    no pages or no text; ImportError when PyMuPDF does not load. Takes the
+    lock like every other read."""
+    view = _ocr_view(src) if ocr else None
+    lines = view.lines(1) if view is not None else None
+    if lines is not None:
+        return _largest_recognized_lines(lines, max_chars)
     try:
         pdf = _open(src)
     except ImportError:
@@ -547,9 +783,9 @@ def page_count(src) -> int:
     """How many pages a PDF has (0 = unreadable; ImportError when PyMuPDF
     does not load). No text extraction; a file in the page-text cache
     answers without being opened."""
-    entry = _text_entry(_text_key(src))
-    if entry is not None:
-        return entry.total
+    total = _cached_total(src)
+    if total is not None:
+        return total
     with _lock:
         try:
             pdf = _open(src)
@@ -569,14 +805,20 @@ def page_count(src) -> int:
 RENDER_MAX_SIDE = 1568
 
 
+# A raster's mode (Pillow's name) and PNG colour type by its channels.
+_MODES = {1: "L", 2: "LA", 3: "RGB", 4: "RGBA"}
+_PNG_TYPES = {1: 0, 2: 4, 3: 2, 4: 6}
+
+
 def _png(width: int, height: int, channels: int, rows) -> bytes:
-    """A plain PNG (8-bit RGB / RGBA, filter 0) — no Pillow needed."""
+    """A plain PNG (8-bit grey, grey and alpha, RGB or RGBA, filter 0) — no
+    Pillow needed."""
     def chunk(tag: bytes, body: bytes) -> bytes:
         return (struct.pack(">I", len(body)) + tag + body
                 + struct.pack(">I", zlib.crc32(tag + body) & 0xFFFFFFFF))
     raw = b"".join(b"\x00" + bytes(row) for row in rows)
     return (b"\x89PNG\r\n\x1a\n"
-            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6 if channels == 4 else 2, 0, 0, 0))
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, _PNG_TYPES[channels], 0, 0, 0))
             + chunk(b"IDAT", zlib.compress(raw, 6))
             + chunk(b"IEND", b""))
 
@@ -585,22 +827,30 @@ class Raster:
     """A rendered page's pixels, copied out of MuPDF's pixmap under the
     lock (``page_raster``, ``page_rasters``), so the encoding happens
     outside it: the PNG is pure Python, far longer than the render itself.
-    8-bit RGB, or RGBA with straight alpha."""
-    __slots__ = ("data", "width", "height", "stride", "channels", "mode")
+    8-bit RGB, or RGBA with straight alpha; drawn ``grey``, one channel
+    (mode "L"), or grey and alpha ("LA"). ``scale`` is the zoom it was drawn
+    at (pixels per point) and ``width_pt`` x ``height_pt`` the size of what
+    was drawn, the page as shown or the box of it, in points as MuPDF
+    measures the page (page.rect: rotation applied, /UserUnit folded in):
+    a pixel x lies at the fraction x / (width_pt * scale) of it, which the
+    pixel width, rounded outward, is not quite."""
+    __slots__ = ("data", "width", "height", "stride", "channels", "mode", "scale", "width_pt", "height_pt")
 
-    def __init__(self, pixmap):
+    def __init__(self, pixmap, scale: float = 1.0, width_pt: float = 0.0, height_pt: float = 0.0):
         self.width, self.height, self.channels = pixmap.width, pixmap.height, pixmap.n
+        self.scale, self.width_pt, self.height_pt = scale, width_pt, height_pt
+        self.mode = _MODES[self.channels]
         if pixmap.alpha:
             # MuPDF keeps an alpha pixmap premultiplied. Its PAM writer takes
             # that out, as its PNG writer does, and packs the rows: the body
-            # after the header is the straight RGBA a PNG holds. The writer
-            # refuses a pixmap without pixels (an empty box's).
+            # after the header is the straight colour and alpha a PNG holds.
+            # The writer refuses a pixmap without pixels (an empty box's).
             size = self.width * self.height * self.channels
             self.data = pixmap.tobytes("pam")[-size:] if size else b""
-            self.stride, self.mode = self.width * self.channels, "RGBA"
+            self.stride = self.width * self.channels
         else:
             self.data = pixmap.samples  # bytes, a copy: the pixmap may go
-            self.stride, self.mode = pixmap.stride, "RGB"
+            self.stride = pixmap.stride
 
     def png(self, crop=None) -> bytes:
         """The raster as a PNG, or the part of it in ``crop`` = ``(left,
@@ -611,7 +861,7 @@ class Raster:
         return _png(right - left, bottom - top, channels, rows)
 
 
-def _draw(page, zoom, box, alpha: bool) -> Raster:
+def _draw(page, zoom, box, alpha: bool, annots: bool = True, grey: bool = False) -> Raster:
     """``page`` drawn as ``page_raster`` says; called under the lock."""
     mupdf = _pymupdf()
     # page.rect is the page as displayed (rotation applied), top-left
@@ -624,14 +874,16 @@ def _draw(page, zoom, box, alpha: bool) -> Raster:
         clip = mupdf.Rect(x0 * w, y0 * h, x1 * w, y1 * h)
         width, height = (x1 - x0) * w, (y1 - y0) * h
     scale = zoom(width, height) if callable(zoom) else zoom
-    pixmap = page.get_pixmap(matrix=mupdf.Matrix(scale, scale), clip=clip, alpha=alpha)
+    pixmap = page.get_pixmap(matrix=mupdf.Matrix(scale, scale), clip=clip, alpha=alpha, annots=annots,
+                             colorspace=mupdf.csGRAY if grey else mupdf.csRGB)
     try:
-        return Raster(pixmap)
+        return Raster(pixmap, scale, width, height)
     finally:
         del pixmap
 
 
-def page_raster(src, page_no: int, zoom, box=None, alpha: bool = False) -> tuple[Raster | None, int]:
+def page_raster(src, page_no: int, zoom, box=None, alpha: bool = False, annots: bool = True,
+                grey: bool = False) -> tuple[Raster | None, int]:
     """Draw page ``page_no`` (1-based) of the PDF ``src`` (a path or PDF
     bytes): ``(raster, pages)``, the raster None when the page number is out
     of range. ``zoom`` is pixels per point, or a function of the drawn
@@ -639,31 +891,34 @@ def page_raster(src, page_no: int, zoom, box=None, alpha: bool = False) -> tuple
     y0, x1, y1)`` as fractions of the page, top-left origin, draws just that
     region; an empty box gives a raster without pixels. With ``alpha`` the
     raster is RGBA, transparent where the page draws nothing; without it,
-    RGB on white. The page is drawn as a viewer shows it, annotations
+    RGB on white; ``grey``, one channel of grey (and alpha), what text
+    recognition reads. The page is drawn as a viewer shows it, annotations
     included: an /Ink or /Highlight without an appearance stream (what
-    pdf_export writes) gets one synthesized, which view_ink relies on.
-    Holds the lock for the open, the render and the close, like the other
-    short walks; the caller encodes the raster outside it. Raises as
-    ``_open`` does when the file will not open, one that needs a password
-    included."""
+    pdf_export writes) gets one synthesized, which view_ink relies on;
+    ``annots=False`` leaves them out, so a note someone typed on a scan is
+    not read as the page's text. Holds the lock for the open, the render
+    and the close, like the other short walks; the caller encodes the
+    raster outside it. Raises as ``_open`` does when the file will not
+    open, one that needs a password included."""
     with _lock:
         pdf = _open(src)
         try:
             total = len(pdf)
             if page_no < 1 or page_no > total:
                 return None, total
-            return _read_page(pdf, page_no - 1, lambda page: _draw(page, zoom, box, alpha)), total
+            return _read_page(pdf, page_no - 1, lambda page: _draw(page, zoom, box, alpha, annots, grey)), total
         finally:
             pdf.close()
 
 
-def page_rasters(src, page_nos, zoom):
+def page_rasters(src, page_nos, zoom, annots: bool = True, grey: bool = False):
     """``page_raster`` for several whole pages of one file, opened once,
-    RGB on white: yields ``(page_no, raster)`` for each of ``page_nos`` in
-    turn, skipping a page the file does not have and one that fails to
-    draw (logged). Takes the lock once per page, like iter_page_texts, so
-    what the caller makes of a raster (a crop, a PNG) is made outside it.
-    Raises as page_raster does when the file will not open."""
+    RGB on white (``annots`` and ``grey`` as there): yields ``(page_no,
+    raster)`` for each of ``page_nos`` in turn, skipping a page the file
+    does not have and one that fails to draw (logged). Takes the lock once
+    per page, like iter_page_texts, so what the caller makes of a raster
+    (a crop, a PNG, its recognition) is made outside it. Raises as
+    page_raster does when the file will not open."""
     pdf = _open(src)
     try:
         with _lock:
@@ -672,7 +927,7 @@ def page_rasters(src, page_nos, zoom):
             if page_no < 1 or page_no > total:
                 continue
             try:
-                raster = _read_page(pdf, page_no - 1, lambda page: _draw(page, zoom, None, False))
+                raster = _read_page(pdf, page_no - 1, lambda page: _draw(page, zoom, None, False, annots, grey))
             except Exception as e:
                 log.warning(f"[pdf-text] picture of page {page_no} failed: {e}")
                 continue
@@ -773,15 +1028,24 @@ class GlyphPages:
     glyph's advance by the font's ascender and descender, so a thin "i" or
     "." has a centre as sound as any letter's. After each of MuPDF's lines
     comes a line break with an empty box, which keeps its place in the
-    order; a glyph of zero advance (a combining mark) has one too. ``src``
-    is a path or PDF bytes."""
+    order, or on a scanned page a space with an empty box when the next
+    line goes on in the same visual row (``_glyphs``); a glyph of zero
+    advance (a combining mark) has an empty box too. ``src``
+    is a path or PDF bytes.
 
-    def __init__(self, src):
+    A page whose text was recognized (``_ocr_view``, resolved on the first
+    page asked for) gives the recognized words' glyphs instead
+    (``_recognized_glyphs``), never read by MuPDF; ``ocr=False`` reads the
+    file's own layer on every page."""
+
+    def __init__(self, src, ocr: bool = True):
         self._src = src
         self._pdf = None
         self._failed = False
         self._pages = {}
         self._labels = None
+        self._ocr = ocr     # whether the recognized text is read, until it is resolved
+        self._view = None   # the recognized text once resolved (None: none, or not read)
 
     def __enter__(self):
         return self
@@ -802,10 +1066,24 @@ class GlyphPages:
         relocation's ``PageText``, which reads every page of a book)."""
         if page_no in self._pages:
             return self._pages[page_no]
-        glyphs = self._read(page_no, _glyphs, "glyphs") or []
+        lines = self._recognized(page_no)
+        if lines is not None:
+            glyphs = _recognized_glyphs(lines, self.frame(page_no))
+        else:
+            glyphs = self._read(page_no, _glyphs, "glyphs") or []
         if cache:
             self._pages[page_no] = glyphs
         return glyphs
+
+    def _recognized(self, page_no: int):
+        """Page ``page_no``'s recognized lines, None when it reads the
+        file's own layer. The recognized text is resolved on the first call,
+        and read only while it counts the file's pages as the file does."""
+        if self._ocr:
+            self._ocr = False
+            view = _ocr_view(self._src)
+            self._view = view if view is not None and view.total == self.page_count() else None
+        return self._view.lines(page_no) if self._view is not None else None
 
     def page_count(self) -> int:
         """How many pages the file has; 0 when it can't be opened."""
@@ -883,24 +1161,69 @@ def _glyphs(page) -> list:
     """``GlyphPages``'s read of one page: the chars of MuPDF's raw text
     dictionary (blocks of text, their lines, their spans, their chars; the
     image blocks skipped), each box taken back to PDF user space, and a
-    line break after every line. A character beyond the BMP is one char
-    here. The page is read ``unrotated``: that is the space MuPDF's boxes
-    come in, and the only one in which page.transformation_matrix takes
-    them back to user space whole, page-box offset included."""
+    line break after every line. On a scanned page under an invisible OCR
+    layer (``pdf_scan.is_scan_page``), where MuPDF cuts a printed line into
+    several lines, two lines of one visual row (``pdf_scan.rows``) are parted
+    by a space without a box instead, as ``_text`` parts them: the order
+    and every glyph's box stay MuPDF's (a highlight another viewer drew
+    over the layer covers these boxes). A character beyond the BMP is one
+    char here. The page is read ``unrotated``: that is the space MuPDF's
+    boxes come in, and the only one in which page.transformation_matrix
+    takes them back to user space whole, page-box offset included."""
     mupdf = _pymupdf()
     with unrotated(page):
         to_user = ~page.transformation_matrix
         blocks = page.get_text("rawdict", flags=_RAWDICT_FLAGS)["blocks"]
+        lines = [line for block in blocks if block.get("type") == 0 for line in block["lines"]]
+        same_row = ([not new for new in pdf_scan.rows([line["bbox"] for line in lines])]
+                    if lines and pdf_scan.is_scan_page(page, lambda: blocks) else [])
     out = []
-    for block in blocks:
-        if block.get("type") != 0:
-            continue
-        for line in block["lines"]:
-            for span in line["spans"]:
-                for char in span["chars"]:
-                    box = mupdf.Rect(char["bbox"]) * to_user  # normalized: bottom < top
-                    out.append((char["c"], (box.x0, box.y0, box.x1, box.y1)))
-            out.append(("\n", (0.0, 0.0, 0.0, 0.0)))
+    for k, line in enumerate(lines):
+        for span in line["spans"]:
+            for char in span["chars"]:
+                box = mupdf.Rect(char["bbox"]) * to_user  # normalized: bottom < top
+                out.append((char["c"], (box.x0, box.y0, box.x1, box.y1)))
+        out.append((" " if k < len(same_row) and same_row[k] else "\n", (0.0, 0.0, 0.0, 0.0)))
+    return out
+
+
+_NO_BOX = (0.0, 0.0, 0.0, 0.0)
+
+
+def _recognized_glyphs(lines, frame) -> list:
+    """``GlyphPages``'s glyphs of a page whose text was recognized, from
+    its ``lines`` (gamma/pdf_ocr.py: words ``[text, x0, y0, x1, y1]`` in
+    ``OCR_UNITS`` of the page as shown) and the page's ``frame`` (view box,
+    rotation), in the shape ``_glyphs`` returns: a boxless " " between two
+    words, a boxless "\\n" after every line, so the glyphs spell the page's
+    recognized text exactly.
+
+    Each glyph is built in the page as shown first, as the viewer's text
+    layer tiles the same words: a word's box is shared out evenly among its
+    characters along the line, and every glyph of a line stands on the
+    line's band (the median top and the median bottom of its words), so a
+    superscript or a stray mark that Tesseract boxed above the line is
+    under the rectangle the viewer draws for the line. Only then are a
+    glyph's four corners taken to user space through the frame
+    (pdf_export.viewer_point_to_pdf), the box their extent: on a turned
+    page a character's slice of its word runs along user y, and slicing
+    the word after mapping it would put the characters out of place."""
+    from .pdf_export import viewer_point_to_pdf  # local: it imports pypdf, which no other read here needs
+
+    view, rotation = frame
+    out = []
+    for line in lines:
+        top, bottom = median(w[2] for w in line) / OCR_UNITS, median(w[4] for w in line) / OCR_UNITS
+        for k, (text, x0, _y0, x1, _y1) in enumerate(line):
+            if k:
+                out.append((" ", _NO_BOX))
+            u0, step = x0 / OCR_UNITS, (x1 - x0) / OCR_UNITS / len(text)
+            for j, ch in enumerate(text):
+                corners = [viewer_point_to_pdf(u, v, rotation, view)
+                           for u in (u0 + step * j, u0 + step * (j + 1)) for v in (top, bottom)]
+                xs, ys = [c[0] for c in corners], [c[1] for c in corners]
+                out.append((ch, (min(xs), min(ys), max(xs), max(ys))))
+        out.append(("\n", _NO_BOX))
     return out
 
 

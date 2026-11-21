@@ -32,8 +32,8 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, gdrive, gdrive_account, guests,
-                hosted, integrity, jobs, offsite, proxy_settings, server_options, snapshot_copies, workspaces,
-                zotero_oauth)
+                hosted, integrity, jobs, ocr_auto, ocr_engine, offsite, proxy_settings, server_options, snapshot_copies,
+                workspaces, zotero_oauth)
 from ..backup_store import StoreConfigError
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
@@ -198,6 +198,8 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
                                      share_host=payload.cloud_share_host)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    if payload.options and ({"ocr", "ocr_auto"} & set(payload.options)):
+        _text_recognition_on(payload.options)
     return {**get_defaults(), **public_url_settings(), **_guests(), "cloud": _cloud(),
             "hosted": hosted.pane(), "options": server_options.view()}
 
@@ -224,6 +226,17 @@ def _guests() -> dict:
     container, a share host), so the pane leaves the rows out."""
     return {**guest_settings(), "guest_logins": guests.logins_open(),
             "guest_logins_available": guests.logins_possible()}
+
+
+def _text_recognition_on(changes: dict) -> None:
+    """After an admin's save of the text recognition's options: recognition
+    on, it checks its engine (ocr_engine ``start_check``, which the startup
+    skips while it is off), and the files the automatic recognition left
+    waiting start (ocr_auto ``resume``) once it may run."""
+    if "ocr" in changes and server_options.ocr_enabled():
+        ocr_engine.start_check()
+    if ocr_auto.enabled():
+        ocr_auto.resume()
 
 
 def _cloud() -> dict:

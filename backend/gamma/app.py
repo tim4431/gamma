@@ -11,7 +11,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
-from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, offsite, reports
+from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, ocr_engine, offsite
+from . import reports
 from . import spa, standby, sync_engine, trash, upload_gc, version, workspaces, ws_backup, zotero_stream
 from .annotations import listeners as annotation_listeners
 from .computers import channel as computer_channel
@@ -49,6 +50,7 @@ from .routers import (
     metadata,
     mirrors,
     notices,
+    ocr as ocr_router,
     pages,
     pdf,
     prefs,
@@ -390,6 +392,7 @@ def create_app() -> FastAPI:
     app.include_router(recordings.router)
     app.include_router(blocks.router)
     app.include_router(pages.router)
+    app.include_router(ocr_router.router)
     app.include_router(trash_router.router)
     app.include_router(imports.router)
     app.include_router(export.router)
@@ -421,6 +424,7 @@ def create_app() -> FastAPI:
 
     sync_engine.start_loop()
     upload_gc.start()
+    ocr_engine.start_check()  # whether this server's engine starts, known before anyone asks for a run
     return app
 
 

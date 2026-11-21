@@ -13,6 +13,7 @@ import android.os.Vibrator
 import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -141,10 +142,13 @@ class ShellController(
         page.bridge.onMessage = { answer(it) }
         // A save is its document's, and none can finish once that is gone.
         // The process's scope: the page's own teardown, after this
-        // controller's scope has ended, drops them too.
+        // controller's scope has ended, drops them too. So is the screen
+        // kept on (`keepAwake`): a reload, another server or an ended
+        // renderer lets it sleep.
         page.bridge.onDocumentGone = {
             val delete = app.saves.cancelAll()
             app.scope.launch(Dispatchers.IO) { delete() }
+            keepAwake(false)
         }
         chrome.onGone = { replaceChrome(it) }
         penLayer.listener = this
@@ -493,6 +497,21 @@ class ShellController(
             saver.saveUrl(message.url, message.name, page.webView.settings.userAgentString, page.bridge.origin)
             emptyMap()
         }
+        is WebMessage.KeepAwake -> {
+            keepAwake(message.on)
+            emptyMap()
+        }
+    }
+
+    /**
+     * The screen kept on while the page asks (`keepAwake`): the window's
+     * FLAG_KEEP_SCREEN_ON, which holds only while the window shows, so the
+     * app going behind another lets the screen sleep and its return keeps it
+     * on again. What the page asked is its document's (onDocumentGone).
+     */
+    private fun keepAwake(on: Boolean) {
+        val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        if (on) activity.window.addFlags(flag) else activity.window.clearFlags(flag)
     }
 
     /** A saved file into Downloads, then its temporary copy goes (Saves.release). */

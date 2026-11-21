@@ -75,14 +75,16 @@ export function chunkRequest(settings) {
 // The request for the paper's brief (POST /api/ai/translate/brief), which a
 // job sends as it starts and does not wait for: the server makes the brief,
 // finds it kept, or waits for the request already making it. `paper` is
-// {pageId, head}: the page, and the document's opening text when the server
-// has not stored its PDF. `onStage` hears the stream's "stage" lines (the
+// {pageId, head, ocr}: the page, the document's opening text when the server
+// has not stored its PDF, and whether that head was read from a scan's OCR
+// layer (a stored file the server checks itself). `onStage` hears the stream's "stage" lines (the
 // first, `brief`, while it is being made). Resolves to {ready, error?};
 // throws as a chunk's request does.
 export function briefRequest(settings) {
-  return async function translateBrief({ pageId = "", head = "" }, signal, onStage) {
+  return async function translateBrief({ pageId = "", head = "", ocr = false }, signal, onStage) {
     const res = await post("/ai/translate/brief", {
-      ...(pageId ? { page_id: pageId } : {}), ...(head ? { head } : {}), ...modelFields(settings), keep: settings.keep !== false,
+      ...(pageId ? { page_id: pageId } : {}), ...(head ? { head } : {}), ...(ocr ? { ocr: true } : {}),
+      ...modelFields(settings), keep: settings.keep !== false,
     }, signal);
     let final = null;
     await readNdjson(res, (events) => {

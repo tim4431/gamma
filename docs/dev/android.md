@@ -303,8 +303,8 @@ reaches the document.
 - **What it declares** (`HostInfo` in `Bridge.kt`): `platform:
   "android"`, `version` (the app's versionName), `ink`, all seven
   `inkLooks`, `hold`, `pencil`, `pencilGestures: ["tap", "squeeze"]`,
-  `haptics` (true when the device has a vibrator), `openFiles`, `save`
-  and `shellBar`; no `pencilPhases` and no `pencilRoll`, since a stylus's
+  `haptics` (true when the device has a vibrator), `openFiles`, `save`,
+  `shellBar` and `keepAwake`; no `pencilPhases` and no `pencilRoll`, since a stylus's
   buttons have no squeeze phases and Android reports no barrel roll.
   The app's script, in the top frame only, defines `window.gammaNative`
   with those flags, its `post(msg)`, which the web's `postToHost`
@@ -320,8 +320,15 @@ reaches the document.
   each, off the main thread where it does IO: a `claim` by the pen layer,
   `theme` by the window, `haptic` by `performHapticFeedback` on the
   page's WebView ([The pen](#the-pen)), `files`, `fileData` and
-  `fileDone` by the opened files, `shellBar` by the model, and the four
-  save messages by the saves ([Saving files](#saving-files)).
+  `fileDone` by the opened files, `shellBar` by the model, the four
+  save messages by the saves ([Saving files](#saving-files)), and
+  `keepAwake` by the activity's window: `on` adds
+  `FLAG_KEEP_SCREEN_ON` while the page reads a scan's text in the window
+  ([What runs](#what-runs)), anything else clears it. The flag holds only
+  while the window shows, so the screen sleeps when the app goes behind
+  another and stays on again when it comes back; it is the document's,
+  cleared with the saves when the document goes (`onDocumentGone`: a
+  reload, another server, an ended renderer).
 - **Shell to page.** `{send: n, msg}` goes to the document that said
   hello. Its script hands `msg` to `window.gammaNative.receive` and
   answers `{result: n, value}` (`null` when the page resolved with
@@ -830,6 +837,20 @@ holds.
   server draws in a process it kills after 10 s, is drawn in the server
   with no time limit, as on the iPad (`sys.platform == "android"`,
   [pictures.md](pictures.md#svg-pictures)).
+- **The text recognition models** from `backend/tessdata`: Tesseract's
+  fast English, French and German models, with their licence and notice.
+  Chaquopy packs them with the server's code and unpacks them with the
+  packages at the first start after an install or an update, to
+  `files/chaquopy/AssetFinder/app/tessdata`, beside `gamma/`. That is
+  where `config.tessdata_dir()` looks when `GAMMA_TESSDATA_DIR` is unset,
+  so nothing is set for them. They take 6.8 MB on the device and about
+  3.4 MB in the APK (Chaquopy's `app.imy` deflates them). The server
+  reads no text itself here, since tesserocr has no Android wheel
+  ([ipad.md "The wheels"](ipad.md#the-wheels)). It serves the models to
+  the page instead (`/api/ocr/models/<tag>/<lang>.traineddata`), which
+  reads a scan's pages in the window with tesseract.js and keeps the
+  screen on meanwhile (`keepAwake`, [The bridge](#the-bridge);
+  [documents.md](documents.md#recognized-text)).
 - **What `gamma_mobile.py` does on Android only.** Threads the server
   starts get an 8 MiB stack (`threading.stack_size`), glibc's default,
   which the server has on Linux: Android's threads get bionic's 1 MiB,
@@ -1066,7 +1087,8 @@ chrome pages (`desktop/ui/`). A build:
    a SHA-256 over their paths and contents.
 3. **Chaquopy** packages Python 3.13 for each ABI, pip-installs
    `backend/requirements-mobile.txt` with Flet's index as an extra index,
-   and takes from `backend/` only `gamma/**`, `app.py` and
+   and takes from `backend/` only `gamma/**`, `tessdata/**` (the text
+   recognition models, [What runs](#what-runs)), `app.py` and
    `gamma_mobile.py`, without `__pycache__`.
 
 Nothing is minified. The JVM tests get the repository's path as the
@@ -1155,8 +1177,11 @@ builds, makes the page for it, reads the manifest (`/api/pdf-info`, one
 page of 612 × 792 points) and asks for a page picture
 (`/api/ai/page-image`). Both come from PyMuPDF, which the server imports
 at its first PDF read (`/api/health` proves only the start), so they are
-the proof that the wheels load and render; a call that does not answer as
-expected fails with the server's log tail. It skips when the app starts its own server
+the proof that the wheels load and render. Last it asks
+`/api/server-config` for text recognition in the window (`ocr.where` is
+`window`) and fetches the English model from the address it names, the
+proof that the models were unpacked where the server finds them. A call
+that does not answer as expected fails with the server's log tail. It skips when the app starts its own server
 (its last server opened was This device), since an interpreter starts
 once per process. It asks the app's server, which is already starting
 before any test runs, rather than the interpreter, which starts only once
@@ -1571,6 +1596,12 @@ hardware (an S Pen tablet, a USI pen, a Wacom EMR device):
     selection set from script, so the page's popup is all that finishes
     one. The cost of unbuffered dispatch on such a stroke, which no claim
     follows.
+26. **Text recognition in the window** on This device: a scan of a few
+    pages recognized from the Document menu, the screen staying on past
+    the screen timeout while it runs (`keepAwake`) and sleeping again once
+    it ends, the app sent to the background and brought back mid-run, and
+    the time and memory a page takes on a mid-range phone and a tablet
+    (`chrome://inspect`).
 
 ## Not built yet
 

@@ -17,6 +17,8 @@ import { exportFile, exportLayout, exportPages } from "../pdf/translateExport.js
 import { folderPapers, paperLayout } from "../pdf/folderTranslation.js";
 import { useFolderTranslations } from "../pdf/useFolderTranslations.js";
 import { docIdOf } from "../pdf/pdfSource";
+import * as ocrState from "../pdf/ocrState.js";
+import * as ocrRuns from "../pdf/ocrRuns.js";
 import { discardApplied, discardOutcome, discardStep, discardUndone, noteSummary, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { canJoin, joinHighlights, takesParts, withPart } from "../shared/model/highlightParts.js";
 import { waitingFor } from "../pdf/highlightWait.js";
@@ -101,7 +103,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UnlinkIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon, LocateIcon, TextPlusIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
+  PanelTopIcon, LocateIcon, TextPlusIcon, ScanTextIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
   StopIcon, GlobeIcon, ChevronRightIcon, FlagIcon, FoldersIcon,
 } from "../shared/ui/Icons";
 import ReportContentHost from "../support/ReportContentHost";
@@ -1047,8 +1049,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // false after the cookie is removed performs a local-only workspace
     // teardown, without starting reads that race logout.
     leaveCurrentPage();
-    // Translation jobs outlive the viewer: stop them before the session goes.
-    endTranslations();
+    // Translation jobs outlive the viewer: stop them before the session goes,
+    // and the recognized text this session read with them, and the
+    // recognition this window reads (pdf/ocrRuns.js).
+    endTranslations(); ocrState.reset(); ocrRuns.reset();
     await fetch(`${API}/logout`, { method: "POST", credentials: "include" });
     // Logout kills the browser-wide session: tell other tabs of this account
     // so they drop to the login page instead of failing on their next save.
@@ -1139,8 +1143,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     tabHistoryRef.current = [];
     // Leaving the account or workspace (here too when the session expired
     // or another tab signed in): its translation jobs stop and its
-    // documents' translations go with it.
-    if (prefsUserRef.current && prefsUserRef.current !== u) endTranslations();
+    // documents' translations go with it, as does their recognized text and
+    // the recognition this window reads.
+    if (prefsUserRef.current && prefsUserRef.current !== u) { endTranslations(); ocrState.reset(); ocrRuns.reset(); }
     if (!u || shareMode) {
       // Losing the session (logout button, expiry in another tab) must fully
       // close the workspace: a stale focusedBlockId would get merged into the
@@ -3539,7 +3544,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     retryTask, onJobFinished } = useAppJobs({
     tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
-    pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations,
+    pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations, ocrCapability: serverConfig?.ocr || null,
     workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks, refreshSession: checkSession,
     confirm: (box) => setConfirmBox(box), switchWorkspace, // the box's state is declared further down
     // a page's chat, or a folder's or the library's (`home`) in the library's view
@@ -4093,10 +4098,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (retryMeta) setStatus(t("Text check failed: {message}", { message: err.message }));
     }
   }
+  // Read again when the PDF's recognized text changes while it is open
+  // (pdf/ocrState.js: a recognition or a forget ended, here or elsewhere).
   useEffect(() => {
     if (openPopover !== "meta" || !docId || shareMode) { setPdfTextInfo(null); return; }
     checkPdfText();
-  }, [openPopover, docId]);
+  }, [openPopover, docId, ocrState.revision(fileHash(doc) || docIdOf(pdfUrl))]);
 
   // Modal preview of what the AI actually gets to read.
   const [pdfTextPreview, setPdfTextPreview] = useState(null); // null | {loading} | {text}
@@ -5270,6 +5277,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onVault: vault.refresh,
     // a computer of the account's came or went: the page's computers, again
     onComputer: pageComputer.refresh,
+    // a stored PDF's recognized text changed, or the socket may have missed it: that
+    // file's recognition (or the one on screen's), again — its text layer, Ctrl+F, the
+    // translation, the menu rows and the metadata popover follow; and the jobs, whose
+    // end (the server's own run of an upload, done between two listings) is said
+    onOcr: (msg) => {
+      ocrState.refresh(msg?.doc_id || fileHash(doc) || docIdOf(pdfUrl));
+      if (msg?.doc_id) tasks.expectEnd(ocrState.fileJobs(msg.doc_id));
+    },
   });
   const collabRef = useRef(collab);
   collabRef.current = collab;
@@ -6709,14 +6724,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (focusedBlockIdRef.current !== pageId) return; // navigated away meanwhile
       await openBlock(pageId, src ? { viewerUrl } : undefined);
       setPdfHidden(false);
-      setStatus(note || (!replace ? (src ? t("PDF attached.") : t("File attached."))
+      // A recognized PDF replaced by one whose text is not: where the Document menu offers it, say so.
+      setStatus([note || (!replace ? (src ? t("PDF attached.") : t("File attached."))
         : bound?.relocation_error
           ? (src ? t("PDF replaced. Its highlights were not placed ({reason}): choose Find highlights in this PDF in the Document menu to place them.",
             { reason: t(bound.relocation_error) })
             : t("File replaced. Its highlights were not placed ({reason}): choose Find highlights in this file in the Document menu to place them.",
               { reason: t(bound.relocation_error) }))
           : src ? t("PDF replaced.")
-          : bound?.relocation ? `${t("File replaced.")} ${relocationSummary(bound.relocation)}` : t("File replaced.")));
+          : bound?.relocation ? `${t("File replaced.")} ${relocationSummary(bound.relocation)}` : t("File replaced.")),
+      ocrState.replacedNote(bound, !!src && !!serverConfig?.ocr && !authUser?.is_guest)].filter(Boolean).join(" "));
     } catch (err) {
       if (err.status === 409 && err.data?.page_id) {
         // The library already holds this file on another page — the page is
@@ -8819,6 +8836,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const relocating = tasks.jobs.some((job) => job.kind === "relocate-highlights" && isActive(job)
     && job.params?.page_id === focusedBlockId);
   const pdfStored = !!fileHash(doc);
+  // The Document menu's "Recognize text in this PDF" (where the server recognizes text, on
+  // it or in this window) and "Forget the recognized text…", decided by pdf/ocrState.js (a
+  // guest cannot start either); a change of the recognized words of the PDF on screen
+  // re-runs a pinned search (the search panel's docNonce).
+  const { recognize: ocrRow, forget: ocrDrop } = ocrState.useOcrMenu({ docId: fileHash(doc),
+    offered: isPdf(doc) && !readOnly && !shareMode && !authUser?.is_guest, capability: serverConfig?.ocr || null,
+    jobs: tasks.jobs, translated: pdfTransState.translated && pdfTransState.url === pdfUrl });
+  const ocrNonce = ocrState.useOcrNonce(fileHash(doc) || docIdOf(pdfUrl) || "");
   // A PDF read where it lies on this computer (gamma/linked_files.py), or a
   // work folder's file, whose PDF is its file's wherever the server keeps
   // the bytes: no other file replaces it from the Document menu.
@@ -8903,7 +8928,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     layoutOf: async (paper, signal) => {
       if (openHere(paper)) return exportTranslation();
       const key = folderKeyOf(paper.doc_id);
-      return key && paperLayout({ url: uploadUrl(storedName(paper.doc_id, ".pdf")), pageId: paper.page_id, key, open: openPdfDocument,
+      return key && paperLayout({ url: uploadUrl(storedName(paper.doc_id, ".pdf")), docId: paper.doc_id, pageId: paper.page_id, key, open: openPdfDocument,
         signal, lookup: lookupRequest({ lang: langOfKey(key), model: modelOfKey(key) }) });
     },
   });
@@ -11402,6 +11427,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                 {isPdf(doc) ? t("Find highlights in this PDF") : t("Find highlights in this file")}
                               </MenuItem>
                             ) : null}
+                            {ocrRow ? (
+                              <MenuItem icon={ScanTextIcon} disabled={loading || ocrRow.busy} title={ocrRow.title} data-ocr="recognize"
+                                onClick={() => { setOpenPopover(null); ocrState.startRecognizing(tasks, focusedBlockId, ocrRow, { title: pageTitle || defaultPageTitle(doc), say: setStatus }).catch((err) => setStatus(t("Could not start: {message}", { message: err.message }))); }}>
+                                {ocrRow.label}
+                              </MenuItem>
+                            ) : null}
+                            {/* Asked first, for everyone in the workspace (pdf/ocrState.js forgetBox). */}
+                            {ocrDrop ? (
+                              <MenuItem icon={Trash2Icon} danger disabled={loading || ocrDrop.busy} title={ocrDrop.title} data-ocr="forget"
+                                onClick={() => { setOpenPopover(null); setConfirmBox(ocrState.forgetBox(tasks, focusedBlockId, pageTitle || defaultPageTitle(doc), setStatus)); }}>
+                                {t("Forget the recognized text…")}
+                              </MenuItem>
+                            ) : null}
                             {!pdfLinked ? <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the file…")}</MenuItem> : null}
                           </>
                         ) : null}
@@ -11639,11 +11677,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             <span className="metaKey">{t("Status")}</span>
                             <span className="metaVal metaStatus">
                               <span className={`metaCell ${!pdfTextInfo || pdfTextInfo.checking || pdfTextInfo.error ? "muted" : pdfTextInfo.ok ? "ok" : "bad"}`}
-                                title={!pdfTextInfo || pdfTextInfo.checking ? t("Checking whether the PDF has a text layer")
+                                title={ocrState.textStatusTitle(pdfTextInfo, ocrRow)
+                                  || (!pdfTextInfo || pdfTextInfo.checking ? t("Checking whether the PDF has a text layer")
                                   : pdfTextInfo.error ? t("Text check failed — {error}", { error: pdfTextInfo.error })
                                   : !pdfTextInfo.found ? t("The PDF file is not on the server")
                                   : pdfTextInfo.ok ? t("The PDF has a text layer — the AI and search can read it")
-                                  : t("No text layer — scanned or image-only? The AI can't read it")}>
+                                  : t("No text layer — scanned or image-only? The AI can't read it"))}>
                                 <i className="setDot" />{!pdfTextInfo || pdfTextInfo.checking ? "checking" : pdfTextInfo.error ? t("text ?") : !pdfTextInfo.found ? t("no file") : pdfTextInfo.ok ? "text" : t("no text")}
                               </span>
                               <span className={`metaCell ${!pdfTextInfo || pdfTextInfo.checking || pdfTextInfo.error || pdfTextInfo.indexed === undefined ? "muted" : pdfTextInfo.indexed ? "ok" : "muted"}`}
@@ -13307,7 +13346,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         scrollToRef={scrollToRef}
         cancelCoarseRestoreRef={cancelCoarseRestoreRef}
         setPdfHidden={setPdfHidden}
-        docNonce={pdfDocNonce}
+        docNonce={pdfDocNonce + ocrNonce}
         onFindMarks={setFindMarks}
         initialQuery={searchSeed}
       />

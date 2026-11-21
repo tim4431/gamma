@@ -60,7 +60,8 @@ Who notices what:
   warning, nothing deleted. It deletes at most ``purge_cap`` files, the
   longest due first; the due files past the cap wait for the next full
   pass, a warning saying how many (a big Empty of Recently deleted makes
-  hundreds due on one day, and they go a cap at a time).
+  hundreds due on one day, and they go a cap at a time). A purged PDF's
+  recognized text (gamma/pdf_ocr.py) goes with it (``pdf_ocr.drop``).
 
 Docs: docs/dev/user_db.md "Stored files".
 """
@@ -70,7 +71,7 @@ import sqlite3
 import threading
 import time
 
-from . import storage
+from . import pdf_ocr, storage
 from .db import connect_pages_db, page_now, parse_stamp, workspace_ids, ws_dir
 from .documents.model import stored_name
 from .logbuf import log
@@ -390,6 +391,9 @@ def _purge(ws: str, conn, due: list, stored: int, keeps: dict) -> tuple[list, st
     except BaseException:
         conn.rollback()
         raise
+    # The text recognized on a deleted PDF's scanned pages (gamma/pdf_ocr.py), kept while the file was stored:
+    # nothing references the file, so no block carries it, and search.index.purge_unused would drop it too.
+    pdf_ocr.drop(ws, [name[:-4] for name in purged if name.endswith(".pdf")])
     if left:  # a backlog (a big Empty thirty days on), or a database that reads wrong: an admin should see it
         log.warning(f"[uploads] workspace {ws}: purged {len(purged)} file(s) unreferenced for "
                     f"{_spans(gone, keeps)}: {purged}; {left} more due, left for the next pass "

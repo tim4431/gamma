@@ -272,6 +272,14 @@ function resealed(s, kept) {
 //                                     or came round again: refetch which
 //                                     computers keep the page
 //                                     (vault/usePageComputer.js)
+//       onOcr(msg)                    the recognized text of a stored PDF changed
+//                                     ({t: "ocr", doc_id, stamp}: a recognition or a
+//                                     forget of it ended, the workspace's file,
+//                                     whichever page carries it), or the socket
+//                                     joined again after it dropped or a poll run
+//                                     began or came round again (msg null): refetch
+//                                     the recognition of that file, or of the one
+//                                     on screen (pdf/ocrState.js refresh)
 //     onRemoteOps also gets the base the ops were applied to (`before`, what
 //     the server held before them), for the undo history's text rebase.
 //   onPeers(peers), onMe(me) — presence changes (the hook's React state); me is
@@ -1173,22 +1181,25 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     // A page in Recently deleted answers 404: this one is back (restored).
     if (s.gone) { s.reloading = true; o().onReload?.(s.pageId); }
     takeLog(s, d);
-    // Comments, a vault's and a computer's nudges have no op log: the
-    // threads, the page's standing with this computer and the computers
-    // that keep it are refetched as a run begins (a hello's refetch) and
-    // every POLL_COMMENTS_EVERY answers after.
+    // Comments, a vault's, a computer's and a recognition's nudges have no
+    // op log: the threads, the page's standing with this computer, the
+    // computers that keep it and the recognized text of the PDF on screen
+    // are refetched as a run begins (a hello's refetch) and every
+    // POLL_COMMENTS_EVERY answers after.
     if (st.pollFresh) {
       st.pollFresh = false;
       st.pollAnswers = 0;
       o().onComments?.(null);
       o().onVault?.();
       o().onComputer?.();
+      o().onOcr?.(null);
       retrySaves(); // the server answers again: a save waiting goes now
     } else if (++st.pollAnswers >= POLL_COMMENTS_EVERY) {
       st.pollAnswers = 0;
       o().onComments?.(null);
       o().onVault?.();
       o().onComputer?.();
+      o().onOcr?.(null);
     }
     armPoll(POLL_MS);
   }
@@ -1257,10 +1268,15 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     disconnect();
     st.closed = false;
     st.page = pageId;
+    // Whether an attempt of this page's socket came before the one opening:
+    // its hello follows a dropped socket, which may have missed a message
+    // the page's first load did not need.
+    let attempts = 0;
     const open = () => {
       st.reconnectTimer = null;
       st.probe = false;
       if (st.closed) return;
+      const again = attempts++ > 0;
       let ws;
       try { ws = openSocket(pageId); } catch { return; }
       st.ws = ws;
@@ -1301,9 +1317,9 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
         const session = st.session;
-        // (the inbox's and a computer's nudges are the account's, whichever
-        // page carries them)
-        if (session.pageId !== pageId && msg.t !== "hello" && msg.t !== "inbox" && msg.t !== "computer") return;
+        // (the inbox's and a computer's nudges are the account's, and a
+        // recognition's the workspace file's, whichever page carries them)
+        if (session.pageId !== pageId && msg.t !== "hello" && msg.t !== "inbox" && msg.t !== "computer" && msg.t !== "ocr") return;
         switch (msg.t) {
           case "hello": {
             greeted = true;
@@ -1330,8 +1346,13 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             retrySaves();
             // Comments written while the socket was away reach no nudge,
             // nor does a vault's round that touched the page meanwhile, nor
-            // a computer that came or went.
-            if (session.pageId === pageId) { o().onComments?.(null); o().onVault?.(); o().onComputer?.(); }
+            // a computer that came or went, nor, once a socket dropped, a
+            // recognition that ended meanwhile (the page's first load read
+            // its PDF's).
+            if (session.pageId === pageId) {
+              o().onComments?.(null); o().onVault?.(); o().onComputer?.();
+              if (again) o().onOcr?.(null);
+            }
             break;
           }
           case "join":
@@ -1368,6 +1389,9 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             break;
           case "computer":
             o().onComputer?.();
+            break;
+          case "ocr":
+            o().onOcr?.(msg);
             break;
           case "inbox":
             onInbox?.();

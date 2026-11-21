@@ -1,0 +1,17 @@
+{
+ "note": "The study's scans. Each file is expected at $OCR_STUDY_DIR/corpus/<id>.pdf. 'source' is where the public ones can be fetched; the copyrighted ones are any library copy from the same producer. 'pages' is the file's page count, 'layer' the kind of OCR layer it has.",
+ "files": {
+  "lounis":   {"citation": "Lounis and Cohen-Tannoudji, J. Phys. II 2, 579 (1992)", "source": "HAL jpa-00247657, https://hal.science/jpa-00247657", "producer": "HAL cover, OCR unknown", "pages": 15, "layer": "poor"},
+  "hansch":   {"citation": "Hänsch, Shahin and Schawlow, Phys. Rev. Lett. 27, 707 (1971)", "source": "a library copy (APS legacy scan)", "producer": "iText 1.4", "pages": 4, "layer": "poor"},
+  "holstein": {"citation": "Holstein and Primakoff, Phys. Rev. 58, 1098 (1940)", "source": "a library copy (APS legacy scan)", "producer": "iText 1.4", "pages": 16, "layer": "poor"},
+  "kitagawa": {"citation": "Kitagawa and Ueda, Phys. Rev. A 47, 5138 (1993)", "source": "a library copy (APS legacy scan)", "producer": "iText 1.4", "pages": 6, "layer": "poor"},
+  "feshbach": {"citation": "Feshbach, Ann. Phys. 5, 357 (1958)", "source": "a library copy", "producer": "Acrobat 4 Capture", "pages": 34, "layer": "poor"},
+  "naca":     {"citation": "Ames Research Staff, NACA Report 1135 (1953)", "source": "NASA NTRS 19930091059, https://ntrs.nasa.gov/citations/19930091059", "producer": "Pdf.Capture 5.2", "pages": 70, "layer": "poor"},
+  "kollin":   {"citation": "Kollin, Benton and Jepsen, Proc. SPIE 1136 (1989)", "source": "a library copy", "producer": "CVISION PdfCompressor 5.0", "pages": 8, "layer": "good"},
+  "jdp":      {"citation": "Le Journal de Physique et le Radium 22 (3), March 1961", "source": "Internet Archive journal-de-physique-1963_1961-03_22_3, https://archive.org/details/journal-de-physique-1963_1961-03_22_3", "producer": "Tesseract 5.3", "pages": 64, "layer": "good"},
+  "physrev":  {"citation": "Physical Review 2 (3), September 1913", "source": "Internet Archive sim_physical-review_1913-09_2_3, https://archive.org/details/sim_physical-review_1913-09_2_3", "producer": "Tesseract 5.3 (from microfilm)", "pages": 88, "layer": "good"},
+  "annalen":  {"citation": "Annalen der Physik und Chemie 31 (1834), one issue", "source": "Internet Archive sim_annalen-der-physik_1834_31_22, https://archive.org/details/sim_annalen-der-physik_1834_31_22", "producer": "Tesseract 5.3 (from microfilm)", "pages": 16, "layer": "good"},
+  "siegman":  {"citation": "Siegman, Lasers (1986)", "source": "a library copy", "producer": "LuraDocument", "pages": 1310, "layer": "good"},
+  "shannon":  {"citation": "Shannon, Bell Syst. Tech. J. 27, 379 (1948)", "source": "Internet Archive bstj27-3-379, https://archive.org/details/bstj27-3-379", "producer": "PDFlib", "pages": 45, "layer": "none"}
+ }
+}

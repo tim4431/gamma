@@ -1966,12 +1966,27 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   `--draw-svg <side> <cap> [<x0> <y0> <x1> <y1>]` runs the server's SVG
   drawing process instead (`gamma/svg_draw.py`): a frozen server has no
   Python to start one with, so it starts itself
-  ([pictures.md](../../docs/dev/pictures.md#svg-pictures)).
+  ([pictures.md](../../docs/dev/pictures.md#svg-pictures)). It points
+  `GAMMA_TESSDATA_DIR` at the bundled `tessdata` and sets
+  `OMP_THREAD_LIMIT=1`, as the Docker image does. `--check-ocr` reads a
+  printed line back with the bundled Tesseract (`gamma/ocr_engine.py`'s
+  full check, then one recognition) and exits 0, or 1 with the reason:
+  the release's smoke step runs it, then requires `/api/server-config`'s
+  `ocr.where` to be `server`: a bundle whose engine does not start still
+  reports `ocr`, its reading left to the window (`window`).
 - `build_backend.py` — PyInstaller onedir freeze into
   `dist-backend/gamma-server/` (collects uvicorn's string-resolved modules,
   PyMuPDF's native libraries — MuPDF and its C++ wrapper beside the
   extension module, `--collect-binaries pymupdf`, about 40 MB of the bundle —
-  ziamath/ziafont fonts, and `frontend/dist`). certifi's CA bundle comes
+  ziamath/ziafont fonts, and `frontend/dist`). Tesseract for recognizing
+  scanned pages: `--hidden-import tesserocr` (`gamma/ocr_engine.py`
+  imports it lazily), whose native libraries PyInstaller's binary analysis
+  finds and keeps where the wheel has them (`tesserocr.libs/` beside the
+  package on Windows and Linux, `tesserocr/.dylibs/` on macOS; 56 MB on
+  Windows, 33 MB of it ICU's data); `--copy-metadata tesserocr`, whose
+  `licenses/` carry the bundled libraries' licences on Windows; and
+  `backend/tessdata` as `tessdata` (the models, their licence and
+  notices). certifi's CA bundle comes
   along through its PyInstaller hook: on a Mac the frozen server's OpenSSL
   looks for CAs under the build machine's python.org framework, so the
   server verifies HTTPS with certifi's instead ([api.md](../../docs/dev/api.md)).

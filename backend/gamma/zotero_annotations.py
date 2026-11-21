@@ -137,7 +137,14 @@ class Pages:
     among the last ``PAGES_KEPT`` asked for, so a round that walks a
     document's annotations in page order reads each page once. A context
     manager; close it when the round is done with the file. ``src`` is a
-    path or PDF bytes. Never call it from ``async def``."""
+    path or PDF bytes. Never call it from ``async def``.
+
+    A page whose text was recognized (gamma/pdf_ocr.py) reads the
+    recognized words, for an incoming annotation's quote and for the sort
+    index alike: one GlyphPages feeds both. Its sort index then counts the
+    recognized characters, which Zotero's reader, reading the file's own
+    layer, would not; that is harmless, since a sort index travels only
+    with a position and is never compared, so no round sends it again."""
 
     def __init__(self, src):
         self._src = src

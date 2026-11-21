@@ -122,6 +122,12 @@ class AITranslateRequest(StorableBody):
     before: str = ""
     after: str = ""
     section: str = ""
+    # True: the texts were read from a scan's OCR layer (the viewer's
+    # pdf/pageText.js said so of their pages). The system prompt then asks
+    # the model to read through misread characters. It is not part of any
+    # key: a page's verdict does not change, and its repaired segmentation
+    # sends texts of its own.
+    ocr: bool = False
 
 
 class AITranslateBriefRequest(StorableBody):
@@ -134,6 +140,9 @@ class AITranslateBriefRequest(StorableBody):
     effort: str = ""      # as the translation's
     speed: str = ""
     keep: bool = True     # whether the brief may be kept with the paper, as AITranslateRequest's
+    # The viewer read `head` from a scan's OCR layer. A stored file's opening
+    # pages the server checks itself (translate_context.Paper.scanned).
+    ocr: bool = False
 
 
 def _model_levels(listing, rt: dict, entry: dict, what: str) -> list:
@@ -358,7 +367,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         # are those of the texts this call sends.
         context = ("", "", payload.section) if alone else (payload.before, payload.after, payload.section)
         return (translate_context.user_turn(batch_texts, *context, terms=terms.line(batch_texts)),
-                translate_context.system_prompt(lang, brief or ""))
+                translate_context.system_prompt(lang, brief or "", ocr=payload.ocr))
 
     def call_options(slot, brief, batch_texts):
         return {"effort": effort, "speed": speed, "max_tokens": _translate_budget(batch_texts),
@@ -546,7 +555,7 @@ def ai_translate_brief(payload: AITranslateBriefRequest, request: Request):
 
     def make():
         began = time.monotonic()
-        system, messages = translate_context.brief_messages(paper, lang)
+        system, messages = translate_context.brief_messages(paper, lang, ocr=payload.ocr)
         with _call_slot(user_id, _TRANSLATE_SLOT_WAIT) as slot:
             # Its tries end by the time the job's chunks stop waiting for it
             # (BRIEF_WAIT): a brief made after that is too late for them.

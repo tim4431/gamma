@@ -113,9 +113,12 @@ The server finds the quote, with the finder a replaced PDF's highlights are
 placed by and an agent's `highlight` tool marks by
 ([highlight_relocation.md](highlight_relocation.md#finding-a-passage)):
 `GET /api/pages/{id}/citation?pdf_page=N&quote=…` (`routers/pages.py`,
-`highlight_relocate.cite` over `find_quote`). The model quoted MuPDF's text
-of the page (`read_page`, the context), and the finder reads the file with
-MuPDF too, so the two sides read alike. `pdf/pdfCitation.js`
+`highlight_relocate.cite` over `find_quote`). The model quoted the page's
+text as every reader of the file reads it (`read_page`, the context), and
+the finder reads it the same way, so the two sides read alike: MuPDF's text
+layer, or on a page whose text was recognized the recognized words in its
+place ([documents.md](documents.md#recognized-text),
+[highlight_relocation.md](highlight_relocation.md#a-page-whose-text-was-recognized)). `pdf/pdfCitation.js`
 (`locateCitation`) asks, and the viewer's citation effect (`PdfViewer`'s
 `activeCitation`) waits for the answer and for the scroll to the cited page.
 
@@ -145,7 +148,8 @@ MuPDF too, so the two sides read alike. `pdf/pdfCitation.js`
 - **Missing.** Nothing alike enough on the three pages, a PDF the server
   does not hold, or a failed request: the page stays open with "Opened the
   cited page; the quote could not be found on it or the pages beside it." A
-  scan without a text layer opens its page this way.
+  scan without a text layer and without recognized text opens its page this
+  way.
 
 The answer is `{status: "matched", page, match, rects}` (`match` 1 for an
 exact copy, else two decimals up to 0.99; `rects` fractions of the page as
@@ -156,8 +160,9 @@ share's request reads only what is stored, so a share link never starts a
 download.
 
 `PdfCitationOverlay` draws the rectangles as percentages of the page, so a
-zoom carries them without a lookup. They are MuPDF's glyph boxes, one per
-line, as an agent's highlight is drawn. The marks (`.pdfCitationMark`, the
+zoom carries them without a lookup. They are the glyph boxes the finder
+read, one per line (MuPDF's, or the recognized words' on a recognized page),
+as an agent's highlight is drawn. The marks (`.pdfCitationMark`, the
 translation shimmer) ignore pointer input and never touch the annotation or
 note store. A click outside the passage or Escape removes them; there is no
 close button.

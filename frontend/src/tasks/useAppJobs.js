@@ -1,10 +1,11 @@
 // App's side of the background tasks (docs/dev/tasks.md): starting the
 // jobs its menus and dialogs ask for — workspace exports, backup restores,
 // the export dialog's job — opening a tray row again, retrying
-// one, and what to say when a job ends that no window shows. One instance,
+// one, what to say when a job ends that no window shows, and the pill of a
+// recognition this window reads (pdf/ocrRuns.js). One instance,
 // in App.jsx, over its `useTasks` store and the state the dialogs keep
 // there; `onJobFinished` is what the store's `onFinished` calls.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { API, fmtBytes, getCurrentWorkspace, withWorkspace } from "../shared/lib/utils";
 import { T, t } from "../shared/i18n/i18n.js";
 import { exportJobBody } from "../transfers/transferFormats";
@@ -14,8 +15,10 @@ import { copyPreview } from "../transfers/exportApi";
 import { guideEvents } from "../guide/events.js";
 import { showInChat } from "../chat/computer/chatSide.js";
 import { connectorTab } from "../shared/lib/connector.js";
-import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle, turnShown } from "./taskKinds.js";
+import { kindOf, ocrEnding, relocationSummary, relocationSuperseded, retryOf, taskTitle, turnShown } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
+import * as ocrRuns from "../pdf/ocrRuns.js";
+import * as ocrState from "../pdf/ocrState.js";
 
 export function useAppJobs({
   tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
@@ -38,6 +41,9 @@ export function useAppJobs({
   confirm, switchWorkspace,
   // a folder upload's dialog on its row (transfers/useUploadBatches.js); the page `id` opened
   openUploads, openPage,
+  // how the server recognizes text (/api/server-config's `ocr`, null for not at
+  // all), which a window run's retry follows
+  ocrCapability = null,
 }) {
   const exportStartingRef = useRef(false); // a second press while the first start is answered starts nothing
   // An export being started, for the dialog's Export button to show busy
@@ -46,6 +52,11 @@ export function useAppJobs({
   // The dialog closed while its export was being started: nothing starts,
   // or the job that did goes on in Background tasks with its file offered.
   const exportLeftRef = useRef(false);
+
+  // A recognition read in this window says so in the pill while it goes,
+  // with its Stop (pdf/ocrRuns.js followPill): the window must stay open
+  // and in front.
+  useEffect(() => ocrRuns.followPill(postPill), [postPill]);
 
   // Export a workspace as a backup zip, or every personal workspace at once
   // (`body`: {ws, uploads} or {all, uploads}): a background job
@@ -209,11 +220,15 @@ export function useAppJobs({
   // Start a task's work again (a row's retry button, the export dialog's
   // Start again): the same route and body as the first time. `download`:
   // "auto" when the file should come as soon as it is ready (the dialog
-  // watches, a workspace export was asked for from a menu), else offered.
+  // watches, a workspace export was asked for from a menu), else offered. A
+  // recognition read in a window is read again in this one, which starts
+  // its own job (pdf/ocrState.js recognizeAgain), or on the server where
+  // the server now reads text itself.
   async function retryTask(task, download = task.kind === "workspace-export" ? "auto" : "offer") {
     const again = retryOf(task);
     if (!again) return null;
     try {
+      if (task.kind === "ocr-tab") return (await ocrState.recognizeAgain(tasks, task, ocrCapability, { say: setStatus })) || null;
       return await tasks.start(again[0], again[1], { download, pill: task.kind === "workspace-export" });
     } catch (err) {
       setStatus(t("{name} failed: {message}", { name: taskTitle(task), message: err.message }));
@@ -346,6 +361,31 @@ export function useAppJobs({
         setStatus(t("{name} was stopped.", { name: title }));
       } else {
         setStatus(t("{name} failed: {message}", { name: title, message: t(job.error) }));
+      }
+      return;
+    }
+    if (job.kind === "ocr" || job.kind === "ocr-tab" || job.kind === "ocr-drop") {
+      // However it ended, every tab that heard it end reads the document's
+      // recognition again (pdf/ocrState.js): the pages a done run or forget
+      // changed build their text again, and a stopped or failed run leaves
+      // the counts the Document menu goes by (what it recognized waits,
+      // unseen, for the next run). Another member's open tab hears it from
+      // the page's socket (`ocr`, App's onOcr). The tab that started it says
+      // how it went; a run read in this window says nothing of a job it goes
+      // on from (its server restarted, or its idle timer stopped it: ocrRuns
+      // starts the job again), nor of one whose end it said itself (it
+      // failed here: ocrState.startRecognizing). The server's own run of a
+      // scan uploaded with no text, done, is told on the page it recognized.
+      if (here) ocrState.refresh(job.params?.doc_id);
+      const run = job.kind === "ocr-tab" ? ocrRuns.status(job.params?.doc_id) : null;
+      const say = ocrEnding(job, { started: !!started, here, pageId,
+        running: !!run && ocrRuns.running(job.params?.doc_id), told: run?.phase === "failed" && run.jobId === job.id });
+      if (say?.text) setStatus(say.text);
+      else if (say?.result) {
+        tasks.fetchJob(job.id).then((full) => {
+          const text = full?.result ? say.result(job, full.result) : "";
+          if (text) setStatus(text);
+        }).catch(() => {});
       }
       return;
     }

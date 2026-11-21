@@ -5,7 +5,8 @@
 // reader leaves the PDF and a document comes back as it was left. Keyed by
 // the document's URL, whose content never changes (upload names are content
 // hashes), so the segmented blocks stay good when the viewer opens the
-// document again.
+// document again; only the text of a scan's pages can, once the server
+// recognizes their words from the pictures (`textChanged`).
 //
 // The viewer (pdf/PdfViewer.jsx) renders a document's `snapshot` through
 // useSyncExternalStore and starts its jobs, keeping a pdf.js document in its
@@ -15,6 +16,8 @@ import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 import { isHeldKey } from "../shared/lib/hotkeys.js";
 import { pageFaces } from "./pdfFonts.js";
 import { segmentPage, textRuns } from "./pdfTranslate.js";
+import { pageText } from "./pageText.js";
+import { OCR_FONT } from "./ocrText.js";
 import { readingOrder } from "./pageFlow.js";
 import { figureRegions, markFigures } from "./pageFigures.js";
 import { markShape } from "./pageShape.js";
@@ -226,6 +229,43 @@ export function forgetAll() {
   for (const url of [...docs.keys()]) forget(url);
 }
 
+// The text of `pages` changed under the same URL: the server recognized
+// their words from the page pictures, or the reader's tab learned of it
+// (pdf/ocrState.js). Their segmented blocks go, with those of the pages
+// beside them (a paragraph joins across a page break), and so do the page
+// entries made from them; the next job or seed segments them afresh from
+// the new text. A seed under way is stopped and every page may be seeded
+// again. A job that runs is halted, and the change applies once it has
+// unwound, so no entry of the old blocks lands after it; its last status
+// says why it stopped (`halted: "text"`), which its row and the status line
+// tell (app/translateFollow.js): another member's recognition or forget can
+// stop it.
+export function textChanged(url, pages) {
+  const d = docs.get(url);
+  if (!d || !pages.length) return;
+  const drop = new Set(pages.flatMap((pn) => [pn - 1, pn, pn + 1]));
+  if (d.job) {
+    for (const pn of drop) d.textDrop.add(pn);
+    d.job.halt();
+    return;
+  }
+  applyTextChange(d, drop);
+}
+
+function applyTextChange(d, drop) {
+  stopSeeds(d);
+  d.epoch += 1;
+  d.seeded = null;
+  // a segmentation under way reads the old text: it keeps nothing
+  d.textGen += 1;
+  for (const pn of drop) {
+    d.paras.delete(pn);
+    d.segmenting.delete(pn);
+  }
+  const entries = new Map([...d.view.entries].filter(([pn]) => !drop.has(pn)));
+  if (entries.size !== d.view.entries.size) update(d, { entries });
+}
+
 // What the host's `scope` says of the document at `url`. The scope is
 // {url, pageId, stored, file}: the host's page, the PDF it shows, whether
 // the server has that PDF to read the paper from, and the page's file, the
@@ -259,13 +299,19 @@ function update(d, patch) {
   if (docs.get(d.url) === d) emit();
 }
 
+// A document's state before anything is known of it. `textGen` moves on
+// with each change of its text (textChanged), and `textDrop` holds the
+// pages a change waits to drop until the job running has unwound.
+const blank = (url) => ({ url, view: EMPTY, paras: new Map(), segmenting: new Map(), job: null, seeded: null, seeds: new Set(), seedCtl: null,
+  epoch: 0, textGen: 0, textDrop: new Set() });
+
 function stateOf(url) {
   let d = docs.get(url);
   if (d) {
     touch(url);
     return d;
   }
-  d = { url, view: EMPTY, paras: new Map(), segmenting: new Map(), job: null, seeded: null, seeds: new Set(), seedCtl: null, epoch: 0 };
+  d = blank(url);
   docs.set(url, d);
   trim();
   return d;
@@ -298,23 +344,32 @@ function trim() {
 function segment(d, doc, pn, near) {
   if (d.paras.has(pn)) return Promise.resolve(d.paras.get(pn));
   if (!d.segmenting.has(pn)) {
-    d.segmenting.set(pn, segmentNow(d, doc, pn, near).finally(() => d.segmenting.delete(pn)));
+    // a text change may have let this one go and started another
+    const run = segmentNow(d, doc, pn, near).finally(() => { if (d.segmenting.get(pn) === run) d.segmenting.delete(pn); });
+    d.segmenting.set(pn, run);
   }
   return d.segmenting.get(pn);
 }
 
 async function segmentNow(d, doc, pn, near) {
   if (!doc || pn < 1 || pn > doc.numPages) return [];
+  const gen = d.textGen;
   const page = await doc.getPage(pn);
   const vp = page.getViewport({ scale: 1 });
-  const tc = await page.getTextContent();
+  const tc = await pageText(page);
+  // A recognized page's words have a font id of their own, with no face to
+  // wait for (pdf/ocrText.js).
   let fonts = FONTS.get(doc);
-  if (!fonts) FONTS.set(doc, (fonts = new Map()));
+  if (!fonts) FONTS.set(doc, (fonts = new Map([[OCR_FONT, null]])));
   const ids = new Set(tc.items.map((it) => it.fontName));
   const faces = await pageFaces(page, ids, fonts);
   const paras = segmentPage(textRuns(tc.items, vp.transform, { faces, styles: tc.styles }));
+  // A scan's blocks were read from its OCR layer: their requests say so, and
+  // the model reads through misread letters (translatePlan.requestFields).
+  if (tc.repaired) for (const p of paras) p.ocr = true;
   if (paras.some((p) => p.translate)) markShape(paras, markFigures(paras, await figureRegions(page)));
   if (!near(pn)) page.cleanup();
+  if (d.textGen !== gen) return paras;
   if (!d.paras.has(pn)) d.paras.set(pn, paras);
   return d.paras.get(pn);
 }
@@ -429,7 +484,7 @@ export function seedPages(url, { doc, key, pages, lookup, near = () => false }) 
 // is not used.
 export async function seedDetached({ doc, key, lookup, signal = null }) {
   signal ||= new AbortController().signal;
-  const d = { url: "", view: EMPTY, paras: new Map(), segmenting: new Map(), job: null, seeded: null, seeds: new Set(), seedCtl: null, epoch: 0 };
+  const d = blank("");
   d.seeded = { key, pages: new Set() };
   const pages = Array.from({ length: doc?.numPages || 0 }, (_, k) => k + 1);
   if (key && pages.length && !signal.aborted) {
@@ -540,7 +595,7 @@ async function seedNow(d, { doc, key, pages, lookup, near, signal, seeded }) {
 // Start a job over `pages` of the document at `url`, one at a time per
 // document: pdf/translateJob.js over this document's blocks and entries,
 // segmenting with `doc` (its pdf.js document). `translate` is the chunk
-// request; `brief({pageId, head}, signal, onStage)` the request for the
+// request; `brief({pageId, head, ocr}, signal, onStage)` the request for the
 // paper's brief. `scope` is the host's (`scopeOf`):
 // the page being translated and whether the server has its PDF. The page
 // names the paper: a PDF the server has not stored is read from its opening
@@ -565,16 +620,21 @@ export function startJob(url, { doc, pages, label, key, parallel, references = f
   const segmentAt = (pn) => segment(d, doc, pn, near);
   const { pageId, stored } = scopeOf(url, scope);
   const head = stored ? null : documentHead(doc, segmentAt);
+  // The brief reads the paper's opening text. A stored file's the server
+  // checks itself for a scan's OCR layer; a head is the first pages' blocks,
+  // which say so when they were read from one.
+  const headOcr = () => [1, 2, 3].some((pn) => d.paras.get(pn)?.some((p) => p.ocr));
   const job = createTranslateJob({
     pages, label, key, parallel, references, focus, fresh, translate,
     brief: brief && (pageId || head)
-      ? async (signal, onStage) => brief({ pageId, head: head ? await head : "" }, signal, onStage) : null,
+      ? async (signal, onStage) => brief({ pageId, head: head ? await head : "", ...(head && headOcr() && { ocr: true }) }, signal, onStage) : null,
     segment: segmentAt,
     cachedParas: (pn) => d.paras.get(pn) || null,
     seed: (pn) => d.view.entries.get(pn),
     context: pageId || !head ? { pageId } : head.then((text) => ({ head: text })),
     onPages: (changed) => update(d, { entries: new Map([...d.view.entries, ...changed]) }),
-    onStatus: (status) => update(d, { status }),
+    // its end while a text change waits for it: halted by that change
+    onStatus: (status) => update(d, { status: status.running || !d.textDrop.size ? status : { ...status, halted: "text" } }),
     limit: REQUESTS,
   });
   d.job = job;
@@ -582,6 +642,12 @@ export function startJob(url, { doc, pages, label, key, parallel, references = f
   update(d, { shown: true });
   return job.run().finally(() => {
     d.job = null;
+    // the text changed while it ran: its pages go now that it has landed all it will
+    if (d.textDrop.size) {
+      const drop = new Set(d.textDrop);
+      d.textDrop.clear();
+      applyTextChange(d, drop);
+    }
     const n = readers.get(url) - 1;
     if (n > 0) readers.set(url, n);
     else readers.delete(url);

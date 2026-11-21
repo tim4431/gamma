@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { addLocalRow, afterFollow, followed, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished,
   progressFraction, remainingMs, sortTasks, trayBadge, waitsForYou } from "../src/tasks/taskModel.js";
-import { byteProgress, bytesInfo, canOpen, exportAgain, fmtRemaining, kindOf, progressCounts, progressText, quietKinds,
-  relocationSummary, relocationSuperseded, retryOf, stopPath, taskActions, taskInfo, taskTime, taskTitle, turnShown }
-  from "../src/tasks/taskKinds.js";
+import { TASK_KINDS, byteProgress, bytesInfo, canOpen, exportAgain, fmtRemaining, hiddenSince, kindOf, noteHidden, ocrAutoSummary,
+  ocrDropSummary, ocrEnding, ocrSummary, progressCounts, progressText, quietKinds, relocationSummary, relocationSuperseded, retryOf,
+  stopPath, taskActions, taskInfo, taskTime, taskTitle, turnShown } from "../src/tasks/taskKinds.js";
 
 const at = (minutes) => new Date(Date.UTC(2026, 8, 29, 12, minutes)).toISOString();
 const job = (fields) => ({ kind: "export", state: "running", params: {}, progress: {}, error: "", artifact: null,
@@ -55,6 +55,12 @@ test("a job that ends between two listings is noticed once, a new one only once 
   const after = [job({ id: "a", state: "done" }), job({ id: "b", state: "running" }), job({ id: "c", state: "done" }),
     job({ id: "d", state: "done" })];
   assert.deepEqual(newlyFinished(before, after).map((j) => j.id), ["a"]);
+  // one this tab was told ended (a page's socket: a recognition landed),
+  // which no listing showed running, is noticed too; one listed already is
+  // not again, whatever it is told
+  const told = (j) => j.id === "d" || j.id === "c";
+  assert.deepEqual(newlyFinished(before, after, told).map((j) => j.id), ["a", "d"]);
+  assert.deepEqual(newlyFinished(before, [job({ id: "d", state: "running" })], told), [], "still running: its end is noticed as any");
 });
 
 test("the tray button: a spinner while anything runs, then a failure, then a file to download", () => {
@@ -216,6 +222,147 @@ test("a text file's run is worded for the file: a dashed range is checked from i
     "A hollow tag marks a highlight whose text is gone: right-click it and choose Move to a selection or Use the closest match.",
   ].join(" "));
   assert.doesNotMatch(relocationSummary(result({ approx: 1 })), /PDF|Document menu|Hover/);
+});
+
+test("a recognition's row: its paper, the phases, the time left at this run's pace, and Try again on the page", () => {
+  const params = { page_id: "p1", doc_id: "d1", title: "Lounis 1992" };
+  const ocr = (fields) => job({ kind: "ocr", params, ...fields });
+  assert.equal(taskTitle(ocr({})), "Recognizing the text of “Lounis 1992”");
+  assert.equal(kindOf(ocr({})).icon, "scanText");
+  assert.deepEqual(retryOf(ocr({ state: "failed" })), ["ocr", { page_id: "p1" }], "the route startJob puts under /api/jobs/");
+  assert.equal(taskInfo(ocr({ state: "queued" })), "Waiting for its turn…", "one recognition runs at a time");
+  assert.equal(progressText(ocr({ progress: { phase: "reading", done: 3, total: 15, unit: "pages" } })), "Reading the PDF · 3 of 15 pages");
+  // A run that goes on from 40 pages an earlier one recognized: 10 more in
+  // 50 s leaves 50 pages, about 4 minutes; counted from 0, under a minute.
+  const since = Date.parse(at(0));
+  const running = ocr({ progress: { phase: "recognizing", done: 50, total: 100, unit: "pages", since, from: 40 } });
+  assert.equal(progressText(running, since + 50000), "Recognizing text · 50 of 100 pages · about 4 minutes left");
+  assert.equal(progressText(running, since + 1000), "Recognizing text · 50 of 100 pages", "too soon to tell");
+  const updating = ocr({ stoppable: false, progress: { phase: "updating" } });
+  assert.equal(progressText(updating), "Updating search and highlights — can no longer be stopped");
+  assert.deepEqual(taskActions(updating), []);
+});
+
+test("a recognition's end says what it changed, that the PDF's text already reads well, or how far it got", () => {
+  const ocr = (fields) => job({ kind: "ocr", state: "done", params: { page_id: "p1", doc_id: "d1", title: "Lounis 1992" }, ...fields });
+  const result = (fields) => ({ scanned: 12, recognized: 0, kept: 0, empty: 0, failed: 0, good_layer: false, shared: null,
+    highlights_respelled: 0, highlights_kept: 0, ...fields });
+  assert.equal(ocrSummary(ocr({}), result({ recognized: 11, empty: 1, highlights_respelled: 3 })),
+    "Text recognized on 11 pages of “Lounis 1992”. 3 highlights took the new text.");
+  assert.equal(ocrSummary(ocr({}), result({ recognized: 1, failed: 2 })),
+    "Text recognized on 1 page of “Lounis 1992”. 2 pages could not be read; recognizing again tries them once more.");
+  assert.equal(ocrSummary(ocr({}), result({ good_layer: true, kept: 3, shared: 0.976 })),
+    "“Lounis 1992”'s own text already reads well (98% of its words match a fresh recognition), so it was kept.");
+  assert.equal(ocrSummary(ocr({}), result({ good_layer: true, kept: 3, shared: 0.976, recognized: 2 })),
+    "“Lounis 1992”'s own text already reads well (98% of its words match a fresh recognition), so it was kept. Text recognized on its 2 picture pages.",
+    "its picture pages are recognized all the same");
+  assert.equal(ocrSummary(ocr({}), result({ scanned: 0 })), "“Lounis 1992” has no scanned pages, so its text was left as it is.");
+  assert.equal(ocrSummary(ocr({ state: "cancelled", progress: { phase: "recognizing", done: 7, total: 12, unit: "pages" } })),
+    "Text recognition of “Lounis 1992” stopped after 7 of 12 pages; recognizing again goes on from there.");
+  // Stopped while the PDF's pages were read (counted over all of them, as
+  // the server reports it): nothing was recognized yet.
+  assert.equal(ocrSummary(ocr({ state: "cancelled", progress: { phase: "reading", done: 3, total: 15, unit: "pages" } })),
+    "Text recognition of “Lounis 1992” was stopped.");
+});
+
+test("the server's own run of a scan says so; a run read in a window is its own row, timed by the time its window was in front", () => {
+  const params = { page_id: "p1", doc_id: "d1", title: "Lounis 1992" };
+  assert.equal(taskTitle(job({ kind: "ocr", params: { ...params, auto: true } })), "Recognizing the text of “Lounis 1992” automatically");
+  assert.deepEqual(retryOf(job({ kind: "ocr", state: "cancelled", params: { ...params, auto: true } })), ["ocr", { page_id: "p1" }],
+    "started again, it is a run someone asked for");
+  const window = { doc_id: "d1", engine: "tesseract.js 7.0.0", langs: "eng+fra+deu", ver: 1, client: "c1" };
+  const tab = (fields) => job({ kind: "ocr-tab", params: { ...params, window }, ...fields });
+  assert.equal(taskTitle(tab({})), "Reading the text of “Lounis 1992” in a window");
+  assert.equal(kindOf(tab({})).icon, "scanText");
+  assert.deepEqual(retryOf(tab({ state: "failed" })), ["ocr", { page_id: "p1", window }]);
+  assert.deepEqual(taskActions(tab({})), ["stop"], "any device can stop it");
+  assert.equal(typeof kindOf(tab({})).halt, "function", "its Stop here ends this window's run of it at once (tests/ocrRuns.test.mjs)");
+  kindOf(tab({ id: "not-read-here" })).halt(tab({ id: "not-read-here" }));
+  assert.equal(progressText(tab({ progress: { phase: "reading", done: 2, total: 6, unit: "pages" } })), "Reading the PDF · 2 of 6 pages");
+  // 10 pages in 100 s since the phase began, 40 of them hidden: 10 pages
+  // left read in a minute here, at 10 s a page, and in 100 s elsewhere.
+  const since = Date.parse(at(0));
+  noteHidden(true, since + 20000);
+  noteHidden(false, since + 60000);
+  assert.equal(hiddenSince(since, since + 100000), 40000);
+  assert.equal(hiddenSince(since + 50000, since + 100000), 10000, "only what falls after since");
+  const recognizing = tab({ progress: { phase: "recognizing", done: 10, total: 20, unit: "pages", since, from: 0 } });
+  const left = TASK_KINDS["ocr-tab"].left;
+  assert.equal(left(recognizing, since + 100000, true), "about 1 minute left");
+  assert.equal(left(recognizing, since + 100000, false), "about 2 minutes left", "the window that reads it is another");
+  assert.equal(progressText(recognizing, since + 100000), "Recognizing text · 10 of 20 pages · about 2 minutes left",
+    "the tray asks whether this window reads it");
+  noteHidden(true, since + 100000); // hidden again, still: up to now
+  assert.equal(hiddenSince(since, since + 110000), 50000);
+  noteHidden(true, since + 105000);
+  assert.equal(hiddenSince(since, since + 110000), 50000, "hidden twice is one span");
+  noteHidden(false, since + 110000);
+  assert.equal(left(tab({ progress: { phase: "updating" } }), since, true), "");
+});
+
+test("forgetting the recognized text is a row of its own: no stop, no retry", () => {
+  const drop = (fields) => job({ kind: "ocr-drop", stoppable: false, params: { page_id: "p1", doc_id: "d1", title: "Lounis 1992" }, ...fields });
+  assert.equal(taskTitle(drop({})), "Forgetting the recognized text of “Lounis 1992”");
+  assert.equal(kindOf(drop({})).icon, "scanText");
+  assert.equal(progressText(drop({ progress: { phase: "updating" } })), "Updating search and highlights — can no longer be stopped");
+  assert.deepEqual(taskActions(drop({})), []);
+  assert.equal(retryOf(drop({ state: "failed" })), null, "its confirm starts it again");
+  assert.deepEqual(taskActions(drop({ state: "failed", error: "boom" })), ["dismiss"]);
+});
+
+test("a forget's end says which pages read their own text again and what their highlights did", () => {
+  const drop = { kind: "ocr-drop", state: "done", params: { page_id: "p1", doc_id: "d1", title: "Lounis 1992" } };
+  const result = (fields) => ({ pages: 0, highlights_respelled: 0, highlights_kept: 0, highlights_changed: 0, highlights_unread: 0, ...fields });
+  assert.equal(ocrDropSummary(drop, result({ pages: 1 })), "“Lounis 1992” reads its own text again on 1 page.");
+  assert.equal(ocrDropSummary(drop, result({ pages: 12, highlights_respelled: 3, highlights_kept: 1, highlights_unread: 2 })),
+    "“Lounis 1992” reads its own text again on 12 pages. 3 highlights took the PDF's own text as their quote. "
+    + "1 highlight kept its quote, which does not read like the PDF's own text under it. "
+    + "2 highlights on pages with no text of their own keep the recognized words as their quotes.");
+  assert.equal(ocrDropSummary(drop, result({ pages: [1, 2], highlights_respelled: 1 })),
+    "“Lounis 1992” reads its own text again on 2 pages. 1 highlight took the PDF's own text as its quote.", "pages given as a list");
+});
+
+test("an OCR job's end: the starter hears how it went, a tab showing the page hears of the server's own run, a window's run that goes on says nothing", () => {
+  const params = { page_id: "p1", doc_id: "d1", title: "Lounis 1992" };
+  const ended = (kind, state, fields = {}) => ({ kind, state, params, progress: {}, error: "", ...fields });
+  // The tab that started it.
+  for (const kind of ["ocr", "ocr-tab"]) {
+    assert.equal(ocrEnding(ended(kind, "done"), { started: true }).result, ocrSummary, kind);
+    assert.deepEqual(ocrEnding(ended(kind, "cancelled"), { started: true }), { text: "Text recognition of “Lounis 1992” was stopped." });
+  }
+  assert.equal(ocrEnding(ended("ocr-drop", "done"), { started: true }).result, ocrDropSummary);
+  assert.deepEqual(ocrEnding(ended("ocr", "failed", { error: "Too long" }), { started: true }),
+    { text: "Recognizing the text of “Lounis 1992” failed: Too long" });
+  assert.deepEqual(ocrEnding(ended("ocr-drop", "failed", { error: "Busy" }), { started: true }),
+    { text: "Forgetting the recognized text of “Lounis 1992” failed: Busy" });
+  assert.equal(ocrEnding(ended("ocr-tab", "failed", { error: "interrupted" }), { started: true, running: true }), null,
+    "the window still reads: it starts the job again");
+  assert.deepEqual(ocrEnding(ended("ocr-tab", "failed", { error: "interrupted" }), { started: true, running: false }),
+    { text: "Reading the text of “Lounis 1992” in a window failed: interrupted" });
+  // Its idle timer stopped it while the window was hidden: the window,
+  // shown again, starts it again and goes on. A person's Stop says so.
+  const byPerson = { phase: "recognizing", done: 3, total: 9, unit: "pages" };
+  const idle = ended("ocr-tab", "cancelled", { progress: { ...byPerson, idle: 600 } });
+  assert.equal(ocrEnding(idle, { started: true, running: true }), null);
+  assert.deepEqual(ocrEnding(idle, { started: true, running: false }),
+    { text: "Text recognition of “Lounis 1992” stopped after 3 of 9 pages; recognizing again goes on from there." });
+  assert.deepEqual(ocrEnding({ ...idle, progress: byPerson }, { started: true, running: true }),
+    { text: "Text recognition of “Lounis 1992” stopped after 3 of 9 pages; recognizing again goes on from there." });
+  // The window's run failed here and said why, stopping its job: nothing
+  // more, unless the job applied after all.
+  assert.equal(ocrEnding({ ...idle, progress: byPerson }, { started: true, told: true }), null);
+  assert.equal(ocrEnding(ended("ocr-tab", "failed", { error: "x" }), { started: true, told: true }), null);
+  assert.equal(ocrEnding(ended("ocr-tab", "done"), { started: true, told: true }).result, ocrSummary);
+  // A tab that did not start it.
+  const auto = ended("ocr", "done", { params: { ...params, auto: true } });
+  assert.equal(ocrEnding(auto, { here: true, pageId: "p1" }).result, ocrAutoSummary, "the page on screen");
+  assert.equal(ocrEnding(auto, { here: true, pageId: "p2" }), null, "another page");
+  assert.equal(ocrEnding(auto, { here: false, pageId: "p1" }), null, "another workspace");
+  assert.equal(ocrEnding({ ...auto, state: "cancelled" }, { here: true, pageId: "p1" }), null, "it gave way, or someone stopped it");
+  assert.equal(ocrEnding(ended("ocr", "done"), { here: true, pageId: "p1" }), null, "someone else's run");
+  assert.equal(ocrAutoSummary(auto, { recognized: 1 }), "Text recognized automatically on 1 page of “Lounis 1992”.");
+  assert.equal(ocrAutoSummary(auto, { recognized: 14 }), "Text recognized automatically on 14 pages of “Lounis 1992”.");
+  assert.equal(ocrAutoSummary(auto, { recognized: 0 }), "", "nothing recognized, nothing said");
 });
 
 test("a click opens the export and import dialogs again, or where the work is managed", () => {
