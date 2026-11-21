@@ -53,10 +53,11 @@
 //   window), Recognize text reads the page in Chromium with tesseract.js,
 //   every file from that server, the `ocr-tab` job's row ends done with its
 //   summary, and the text layer and Ctrl+F read what the window recognized;
-// - on a server with GAMMA_OCR_AUTO=on, a scan uploaded whose pages are only
-//   pictures is recognized by itself: the workspace's run, its row in
-//   Background tasks and its summary on the page shown; Settings → Server →
-//   Text recognition shows the switch the environment holds.
+// - on a server with automatic recognition on (the server option
+//   ocr_auto), a scan uploaded whose pages are only pictures is recognized
+//   by itself: the workspace's run, its row in Background tasks and its
+//   summary on the page shown; Settings → Server → Text recognition shows
+//   its rows, and its automatic switch saves.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -981,7 +982,7 @@ async function windowSteps({ browser, step, until, assert, assertEq, assertNoPro
 }
 
 // A server that recognizes the text of a scan uploaded with no text by
-// itself (GAMMA_OCR_AUTO=on; gamma/ocr_auto.py): the run is the workspace's
+// itself (the server option ocr_auto on; gamma/ocr_auto.py): the run is the workspace's
 // own, one file at a time, and a tab showing the page says when it is done
 // (tasks/taskKinds.js ocrEnding), whether its tasks store saw the run going
 // or only heard of its end from the page socket (useTasks expectEnd). The
@@ -990,7 +991,7 @@ async function windowSteps({ browser, step, until, assert, assertEq, assertNoPro
 const AUTO_PAGES = 40;
 
 async function automaticSteps({ browser, step, until, assert, assertEq, assertNoProblems, openPage }) {
-  const auto = new Server({ env: { GAMMA_OCR_AUTO: "on" } });
+  const auto = new Server({ options: { ocr_auto: "on" } });
   let ctx = null, page = null, owner = null;
   try {
     await step("scan layer: automatically: setup, a server that recognizes scans by itself", async () => {
@@ -1037,21 +1038,25 @@ async function automaticSteps({ browser, step, until, assert, assertEq, assertNo
       return said;
     });
 
-    await step("scan layer: automatically: Settings → Server → Text recognition shows the switch on and held by the environment", async () => {
+    await step("scan layer: automatically: Settings → Server → Text recognition shows its rows, and the automatic switch saves", async () => {
+      const options = async () => (await owner.api("/api/admin/settings")).options;
       await page.locator('[data-guide="header.account"]').click();
       await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await settingsPane(page, "Server");
-      const row = page.locator('.settingsPane [data-setting="Recognize scans automatically"]').first();
-      await row.waitFor();
-      const box = row.locator('input[type="checkbox"], [role="switch"]').first();
-      assert(await box.isChecked(), "the switch is on");
-      assert(await box.isDisabled(), "the environment holds it");
-      const text = (await row.innerText()).replace(/\s+/g, " ").trim();
-      assert(text.includes("Set by GAMMA_OCR_AUTO in the server's environment"), `the row says what holds it: ${text}`);
+      const recognition = page.getByRole("checkbox", { name: "Recognize text in scanned PDFs", exact: true });
+      const automatic = page.getByRole("checkbox", { name: "Recognize scans automatically", exact: true });
+      await automatic.waitFor();
+      assert(await recognition.isChecked() && !(await recognition.isDisabled()), "recognition on, and the admin's to turn off");
+      assert(await automatic.isChecked(), "the automatic switch on");
+      assertEq(await page.getByRole("spinbutton", { name: "Files recognized at once", exact: true }).inputValue(), "1", "one file at a time");
+      await automatic.click();
+      await until(async () => (await options()).ocr_auto === false, { what: "the automatic switch saved off" });
+      assert((await owner.api("/api/server-config")).ocr?.auto === false, "the server no longer recognizes scans by itself");
+      await automatic.click();
+      await until(async () => (await options()).ocr_auto === true, { what: "and on again" });
       await page.keyboard.press("Escape");
       assertNoProblems(page);
-      return text;
     });
   } finally {
     await ctx?.close();

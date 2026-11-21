@@ -39,10 +39,11 @@ def _bundle_env():
     if os.path.isdir(tessdata):
         os.environ.setdefault("GAMMA_TESSDATA_DIR", tessdata)
     # One thread per recognized page, as the Docker image sets it: the OCR
-    # lane (GAMMA_OCR_WORKERS) decides how many pages are read at once, and
-    # a Tesseract built with OpenMP would otherwise start a thread a core,
-    # which measured slower (docs/research/ocr.md). Read when the library
-    # loads, so it is set before anything imports it.
+    # lane (Settings → Server → Text recognition: files recognized at once)
+    # decides how many pages are read at once, and a Tesseract built with
+    # OpenMP would otherwise start a thread a core, which measured slower
+    # (docs/research/ocr.md). Read when the library loads, so it is set
+    # before anything imports it.
     os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 
@@ -54,7 +55,7 @@ def check_ocr() -> int:
 
     # A check of the engine, not of a server's settings: OCR is on unless
     # the environment says otherwise, so nothing opens a data directory's
-    # users.db to read whether the server is a demo (config.ocr_enabled).
+    # users.db to read whether the server is a demo (server_options.ocr_enabled).
     # gamma.config still places a data directory at import, beside the
     # bundle when unset: a throwaway one, should anything open it.
     os.environ.setdefault("GAMMA_OCR", "on")

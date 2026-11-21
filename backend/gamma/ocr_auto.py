@@ -3,8 +3,8 @@ pictures, with no text to select or search, has its words recognized by the
 server by itself, one file at a time, by the ``ocr`` job of
 gamma/pdf_ocr.py (docs/dev/documents.md "Recognized text").
 
-The switch is the admin's (server_settings ``ocr_auto_settings``: on by
-default, ``GAMMA_OCR_AUTO`` overriding it), and it works only where the
+The switch is the admin's (the server option ``ocr_auto``, on by default:
+Settings → Server → Text recognition), and it works only where the
 server recognizes text itself (``available``: never on a hosted container,
 a demo server or the apps, where the window that asks reads the pages).
 
@@ -49,7 +49,7 @@ import threading
 import time
 from contextlib import closing
 
-from . import db, jobs, ocr_engine, pdf_ocr, pdf_text, server_settings, workspaces
+from . import db, jobs, ocr_engine, pdf_ocr, pdf_text, server_options, workspaces
 from .logbuf import log
 
 OCR = "ocr"
@@ -75,10 +75,10 @@ def available(capability=_ASK) -> bool:
 
 
 def switched_on() -> bool:
-    """The admin's switch (server_settings ``ocr_auto_settings``); off
-    while users.db cannot be read (logged)."""
+    """The admin's switch (the server option ``ocr_auto``); off while
+    users.db cannot be read (logged)."""
     try:
-        return server_settings.ocr_auto_settings()["ocr_auto"]
+        return bool(server_options.get("ocr_auto"))
     except Exception as e:  # noqa: BLE001 — nothing starts by itself until the switch reads again
         log.warning(f"[ocr] the automatic recognition's switch cannot be read: {e}")
         return False

@@ -34,7 +34,7 @@ import sys
 import threading
 from contextlib import contextmanager
 
-from . import config
+from . import config, server_options
 from .logbuf import log
 
 LANGS = "eng+fra+deu"
@@ -119,6 +119,13 @@ def _models(path) -> list[str]:
     return [os.path.join(os.fspath(path), f"{lang}.traineddata") for lang in LANG_LIST]
 
 
+def has_models() -> bool:
+    """Whether the models are in ``config.tessdata_dir()``: what recognition
+    needs on the server and in the window alike, whether it is on or not
+    (Settings shows its switch only where they are)."""
+    return all(os.path.isfile(model) for model in _models(config.tessdata_dir()))
+
+
 def _static_reason(path) -> str:
     """The cheap checks: no import, no Init. "" when they pass, else why
     not, in words a person can read (no paths): the switch that leaves
@@ -146,12 +153,12 @@ def _static_reason(path) -> str:
 def probe() -> dict | None:
     """Whether this server recognizes text itself: ``{"engine":
     "tesseract", "langs": [...]}``, or None when it is turned off
-    (``config.ocr_enabled``), has no engine or no models, runs where the
+    (``server_options.ocr_enabled``), has no engine or no models, runs where the
     engine does not (the mobile apps, macOS before 15), is told to leave
     it to the window (``config.ocr_in_window``), or failed its full check
     (``check``). Cheap: the engine is not imported here. The checks are
     cached; whether OCR is on is read every time."""
-    if not config.ocr_enabled():
+    if not server_options.ocr_enabled():
         return None
     path = config.tessdata_dir()
     if _static_reason(path) or _checked.get(os.fspath(path)):
@@ -179,7 +186,7 @@ def capability() -> dict | None:
     found = probe()
     if found is not None:
         return {"where": "server", **found}
-    if not config.ocr_enabled():
+    if not server_options.ocr_enabled():
         return None
     path = config.tessdata_dir()
     reason = _static_reason(path) or _checked.get(os.fspath(path), "")
@@ -228,7 +235,7 @@ def check() -> str | None:
     the reason, a plain sentence without paths (the log has the error).
     Cached once run (a failure turns ``probe`` off), except whether OCR is
     on. Blocking: call it on a worker thread, never in ``async def``."""
-    if not config.ocr_enabled():
+    if not server_options.ocr_enabled():
         return TURNED_OFF
     path = config.tessdata_dir()
     reason = _static_reason(path)
@@ -249,7 +256,7 @@ def start_check() -> None:
     the window reads them (``models_tag``). Never raises; logs a
     failure."""
     global _startup
-    if not config.ocr_enabled():
+    if not server_options.ocr_enabled():
         return
 
     def run():
@@ -330,7 +337,7 @@ def _new_api(path):
 # --- The engines -------------------------------------------------------------
 # An engine holds its models (about 50 MB for the three) and is not
 # thread-safe, so a few are kept loaded and each is lent to one page at a
-# time: at most config.ocr_workers(), made on first use. ``reset`` ends them.
+# time: at most the ``ocr_workers`` option (server_options), made on first use. ``reset`` ends them.
 _pool = threading.Condition()
 _idle: list = []     # engines ready, of _gen
 _made = 0            # engines of _gen alive, idle or lent
@@ -340,7 +347,7 @@ _path = None         # the tessdata path the engines of _gen were set up with
 
 def _take():
     """An engine for one page and the generation it belongs to, waiting
-    while all ``config.ocr_workers()`` are lent."""
+    while all ``ocr_workers`` (server_options) are lent."""
     global _made, _gen, _path
     path = os.fspath(config.tessdata_dir())
     ended = []
@@ -349,7 +356,7 @@ def _take():
             ended, _idle[:] = list(_idle), []
             _gen, _path, _made = _gen + 1, path, 0
             _pool.notify_all()
-        while not _idle and _made >= config.ocr_workers():
+        while not _idle and _made >= server_options.get("ocr_workers"):
             _pool.wait()
         gen = _gen
         api = _idle.pop() if _idle else None

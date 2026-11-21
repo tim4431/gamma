@@ -90,8 +90,9 @@ test("labels that hold the query come first; hints and synonyms find the rest", 
   const zotero = searchSettings("zotero", all).map((r) => `${r.pane}/${r.label}`);
   assert.deepEqual(zotero.slice(0, 1), ["account/Zotero"]);
   assert.ok(zotero.includes("workspaces/Clones and Zotero links"), zotero.join(", "));
-  // the Server pane's switch for scans uploaded with no text
-  assert.equal(searchSettings("ocr", all)[0]?.label, "Recognize scans automatically");
+  // the Server pane's text recognition rows, the switch of recognition itself first
+  const ocr = searchSettings("ocr", all).map((r) => r.label);
+  assert.deepEqual(ocr.slice(0, 3), ["Recognize text in scanned PDFs", "Recognize scans automatically", "Files recognized at once"]);
   assert.equal(searchSettings("text recognition", all)[0]?.section, "Text recognition");
 });
 

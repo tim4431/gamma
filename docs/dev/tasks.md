@@ -113,8 +113,8 @@ and `keep_final_copies`, `integrity.check_all`, the export driver
 wait queued, oldest first. A workspace's own jobs (the indexer) run outside
 those limits. A kind that keeps a core busy for hours runs in a lane of
 its own instead (`KIND_LIMITS`, a function per kind read as the queue is
-pumped): the text recognition, `ocr`, at most `GAMMA_OCR_WORKERS` (1 by
-default) at once on the server, whoever starts them, the others queued,
+pumped): the text recognition, `ocr`, at most the server option
+`ocr_workers` (1 by default) at once on the server, whoever starts them, the others queued,
 and a queued one stops at once. A lane's jobs hold no place of the
 server's four or an account's two, so a book's recognition never holds up
 an export. A lane job started with `yields=True` (an automatic
@@ -630,7 +630,7 @@ page or folder by link").
   export unpacking no PDF) are tested in `test_import_review.py`, the metadata batch in `test_metadata_batch.py`
   and the indexer in `test_search.py`. `test_jobs_lanes.py` covers the
   lane (one recognition running and one queued while an export starts,
-  `GAMMA_OCR_WORKERS`, a queued one stopped and its end hook told),
+  `ocr_workers`, a queued one stopped and its end hook told),
   `jobs.live`, the exclusive start with a kind or a tuple of kinds,
   `AT_ONCE`, a yield, a give-way withdrawn, `promote` and a job that gave
   way, and the extra progress fields; `test_ocr_api.py` the recognition's

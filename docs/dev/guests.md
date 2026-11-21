@@ -163,7 +163,7 @@ rolling 24 hours:
 that `GAMMA_DEMO=1` overrides, reported with its source like the public
 URL. It changes presentation, not rules: guests, their expiry and the
 allowance work the same on every server. One default differs: a demo
-server recognizes no text of scanned PDFs unless `GAMMA_OCR=on`
+server recognizes no text of scanned PDFs, whatever Settings says, unless `GAMMA_OCR=on`
 ([debugging.md](debugging.md#text-recognition)), since a book's run takes
 hours of the CPU every visitor shares. A guest may never start one, and
 the Document menu does not offer it to a guest.

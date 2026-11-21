@@ -287,25 +287,19 @@ def tessdata_dir() -> Path:
     return Path(os.environ.get("GAMMA_TESSDATA_DIR", "").strip() or Path(__file__).resolve().parent.parent / "tessdata")
 
 
-def ocr_enabled() -> bool:
-    """Whether this server recognizes the text of scanned PDFs:
-    ``GAMMA_OCR`` on or off (1/true/yes/on, 0/false/no/off) when set;
-    unset, on except on a hosted container (``hosted``) and in demo mode
-    (server_settings.demo_mode), where a run of hours takes the CPU every
-    account shares. Read when asked, so a test can turn it either way."""
+def ocr_override() -> bool | None:
+    """``GAMMA_OCR``: True or False when it says on or off (1/true/yes/on,
+    0/false/no/off), as a hosted container's environment turns text
+    recognition on (docs/dev/hosted.md) or the desktop's engine check does;
+    None when it is unset or says neither. Elsewhere an admin sets it in
+    Settings → Server → Text recognition (gamma/server_options.py
+    ``ocr_enabled``). Read when asked, so a test can turn it either way."""
     raw = os.environ.get("GAMMA_OCR", "").strip().lower()
     if raw in ("1", "true", "yes", "on"):
         return True
     if raw in ("0", "false", "no", "off"):
         return False
-    if hosted():
-        return False
-    from . import server_settings  # local: server_settings imports this module
-
-    try:
-        return not server_settings.demo_mode()
-    except Exception:  # noqa: BLE001 — a users.db that does not read now: a demo server says so once it does
-        return True
+    return None
 
 
 def ocr_in_window() -> bool:
@@ -315,21 +309,6 @@ def ocr_in_window() -> bool:
     with the engine. Any other value, or none, changes nothing. Read when
     asked."""
     return os.environ.get("GAMMA_OCR_ENGINE", "").strip().lower() == "window"
-
-
-DEFAULT_OCR_WORKERS = 1
-
-
-def ocr_workers() -> int:
-    """How many texts are recognized at once (the ``ocr`` jobs that run,
-    and the recognition engines kept loaded, about 50 MB each):
-    ``GAMMA_OCR_WORKERS``, 1 unless set; a page keeps one core busy for
-    seconds, so more serve a server with cores to spare. Unparseable or
-    below 1 reads as 1. Read when asked."""
-    try:
-        return max(1, int(os.environ.get("GAMMA_OCR_WORKERS", "").strip() or DEFAULT_OCR_WORKERS))
-    except ValueError:
-        return DEFAULT_OCR_WORKERS
 
 
 def sync_interval_s() -> int:

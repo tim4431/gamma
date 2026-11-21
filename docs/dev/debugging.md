@@ -154,20 +154,20 @@ window that asks (tesseract.js, `ocr.where` `window` in
 `/api/server-config`); without the models it reports no `ocr` and offers
 no Recognize text. Read when asked:
 
-- `GAMMA_OCR`: `on` or `off` (also 1/0, true/false, yes/no). Unset, it is
-  on, except on a hosted container and in demo mode.
+- `GAMMA_OCR`: `on` or `off` (also 1/0, true/false, yes/no), over the
+  admin's switch (Settings → Server → Text recognition, the server option
+  `ocr`, on by default). Unset, recognition is off on a hosted container
+  and in demo mode whatever the switch says.
 - `GAMMA_OCR_ENGINE=window`: a server with the engine reads no text itself
   and leaves every reading to the window, as the apps do. Any other value
   changes nothing. The scan-layer browser group sets it for the window
   path.
-- `GAMMA_OCR_AUTO`: `on` or `off` (the same spellings), the automatic
-  recognition of a scan uploaded with no text, over the admin's switch
-  (on by default; it acts only where the server recognizes text itself).
-  The backend's `conftest.py` and the browser harness set it `off`, and
-  the tests of the automatic runs turn it on.
-- `GAMMA_OCR_WORKERS`: how many files are recognized at once on the
-  server, and engines kept loaded (about 50 MB each); 1 unless set. A page
-  keeps one core busy for seconds.
+- The automatic recognition of a scan uploaded with no text (`ocr_auto`)
+  and how many files are recognized at once (`ocr_workers`) are server
+  options, set in the same Settings section or by `manage.py set-option`.
+  The backend's `conftest.py` makes `ocr_auto` off by default and the
+  browser harness starts every server with it off; the tests of the
+  automatic runs turn it on (`server_option`, a scenario's `options`).
 - `GAMMA_TESSDATA_DIR`: another models folder (the Docker image's
   `/app/tessdata`, the desktop bundle's).
 - `OMP_THREAD_LIMIT`: set to 1 unless the environment sets it (the Docker
@@ -1833,10 +1833,11 @@ The scenarios live in `tests/e2e/scenarios/`:
   `GAMMA_OCR_ENGINE=window` (the row's title, the `ocr-tab` row done with
   its summary, the file's engine `tesseract.js 7.0.0`, every request to
   that server, the spans over their printed words, Ctrl+F); and on a
-  server with `GAMMA_OCR_AUTO=on` a 40-page picture-only scan recognized by
-  itself (the workspace's job, its row, its summary on the page shown) and
-  Settings → Server → Text recognition held by the environment. The
-  harness sets `GAMMA_OCR_AUTO=off` for every other server.
+  server with the option `ocr_auto` on a 40-page picture-only scan
+  recognized by itself (the workspace's job, its row, its summary on the
+  page shown) and Settings → Server → Text recognition's rows, its
+  automatic switch saved off and on. The harness starts every other
+  server with `ocr_auto` off.
 - `translation.mjs`: a two-column page whose paragraph runs over the column
   break: the request carries one text with `{br}`, the formulas and the
   citation marker as tokens, the page and the section; the reply fills both

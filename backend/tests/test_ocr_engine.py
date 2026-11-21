@@ -17,7 +17,7 @@ import pymupdf
 import pytest
 from ocr_fixtures import PRINTED_TEXT, printed_scan_pdf
 
-from gamma import config, ocr_engine, pdf_ocr, pdf_text
+from gamma import config, ocr_engine, pdf_ocr, pdf_text, server_options, server_settings
 
 TESSDATA = Path(__file__).resolve().parents[1] / "tessdata"
 
@@ -46,33 +46,38 @@ def test_a_page_is_drawn_at_300_dpi_unless_that_is_too_many_pixels():
 
 # --- Whether this server recognizes text ------------------------------------------
 
-def test_the_switch_and_where_it_is_off_by_default(monkeypatch):
-    from gamma import server_settings
-
+def test_the_switch_and_where_it_is_off_by_default(monkeypatch, client, server_option):
     monkeypatch.setattr(server_settings, "demo_mode", lambda: False)
     monkeypatch.delenv("GAMMA_OCR")
     monkeypatch.delenv("GAMMA_HOSTED", raising=False)
-    assert config.ocr_enabled()
+    assert server_options.ocr_enabled()
+    server_option("ocr", False)
+    assert not server_options.ocr_enabled(), "the admin turned it off (Settings → Server → Text recognition)"
+    assert server_options.ocr_rows()["switch"], "and can turn it on again: the models are here"
+    server_option("ocr", True)
     monkeypatch.setattr(server_settings, "demo_mode", lambda: True)
-    assert not config.ocr_enabled(), "a demo server: guests would share its CPU"
+    assert not server_options.ocr_enabled(), "a demo server: guests would share its CPU"
+    assert not server_options.ocr_rows()["switch"], "nor does its admin turn it on"
     monkeypatch.setattr(server_settings, "demo_mode", lambda: False)
     monkeypatch.setenv("GAMMA_HOSTED", "1")
-    assert not config.ocr_enabled(), "a hosted container"
+    assert not server_options.ocr_enabled(), "a hosted container"
     monkeypatch.setenv("GAMMA_OCR", "on")
-    assert config.ocr_enabled(), "said on, it is on"
+    assert server_options.ocr_enabled(), "said on, it is on"
+    assert server_options.ocr_rows()["switch"], "the row shows what the environment says"
     monkeypatch.delenv("GAMMA_HOSTED")
     monkeypatch.setenv("GAMMA_OCR", "off")
-    assert not config.ocr_enabled()
+    assert not server_options.ocr_enabled()
     assert ocr_engine.probe() is None
     assert ocr_engine.check() == "Text recognition is turned off on this server."
 
 
-def test_workers_and_the_models_folder(monkeypatch, tmp_path):
-    monkeypatch.delenv("GAMMA_OCR_WORKERS", raising=False)
-    assert config.ocr_workers() == 1
-    for raw, n in (("3", 3), ("0", 1), ("many", 1)):
-        monkeypatch.setenv("GAMMA_OCR_WORKERS", raw)
-        assert config.ocr_workers() == n
+def test_workers_and_the_models_folder(monkeypatch, tmp_path, client, server_option):
+    assert server_options.get("ocr_workers") == 1
+    server_option("ocr_workers", 3)
+    assert server_options.get("ocr_workers") == 3
+    for bad in (0, 65, "many"):
+        with pytest.raises(ValueError):
+            server_options.check("ocr_workers", bad)
     assert config.tessdata_dir() == TESSDATA
     monkeypatch.setenv("GAMMA_TESSDATA_DIR", str(tmp_path))
     assert config.tessdata_dir() == tmp_path

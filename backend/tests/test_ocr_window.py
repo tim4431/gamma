@@ -261,7 +261,6 @@ def test_a_manual_start_beside_an_automatic_run_that_gave_way_is_a_run_of_its_ow
     promote: the start never gets that ending run back, which would end
     stopped and start again later as an automatic run."""
     monkeypatch.delenv("GAMMA_OCR_ENGINE")
-    monkeypatch.setenv("GAMMA_OCR_WORKERS", "1")
     install(monkeypatch)
     page_id, doc = scan_page(wendy)
     ws, me = workspace_of("ow_wendy"), account_of("ow_wendy")

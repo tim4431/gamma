@@ -58,7 +58,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import config
+from . import config, server_options
 from .db import connect_users_db, format_stamp, page_now
 from .logbuf import log
 
@@ -71,11 +71,12 @@ MAX_ACTIVE_PER_ACCOUNT = 20      # queued + running: past it, starting another i
 # The kinds that run in a lane of their own, each to the limit its function
 # reads when asked: a text recognition (gamma/pdf_ocr.py) keeps a core busy
 # for seconds a page, hours for a book, so the server runs as many at once
-# as GAMMA_OCR_WORKERS says, whoever starts them. A lane's jobs count toward
+# as the ``ocr_workers`` option says (Settings → Server → Text
+# recognition, gamma/server_options.py), whoever starts them. A lane's jobs count toward
 # neither MAX_RUNNING nor an account's running jobs (a long one would hold
 # up its owner's exports, or every account's), but toward its
 # MAX_ACTIVE_PER_ACCOUNT like any.
-KIND_LIMITS = {"ocr": config.ocr_workers}
+KIND_LIMITS = {"ocr": lambda: server_options.get("ocr_workers")}
 # The kinds whose work is done elsewhere, their job only waiting for it and
 # keeping it (``ocr-tab``: a window recognizes a PDF's pages and sends their
 # words, gamma/pdf_ocr.py ``window_run``): they start at once, held by

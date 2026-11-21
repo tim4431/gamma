@@ -17,7 +17,6 @@ from testrun import own_folder, pytest_configure, pytest_enter_pdb, pytest_leave
 # Must happen BEFORE importing gamma — config reads the environment at import.
 os.environ["GAMMA_DATA_DIR"] = own_folder("gamma-test-")
 os.environ["GAMMA_SYNC_INTERVAL"] = "0"  # mirror rounds run only when a test asks
-os.environ["GAMMA_OCR_AUTO"] = "off"  # no scan an upload stores is recognized by itself unless a test turns it on
 for var in ("GAMMA_STATIC_DIR", "GAMMA_AI_ANTHROPIC_API_KEY", "GAMMA_AI_OPENAI_API_KEY",
             "GAMMA_AI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GAMMA_AI_MODELS", "GAMMA_AI_MODEL",
             "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD", "GAMMA_FOLDER_LINKS", "GAMMA_SHELL_SECRET",
@@ -31,8 +30,17 @@ for var in [name for name in os.environ if name.startswith(("GAMMA_S3_", "GAMMA_
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import dataclasses
+
 import pytest
 from fastapi.testclient import TestClient
+
+from gamma import server_options
+
+# No scan an upload stores is recognized by itself unless a test turns it on
+# (server_option("ocr_auto", True)): the option's default, in every data
+# directory a test makes, and what the server_option fixture goes back to.
+server_options.OPTIONS["ocr_auto"] = dataclasses.replace(server_options.OPTIONS["ocr_auto"], default=False)
 
 
 S3_TEST_BUCKET = "gamma-test"

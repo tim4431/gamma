@@ -22,7 +22,7 @@ from test_jobs import Gate
 from test_ocr_api import scan_page, start, upload
 from test_pdf_ocr_run import born_digital
 
-from gamma import jobs, ocr_auto, ocr_engine, pdf_ocr, pdf_text, server_settings, workspaces
+from gamma import jobs, ocr_auto, ocr_engine, pdf_ocr, pdf_text, server_options, workspaces
 from gamma.db import connect_pages_db, connect_users_db, page_now
 
 PW = "oau-pass-12345"
@@ -42,11 +42,11 @@ def admin(client):
 
 
 @pytest.fixture(autouse=True)
-def fake(monkeypatch):
+def fake(monkeypatch, server_option):
     """The switch on, a fake engine; nothing of the queue left from a test
     before, and every file handed to the worker considered before the test
     ends (its jobs then end with it: conftest)."""
-    monkeypatch.setenv("GAMMA_OCR_AUTO", "on")
+    server_option("ocr_auto", True)
     found = install(monkeypatch)
     ocr_auto.reset()
     pdf_text.text_cache_clear()
@@ -144,7 +144,7 @@ def test_which_pdfs_are_scans_with_no_text(tmp_path, monkeypatch):
     assert ocr_auto.qualifies(path_of(joined(layered_scan(), scan(4)))) is None and read == [1]
 
 
-def test_what_an_upload_is_taken_up_by(amy, guest):
+def test_what_an_upload_is_taken_up_by(amy, guest, server_option):
     ws = workspace_of("oau_amy")
     _page, figure = uploaded(amy, joined(born_digital(), born_digital(), born_digital(), picture_pdf()))
     _page, layered = uploaded(amy, layered_scan())
@@ -161,10 +161,9 @@ def test_what_an_upload_is_taken_up_by(amy, guest):
     _page, by_hand = scan_page(amy, scan())
     assert automatic(ws, by_hand) is None and ocr_auto.marker(ws, by_hand) is None
     # the switch off: nothing considered
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setenv("GAMMA_OCR_AUTO", "off")
-        _page, off = uploaded(amy, scan())
-        assert automatic(ws, off) is None and ocr_auto.marker(ws, off) is None
+    server_option("ocr_auto", False)
+    _page, off = uploaded(amy, scan())
+    assert automatic(ws, off) is None and ocr_auto.marker(ws, off) is None
 
 
 def test_the_routes_that_make_a_page_of_an_upload_hand_it_over(amy, monkeypatch):
@@ -314,7 +313,6 @@ def test_a_run_a_workspace_delete_stopped_waits_for_its_turn_again(amy, fake, mo
 
 
 def test_an_automatic_run_stopped_while_it_waits_is_declined(amy, monkeypatch):
-    monkeypatch.setenv("GAMMA_OCR_WORKERS", "1")
     ws, me = workspace_of("oau_amy"), account_of("oau_amy")
     _page, doc = scan_page(amy, scan(1))
     pdf_ocr.set_scanned(ws, doc, 1, 1, {1: "picture"})
@@ -375,37 +373,29 @@ def test_a_failed_metadata_lookup_is_cleared_once_the_text_is_recognized(amy, fa
     assert (actor, client) == (me, "ocr"), "written under the uploader"
 
 
-def test_the_switch_and_where_it_comes_from(admin, anon, monkeypatch):
-    def unsaved():
-        with connect_users_db() as conn:
-            conn.execute("DELETE FROM settings WHERE key = 'ocr_auto'")
-            conn.commit()
-
-    monkeypatch.delenv("GAMMA_OCR_AUTO")
-    unsaved()
-    try:
-        got = admin.get("/api/admin/settings").json()
-        assert (got["ocr_auto"], got["ocr_auto_source"], got["ocr_auto_available"]) == (True, "default", True)
-        assert anon.get("/api/server-config").json()["ocr"]["auto"] is True
-        r = admin.put("/api/admin/settings", json={"ocr_auto": False})
-        assert r.status_code == 200, r.text
-        assert (r.json()["ocr_auto"], r.json()["ocr_auto_source"]) == (False, "saved")
-        assert anon.get("/api/server-config").json()["ocr"]["auto"] is False and not ocr_auto.enabled()
-        assert admin.put("/api/admin/settings", json={"ocr_auto": True}).json()["ocr_auto"] is True
-        assert server_settings.ocr_auto_settings() == {"ocr_auto": True, "ocr_auto_source": "saved"}
-        monkeypatch.setenv("GAMMA_OCR_AUTO", "off")
-        got = admin.get("/api/admin/settings").json()
-        assert (got["ocr_auto"], got["ocr_auto_source"]) == (False, "environment")
-        refused = admin.put("/api/admin/settings", json={"ocr_auto": True})
-        assert refused.status_code == 400 and "GAMMA_OCR_AUTO" in refused.json()["detail"]
-        monkeypatch.setenv("GAMMA_OCR_AUTO", "on")
-        assert server_settings.ocr_auto_settings() == {"ocr_auto": True, "ocr_auto_source": "environment"}
-        # a server whose pages are read in the window: nothing would run by itself, whatever the switch says
-        monkeypatch.setattr(ocr_engine, "capability", lambda: {"where": "window", "engine": "e", "langs": [],
-                                                                "models": "/m"})
-        got = admin.get("/api/admin/settings").json()
-        assert (got["ocr_auto"], got["ocr_auto_available"]) == (True, False)
-        assert anon.get("/api/server-config").json()["ocr"]["auto"] is False and not ocr_auto.enabled()
-        assert anon.get("/api/admin/settings").status_code == 401
-    finally:
-        unsaved()
+def test_the_switch_is_a_server_option(admin, anon, monkeypatch):
+    """Settings → Server → Text recognition: the automatic recognition's
+    switch is the server option ``ocr_auto`` (on by default; the suite
+    starts with it off, conftest), and it acts only where the server
+    recognizes text itself."""
+    assert server_options.OPTIONS["ocr_auto"].default is False, "the suite's default (conftest)"
+    r = admin.put("/api/admin/settings", json={"options": {"ocr_auto": False}})
+    assert r.status_code == 200, r.text
+    got = r.json()["options"]
+    assert (got["ocr_auto"], got["text_recognition"]["server"]) == (False, True)
+    assert anon.get("/api/server-config").json()["ocr"]["auto"] is False and not ocr_auto.enabled()
+    got = admin.put("/api/admin/settings", json={"options": {"ocr_auto": True}}).json()["options"]
+    assert got["ocr_auto"] is True and ocr_auto.enabled()
+    assert anon.get("/api/server-config").json()["ocr"]["auto"] is True
+    # recognition itself: the admin's too, unless GAMMA_OCR decides (the row read-only)
+    monkeypatch.setenv("GAMMA_OCR", "on")
+    assert admin.get("/api/admin/settings").json()["options"]["ocr_env"] is True
+    refused = admin.put("/api/admin/settings", json={"options": {"ocr": False}})
+    assert refused.status_code == 400 and "GAMMA_OCR" in refused.json()["detail"]
+    # a server whose pages are read in the window: nothing would run by itself, whatever the switch says
+    monkeypatch.setattr(ocr_engine, "capability", lambda: {"where": "window", "engine": "e", "langs": [],
+                                                            "models": "/m"})
+    got = admin.get("/api/admin/settings").json()["options"]
+    assert (got["ocr_auto"], got["text_recognition"]["server"]) == (True, False)
+    assert anon.get("/api/server-config").json()["ocr"]["auto"] is False and not ocr_auto.enabled()
+    assert anon.get("/api/admin/settings").status_code == 401

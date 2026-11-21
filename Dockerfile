@@ -42,10 +42,10 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ARG GAMMA_VERSION=""
 ARG GAMMA_BRANCH=""
 ARG GAMMA_COMMIT=""
-# OMP_THREAD_LIMIT: one thread per recognized page; the OCR lane
-# (GAMMA_OCR_WORKERS) decides how many pages are read at once, and a
-# Tesseract built with OpenMP would otherwise start a thread a core, which
-# measured slower (docs/research/ocr.md).
+# OMP_THREAD_LIMIT: one thread per recognized page; the OCR lane (Settings →
+# Server → Text recognition: files recognized at once) decides how many pages
+# are read at once, and a Tesseract built with OpenMP would otherwise start a
+# thread a core, which measured slower (docs/research/ocr.md).
 ENV GAMMA_DATA_DIR=/data \
     GAMMA_STATIC_DIR=/app/static \
     GAMMA_TESSDATA_DIR=/app/tessdata \

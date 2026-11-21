@@ -43,7 +43,6 @@ def _ended(job_id):
 
 def test_an_ocr_lane_runs_one_and_an_export_still_starts(owners, monkeypatch):
     alice, bob = owners
-    monkeypatch.setenv("GAMMA_OCR_WORKERS", "1")
     monkeypatch.setattr(jobs, "MAX_RUNNING_PER_ACCOUNT", 1)
     first, second, export = Gate(result={"n": 1}), Gate(result={"n": 2}), Gate(result={"n": 3})
     a = _start(alice, first, key="w:a")
@@ -63,9 +62,9 @@ def test_an_ocr_lane_runs_one_and_an_export_still_starts(owners, monkeypatch):
     assert _ended(b["id"])["result"] == {"n": 2} and _ended(c["id"])["result"] == {"n": 3}
 
 
-def test_the_lane_takes_as_many_as_it_is_set_to(owners, monkeypatch):
+def test_the_lane_takes_as_many_as_it_is_set_to(owners, server_option):
     alice, bob = owners
-    monkeypatch.setenv("GAMMA_OCR_WORKERS", "2")
+    server_option("ocr_workers", 2)
     gates = [Gate(), Gate(), Gate()]
     started = [_start(owner, gate, key=f"w:{n}") for n, (owner, gate) in enumerate(zip((alice, bob, alice), gates))]
     assert gates[0].started.wait(10) and gates[1].started.wait(10)
@@ -178,7 +177,6 @@ class _Pages:
 
 def test_a_job_that_yields_gives_way_to_one_asked_for(owners, monkeypatch):
     alice, _bob = owners
-    monkeypatch.setenv("GAMMA_OCR_WORKERS", "1")
     told, auto = [], _Pages()
     a = _start(jobs.WORKSPACE, auto, key="w:auto", yields=True, ended=told.append)
     assert auto.started.wait(10)
@@ -193,7 +191,6 @@ def test_a_job_that_yields_gives_way_to_one_asked_for(owners, monkeypatch):
 
 def test_a_lane_starts_the_jobs_asked_for_first(owners, monkeypatch):
     alice, _bob = owners
-    monkeypatch.setenv("GAMMA_OCR_WORKERS", "1")
     first = Gate()
     holder = _start(alice, first, key="w:first")
     assert first.started.wait(10)
@@ -211,7 +208,6 @@ def test_a_lane_starts_the_jobs_asked_for_first(owners, monkeypatch):
 
 def test_a_promoted_job_no_longer_gives_way(owners, monkeypatch):
     alice, _bob = owners
-    monkeypatch.setenv("GAMMA_OCR_WORKERS", "1")
     told, auto = [], Gate(result={"auto": True})
     a = _start(jobs.WORKSPACE, auto, key="w:promoted", yields=True, ended=told.append)
     assert auto.started.wait(10)
@@ -229,7 +225,6 @@ def test_a_promoted_job_no_longer_gives_way(owners, monkeypatch):
 
 def test_a_stop_of_the_job_that_waited_withdraws_the_give_way(owners, monkeypatch):
     alice, _bob = owners
-    monkeypatch.setenv("GAMMA_OCR_WORKERS", "1")
     told, auto = [], Gate(result={"auto": True})
     a = _start(jobs.WORKSPACE, auto, key="w:withdrawn", yields=True, ended=told.append)
     assert auto.started.wait(10)
@@ -243,7 +238,6 @@ def test_a_stop_of_the_job_that_waited_withdraws_the_give_way(owners, monkeypatc
 
 def test_a_job_that_gave_way_is_promoted_no_more_and_a_start_beside_it_is_its_own(owners, monkeypatch):
     alice, _bob = owners
-    monkeypatch.setenv("GAMMA_OCR_WORKERS", "1")
     told, ending, hold = [], threading.Event(), threading.Event()
 
     def run(job):  # reports until it gives way, then holds while it ends
@@ -276,7 +270,6 @@ def test_a_job_that_gave_way_is_promoted_no_more_and_a_start_beside_it_is_its_ow
 
 def test_a_job_stopped_while_it_waits_tells_its_end_hook(owners, monkeypatch):
     alice, _bob = owners
-    monkeypatch.setenv("GAMMA_OCR_WORKERS", "1")
     first = Gate()
     holder = _start(alice, first, key="w:holds")
     assert first.started.wait(10)
@@ -294,7 +287,6 @@ def test_a_job_stopped_while_it_waits_tells_its_end_hook(owners, monkeypatch):
 
 def test_a_job_past_its_last_stop_does_not_give_way(owners, monkeypatch):
     alice, _bob = owners
-    monkeypatch.setenv("GAMMA_OCR_WORKERS", "1")
     auto = Gate(result={"applied": True}, stoppable=False)
     a = _start(jobs.WORKSPACE, auto, key="w:applying", yields=True)
     assert auto.started.wait(10)

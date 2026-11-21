@@ -603,7 +603,7 @@ English, French and German are loaded together (`eng+fra+deu`) from
   order (`PSM.AUTO`), each word with its pixel box and confidence: `[]`
   for a page with no words; None for one that failed, ran past 120 s, or
   read more than 20,000 words or a word longer than 200 characters. The
-  engines come from a pool of at most `config.ocr_workers()`, each lent to
+  engines come from a pool of at most the `ocr_workers` option, each lent to
   one page at a time, about 50 MB each. Recognition releases the GIL.
 - On Windows a models folder whose path is not ASCII (a user name with an
   accent) opens only with the C runtime reading file names as UTF-8, so
@@ -735,8 +735,8 @@ server and finished in a window reads both.
 **Automatic runs** (`gamma/ocr_auto.py`). A PDF uploaded whose pages are
 all pictures, with no text to select or search, is recognized by itself,
 on a server whose capability is `server` and whose switch is on
-(`ocr_auto`, Settings → Server → Text recognition, on by default;
-`GAMMA_OCR_AUTO` overrides it). The routes that make a library page of a
+(the server option `ocr_auto`, Settings → Server → Text recognition, on
+by default). The routes that make a library page of a
 person's upload call `consider`: `POST /api/blocks/by-doc` when it made
 the page, `/api/clip` for a new page, `POST /api/pages/by-file` for a new
 PDF page, Add to library and Save a copy to library. It hands the file to
@@ -852,14 +852,16 @@ words are read 32 pages at a time.
   reads both files that way for a highlight measured on a file whose text
   was not recognized.
 
-**Settings** ([debugging.md](debugging.md#text-recognition)). `GAMMA_OCR`
-turns recognition on or off; unset, it is off on a hosted container and in
-demo mode, where a book's hours of CPU would take what every account
-shares. `GAMMA_OCR_WORKERS` (default 1) is how many files are recognized
-at once on the server, and `GAMMA_TESSDATA_DIR` where the models are.
-`GAMMA_OCR_ENGINE=window` leaves every reading to the window on a server
-that has the engine, for tests and development. `GAMMA_OCR_AUTO` (`on` or
-`off`) decides the automatic runs' switch. The apps carry the models
+**Settings** (Server → Text recognition, [settings.md](settings.md);
+[debugging.md](debugging.md#text-recognition)). Three server options
+(`gamma/server_options.py`): `ocr` turns recognition on or off
+(`server_options.ocr_enabled`: `GAMMA_OCR` overrides it, and unset that,
+recognition is off on a hosted container and in demo mode, where a book's
+hours of CPU would take what every account shares), `ocr_auto` is the
+automatic runs' switch, and `ocr_workers` (default 1) how many files are
+recognized at once on the server. `GAMMA_TESSDATA_DIR` says where the
+models are, and `GAMMA_OCR_ENGINE=window` leaves every reading to the
+window on a server that has the engine, for tests and development. The apps carry the models
 beside their `gamma/` package and serve them to the window
 ([android.md](android.md#what-runs), [ipad.md](ipad.md#what-runs)).
 

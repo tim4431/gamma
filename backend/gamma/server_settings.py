@@ -32,8 +32,7 @@ derived from it ([mcp.md](../../docs/dev/mcp.md)), and the guest settings
 (`guest_logins`, whether this server takes guest logins at all;
 `guest_ttl_hours`, how long a guest account lives, `GAMMA_GUEST_TTL_HOURS`
 overriding it; `demo_mode`, `GAMMA_DEMO` overriding it —
-docs/dev/guests.md), and the switch of the automatic text recognition
-(`ocr_auto`, `GAMMA_OCR_AUTO` overriding it: gamma/ocr_auto.py). Other modules keep their
+docs/dev/guests.md). Other modules keep their
 server-wide values in the same KV through ``_get_raw``/``_set_raw``: the
 cloud sign-in (`cloud_*`, gamma/cloud_auth.py), the shared AI providers
 (`ai_providers`, gamma/ai_settings.py), and the off-site copies (`offsite`,
@@ -42,7 +41,6 @@ which read theirs with ``_peek_raw``, on a connection of their own.
 """
 
 import ipaddress
-import os
 import re
 import socket
 import sqlite3
@@ -312,39 +310,6 @@ def guest_settings() -> dict:
     """The admin Settings rows: the guest sign-in switch, the guest lifetime
     and demo mode, each with its source."""
     return {**guest_logins_settings(), **guest_ttl_settings(), **demo_settings()}
-
-
-_ON, _OFF = ("1", "true", "yes", "on"), ("0", "false", "no", "off")
-
-
-def _ocr_auto_override() -> bool | None:
-    """``GAMMA_OCR_AUTO``: True or False when it says on or off (1/true/yes/on,
-    0/false/no/off), None when it is unset or says neither. Read when asked,
-    so a test can turn it either way."""
-    raw = os.environ.get("GAMMA_OCR_AUTO", "").strip().lower()
-    return True if raw in _ON else False if raw in _OFF else None
-
-
-def ocr_auto_settings() -> dict:
-    """``{ocr_auto, ocr_auto_source}``: the admin's switch for recognizing
-    the text of a scan uploaded with no text by itself (Settings → Server →
-    Text recognition, gamma/ocr_auto.py): ``GAMMA_OCR_AUTO`` when it says on
-    or off ("environment"), else the saved switch ("saved" once an admin set
-    it either way), else on ("default"). Whether this server can do it at
-    all (it recognizes text itself) is ``ocr_auto.available``, and no switch
-    turns that on. The environment is read first: a server it turns off
-    reads no users.db for it."""
-    found = _ocr_auto_override()
-    if found is not None:
-        return {"ocr_auto": found, "ocr_auto_source": "environment"}
-    saved = _get_raw("ocr_auto")
-    return {"ocr_auto": saved != "0", "ocr_auto_source": "saved" if saved else "default"}
-
-
-def set_ocr_auto(on: bool) -> None:
-    if _ocr_auto_override() is not None:
-        raise ValueError("Automatic text recognition is set by GAMMA_OCR_AUTO on this server.")
-    _set_raw("ocr_auto", "1" if on else "0")
 
 
 def _plan_caps(conn) -> dict:

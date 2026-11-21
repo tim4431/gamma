@@ -32,8 +32,8 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, gdrive, gdrive_account, guests,
-                hosted, integrity, jobs, ocr_auto, offsite, proxy_settings, server_options, snapshot_copies, workspaces,
-                zotero_oauth)
+                hosted, integrity, jobs, ocr_auto, ocr_engine, offsite, proxy_settings, server_options, snapshot_copies,
+                workspaces, zotero_oauth)
 from ..backup_store import StoreConfigError
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
@@ -52,12 +52,10 @@ from ..server_settings import (
     check_within_plan,
     get_defaults,
     guest_settings,
-    ocr_auto_settings,
     public_url_settings,
     set_demo_mode,
     set_guest_logins,
     set_guest_ttl_hours,
-    set_ocr_auto,
     validate_guest_ttl_hours,
     set_public_url,
     confirmable_public_url,
@@ -130,15 +128,14 @@ async def get_logs(request: Request, after: int = 0):
 @router.get("/settings")
 def get_settings(request: Request):
     """The server-wide default storage quota (per-user overrides live on
-    the users list), the public URL, the cloud sign-in, the guest settings
+    the users list), the public URL, the cloud sign-in and the guest settings
     (the sign-in switch, the lifetime and demo mode — each with its source —
-    and ``guest_logins_available``) and the automatic text recognition's
-    (``_ocr_auto``) for the admin rows in the Settings dialog, the server
-    options (``options``: ``server_options.view``); on a hosted container
-    ``hosted`` (``hosted.pane``: the plan's limits, the Plan rows), else
-    null."""
+    and ``guest_logins_available``) for the admin rows in the Settings
+    dialog, the server options (``options``: ``server_options.view``); on a
+    hosted container ``hosted`` (``hosted.pane``: the plan's limits, the
+    Plan rows), else null."""
     require_admin(request)
-    return {**get_defaults(), **public_url_settings(), **_guests(), **_ocr_auto(), "cloud": _cloud(),
+    return {**get_defaults(), **public_url_settings(), **_guests(), "cloud": _cloud(),
             "hosted": hosted.pane(), "options": server_options.view(),
             "quota_mb_range": [QUOTA_MB_MIN, QUOTA_MB_MAX],
             "guest_ttl_hours_range": [GUEST_TTL_MIN, GUEST_TTL_MAX]}
@@ -161,9 +158,6 @@ class SettingsUpdateRequest(BaseModel):
     # The server options (gamma/server_options.py), {name: value}; a secret
     # left out is kept, "" removes it.
     options: dict | None = None
-    # Scans uploaded with no text recognized by themselves (gamma/ocr_auto.py):
-    # refused (400) while GAMMA_OCR_AUTO decides.
-    ocr_auto: bool | None = None
 
 
 @router.put("/settings")
@@ -185,8 +179,6 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
             raise ValueError("This server takes no guest logins.")
         if payload.options:
             server_options.check_admin_change(payload.options)
-        if payload.ocr_auto is not None and ocr_auto_settings()["ocr_auto_source"] == "environment":
-            raise ValueError("Automatic text recognition is set by GAMMA_OCR_AUTO on this server.")
         if payload.public_url is not None:
             set_public_url(payload.public_url)
         if payload.quota_mb is not None:
@@ -199,8 +191,6 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
             set_demo_mode(payload.demo_mode)
         if payload.options:
             server_options.update(payload.options)
-        if payload.ocr_auto is not None:
-            set_ocr_auto(payload.ocr_auto)
         if any(v is not None for v in (payload.cloud_issuer, payload.cloud_client_id, payload.cloud_client_secret,
                                        payload.cloud_policy, payload.cloud_share_host)):
             cloud_auth.save_settings(issuer=payload.cloud_issuer, client_id=payload.cloud_client_id,
@@ -208,9 +198,9 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
                                      share_host=payload.cloud_share_host)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    if payload.ocr_auto:
-        ocr_auto.resume()  # the files left waiting while it was off start now
-    return {**get_defaults(), **public_url_settings(), **_guests(), **_ocr_auto(), "cloud": _cloud(),
+    if payload.options and ({"ocr", "ocr_auto"} & set(payload.options)):
+        _text_recognition_on(payload.options)
+    return {**get_defaults(), **public_url_settings(), **_guests(), "cloud": _cloud(),
             "hosted": hosted.pane(), "options": server_options.view()}
 
 
@@ -238,13 +228,15 @@ def _guests() -> dict:
             "guest_logins_available": guests.logins_possible()}
 
 
-def _ocr_auto() -> dict:
-    """The automatic text recognition's row (gamma/ocr_auto.py): the switch
-    with its source (``ocr_auto``, ``ocr_auto_source``), and
-    ``ocr_auto_available``, false where nothing would run whatever the
-    switch says (a server that does not recognize text itself: turned off,
-    a hosted container, a demo, the apps), so the pane leaves the row out."""
-    return {**ocr_auto_settings(), "ocr_auto_available": ocr_auto.available()}
+def _text_recognition_on(changes: dict) -> None:
+    """After an admin's save of the text recognition's options: recognition
+    on, it checks its engine (ocr_engine ``start_check``, which the startup
+    skips while it is off), and the files the automatic recognition left
+    waiting start (ocr_auto ``resume``) once it may run."""
+    if "ocr" in changes and server_options.ocr_enabled():
+        ocr_engine.start_check()
+    if ocr_auto.enabled():
+        ocr_auto.resume()
 
 
 def _cloud() -> dict:

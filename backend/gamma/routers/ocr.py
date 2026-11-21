@@ -37,7 +37,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from .. import config, jobs, ocr_auto, ocr_engine, pdf_ocr, pdf_text, ratelimit
+from .. import jobs, ocr_auto, ocr_engine, pdf_ocr, pdf_text, ratelimit, server_options
 from ..auth import read_body, require_personal_user_id, require_user_id, require_ws, resolve_ws, share_scope
 from ..blocks_store import load_props
 from ..db import connect_pages_db
@@ -156,7 +156,7 @@ def busy_job(busy: jobs.Busy, user_id: str, kind: str) -> dict | None:
 def _unavailable() -> HTTPException:
     """The 503 of a server where no text is recognized at all
     (``capability`` None): turned off, or its models missing."""
-    reason = ocr_engine.NO_MODELS if config.ocr_enabled() else ocr_engine.TURNED_OFF
+    reason = ocr_engine.NO_MODELS if server_options.ocr_enabled() else ocr_engine.TURNED_OFF
     return HTTPException(status_code=503, detail=reason)
 
 
