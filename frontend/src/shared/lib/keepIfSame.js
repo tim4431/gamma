@@ -21,6 +21,13 @@ export function sameObject(a, b, same = (x, y) => x === y) {
   return keys.length === Object.keys(b).length && keys.every((k) => same(a[k], b[k]));
 }
 
+// Two lists of the same items in order, each the same object or reading as
+// the same JSON: keepIfSameJson's answer, for a list whose unchanged items
+// keep their identity (blockModel.js blocksToHighlights), at the cost of
+// serializing only the items that were rebuilt.
+export const sameItems = (a, b) =>
+  a.length === b.length && a.every((x, i) => x === b[i] || JSON.stringify(x) === JSON.stringify(b[i]));
+
 // `prevRef.current.value` while `next` reads as the same JSON, else `next`:
 // for a derived list of rebuilt objects, where only their text tells two
 // apart. The ref holds `{json, value}` and starts as `{json: "", value: []}`.

@@ -1,13 +1,13 @@
 // node --test tests/treeDerived.test.mjs (from frontend/) — what App derives
 // from the open page's tree on each change (app/treeDerived.js), and the
-// JSON keep its memos hold the lists by (shared/lib/keepIfSame.js
-// keepIfSameJson).
+// keeps its memos hold the lists by (shared/lib/keepIfSame.js
+// keepIfSameJson, sameItems).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { blocksById, commentAnchors, pageHighlights, recordingList, sheetNumbersOf, stampedList } from "../src/app/treeDerived.js";
 import { sheetsOf } from "../src/notebook/notebook.js";
-import { keepIfSameJson } from "../src/shared/lib/keepIfSame.js";
-import { flattenBlocks } from "../src/shared/model/blockModel.js";
+import { keepIfSame, keepIfSameJson, sameItems } from "../src/shared/lib/keepIfSame.js";
+import { flattenBlocks, updateBlockTree } from "../src/shared/model/blockModel.js";
 
 const at = (page) => ({ pageNumber: page, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4, width: 612, height: 792, pageNumber: page }, rects: [] });
 const rec = { started: 1000, state: "done", segments: [{ url: "/api/uploads/r.webm", started: 1000, dur: 5000 }] };
@@ -47,6 +47,33 @@ test("pageHighlights: the viewer's highlights with their open threads counted an
   assert.deepEqual(out[1].linkTarget, { url: "https://example.org", pageId: "", blockId: "b9" });
 });
 
+test("pageHighlights keeps an item while its block and its count do, and sameItems the list while it reads the same", () => {
+  const counts = new Map([["h1", 2]]);
+  const key = (blocks, id, content) => updateBlockTree(blocks, id, (b) => ({ ...b, content: content ?? `${b.content}x` }));
+  const ref = { current: null };
+  const first = keepIfSame(ref, pageHighlights(tree, flat, counts), sameItems);
+  // a key in a note no highlight holds: only the path to it is copied
+  const elsewhere = key(tree, "f1");
+  const again = pageHighlights(elsewhere, flattenBlocks(elsewhere), counts);
+  assert.ok(again !== first && again.every((h, i) => h === first[i]), "no item rebuilt");
+  assert.equal(keepIfSame(ref, again, sameItems), first);
+  // a key in h1's child note copies h1, whose item is rebuilt and reads the same: the list is kept
+  const under = key(tree, "n1");
+  const rebuilt = pageHighlights(under, flattenBlocks(under), counts);
+  assert.notEqual(rebuilt[0], first[0]);
+  assert.equal(keepIfSame(ref, rebuilt, sameItems), first);
+  // h1's own note changes what its item reads: the next list
+  const commented = key(tree, "h1", "a comment");
+  const next = pageHighlights(commented, flattenBlocks(commented), counts);
+  assert.equal(keepIfSame(ref, next, sameItems), next);
+  assert.equal(next[0].note, "a comment");
+  assert.equal(next[1], first[1]);
+  // a thread opened on l1: its item alone is new
+  const counted = pageHighlights(elsewhere, flattenBlocks(elsewhere), new Map([["h1", 2], ["l1", 1]]));
+  assert.equal(counted[0], first[0]);
+  assert.deepEqual([counted[1] !== first[1], counted[1].threadCount, !!counted[1].linkTarget], [true, 1, true]);
+});
+
 test("commentAnchors: the highlights and the ink groups on PDF pages, in document order, with their open threads", () => {
   const box = (page) => ({ pageNumber: page, width: 612, height: 792, boundingRect: { x1: 10, y1: 20, x2: 30, y2: 40 }, rects: [{ x1: 10, y1: 20, x2: 30, y2: 40 }] });
   const inked = [
@@ -80,6 +107,9 @@ test("pageHighlights and commentAnchors under the image key: a picture's regions
   const out = pageHighlights(picture, flatPicture, new Map([["r1", 1]]), "image_position", "i1");
   assert.deepEqual(out.map((h) => [h.id, h.threadCount, h.hasNote, h.position.area, h.position.onVersion]),
     [["r1", 1, true, true, true], ["r0", undefined, false, true, false]]);
+  const onI0 = pageHighlights(picture, flatPicture, new Map([["r1", 1]]), "image_position", "i0");
+  assert.deepEqual(onI0.map((h) => h.position.onVersion), [false, true], "another version: items of its own");
+  assert.equal(pageHighlights(picture, flatPicture, new Map([["r1", 1]]), "image_position", "i1")[0], out[0], "each version's kept");
   assert.deepEqual(pageHighlights(picture, flatPicture, new Map()).map((h) => h.id), ["h1"], "the PDF key: the PDF's alone");
   const anchors = commentAnchors(picture, new Map([["r0", 2]]), "image_position");
   assert.deepEqual(anchors.map((a) => [a.id, a.kind, a.threadCount]), [["r1", "highlight", 0], ["r0", "highlight", 2]]);
