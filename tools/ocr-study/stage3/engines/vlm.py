@@ -110,7 +110,8 @@ def free_port(start: int = 9100) -> int:
 
 
 class Server:
-    def __init__(self, model: str, device: str, threads: int | None, port: int, ctx: int, log: Path, special: bool = False):
+    def __init__(self, model: str, device: str, threads: int | None, port: int, ctx: int, log: Path, special: bool = False,
+                 extra: list[str] | None = None):
         spec = MODELS[model]
         self.port = port
         args = [
@@ -132,6 +133,7 @@ class Server:
             args += ["-t", str(threads), "-tb", str(threads)]
         if special:
             args += ["--special"]  # print special tokens (Granite-Docling's DocTags element tags are special tokens)
+        args += list(extra or [])
         self.args = args
         log.parent.mkdir(parents=True, exist_ok=True)
         self.logf = open(log, "w", encoding="utf-8", errors="replace")

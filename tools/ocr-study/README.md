@@ -41,6 +41,9 @@ from them.
 | `stage2/gtprep/gt_A/`, `gt_B/` | the two transcription passes |
 | `stage2/gtprep/<page>/diff.txt`, `diff/<n>.png` | `diff_gt.py` |
 | `stage2/gt/<page>.txt` | the settled truth |
+| `stage2/vlm_raw/<engine>/<page>.json` | `stage3/engines/pageocr.py` (`run_pageocr_gpu.sh`): the small models' page OCR, raw |
+| `stage2/vlm_timing/_run_<engine>-<device>.json`, `<engine>-t<threads>-<page>.json` | `stage3/engines/pageocr.py`: each run's summary; the CPU timings of `run_pageocr_cpu.sh` |
+| `stage2/out/vlm-<engine>/<page>.json` | `stage3/flatten_vlm.py`: the page OCR as Stage 2 engine output |
 | `stage3/pages.json`, `stage3/img/<page>.png` | `render_pages.py`: the 300-dpi grey pages |
 | `stage3/lines/<page>.json` | `tess_lines.py`: Tesseract's lines and words |
 | `stage3/grid/<page>/<tile>.png`, `grid/index.json` | `make_grid_tiles.py` (`tiles/<page>/` from `make_tiles.py`) |
@@ -176,7 +179,8 @@ Setup, beyond the corpus:
 - llama.cpp b12359's Windows binaries (CPU, and CUDA 12.4 with its cudart),
   fetched by `engines/tools/fetch_vlm.sh` and unpacked into
   `dl/llamacpp-cpu-b12359/bin` and `dl/llamacpp-cuda12-b12359/bin`.
-- A CUDA GPU is optional: only `run_gpu.sh` needs one.
+- A CUDA GPU is optional: only `run_gpu.sh` and
+  `engines/tools/run_pageocr_gpu.sh` need one.
 
 The marks, both transcription passes, the settled truth, the synthetic set
 (private: its papers are under no Creative Commons licence, see
@@ -249,3 +253,29 @@ From `stage3/`, with the plain Python unless an engine is named:
     dots.ocr on the CPU on one thread and the default. Meanwhile `mem_sampler.ps1` (Windows PowerShell)
     keeps each engine process's peak working set in `timing/peaks.json`, in
     MiB.
+14. Page OCR with the small models, on Stage 2's 15 pages (`stage2/img/`,
+    rendered by Stage 2's `render.py`): `bash
+    engines/tools/run_pageocr_gpu.sh` runs each engine of
+    `engines/pageocr.py` on the GPU into `stage2/vlm_raw/<engine>/`. The
+    whole-page engines (`glm-page`, `paddle-page`, `lighton-page`,
+    `granite-page`, `dots-ocr-page`, `dots-layout`) send the page with the
+    model's page prompt; `glm-regions` and `paddle-regions` cut the page into
+    PP-DocLayoutV3 regions and read each one. Each run warms up on a smoke
+    crop (`engines/crops/smoke/`, from `engines/tools/make_smoke_crops.py`).
+    `python -I engines/tools/pageocr_summary.py` lists seconds, tokens,
+    capped pages and odd answers per engine.
+15. `python -I flatten_vlm.py [engine ...]` turns the models' Markdown, HTML,
+    DocTags and LaTeX into the truth's plain text, as Stage 2 engine output in
+    `stage2/out/vlm-<engine>/`. `python -I test_flatten.py` checks it.
+16. From `stage2/`, `python -I score.py --engines
+    vlm-paddle-regions,vlm-lighton-page,vlm-glm-regions,vlm-paddle-page,vlm-glm-page,vlm-granite-page,vlm-dots-ocr-page,vlm-dots-layout`
+    scores them like the other Stage 2 engines.
+17. `python -I cpu_estimate.py` estimates the CPU seconds per page on the
+    default threads and on one: the models' prefill and decode rates and
+    request overhead from the CPU crop timings (`timing/rec*/`, `rec/`),
+    applied to the GPU page runs' token counts, plus the detector's time for
+    the region engines.
+18. `bash engines/tools/run_pageocr_cpu.sh`, on an otherwise idle machine,
+    measures the CPU page OCR instead: a fresh llama-server per page, on
+    lounis-p2 and holstein-p2 with the default threads and lounis-p2 on one,
+    with each server's peak working set, into `stage2/vlm_timing/`.

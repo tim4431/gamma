@@ -14,7 +14,8 @@ In this folder:
 |---|---|
 | `common.py` | paths (through `../common.py`), ONNX Runtime thread control, helpers |
 | `detect.py`, `recognize.py`, `vlm.py` | the runners |
-| `tools\` | download lists (`fetch*.sh`, sha256-checked), crop cutter, conversion checks, `shrink_layout.py` / `shrink_fp16.py`, `summarize.py`, `smoke_rest.sh` |
+| `pageocr.py` | page OCR on Stage 2's 15 pages with the llama.cpp models: whole pages, or PP-DocLayoutV3 regions read one by one (into `$OCR_STUDY_DIR\stage2\vlm_raw`, `--timing-out` for CPU timings with the peak working set) |
+| `tools\` | download lists (`fetch*.sh`, sha256-checked), crop cutter, conversion checks, `shrink_layout.py` / `shrink_fp16.py`, `summarize.py`, `smoke_rest.sh`; for `pageocr.py`, `run_pageocr_gpu.sh` (every engine on the GPU), `run_pageocr_cpu.sh` (CPU timings on an idle machine) and `pageocr_summary.py` (seconds, tokens, caps and odd answers per engine) |
 
 In the work folder `$E`:
 
