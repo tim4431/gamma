@@ -233,6 +233,7 @@ export const RULES = [
   // Settings → Chat's skills sections, whose writes reach the chat's "/" menu
   ["frontend/src/settings/SettingsSkills.jsx", ["settings", "chat-skills", "i18n"]],
   // ipad: Apple Pencil, under its host; android: the Stylus section and the server inside the app (SettingsServer.jsx)
+  ["frontend/src/settings/SettingsTextRecognition.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link", "scan-layer"]],
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link"]],
   // the sync pill and its popover, the conflict cards: a clone's, a publication's, a Zotero link's
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish", "zotero-link"]],
@@ -299,7 +300,7 @@ export const RULES = [
   ["frontend/src/transfers/importReview.js", [...EXPORTS, "sub-pages"]],
   ["frontend/src/transfers/ImportTree.jsx", [...EXPORTS, "sub-pages"]],
   ["frontend/src/transfers/**", EXPORTS],
-  ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad", "android", "remote-chat", "remote-asks"]], // the Background tasks tray and its store; android: a job's file saved through the app; remote-chat: a turn on another computer; remote-asks: one that waits there for an answer
+  ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad", "android", "remote-chat", "remote-asks", "scan-layer"]], // the Background tasks tray and its store; android: a job's file saved through the app; remote-chat: a turn on another computer; remote-asks: one that waits there for an answer; scan-layer: the recognition's rows
   ["frontend/src/support/**", ["settings"]],
   ["frontend/src/auth/StandbyPage.jsx", ["standby"]], // the page a server shows while it cannot open its library
   ["frontend/src/auth/**", ["auth", "cloud-sign-in", "publish", "ipad", "standby"]], // ipad: the sign-in page's Server link
@@ -414,7 +415,7 @@ export const RULES = [
   ["backend/gamma/routers/sync.py", ["mirror", "publish", "remote-work", "remote-asks"]], // remote-asks: whoami's computer_asks
   ["backend/gamma/routers/mirrors.py", ["mirror", "publish"]],
   ["backend/gamma/cloud_*.py", ["cloud-sign-in", "publish"]],
-  ["backend/gamma/routers/cloud_auth.py", ["cloud-sign-in", "publish"]],
+  ["backend/gamma/routers/cloud_auth.py", ["cloud-sign-in", "publish", "scan-layer"]], // scan-layer: /api/server-config's ocr
   ["backend/gamma/hosted.py", ["cloud-sign-in"]], // a hosted container's plan (read-only gates every write only there)
   ["backend/gamma/publish.py", ["publish"]],
   ["backend/gamma/routers/publish.py", ["publish"]],
@@ -437,7 +438,7 @@ export const RULES = [
   ["backend/gamma/documents/text_anchors.py", ["text-anchors"]],
   ["backend/gamma/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]], // the document text index
   // the highlights found again in a replaced PDF, and the write a text file's run shares
-  ["backend/gamma/highlight_relocate.py", ["notes-pdf-share", "text-anchors"]],
+  ["backend/gamma/highlight_relocate.py", ["notes-pdf-share", "text-anchors", "scan-layer"]], // scan-layer: the quotes respelled after a recognition
   ["backend/gamma/routers/pdf.py", PDF_VIEW],
   ["backend/gamma/textnorm.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/block_index.py", ["notes-pdf-share", "quick-open"]],
@@ -482,7 +483,7 @@ export const RULES = [
   ["backend/gamma/fonts/**", EXPORTS],
   ["backend/gamma/routers/export.py", [...EXPORTS, "sub-pages"]], // a page's export with the pages inside it
   ["backend/gamma/routers/imports.py", EXPORTS],
-  ["backend/gamma/jobs.py", [...EXPORTS, "settings", "notes-pdf-share"]], // exports, backups, the search indexer
+  ["backend/gamma/jobs.py", [...EXPORTS, "settings", "notes-pdf-share", "scan-layer"]], // exports, backups, the search indexer, the recognition's lane
   ["backend/gamma/routers/jobs.py", [...EXPORTS, "settings", "remote-chat", "remote-asks"]], // remote-chat: a chat turn on another computer; remote-asks: one that waits there
   ["backend/gamma/backup_schedule.py", ["settings"]],
   ["backend/gamma/backups.py", ["settings"]],
@@ -493,7 +494,7 @@ export const RULES = [
   ["backend/gamma/routers/notices.py", ["settings"]],
   ["backend/gamma/version.py", ["settings"]],
   ["backend/gamma/server_settings.py", ["settings", "mcp", "cloud-sign-in"]],
-  ["backend/gamma/routers/admin.py", ["settings", "mcp", "cloud-sign-in"]],
+  ["backend/gamma/routers/admin.py", ["settings", "mcp", "cloud-sign-in", "scan-layer"]], // scan-layer: Server › Text recognition
   ["backend/gamma/routers/shares.py", ["notes-pdf-share", "publish", "collab", "inbox", "cloud-sign-in", "sub-pages"]],
   // a share's invitations by Gamma Cloud username (claimed on every cloud sign-in) and its Inbox item
   ["backend/gamma/shares.py", ["notes-pdf-share", "publish", "collab", "inbox", "cloud-sign-in", "sub-pages"]],
