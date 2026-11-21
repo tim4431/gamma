@@ -1025,6 +1025,82 @@ documentation (November 2026), not counted.
 - **The pictures leave the server.** The crops or pages go to whoever the
   person's AI provider is.
 
+### Whole pages with the small models
+
+Could one of the small vision models replace Tesseract for a scan's text,
+not only its formulas? Four were run on Stage 2's 15 truth pages and scored
+as Stage 2 scores an engine (text lines; display math apart):
+- GLM-OCR;
+- PaddleOCR-VL 1.6;
+- LightOnOCR-2-1B;
+- Granite-Docling 258M.
+
+They used the same llama.cpp b12359 builds as for the formulas. Larger
+models (dots.ocr, olmOCR-2 at 7B) and hosted services were left out.
+
+Each was run two ways where its makers do both:
+- **The whole page**, with the model's page prompt.
+- **By region**, as GLM-OCR's SDK and PaddleOCR-VL's pipeline run it.
+  PP-DocLayoutV3 finds the page's blocks in the model's reading order, and
+  each block's crop is read with its prompt (text, formula or table).
+
+Their Markdown, HTML, DocTags and LaTeX were turned into the truth's flat
+style before scoring (`stage3/flatten_vlm.py`, with its own tests). A
+difference of convention may remain, as a small cost to the models.
+
+| Engine | Errors | Recall | Precision | Continuity | s/page, GPU | s/page, CPU (estimated), 12 threads / one |
+|---|---|---|---|---|---|---|
+| Tesseract 5.5, fast, eng+fra+deu | 1.46% | 96.1% | 91.7% | 94.1% | – | 2.5–3.7 on one thread, measured (CLI, tesserocr) |
+| PaddleOCR-VL 1.6, by region | **0.86%** | 96.0% | 93.8% | 95.5% | 5.5 | 44 / 190 |
+| LightOnOCR-2-1B, whole page | 1.03% | 96.2% | 91.3% | 95.7% | 5.0 | 32 / 100 |
+| GLM-OCR, by region | 1.25% | 94.3% | 84.3% | 96.0% | 6.0 | 46 / 130 |
+| PaddleOCR-VL 1.6, whole page | 1.38% | 95.2% | 92.5% | 95.5% | 3.1 | 25 / 110 |
+| Granite-Docling 258M, whole page | 1.78% | 93.7% | 82.0% | 95.0% | 3.3 | 27 / 110 |
+| GLM-OCR, whole page | 3.33% | 92.2% | 91.1% | 95.7% | 5.2 | 38 / 107 |
+
+What the table shows:
+- **The poorest pages gain most.** PaddleOCR-VL by region takes Lounis p8's
+  text from 4.62% to 1.37%, Holstein p8's from 4.84% to 3.06% and J. Phys.
+  Radium p12 from 2.48% to 1.56%.
+- **A few clean pages lose.** Annalen p10 goes from 0.71% to 1.52%, and
+  Siegman p99 from 0.51% to 0.67%.
+- **Precision.** GLM-OCR and Granite-Docling read words the page does not
+  have. Their precision is 84% and 82%.
+- **GLM-OCR depends on how it is run.** It reads well by region and poorly
+  whole.
+- **No run looped.** None stopped at its 8,192-token cap.
+
+GPU times are on an RTX 4070 SUPER.
+
+The CPU times are estimates, not timings. The machine was busy with other
+work during this stage, at 99–100% of its 24 threads.
+- **The rates** come from Stage 3's crop timings on the same CPU while it
+  was idle. llama-server's own split gives, on 12 threads, prefill of
+  185–244 tokens a second and decode of 55–65.
+- **The page counts** are the GPU runs' token counts. A page writes about
+  1,100 tokens, and by region it reads about 5,000 (1,000–2,000 whole).
+- **One thread** is the 12-thread figure times the ratio of the two
+  timings on the same crops: 2.8 to 4.3, depending on the model.
+- **The figures are extrapolated.** The crops held at most about 600 input
+  tokens, and a page holds 1,000–5,000. Take them to within about ±40%.
+- **Writing the text costs about 20 s a page** on 12 threads, whatever the
+  model or the mode.
+- **Memory** is about 2 GB per model server, as measured in Stage 3.
+
+Against Tesseract's 2.5–3.7 s a page on one thread:
+- **One thread each:** a page takes 27–76 times as long.
+- **The model on 12 threads:** still 7–18 times as long.
+
+For a 20-page paper read by PaddleOCR-VL by region, that is about 15
+minutes on all 12 cores of this desktop, or an hour on one core.
+
+**None of the four gives word boxes.** They give text per block. The viewer's
+text layer, selection, highlights and search hits need each word's box. A
+model's text could only correct Tesseract's words block by block, Tesseract
+keeping the boxes; that pairing was neither built nor measured.
+
+So Tesseract stays the engine for a scan's words.
+
 ### What the numbers say
 
 - **Finding comes first, and it is solved.** PP-DocLayoutV3, under
@@ -1064,6 +1140,14 @@ documentation (November 2026), not counted.
   It doubles the cost. GLM-OCR is rarely wrong to begin with, once in the
   191 synthetic scans, and the page's crop stays the authority wherever a
   person sees the formula.
+- **For a page's text, Tesseract stays.**
+  - The best small model, PaddleOCR-VL read by region, makes about 40%
+    fewer errors (0.86% against 1.46%).
+  - It takes 27–76 times Tesseract's time on a core, estimated.
+  - It gives no word boxes, which everything that draws or selects text
+    needs.
+  - Its affordable use is the formulas alone, where it is a few seconds a
+    page.
 
 ### A design that follows
 
@@ -1122,9 +1206,13 @@ Not built.
 - **Inline readings against a truth.**
 - **A hosted model on the real scans.** Their truth was made by the same
   kind of model, which would make the comparison circular.
-- **Whole-page reading by a vision-language model.** It gives LaTeX
-  without a separate finder; Granite-Docling read Lounis p8 whole in 4 s on
-  the GPU, but where its LaTeX sits on the page was not scored.
+- **Where a whole-page reading's LaTeX sits.** It gives LaTeX without a
+  separate finder (Granite-Docling read Lounis p8 whole in 4 s on the GPU).
+  Its text was scored ([above](#whole-pages-with-the-small-models)); where
+  its formulas sit on the page was not.
+- **The small models' page reading on a CPU.** It was estimated from crop
+  timings, on a busy machine. The runner for an idle one is in the harness.
+- **Tesseract's boxes with a model's text, block by block.**
 - **GLM-OCR at a smaller quantization than Q8_0.**
 - **Fraktur formulas.**
 
@@ -1167,6 +1255,10 @@ Nothing of it is built. Left:
   provider, for the chat, MCP, copy and search.
 - **What was not measured**: a NAS, the window and the apps, inline
   readings against a truth, and a hosted model on the real scans.
+- **A page's text by a small model**: decided against for now
+  ([Whole pages with the small models](#whole-pages-with-the-small-models)).
+  If it comes back, it would be Tesseract's word boxes with PaddleOCR-VL's
+  text by region, as an opt-in run where a GPU or time allows.
 
 The field's known failures on old print were looked for:
 - characters repeated until the output runs out, on 19th-century
