@@ -46,7 +46,7 @@ LINED = ("lines",)                          # the kinds that have lines in a tex
 ON_THIS_BUILD = ("exact", "rough", "estimate")  # a place on the page's current file
 
 # How to answer, the same in every document: the comment routes and the MCP
-# tools (the writing tools of gamma/ai_tools.py, docs/dev/annotations.md
+# tools (the writing tools of gamma/ai_tools/commenting.py, docs/dev/annotations.md
 # "The writing tools").
 ANSWER = {"reply": "POST /api/pages/{page_id}/comments {block_id, thread_id, body}",
           "resolve": "POST /api/comments/{id}/resolve {resolved: true}",
@@ -461,7 +461,7 @@ def link_of(ws: str, page_id: str, block_id: str, link_base: str = "", thread_id
     """An entry's link: the page, at the block its thread (``thread_id``)
     is on or the highlight, after ``link_base`` (MCP's absolute base; ""
     for the chat, whose links are a query alone). What the writing tools
-    answer with for what they make (gamma/ai_tools.py)."""
+    answer with for what they make (gamma/ai_tools/commenting.py)."""
     link = f"{link_base}?ws={ws}&page={page_id}&block={block_id}"
     return f"{link}&thread={thread_id}" if thread_id else link
 

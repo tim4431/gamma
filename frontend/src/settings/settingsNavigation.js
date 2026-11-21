@@ -19,6 +19,9 @@ const SECTIONS = {
   // menu): Toolbars, at the Text highlighters section.
   highlighters: ["toolbars", T("Text highlighters")],
   "viewer-tools": ["toolbars", T("Viewer tools")],
+  // Manage skills… (the chat's "/" menu that matches none, the card of a
+  // skill gone before the send): Chat, at Your skills.
+  skills: ["assistant", T("Your skills")],
 };
 export const resolveSettingsPane = (pane) => SECTIONS[pane]?.[0] || pane;
 // The untranslated label of the row a section entry point jumps to, or "".

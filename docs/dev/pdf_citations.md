@@ -6,8 +6,9 @@ A highlight block can make a PDF region clickable through
 `properties.link_url` or `link_page_id`; `link_block_id` additionally
 targets a particular highlight on the destination page, by its block id (a
 highlight's id is its block's, [api.md](api.md) "The highlight shape"):
-"Copy as reference point" on a highlight keeps that id for another paper's
-link dialog and copies the highlight's block link (`?block=<id>`). Pasted
+"Copy as reference point" on a highlight keeps that id for the link dialog
+(another highlight's, on this paper or another) and copies the highlight's
+block link (`?block=<id>`). Pasted
 into a note or the chat, that link lands on the passage as the deep link
 does: App's `openBlockLink`, which every block link, `[[ref]]`, backlink and
 inbox item opens through, shows the block's row in the notes and, for a
@@ -19,20 +20,34 @@ another, both through `pendingJumpRef`). The link dialog
 (`library/PagePicker.jsx`): its field takes a DOI, an arXiv id or a web
 address (`isLinkInput`; `normalizeLinkInput` makes it a URL), and "Link to …"
 leads the list while it reads as one, or else searches the pages as Ctrl+P
-does. With nothing typed it lists Remove link for a passage that links
-already, the copied reference point, then the pages the passage names
-(`scorePaperMatch` 6 or more: its DOI or arXiv id, the authors, title
-words) as Best matches before the recent pages. "Change link…" opens with
-a URL link's address in the field. App derives the viewer's `linkTarget`
-(`{url, pageId, blockId}`) from those properties, and opening the link jumps to the block
-once the page is up. `linkProps` writes them and drops (null) the keys the
+does. A Gamma link in the field (`parseGammaLink`, whatever host it names:
+a copied highlight's `?block=`, a page's `?page=`) that App's
+`gammaLinkPlace` finds in this workspace (`GET /blocks/{id}` for a block,
+the library listing for a page) leads instead as the highlight or page it
+names, and picking it links there (`{pageId, blockId}`), not to the
+address; a highlight on this same paper is offered too (a cross-reference
+to a figure), the one being linked and this page itself are not. One
+another server or workspace holds stays a "Link to …" address. With
+nothing typed it lists Remove link for a passage that links already, the
+copied reference point (any highlight but the one being linked), then the
+pages the passage names (`scorePaperMatch` 6 or more: its DOI or arXiv id,
+the authors, title words) as Best matches before the recent pages.
+"Change link…" opens with a URL link's address in the field, so a Gamma
+link stored as an address is turned into a highlight link by picking the
+row it resolves to. App derives the viewer's `linkTarget`
+(`{url, pageId, blockId}`) from those properties, and `openLinkTarget`
+opens one, the PDF region's press and its note's link alike: a block
+through `openBlockLink` (on this page it scrolls there, Back returning;
+on another the page opens and lands on it), a page through `openBlock`, an
+address through `handleDocLink`. `linkProps` writes them and drops (null) the keys the
 target does not set, all three when the link is removed; an empty string,
 which older clients stored, reads as unset everywhere. A new link region
 is made in `LINK_COLOR` (`shared/model/palette.js`, a light blue wash).
 The block table's `kind` calls such a block a `link`; the viewer draws it
-as a highlight. `handleDocLink` resolves a DOI
-or arXiv URL against the current library first, opening the existing page
-when found; otherwise it offers fetching the paper or opening the browser.
+as a highlight. `handleDocLink` opens a Gamma link whose block or page
+`gammaLinkPlace` finds here in place (a citation at its passage), resolves
+a DOI or arXiv URL against the current library, opening the existing page
+when found, and otherwise offers fetching the paper or opening the browser.
 
 ## AI citation links
 
@@ -61,18 +76,21 @@ and a note's preview on the PDF. It shows "p. 2" on the text's baseline,
 sized from the surrounding text. When the reply or note cites several
 sources (`citesSeveralSources`: papers and files alike), a pill whose label
 names only the place gets its source in front ("Vaswani · p. 2").
-Hovering, focusing or long-pressing it previews the paper title, the PDF page
-and the quote; App's `citeSource` (on `GammaNavContext`) names the paper.
-The pointer can move from the pill into the preview, across the text between
-them, without the preview closing ([menuAim.js](../../frontend/src/shared/ui/menuAim.js),
+Hovering or focusing it previews the paper title, the PDF page and the
+quote, and a right-click or a held finger pins that card: the link card
+every link has ([mentions.md](mentions.md#the-link-card)), whose Edit, Copy
+link and Remove link a note that may be edited adds. App's `citeSource` (on
+`GammaNavContext`) names the paper. The pointer can move from the pill into
+the preview, across the text between them, without the preview closing
+([menuAim.js](../../frontend/src/shared/ui/menuAim.js),
 [ui-design.md](ui-design.md)). Its **Open in PDF** link opens the passage the
 way the pill does. A
 page or block link is a card (`GammaLinkCard`). Clicking a citation calls
 `openPage(id, citation)` from `GammaNavContext`, which App provides once: the library page
-opens in place, waits for that PDF and the cited page's text layer, then
-matches the quote in the browser. A pasted link on a cold load works the same
-way (the same classifier on the initial URL). Only the cited page is
-force-rendered. No document scan and no server-side coordinates.
+opens in place, waits for that PDF, scrolls to the cited page and asks the
+server where the quote stands ([Finding the quote](#finding-the-quote)). A
+pasted link on a cold load works the same way (the same classifier on the
+initial URL). Only the page the passage is found on is force-rendered.
 
 The quote is optional: `?page=…&pdf_page=N` alone opens the paper at that
 page with nothing highlighted.
@@ -89,60 +107,75 @@ be. Pasting normalises the other way: the "Paste as" chooser offers
 it host- and workspace-free (`relativeGammaLink`), so new notes never learn a
 host.
 
-`pdf/pdfCitation.js` keeps source offsets through Unicode ligature folding,
-dehyphenation and whitespace normalization. Fallback passes tolerate differing
-spaces and compound-word hyphens that cross line wraps. PDF.js text items are
-mapped directly to their rendered spans, preserving empty EOL items and font
-geometry. Small, raised multi-digit reference numbers after prose and before
-punctuation can be omitted when matching an otherwise exact quote. Baseline
-numbers, mathematical signs and single-digit exponents are not discarded.
-A typography fallback permits omitted standalone section pointers: `(Methods)`,
-`(Online Methods)`, and `(Supplementary Information/Methods/Material)` (one
-of those three names). Wrapped pointers such as `(Meth-\nods)` work too.
-Other parentheticals must still match in this pass. Omitted pointers are
-excluded from the highlight, even when they share a text run with the quote;
-exact matches take priority.
+### Finding the quote
 
-If those passes fail, `pdf/fuzzyCitation.js` aligns the quote's words against
-the cited page with bounded edit distance. It tolerates punctuation changes,
-minor spelling/OCR errors, and a few inserted, omitted or substituted words,
-including arbitrary parenthetical prose. This requires at least eight words
-and 40 non-space characters. The budget is one word edit per eight words,
-capped at eight edits; one or two character typos in longer words cost a
-quarter or half of a word edit. Numbers, mathematical symbols, Greek letters,
-single-letter variables and negations cannot be inserted, deleted or changed
-by this pass (the existing case folding still applies). A second qualifying
-passage is ambiguous. Exact matches always win over approximate ones.
+The server finds the quote, with the finder a replaced PDF's highlights are
+placed by and an agent's `highlight` tool marks by
+([highlight_relocation.md](highlight_relocation.md#finding-a-passage)):
+`GET /api/pages/{id}/citation?pdf_page=N&quote=…` (`routers/pages.py`,
+`highlight_relocate.cite` over `find_quote`). The model quoted MuPDF's text
+of the page (`read_page`, the context), and the finder reads the file with
+MuPDF too, so the two sides read alike. `pdf/pdfCitation.js`
+(`locateCitation`) asks, and the viewer's citation effect (`PdfViewer`'s
+`activeCitation`) waits for the answer and for the scroll to the cited page.
 
-Fuzzy matches highlight the source passage, including internal words
-omitted by the quote, and show “Highlighted an approximate text match.” The
-matcher preserves source offsets and stops after at most one million word
-comparison cells; unusually dense pages fall back to the unresolved notice
-when exact matching fails. Missing or ambiguous passages show a message on the
-cited page without a highlight. Scans without a text layer
-therefore open the page but cannot highlight text.
+- **Where.** The cited page is read first, and the pages either side only
+  when it holds no exact copy, so a model that names the printed page one off
+  the physical one is still found. Reading a page is most of a lookup's time
+  (about 150 ms; the search a few).
+- **Exact** is exact as the finder folds text: case, dashes, quotes,
+  ligatures, a word hyphenated at a line's end and the spaces. A hyphen inside
+  a word may be missing from the page ("Carr-Purcell-Meiboom" where a line's
+  end joined "Purcell-" and "Meiboom"). A reference mark the quote leaves
+  out does not count either: "sequence." for "sequence¹⁵⁹˒¹⁶⁰." The mark
+  must be several digits, a list or a range, set smaller and raised after a
+  word of three letters and before its punctuation. A mark at the quote's
+  end is left out of the highlight, one inside it is covered.
+- **Rough.** With no exact copy, the place reading most alike from 80%
+  (`ROUGH_APPLY`, difflib's ratio of the folded texts) is marked, and the
+  notice says how alike it reads: "Highlighted an approximate text match
+  (97% alike)." Nothing is frozen. A misquoted number or an editorial
+  pointer the quote leaves out (`(Methods)`) reads nearly alike, and the
+  passage the model meant is shown with that notice. A quote under 12
+  characters is found exactly or not at all.
+- **Ambiguous.** When another place of that page reads exactly as alike
+  (`Match.twin`: two copies, exact or rough), nothing is marked and the
+  notice says "More than one passage on this page matches this quote." A
+  citation has no context to tell them apart.
+- **Missing.** Nothing alike enough on the three pages, a PDF the server
+  does not hold, or a failed request: the page stays open with "Opened the
+  cited page; the quote could not be found on it or the pages beside it." A
+  scan without a text layer opens its page this way.
 
-`PdfCitationOverlay` draws DOM `Range` rectangles from the real pdf.js text
-nodes (partial runs included) instead of estimating glyph widths or trusting
-offsets into the server's extracted text (MuPDF's text is not pdf.js's).
-The rectangles are percentages of the page, and a finished
-text-layer render recomputes them after a zoom; stale document/render work is
-cancelled. The marks (`.pdfCitationMark`, the translation shimmer) ignore
-pointer input and never touch the annotation or note store. A click outside
-the passage or Escape removes them; there is no close button.
+The answer is `{status: "matched", page, match, rects}` (`match` 1 for an
+exact copy, else two decimals up to 0.99; `rects` fractions of the page as
+shown, one per line), `{status: "ambiguous", page}` or `{status: "missing"}`
+([api.md](api.md) "Pages"). A member's request fetches a PDF shown from a URL
+that the server has not stored yet, as the chat does when it reads one. A
+share's request reads only what is stored, so a share link never starts a
+download.
+
+`PdfCitationOverlay` draws the rectangles as percentages of the page, so a
+zoom carries them without a lookup. They are MuPDF's glyph boxes, one per
+line, as an agent's highlight is drawn. The marks (`.pdfCitationMark`, the
+translation shimmer) ignore pointer input and never touch the annotation or
+note store. A click outside the passage or Escape removes them; there is no
+close button.
 
 Coverage: `frontend/tests/gammaLinks.test.mjs` (the classifier, the line
 kind), `frontend/tests/coverage.test.mjs` (the context pill in pages and in
-lines), `frontend/tests/pdfCitation.test.mjs`, the citation scenario in
-`frontend/tests/e2e/scenarios/pdf.mjs`, and `backend/tests/test_pdf_citations.py`.
-The frontend fixture includes the failing PDF.js runs from physical
-pages 20–22 of Krantz et al., *A quantum engineer's guide to superconducting
-qubits*. `node tests/e2e/pdfCitationPaper.mjs /path/to/1904.06560.pdf` runs the
-saved citations against that complete PDF in an isolated browser test.
-`pdfCitationTransduction.json` captures the page 4 regression from
-*Quantum-enabled millimetre wave to optical transduction using neutral atoms*:
-the quote omitted `(Methods)` before the period. To check another complete PDF,
-pass its fixture file after the screenshot directory:
+lines), the citation scenarios in `frontend/tests/e2e/scenarios/pdf.mjs`, and
+`backend/tests/test_pdf_citations.py` (the finder's cases and the route).
+`node tests/e2e/pdfCitationPaper.mjs /path/to/1904.06560.pdf` runs the saved
+citations of `tests/fixtures/pdfCitationPaper.json` (physical pages 20–22 of
+Krantz et al., *A quantum engineer's guide to superconducting qubits*: wrapped
+compounds and left-out superscript references, each exact) against that
+complete PDF in an isolated browser test. `pdfCitationTransduction.json`
+holds the page 4 citation from the journal version of *Quantum-enabled
+millimetre wave to optical transduction using neutral atoms*, whose quote
+left out `(Methods)` before the period: found at 99%, so `approximate`. To
+check another complete PDF, pass
+its fixture file after the screenshot directory:
 `node tests/e2e/pdfCitationPaper.mjs /path/to/transduction.pdf /tmp/citation-shots tests/fixtures/pdfCitationTransduction.json`.
 
 ## Line links

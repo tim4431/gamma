@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 import pytest
 
 from gamma import ai_client, search_services
-from gamma.ai_tools import MAX_WEB_SEARCHES, run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
+from gamma.ai_tools.web import MAX_WEB_SEARCHES
 from gamma.db import page_now
 
 from ai_fixtures import folder, org  # noqa: F401  (org is a fixture)
@@ -78,25 +79,25 @@ def test_settings_are_masked_and_secrets_kept(account):
     assert c.put("/api/prefs/search-services", json={"value": {}}).status_code == 400
 
 
-def test_which_engine_a_chat_gets(account, monkeypatch):
+def test_which_engine_a_chat_gets(account, server_option):
     c, user = account
-    monkeypatch.setattr(search_services, "SERVER_SEARXNG_URL", "")
+    server_option("searxng_url", "")
     assert search_services.web_engine(user, GATEWAY, ENTRY) == ""  # a gateway hosts no search
     assert search_services.web_engine(user, ANTHROPIC, ENTRY) == "ai"
     assert search_services.web_engine(user, OPENAI, ENTRY) == "ai"  # through its Responses wire
     assert search_services.web_engine(user) == ""  # no connection (a context export)
     # Automatic: Brave, Tavily, SearXNG, then the AI connection.
-    monkeypatch.setattr(search_services, "SERVER_SEARXNG_URL", "http://searxng:8080")
+    server_option("searxng_url", "http://searxng:8080")
     assert search_services.web_engine(user, ANTHROPIC, ENTRY) == "searxng"
     c.put("/api/ai/search-services/tavily", json={"fields": {"api_key": "tvly-secret-7890"}})
     assert search_services.web_engine(user, ANTHROPIC, ENTRY) == "tavily"
     c.put("/api/ai/search-services/brave", json={"fields": {"api_key": "BSA-secret-123456"}})
     assert search_services.web_engine(user, ANTHROPIC, ENTRY) == "brave"
     # A named engine is used only when it is ready — never a silent switch.
-    monkeypatch.setattr(search_services, "SERVER_SEARXNG_URL", "")
+    server_option("searxng_url", "")
     c.put("/api/ai/search-services/engine", json={"engine": "searxng"})
     assert search_services.web_engine(user, ANTHROPIC, ENTRY) == ""
-    monkeypatch.setattr(search_services, "SERVER_SEARXNG_URL", "http://searxng:8080")
+    server_option("searxng_url", "http://searxng:8080")
     assert search_services.web_engine(user, ANTHROPIC, ENTRY) == "searxng"  # the admin's instance
     c.put("/api/ai/search-services/engine", json={"engine": "ai"})
     assert search_services.web_engine(user, GATEWAY, ENTRY) == ""
@@ -190,7 +191,7 @@ def test_tavily_posts_a_bearer_key_and_its_filters(account, monkeypatch):
     assert "time_range" not in json.loads(seen[1].data) and "include_domains" not in json.loads(seen[1].data)
 
 
-def test_searxng_guards_an_accounts_url_but_not_the_admins(account, monkeypatch):
+def test_searxng_guards_an_accounts_url_but_not_the_admins(account, monkeypatch, server_option):
     c, user = account
     opened = []
     monkeypatch.setattr(search_services, "guarded_urlopen",
@@ -199,7 +200,7 @@ def test_searxng_guards_an_accounts_url_but_not_the_admins(account, monkeypatch)
                              "publishedDate": "2025-10-07T00:00:00"}]}))
     monkeypatch.setattr(search_services, "urlopen",
                         lambda req, timeout=20: opened.append(("plain", req.full_url)) or Reply(b"<html>"))
-    monkeypatch.setattr(search_services, "SERVER_SEARXNG_URL", "http://searxng:8080/search")
+    server_option("searxng_url", "http://searxng:8080/search")
     with pytest.raises(search_services.SearchError, match="enable the json format"):
         search_services.search("searxng", user, "q", 3)
     c.put("/api/ai/search-services/searxng", json={"fields": {"url": "https://search.example.org"}})

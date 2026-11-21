@@ -1015,7 +1015,14 @@ poll (`hidden`), and `peers` / `me` as React state. The session owns:
   swap; the view beside the tree is untouched). App's refetch
   (`loadBlocksForBlock`) carries a token and the page id: an answer
   overtaken by a newer refetch or arriving for a page no longer open is
-  dropped. A failed refetch keeps the tree on screen (never an empty page),
+  dropped. A fetched tree whose `seq` is below the batches this tab has
+  applied (one came over the socket while the read was on its way) lacks
+  them, and nothing would bring them back: the session asks for the page
+  again, holding the batches after it as for any reload, and a read sent
+  then answers at that `seq` at least. Kept, it left a collaborator's
+  screen on the text before the last batch until the next change (the
+  collab merge race's typed case, seen at CI's pace). A failed refetch
+  keeps the tree on screen (never an empty page),
   shows "Couldn't refresh the page" and tries again (2 s, doubling up to
   30 s). It also tells the session (`reloadFailed`), which stops holding the
   socket's batches back for it.

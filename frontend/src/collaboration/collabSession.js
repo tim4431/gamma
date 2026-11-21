@@ -801,7 +801,17 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       seedPositions(tree, s.pos);
       s.base = heldBack(s, tree);
       unpark(s);
-      if (seq != null) {
+      if (seq != null && seq < s.seq) {
+        // Read before a batch this tab applied while the read was on its way
+        // (one came over the socket meanwhile): the tree on screen lacks it,
+        // and nothing would bring it back. The page is read again, the
+        // batches after this one waiting as for any reload; a read sent now
+        // answers at s.seq at least, since the server fans a batch out once
+        // it is committed. The base is this tree, the one on screen, so an
+        // edit made meanwhile is diffed against what it shows.
+        s.reloading = true;
+        o().onReload?.(page);
+      } else if (seq != null) {
         s.seq = Math.max(s.seq, seq);
         for (const n of s.pending.keys()) if (n <= s.seq) s.pending.delete(n);
         s.reloading = false;

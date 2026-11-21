@@ -10,7 +10,8 @@ of work meet there:
   recognized or forgotten, and the search indexer. A job lives
   on the server (`gamma/jobs.py`), so it goes on when the tab or the dialog
   that started it closes, and every tab and device of the account sees it.
-- **This tab's own work**: a PDF loading in the viewer, a file uploading
+- **This tab's own work**: a PDF loading in the viewer (a link resolving
+  first, its Stop aborting the resolve: `resolvePdfSource`), a file uploading
   (its bytes and the time left at the rate kept so far, `taskKinds`
   `byteProgress`, patched once per visible percent), a folder or many files
   uploading as one batch (local kind `uploads`, whose click opens its
@@ -205,9 +206,18 @@ jobs".
   Settings → Backups, and a failure raises the `backup-failed` notice —
   and the AI chat's blocked paper fetches (`gamma/fetch_handoff.py`) as
   `paper-handoff` while one waits for the user's browser, so a card whose
-  reply has scrolled away is still somewhere to find. A click on that row
-  opens the publisher's page; the chat's own card settles the request
-  ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A third,
+  reply has scrolled away is still somewhere to find. The row is named by
+  the paper's title (`params.title`, else the DOI or arXiv id asked for,
+  else the site), and its line says whose turn it is and the site
+  (`progress.item`). While nothing has taken it up (phase `browser`) it
+  waits for the person, as an ask does. A click on that row opens the
+  publisher's page; the chat's own card settles the request, so does
+  stopping the reply that asked for it
+  ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)), and so does
+  the row's Stop, which goes to the request's own stop route
+  (`POST /api/ai/handoffs/{id}/stop`, not `cancelJob`), and `useAppJobs`
+  `stopTask` then asks Gamma Connector to close the background tab it kept
+  for it ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A third,
   `computer-turn`, is a chat turn of an agent on this computer queued or
   running for the account, or for a co-author its agent serves
   (`params.person`; [local_agents.md](local_agents.md) "Its model, its
@@ -216,9 +226,9 @@ jobs".
   co-author's, else the page's own; a turn of another workspace, only its
   page), and its Stop goes to
   the turn's own stop route, not `cancelJob`. While one asks the person
-  (`progress.phase` `asking`, taskModel `waitsForYou`) its row has a still
-  shield and no bar, and the tray button the accent dot instead of the
-  spinner.
+  (`progress.phase` `asking`, or a paper handoff's `browser`: taskModel
+  `waitsForYou`) its row has a still shield and no bar, and the tray
+  button the accent dot instead of the spinner.
 - `GET /api/jobs/{id}` is one job with its `result`.
 - `POST /api/jobs/{id}/cancel`, `DELETE /api/jobs/{id}` and
   `POST /api/jobs/clear` stop, remove and clear jobs.
@@ -236,9 +246,10 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `import-preview` | `import-preview` (`routers/imports.py`, an uploaded file; `import-preview/parts` for one in parts; one per review) | the import dialog, once the file is chosen | `{review_id, pages, warnings}`, the counts; the review itself is kept with the staged upload (`GET /import/review/{id}`) |
 | `import` | `import` (`routers/imports.py`) | the import review's Import to library | the import report |
 | `workspace-export` | `workspace-export` (`routers/ws_backups.py`) | Settings → Workspaces → Data → Export…, Export all | the zip |
-| `workspace-copy` | `workspace-copy` (`routers/ws_backups.py`, `gamma/workspace_copy.py`) | the library's page menu → Copy to workspace ▸; Settings → Workspaces → Data → Duplicate… (a clone's or a Zotero link's More) | the merge's counts with `workspace`, the target, and `zotero_pdfs`; the job's `ws` is the target (empty for a duplicate, whose workspace is made as it runs), and the tab that started it says what came and offers Open ([workspaces.md](workspaces.md) "Copies between workspaces") |
+| `workspace-copy` | `workspace-copy` (`routers/ws_backups.py`, `gamma/workspace_copy.py`) | the library's page menu → Copy to workspace ▸; Settings → Workspaces → Manage → Duplicate… (a clone's or a Zotero link's More) | the merge's counts with `workspace`, the target, and `zotero_pdfs`; the job's `ws` is the target (empty for a duplicate, whose workspace is made as it runs), and the tab that started it says what came and offers Open ([workspaces.md](workspaces.md) "Copies between workspaces") |
 | `snapshot` | `snapshot` | Settings → Backups → Back up now, Back up all | `{snapshots, failed}` |
 | `restore` | `restore` (an uploaded zip), `restore-snapshot`, `bucket-restore` (`params.source` `bucket` or `drive`; `into: "new"` makes the workspace) | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore (Restore as new… for a copy in the bucket or in Google Drive), a shared page or folder imported by link | the restore report |
+| `copies-restore` | `bucket-restore-many` (`routers/ws_backups.py`, admins; `params.items` `[{ws, name, store, label}]`, `params.count`) | Settings → Backups → Cloud copies → Restore all… | `{restored: [{ws, workspace, name}], failed: [{ws, name, error}]}`; failed when none came back |
 | `bucket-download` | `bucket-download` (`routers/ws_backups.py`, admins; `params.store` `bucket` or `drive`) | Settings → Backups → a copy only the bucket or Google Drive holds → Download | the zip |
 | `metadata` | `metadata` (`routers/metadata.py`) | Settings → Maintenance → Fetch needed / Fetch selected / Refetch; an upload of several PDFs | `{papers, fetched, failed}` |
 | `server-backup` | `server-backup` (`routers/admin.py`) | Settings → Server → Server backups | the snapshot's info |
@@ -435,7 +446,9 @@ keeps it with the job,
   Finished, a new one fades in, and one removed leaves from where it stood
   while the rest close up.
 - A row has its title, elapsed or finish time, bar and detail, plus Stop,
-  Download, Start again and Remove. A click on an export or import row
+  Download, Start again and Remove. Stop goes through the panel's `onStop`
+  (`useAppJobs` `stopTask`: the store's `cancel`, plus what a kind leaves
+  outside the server, a paper handoff's Connector tab). A click on an export or import row
   opens its dialog on that job again; a backup row opens Settings → Backups.
 - `TaskProgress` is the progress block the dialogs show; for a row of this
   tab's (the upload dialog's batch) it shows the row's own line and how

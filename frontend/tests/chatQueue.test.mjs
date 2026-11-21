@@ -64,6 +64,7 @@ test("Steer carries the text, the quoted passages and the pictures; files and at
   });
   assert.equal(q.canSteer({ parts: { files: [{ name: "a.pdf" }] } }), false);
   assert.equal(q.canSteer({ parts: { notes: [{ kind: "block", text: "a block" }] } }), false);
+  assert.equal(q.canSteer({ parts: { skill: { id: "a1", name: "referee", args: "" } } }), false, "a skill runs in a turn of its own");
   // The transcript shows it as a sent message reads: the passages' start
   // quoted, every line of it.
   const shown = q.steeredMessage([item, { text: "and be brief", parts: {} }], "u1");
@@ -79,4 +80,18 @@ test("a quote of the transcript goes ahead of the message, as it is sent, steere
   assert.equal(q.steeredMessage([item], "u2").text, "> It is $x^2$.\n>\n> - a point\n\nwhy?");
   assert.equal(q.canSteer(item), true);
   assert.equal(q.messageText("plain", {}), "plain");
+});
+
+test("a queued message keeps the skill split off it as it was queued, until an edit says what it runs", () => {
+  const skill = { id: "a1", name: "referee", args: "be harsh" };
+  q.enqueue("skills", { id: "s1", text: "/referee be harsh", parts: { quotes: ["a quote"], skill } });
+  const [item] = q.queueOf("skills").items;
+  assert.equal(item.text, "/referee be harsh", "its row reads as typed");
+  assert.equal(q.sentText(item), "be harsh", "it sends the arguments");
+  q.edit("skills", "s1", "plain words");
+  assert.deepEqual(q.queueOf("skills").items[0].parts, { quotes: ["a quote"] });
+  assert.equal(q.sentText(q.queueOf("skills").items[0]), "plain words");
+  q.edit("skills", "s1", "/referee", { ...skill, args: "" });
+  assert.equal(q.sentText(q.queueOf("skills").items[0]), "", "a skill with nothing after its name");
+  q.remove("skills", "s1");
 });

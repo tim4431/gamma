@@ -33,12 +33,12 @@
 // What the shell knows of the remote servers' addresses and certificates
 // (docs/dev/https.md): `pins`, the certificates the person trusted by their
 // fingerprint, by origin (lib/certs.js: `{ sha256, subject, issuer,
-// validFrom, validTo, pinnedAt }`), which main.js hands to the local
+// validFrom, validTo, pinnedAt }`), which lib/addresses.js hands to the local
 // servers; `moved`, the addresses a server's links moved from, each with
 // where they went (`{ to, at, kind }`, setRemoteUrl), so a load of an old
 // address goes to the current one (currentOrigin); a remote's `httpsSeen`,
 // set once it loaded over https; and `settings.plainAccepted`, the origins
-// the person agreed to reach over plain http (main.js beforeMint).
+// the person agreed to reach over plain http (lib/addresses.js beforeMint).
 //
 // Local server data dirs live under ONE root, `<root>/<server id>`:
 // `settings.dataRoot` when set, else `<userData>/workspaces` (the folder
@@ -73,7 +73,7 @@ const DEFAULTS = {
     background: false,
     openAtLogin: false,
     // The local server that keeps the synced vaults of remote servers on
-    // this disk (main.js addFolderVault): started at launch like the clones' hosts.
+    // this disk (lib/vaults.js addFolderVault): started at launch like the clones' hosts.
     folderHost: '',
     // The origins a token may go to over plain http:// without asking again.
     plainAccepted: [],
@@ -315,8 +315,8 @@ const hostOfUrl = (url) => {
   try { return new URL(url).hostname; } catch { return ''; }
 };
 
-// A remote server's address, changed once its links moved there (main.js
-// moveServer): the mirrors of its workspaces follow (they are keyed by the
+// A remote server's address, changed once its links moved there
+// (lib/addresses.js moveServer): the mirrors of its workspaces follow (they are keyed by the
 // remote's origin), the old address is recorded as moved (`moved`, which
 // currentOrigin follows), a host name it no longer has was not seen over
 // https, and the old address's pin goes with it: to the new address on the
@@ -444,7 +444,7 @@ function setPort(id, port) {
 }
 
 // Whether local server `id` holds a Zotero link that is not detached, as
-// the shell last read its links (main.js refreshKeeping); such a server
+// the shell last read its links (lib/syncPanel.js refreshKeeping); such a server
 // starts at launch. Written only when it changes.
 function setZoteroHost(id, on) {
   const state = load();

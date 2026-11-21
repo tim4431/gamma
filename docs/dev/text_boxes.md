@@ -486,7 +486,7 @@ highlight, placed by the nearest-sheet rule.
   starts at a block asks `ai_context.under_sheet` once.
 - `ai_context.area_highlight` never answers for a box. `move_block` refuses
   to move a box or a picture to another page unless its sheet moves too
-  (`ai_tools._loose_placed`). A search hit on a box has `kind:
+  (`ai_tools.notes._loose_placed`). A search hit on a box has `kind:
   "text_box"` (the block table's generated `kind`); the search panel lists
   it with the notes.
 

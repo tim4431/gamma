@@ -28,18 +28,21 @@ import pytest
 
 from conftest import account_of, fresh_client, login, make_folder, make_page, make_user, mark_work_folder, \
     token_for, work_props
-from gamma import agents, workspaces
+from gamma import agents, skills, workspaces
 from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page
 from gamma.computers import registry
 from gamma.db import connect_pages_db, connect_users_db
-from gamma.local_agents import chats
+from gamma.local_agents import chats, far_turns
 from gamma.ops import STALE, OpError
+from gamma.routers.local_agents import OLDER_SKILLS
 from gamma.work_folders import takeover
 
 MAKER, EDITOR, STRANGER = "ccx_maker", "ccx_editor", "ccx_stranger"
-MODELS = [{"id": "gpt-5", "label": "GPT-5", "efforts": ["low", "medium", "high"], "effort": "medium", "default": True},
-          {"id": "gpt-5-mini", "label": "GPT-5 mini", "efforts": [], "effort": None, "default": False}]
+MODELS = [{"id": "gpt-5", "label": "GPT-5", "efforts": ["low", "medium", "high"], "effort": "medium", "default": True,
+           "speeds": ["standard", "fast"], "speed": "fast"},
+          {"id": "gpt-5-mini", "label": "GPT-5 mini", "efforts": [], "effort": None, "default": False, "speeds": [],
+           "speed": None}]
 CODEX = [{"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "0.167.0", "code": "",
           "models": MODELS, "enabled": True, "runs": "never"}]
 OFF = [{**CODEX[0], "enabled": False}]   # Codex there, turned off
@@ -172,6 +175,7 @@ def test_the_announce_keeps_each_assistants_models(lab):
     assert assistants[0]["models"][:2] == MODELS                      # one without an id, and a repeat, left out
     assert [m["id"] for m in assistants[0]["models"]] == ["gpt-5", "gpt-5-mini", "m0", "m1", "m2"]
     assert assistants[0]["models"][2]["efforts"] == [f"e{j}" for j in range(registry.MAX_EFFORTS)]
+    assert (assistants[0]["models"][2]["speeds"], assistants[0]["models"][2]["speed"]) == ([], None)  # none announced
     assert assistants[1]["models"] == []                              # none announced: none
     for bad in ({**CODEX[0], "models": "all"}, {**CODEX[0], "models": ["gpt-5"]},
                 {**CODEX[0], "models": [{"id": f"m{i}"} for i in range(registry.MAX_MODELS + 1)]}):
@@ -263,7 +267,7 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
     claimed = _claim(pc, turn)
     assert claimed["turn"] == {"id": turn, "conversation_id": made["conversation"]["id"], "bucket": lab.main,
                                "title": "Tighten this paragraph.", "text": "Tighten this paragraph.",
-                               "selections": [selection], "model": "gpt-5", "effort": "high",
+                               "selections": [selection], "model": "gpt-5", "effort": "high", "speed": "",
                                "for": {"id": account_of(MAKER), "username": MAKER}}
     assert claimed["history"] == [] and claimed["seen"]
     assert (claimed["about"]["kind"], claimed["about"]["title"], claimed["about"]["path"]) == ("page", "main",
@@ -339,6 +343,34 @@ def test_the_claim_is_keyed_by_the_run(lab, pc):
     assert r.status_code == 404
 
 
+def test_a_skill_turn_goes_with_its_instructions_to_a_computer_that_runs_skills_alone(lab, pc):
+    made = skills.create(account_of(MAKER), skills.clean_fields("ccx-tighten", "Tighten a passage.", "",
+                                                                "Tighten $ARGUMENTS.", True))
+    ran = {"id": made["id"], "name": "ccx-tighten", "args": "the abstract"}
+    try:
+        # an older app would run the arguments without the instructions
+        assert _say(lab, "the abstract", skill=ran, status=409)["detail"] == OLDER_SKILLS.format(computer="TIM-PC")
+        _ok(pc.c.post("/api/computers/announce", json={"computer": {"id": "ccx-pc", "name": "TIM-PC"}, "app": "v9",
+                                                       "vaults": [_kept(lab)], "assistants": CODEX, "skills": True}))
+        turn = _say(lab, "the abstract", skill=ran)["turn"]["id"]
+        claimed = _claim(pc, turn)["turn"]
+        assert (claimed["text"], claimed["title"]) == ("the abstract", "/ccx-tighten the abstract")
+        assert claimed["skill"] == {"name": "ccx-tighten", "instructions": "Tighten the abstract."}
+        _write(pc, turn, 1, state="done", text="Tightened.")
+        # a message without one carries none
+        second = _claim(pc, _say(lab, "And the title.")["turn"]["id"], run="run-2")
+        assert "skill" not in second["turn"]
+        _write(pc, second["turn"]["id"], 1, run="run-2", state="done", text="Done.")
+        # deleted before the computer took it: the turn fails here, nothing runs there
+        third = _say(lab, "the conclusion", skill={**ran, "args": "the conclusion"})["turn"]["id"]
+        skills.remove(account_of(MAKER), made["id"], None)
+        gone = chats.SKILL_GONE.format(name="ccx-tighten")
+        assert _claim(pc, third, run="run-3", status=409)["detail"] == gone
+        assert (_reply(lab)["state"], _reply(lab)["error"]) == ("failed", gone)
+    finally:
+        skills.update(account_of(MAKER), lambda value: value["skills"].clear())
+
+
 def test_a_turn_whose_agent_changed_fails_at_the_announce(lab, pc):
     turn = _say(lab)["turn"]["id"]
     _announce(pc.c, _kept(lab), assistants=[*OFF, *CLAUDE])
@@ -369,7 +401,7 @@ def test_a_turn_is_listed_to_the_computer_it_is_for_alone(lab, pc):
     turn = _say(lab)["turn"]["id"]
     assert _reply(lab)["agent"] == "claude"
     assert _chats(pc)["turns"] == []
-    assert _claim(pc, turn, agent="claude", status=404)["detail"] == chats.NO_TURN
+    assert _claim(pc, turn, agent="claude", status=404)["detail"] == far_turns.NO_TURN
     assert _row(lab, turn)["state"] == "queued" and _reply(lab)["state"] == "queued"
     assert [t["id"] for t in _chats(lc)["turns"]] == [turn]
     _claim(lc, turn, agent="claude")
@@ -584,7 +616,7 @@ def test_a_detach_fails_the_turns_queued_and_leaves_a_running_one_to_its_compute
     r = lab.maker.post(f"/api/folders/{w}/detach", json={"pages": "keep"})
     assert r.status_code == 200, r.text
     reply = _reply_of(lab, queued)
-    assert (reply["state"], reply["error"]) == ("failed", chats.DETACHED) and _row(lab, queued)["state"] == "failed"
+    assert (reply["state"], reply["error"]) == ("failed", far_turns.DETACHED) and _row(lab, queued)["state"] == "failed"
     assert _row(lab, running)["state"] == "running" and _row(lab, elsewhere)["state"] == "queued"
     assert [t["id"] for t in _chats(pc)["turns"]] == [elsewhere, library]
     assert _write(pc, running, 1, state="failed", error="Stopped: the synced folder was detached.") == {"ok": True}
@@ -594,7 +626,7 @@ def test_a_detach_fails_the_turns_queued_and_leaves_a_running_one_to_its_compute
 def _reply_of(lab, turn_id) -> dict:
     """The turn's agent message, though the page's chat no longer answers."""
     with connect_pages_db(lab.ws) as conn:
-        row = chats.run_of(conn, turn_id)
+        row = far_turns.run_of(conn, turn_id)
         conversation = chats.get(conn, row["conversation_id"])
     return next(m for m in conversation["messages"] if m.get("turn_id") == turn_id)
 

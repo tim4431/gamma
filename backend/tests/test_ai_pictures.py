@@ -17,7 +17,7 @@ from gamma import ai_pictures, ink as inkmod, upload_gc
 from gamma.ai_context import build_messages
 from gamma.ai_protocols import WIRES
 from gamma.ai_revert import RevertError, revert_change
-from gamma.ai_tools import approval_preview, run_agent_tool
+from gamma.ai_tools.registry import approval_preview, run_agent_tool
 from gamma.db import connect_pages_db
 
 from ai_fixtures import ALLOW_ALL, CONF, FakeResp, ai_provider, children, folder, org, props  # noqa: F401  (fixtures)
@@ -326,7 +326,7 @@ def test_view_image_shows_a_notes_pictures(pictured):
     text, _ = run_agent_tool(ids["ws"], folder(ids["cooling"]), "view_image", {"block_id": ids["figure"]})
     assert "outside" in text
     # A model that reads text only is not offered it (PICTURE_TOOLS).
-    from gamma.ai_tools import PICTURE_TOOLS
+    from gamma.ai_tools.registry import PICTURE_TOOLS
     assert "view_image" in PICTURE_TOOLS
 
 

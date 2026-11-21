@@ -856,7 +856,7 @@ export async function triggeredGuideScenarios(env) {
       assertEq(await progress(page, "split-view"), "done");
       // One pane again, then from the Tours menu: the user splits, and the tour goes on.
       await page.locator(".tabGroup.framed.live .tabStrip .tab").first().click({ button: "right" });
-      await page.getByRole("menuitem", { name: "Join tab groups" }).click();
+      await page.getByRole("menuitem", { name: "Join panes" }).click();
       await until(async () => (await page.locator(".tabGroup.framed").count()) === 0, { what: "one pane" });
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');

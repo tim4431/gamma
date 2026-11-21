@@ -12,8 +12,9 @@ raised/lowered runs, and structures collapse to inline forms
 (``\\frac{a}{b}`` → ``a/b``, ``\\sqrt x`` → ``√x``). Unknown commands fall back
 to their own name, which is what you want for ``\\sin``, ``\\log``, ``\\max``.
 It also keeps the inline grammar (``INLINE_RE``) that both ``pdf_document``
-and the Zotero notes (``zotero_notes``) read a block's text with, and the
-image-size syntax every backend reader of an image shares.
+and the Zotero notes (``zotero_notes``) read a block's text with, the
+``[[ref]]`` syntax (``BLOCK_REF_RE``) and the image-size syntax every backend
+reader shares.
 """
 
 import re
@@ -64,6 +65,56 @@ INLINE_RE = re.compile(
     r"|(?P<url>" + BARE_URL + ")"
 )
 LINK_PARTS = re.compile(r"\[([^\]]*)\]\(\s*(" + LINK_TARGET + ")")
+
+# A link to a page or a note as the editor writes it: ``[[id]]``, or
+# ``[[id|words]]`` showing those words in place of what it names (``\|`` too,
+# the pipe a table's cell escapes, as Obsidian writes it); ``![[id]]`` embeds
+# the note, and an embed's words are none. Groups: the "!", the id, the
+# words. The editor's twin is editor/refLabels.js REF_RE.
+BLOCK_REF_RE = re.compile(r"(!?)\[\[([A-Za-z0-9_-]+)(?:\\?\|([^\[\]\n]*))?\]\]")
+
+
+def ref_alias(m) -> str | None:
+    """The words a ``BLOCK_REF_RE`` match shows in place of what it names,
+    or None: its target's own (no words, blank ones, or an embed)."""
+    return None if m[1] else (m[3] or "").strip() or None
+
+
+def table_pipe(text: str, at: int) -> str:
+    """The pipe a link's words take at ``at`` in ``text``: ``\\|`` on a
+    table's row, whose cells a bare one would split, else ``|``."""
+    return "\\|" if text[text.rfind("\n", 0, at) + 1:at].lstrip(" \t").startswith("|") else "|"
+
+
+def ref_token(block_id: str, alias: str | None = None, bang: str = "", pipe: str = "|") -> str:
+    """``[[id]]``, ``![[id]]`` or ``[[id|words]]`` (``pipe`` ``\\|`` in a
+    table's row), as ``BLOCK_REF_RE`` reads it back: the words on one line,
+    without the brackets that would end the link; an embed takes none."""
+    words = " ".join(re.sub(r"[\[\]]", "", alias or "").split())
+    return f"{bang}[[{block_id}{pipe + words if words and not bang else ''}]]"
+
+
+def link_target(url: str) -> str:
+    """``url`` as a markdown link's target: no space or parenthesis bare."""
+    return url.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
+
+
+def markdown_link(text: str, url: str) -> str:
+    """``[text](url)``, the shape a file chip and a link block hold: no
+    brackets in the text (the frontend's file-chip markdown drops them too)."""
+    text = re.sub(r"[\[\]]", "", text or "").strip() or url
+    return f"[{text}]({link_target(url)})"
+
+
+def ref_parts(token: str) -> tuple[str, str | None]:
+    """An ``INLINE_RE`` ``ref`` or ``embed`` token — an id, or a title typed
+    by hand that no page answered — as its target and the words it shows in
+    place of the target's (``ref_alias``'s rule)."""
+    embed = token.startswith("!")
+    target, pipe, alias = token[3 if embed else 2:-2].partition("|")
+    if pipe and target.endswith("\\"):
+        target = target[:-1]
+    return target.strip(), None if embed else alias.strip() or None
 
 # Image sizes. Gamma keeps an image's display width at the end of its alt,
 # as Obsidian does and the editor writes it: ``![alt|300](url)``

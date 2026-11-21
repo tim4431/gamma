@@ -84,7 +84,7 @@ import socket
 import threading
 import time
 import uuid
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode
 
 from cryptography.fernet import InvalidToken
 
@@ -104,7 +104,7 @@ QUICK_S = 1.0            # a poll answered at once with nothing: the next waits 
 CHATS_EVERY_S = 180      # the turns that wait there are asked for at least this often (a wake lost)
 MAX_MODELS = 32          # models an assistant's announce names
 _TURN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a chat turn's id there (``blocks_store.new_block_id``'s)
-_ANSWER = ("id", "run", "ask", "decision")        # an answer's fields there (``chats.answers_of``), and its note
+_ANSWER = ("id", "run", "ask", "decision")        # an answer's fields there (``far_turns.answers_of``), and its note
 _ASK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")    # an ask's id there (gamma/computers/sessions.py)
 STATES = ("connecting", "connected", "refused", "older", "unreachable")
 
@@ -283,7 +283,7 @@ def assistants(link: dict) -> list[dict]:
     """The agents on this computer as the catalog last found them
     (``catalog.known``: one probe when none was ever made, never one to
     refresh it, so a channel keeps no agent probed), each with the models
-    it offers (``[{id, label, efforts, effort, default}]``, at most
+    it offers (``[{id, label, efforts, effort, default, speeds, speed}]``, at most
     ``MAX_MODELS``: what a chat turn there may ask for), whether it is on
     for the channel ``link``'s account (``enabled``: on, and that account
     turned it on; another account's agent is not that server's to use),
@@ -361,8 +361,10 @@ def state_of(link: dict) -> dict:
     server offers them to that account on its buckets
     (gamma/computers/registry.py), whether that server may answer what
     they ask (``asks``, the link's), the directories offered them
-    (``dirs``, ``offered``), and that it answers what that server asks of
-    its agents' sessions (``sessions``, ``_sessions``). A work folder's
+    (``dirs``, ``offered``), that it answers what that server asks of
+    its agents' sessions (``sessions``, ``_sessions``), and that it runs a
+    turn's skill with the instructions its claim carries (``skills``,
+    gamma/local_agents/home.py ``HttpChatHome.claim``). A work folder's
     vault also names its agent (``agent``) for an older server, which reads
     it from there."""
     vaults, agents = [], agent_folders(link)
@@ -373,7 +375,8 @@ def state_of(link: dict) -> dict:
             vaults[-1]["agent"] = agents[vault["folder_id"]][1]
     return {"computer": {"id": computer_id(link["remote_url"]), "name": computer_name()},
             "app": version.label()[:64], "vaults": vaults, "assistants": assistants(link),
-            "asks": bool(link.get("asks")), "dirs": offered(link), "sessions": True}
+            "asks": bool(link.get("asks")), "dirs": offered(link), "sessions": True,
+            "skills": True}
 
 
 def offered(link: dict) -> list[dict]:

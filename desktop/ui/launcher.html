@@ -129,7 +129,7 @@
   <div class="adders">
     <button class="uiBtn primary desktopOnly" id="btnAddLocal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>New local server</button>
     <button class="uiBtn" id="btnAddRemote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>Add remote server…</button>
-    <!-- A directory on this computer becomes a folder of Gamma kept in step with it (main.js addDirectoryVault); the dialog opens in the bar's sync panel. -->
+    <!-- A directory on this computer becomes a folder of Gamma kept in step with it (lib/vaults.js addDirectoryVault); the dialog opens in the bar's sync panel. -->
     <button class="uiBtn desktopOnly" id="btnAddVault" title="A directory on this computer becomes a folder of Gamma, its notes and PDFs kept in step with it"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M12 10v6"/><path d="M9 13h6"/></svg>Add a synced folder…</button>
   </div>
   <div class="status" id="status"></div>
@@ -258,7 +258,7 @@
   <h3 id="dlgRenameTitle">Rename server</h3>
   <input class="uiInput" id="renameName" aria-label="Name" />
   <input class="uiInput mono" id="renameUrl" aria-label="Address" placeholder="http://192.168.1.10:9001" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="url" hidden />
-  <!-- A remote's trust: the certificate trusted by its fingerprint, and the yes to plain http:// (main.js forgetCert, beforeMint). -->
+  <!-- A remote's trust: the certificate trusted by its fingerprint, and the yes to plain http:// (lib/addresses.js forgetCert, beforeMint). -->
   <div class="formActs" id="renameTrust" hidden>
     <button class="uiBtn sm" id="btnForgetCert" hidden>Forget the trusted certificate</button>
     <button class="uiBtn sm" id="btnForgetPlain" hidden>Ask again before connecting over http://</button>
@@ -409,7 +409,7 @@
           $('btnForgetPlain').hidden = true;
           setStatus(`Gamma asks again before it connects to ${ws.name} over http://.`);
         };
-        // A new address moves the server's links with it (main.js moveServer), asked
+        // A new address moves the server's links with it (lib/addresses.js moveServer), asked
         // first; a refusal keeps the dialog open on the server's words, to try again.
         $('btnRename').onclick = async () => {
           try {
@@ -667,7 +667,7 @@
     $('failLog').textContent = f.log || '';
     $('failLogBox').hidden = !f.log;
     $('failLogBox').open = false;
-    // A certificate to trust by its fingerprint (main.js certCard): its words are
+    // A certificate to trust by its fingerprint (lib/addresses.js certCard): its words are
     // the server's, so they go in as text only.
     const box = $('failCert');
     box.textContent = '';
@@ -720,7 +720,7 @@
     }
     // A plain-HTTP server behind an https:// address (`http`), or an http:// one
     // that sent this window to https:// (`https`): the address changes, the links with it
-    // (main.js moveServer asks first), and the server opens again.
+    // (lib/addresses.js moveServer asks first), and the server opens again.
     const moveTo = async (b, url) => {
       const ws = server();
       if (!ws) return;

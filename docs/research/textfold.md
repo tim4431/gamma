@@ -104,7 +104,7 @@ FTS5's `trigram` tokenizer is the alternative, but it misses two-character words
 
 **TextFold** drops a stop list that includes question words, keeps symbols such as `D=4` whole, and scores passages by IDF ([`notes.py` L106–L134](https://github.com/chenxiachan/textfold/blob/2cd77e0/textfold/notes.py#L106-L134)).
 
-**Here:** `fts_query` ANDs every term (`block_index.py:27-36`). On a miss, `ai_tools.py:1767-1783` retries with the three longest words of three or more characters, with no stop list. "what is the threshold for D=4 surface code" falls back to `threshold surface what`.
+**Here:** `fts_query` ANDs every term (`block_index.py:27-36`). On a miss, `ai_tools/library.py` retries with the three longest words of three or more characters, with no stop list. "what is the threshold for D=4 surface code" falls back to `threshold surface what`.
 
 **To take:** on a miss, drop stop words, keep tokens with digits, `=` or Greek letters, and run an OR query ordered by FTS5's `rank`. Its bm25 already weights terms by IDF. The results are already labelled approximate.
 
@@ -114,7 +114,7 @@ FTS5's `trigram` tokenizer is the alternative, but it misses two-character words
 
 **TextFold** has the model cite paragraphs by short numbers, because "a number is copied right far more often than an id" ([`notes.py` L138–L143](https://github.com/chenxiachan/textfold/blob/2cd77e0/textfold/notes.py#L138-L143)). `_cited` maps each number back to its paragraph. A number that matches nothing is kept, marked as broken ([L266–L283](https://github.com/chenxiachan/textfold/blob/2cd77e0/textfold/notes.py#L266-L283)).
 
-**Here:** the model writes a page id, the physical page and a verbatim quote (`ai_tools.py:116`, [pdf_citations.md](../dev/pdf_citations.md)). Nothing checks them until a click, when the viewer runs its exact and fuzzy passes.
+**Here:** the model writes a page id, the physical page and a verbatim quote (`ai_tools/prompt.py`, [pdf_citations.md](../dev/pdf_citations.md)). Nothing checks them until a click, when the viewer runs its exact and fuzzy passes.
 
 **To take:** when a reply ends, parse its citation links and check that:
 
@@ -170,7 +170,7 @@ Fold finished replies only; copying and saving to a note use the full text. Gamm
 **Here:**
 
 - `document_map` lists how each page starts (`ai_context.py:759-786`). It has one caller, the chat's context (`:1635`).
-- An MCP agent's `read_page` gets a 6,000-character window (`ai_tools.py:97`) with no page count and no map.
+- An MCP agent's `read_page` gets a 6,000-character window (`ai_tools/base.py`) with no page count and no map.
 - The PDF's bookmarks (`pdf_text.outline`, `pdf_text.py:445`) and the detected headings exist, but only label selected passages.
 
 **To take:** build map lines from bookmarks or detected headings ("§3 Results — p. 7"), with page starts as the fallback. When there is no chat context, put the page count and the map before the first window.

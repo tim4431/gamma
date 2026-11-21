@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import account_of, login, make_folder, make_user, mark_work_folder, workspace_of
-from gamma import folder_links, gamma_sync, linked_files, pdf_meta, storage
+from gamma import folder_links, gamma_sync, linked_files, pdf_meta, server_options, storage
 from gamma.vault import disk as vault_disk, kinds, store as vault_store
 from gamma.blocks_store import page_for_file
 from gamma.db import connect_pages_db, connect_vaults_db
@@ -427,8 +427,8 @@ def test_a_notes_link_to_a_work_folders_file_is_a_mention_of_its_page(work):
     v.sync()
     pic = f"{_digest(PNG)}.png"
     assert v.texts(v.page_of("notes.md")) == [
-        f"[[{pages['sections/method.tex']}]] and [[{pages['main.md']}]] and [[{pages['figures/fig1.pdf']}]]",
-        f"![](/api/uploads/{pic}) and [[{pages['fig.png']}]]"]
+        f"[[{pages['sections/method.tex']}|the method]] and [[{pages['main.md']}]] and [[{pages['figures/fig1.pdf']}]]",
+        f"![](/api/uploads/{pic}) and [[{pages['fig.png']}|fig]]"]
     paper = v.doc(pages["main.md"])["hash"]
     assert v.texts(pages["main.md"]) == [f"the paper, see [main.pdf](/api/uploads/{paper}.pdf)"]
     assert v.text("notes.md") == text
@@ -455,7 +455,7 @@ def test_a_file_new_in_the_round_is_its_upload_until_the_note_changes(work):
 
 
 def test_a_listed_files_link_is_its_page_and_a_listed_pictures_embed_stays_as_typed(work, monkeypatch):
-    monkeypatch.setenv("GAMMA_VAULT_KEEP_MB", "1")
+    monkeypatch.setattr(server_options, "vault_keep_bytes", lambda: 1 << 20)
     v = work()
     v.write("data/big.h5", b"\x00" + os.urandom(MB), age=10)
     v.write("data/huge.png", PNG + os.urandom(MB), age=10)
@@ -464,7 +464,7 @@ def test_a_listed_files_link_is_its_page_and_a_listed_pictures_embed_stays_as_ty
     assert v.doc(big)["at"] == "listed" and v.doc(v.page_of("data/huge.png"))["at"] == "listed"
     v.write("notes/N.md", "the weights: [[big.h5]], [w](../data/big.h5)\n\n![[huge.png]]\n")
     v.sync()
-    assert v.texts(v.page_of("notes/N.md")) == [f"the weights: [[{big}]], [[{big}]]", "![[huge.png]]"]
+    assert v.texts(v.page_of("notes/N.md")) == [f"the weights: [[{big}]], [[{big}|w]]", "![[huge.png]]"]
     v.quiet()
 
 
@@ -480,13 +480,13 @@ def test_gammas_link_to_a_file_page_is_written_by_its_path_and_asks_no_anchor(wo
     v.write("notes.md", "see [the method](sections/method.tex)\n")
     v.sync()
     note = v.page_of("notes.md")
-    block, thought = v.find(note, f"see [[{method}]]"), v.find(method, "a thought on the method")
-    v.edit(note, set_(block, f"now see [[{method}]]"),
+    block, thought = v.find(note, f"see [[{method}|the method]]"), v.find(method, "a thought on the method")
+    v.edit(note, set_(block, f"now see [[{method}|the method]]"),
            insert(note, f"and [[{pages['figures/fig1.pdf']}]], [[{thought}]] and [[{pages['main.md']}]]"))
     v.sync()
     assert v.text("notes.md") == "now see [the method](sections/method.tex)\n\nand [[fig1.pdf]], [[method.tex]] and [[main]]\n"
     assert v.text("sections/method.tex") == "\\section{Method}\n" and v.text("main.md") == "the paper\n"
-    assert v.texts(note) == [f"now see [[{method}]]",
+    assert v.texts(note) == [f"now see [[{method}|the method]]",
                              f"and [[{pages['figures/fig1.pdf']}]], [[{thought}]] and [[{pages['main.md']}]]"]
     v.quiet()
     v.write(".obsidian/app.json", '{"useMarkdownLinks": true}')
@@ -515,7 +515,7 @@ def test_a_file_moved_on_disk_keeps_the_notes_link_on_both_sides(work):
 # --- the keep limit ------------------------------------------------------------------------------
 
 def test_a_file_past_the_keep_limit_is_listed_and_hashed_once_it_shrinks(work, monkeypatch):
-    monkeypatch.setenv("GAMMA_VAULT_KEEP_MB", "1")
+    monkeypatch.setattr(server_options, "vault_keep_bytes", lambda: 1 << 20)
     v = work()
     big = b"\x00" + os.urandom(MB)
     v.write("weights.ckpt", big, age=10)
@@ -599,7 +599,7 @@ def test_a_file_is_listed_or_hashed_by_the_stat_its_read_takes(work, monkeypatch
     """The scan's size decided, so a file that shrank below the limit between
     the walk and its read was recorded listed with the small file's stat, and
     stayed listed until it changed again."""
-    monkeypatch.setenv("GAMMA_VAULT_KEEP_MB", "1")
+    monkeypatch.setattr(server_options, "vault_keep_bytes", lambda: 1 << 20)
     v = work()
     small = v.write("build.log", b"small\n", age=10)
     st = os.stat(small)
@@ -617,7 +617,7 @@ def test_a_listed_files_failed_set_is_its_problem_and_never_a_push_that_landed(w
     """A listed read's hash is "", which the page's ``doc_of`` answered too, so
     a refused ``set_doc`` left its pending and the next round promoted it as
     done: the page's size stayed stale until the file changed again."""
-    monkeypatch.setenv("GAMMA_VAULT_KEEP_MB", "1")
+    monkeypatch.setattr(server_options, "vault_keep_bytes", lambda: 1 << 20)
     v = work()
     big = b"\x00" + os.urandom(MB)
     v.write("weights.ckpt", big, age=10)

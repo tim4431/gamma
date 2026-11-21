@@ -41,6 +41,7 @@ import { settingsScenarios } from "./scenarios/settings.mjs";
 import { mcpScenarios } from "./scenarios/mcp.mjs";
 import { mirrorScenarios } from "./scenarios/mirror.mjs";
 import { mentionScenarios } from "./scenarios/mentions.mjs";
+import { chatSkillScenarios } from "./scenarios/chatSkills.mjs";
 import { noteMentionScenarios } from "./scenarios/noteMentions.mjs";
 import { commentScenarios } from "./scenarios/comments.mjs";
 import { translationScenarios } from "./scenarios/translation.mjs";
@@ -82,6 +83,7 @@ import { vaultScenarios } from "./scenarios/vaults.mjs";
 import { workFolderScenarios } from "./scenarios/workFolders.mjs";
 import { localAgentScenarios } from "./scenarios/localAgents.mjs";
 import { computerScenarios } from "./scenarios/computers.mjs";
+import { standbyScenarios } from "./scenarios/standby.mjs";
 import { httpsScenarios } from "./scenarios/https.mjs";
 import { remoteWorkScenarios } from "./scenarios/remoteWork.mjs";
 import { remoteChatScenarios } from "./scenarios/remoteChat.mjs";
@@ -117,6 +119,7 @@ const RUNNERS = {
   "publish": publishScenarios,
   "chat-navigation": chatNavigationScenarios,
   "mentions": mentionScenarios,
+  "chat-skills": chatSkillScenarios,
   "note-mentions": noteMentionScenarios,
   "comments": commentScenarios,
   "translation": translationScenarios,
@@ -129,6 +132,7 @@ const RUNNERS = {
   "work-folders": workFolderScenarios,
   "local-agents": localAgentScenarios,
   "computers": computerScenarios,
+  "standby": standbyScenarios,
   "https": httpsScenarios,
   "remote-work": remoteWorkScenarios,
   "remote-chat": remoteChatScenarios,

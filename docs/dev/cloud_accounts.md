@@ -2124,7 +2124,7 @@ nothing. Two first-run behaviours of the image are off there:
   becomes admin at their first cloud sign-in as the admin subject; a
   seeded login would belong to nobody and take one of the plan's accounts.
 - **No guests.** `GAMMA_HOSTED` turns guest logins off by itself
-  (`config.guest_max`, [guests.md](guests.md)), since a guest would not
+  (`server_options.guest_max`, [guests.md](guests.md)), since a guest would not
   count against the plan's accounts. The account server also starts every
   container with `GAMMA_GUEST_MAX=0`, which covers an image older than
   that rule. Settings → Users shows no Guests section there.

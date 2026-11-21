@@ -274,7 +274,7 @@ export async function textAnchorScenarios(env) {
         assert(box.h < 48, `the new comment's field is one line tall: ${box.h}px`);
         assertEq(box.bg, "rgba(0, 0, 0, 0)", "the field's editor paints no background");
         await page.keyboard.type("Say how much, in numbers.");
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         const thread = await until(async () => (await threadsOf(main.id)).find((th) => th.comments[0]?.body === "Say how much, in numbers."),
           { what: "the thread is stored" });
         first = { block: thread.block_id, thread: thread.id };

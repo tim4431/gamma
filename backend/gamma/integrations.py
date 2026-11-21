@@ -70,7 +70,8 @@ class Connection(NamedTuple):
     """An MCP connection (``resolve_connection``): ``user_id`` and
     ``workspaces`` first, as the pair it once was; ``editable`` the ones of
     them whose notes it may change now, and whether each change asks first;
-    ``commentable`` those it may comment in."""
+    ``commentable`` those it may comment in; ``deletes`` whether it may also
+    delete notes where it edits."""
     user_id: str
     workspaces: list
     scope: str
@@ -80,6 +81,7 @@ class Connection(NamedTuple):
     editable: tuple = ()
     asks: bool = True
     commentable: tuple = ()
+    deletes: bool = False
 
 
 def display_name(name: str) -> str:
@@ -285,9 +287,19 @@ def set_workspaces(user_id: str, token_id: str, workspaces, edits=(), comments=(
 def set_asks(user_id: str, token_id: str, asks: bool) -> None:
     """Whether one of the account's connections asks before each change it
     makes (Settings, or the person's "don't ask again" on a question)."""
+    _set_flag(user_id, token_id, "asks", asks)
+
+
+def set_deletes(user_id: str, token_id: str, deletes: bool) -> None:
+    """Whether one of the account's connections may delete notes where it
+    edits them (Settings, "May delete notes" on its row)."""
+    _set_flag(user_id, token_id, "deletes", deletes)
+
+
+def _set_flag(user_id: str, token_id: str, column: str, value: bool) -> None:
     with connect_users_db() as conn:
-        found = conn.execute("UPDATE integration_tokens SET asks = ? WHERE id = ? AND user_id = ? AND scope != ?",
-                             (int(bool(asks)), token_id, user_id, TURN)).rowcount
+        found = conn.execute(f"UPDATE integration_tokens SET {column} = ? WHERE id = ? AND user_id = ? AND scope != ?",
+                             (int(bool(value)), token_id, user_id, TURN)).rowcount
     if not found:
         raise HTTPException(404, "This connection is gone.")
 
@@ -322,7 +334,7 @@ def forget_workspace(conn, ws: str) -> None:
 
 def _row(token: str, resource: str | None):
     """The live token's ``(user_id, username, workspace_id, scope,
-    workspaces, id, name, edits, asks, comments)``, else None. ``resource``
+    workspaces, id, name, edits, asks, comments, deletes)``, else None. ``resource``
     is the MCP URL an OAuth token must be bound to."""
     if not token.startswith("gamma_") or len(token) > 128:
         return None
@@ -334,7 +346,7 @@ def _row(token: str, resource: str | None):
                 return None
         return conn.execute(
             "SELECT t.user_id, u.username, t.workspace_id, t.scope, t.workspaces, t.id, t.name, t.edits, t.asks, "
-            "t.comments FROM integration_tokens t "
+            "t.comments, t.deletes FROM integration_tokens t "
             "JOIN users u ON u.id = t.user_id "
             "WHERE t.token_hash = ? AND t.expires_at > ? AND u.is_guest = 0",
             (token_digest(token), int(time.time()))).fetchone()
@@ -388,7 +400,7 @@ def resolve_connection(token: str, resource: str | None = None) -> Connection | 
     row = _row(token, resource)
     if not row or row[3] == "computer":
         return None
-    user_id, username, primary, scope, value, token_id, name, edits, asks, comments = row
+    user_id, username, primary, scope, value, token_id, name, edits, asks, comments, deletes = row
     wanted = granted(primary, value)
     if wanted == ALL:
         wanted = [w["id"] for w in list_for_user(user_id) if not w["deleting"]]
@@ -399,4 +411,23 @@ def resolve_connection(token: str, resource: str | None = None) -> Connection | 
                      and _covers(edits, w))
     commentable = tuple(w for w in readable if comments_in(scope, edits, comments, w))
     return Connection(user_id, readable, _scope(scope), token_id, name, username, editable,
-                      bool(asks), commentable) if readable else None
+                      bool(asks), commentable, bool(deletes) and bool(editable)) if readable else None
+
+
+def still_edits(token_id: str, ws: str) -> bool:
+    """Whether the live token ``token_id`` may still edit ``ws``'s notes, by
+    ``resolve_connection``'s rule (a read token whose edit level names the
+    workspace, which its account still edits): an MCP assistant's upload
+    ticket, minted earlier, is honoured only then (routers/uploads.py
+    ``agent_upload``)."""
+    with connect_users_db() as conn:
+        row = conn.execute(
+            "SELECT t.user_id, t.workspace_id, t.scope, t.workspaces, t.edits FROM integration_tokens t "
+            "JOIN users u ON u.id = t.user_id WHERE t.id = ? AND t.expires_at > ? AND u.is_guest = 0",
+            (token_id, int(time.time()))).fetchone()
+    if not row:
+        return False
+    user_id, primary, scope, value, edits = row
+    wanted = granted(primary, value)
+    return (_scope(scope) == "read" and (wanted == ALL or ws in wanted) and _covers(edits, ws)
+            and role_of(ws, user_id) in EDITING_ROLES)

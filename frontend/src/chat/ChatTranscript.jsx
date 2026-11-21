@@ -27,14 +27,15 @@ import { cachedPercent, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { areaPicturesNote, canContinueAfterLimit, continueAfterLimitPrompt, coverageNote, limitNote, shortenedNote, trimmedNote,
   toolsOffNote, truncatedNote } from "./coverage.js";
 import { failureCopy } from "./chatErrors";
-import { chipNote, helperStatus, runningLabel, splitActions, stepsSummary } from "./agentSteps";
+import { actionSummary, chipNote, helperStatus, runningLabel, splitActions, stepsSummary } from "./agentSteps";
+import { skillText } from "./skills.js";
 import { sendsOnEnter } from "./enterKey.js";
 import { splitQuoted } from "./chatQuotes.js";
 import ChipPreview from "./ChipPreview.jsx";
 import { composing } from "../shared/lib/hotkeys.js";
 import { openReport } from "../support/reportContent.js";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ClockIcon, CopyIcon, FileIcon, FlagIcon, FolderIcon,
-  CornerDownRightIcon, InfoIcon, PencilIcon, QuoteIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
+  CornerDownRightIcon, InfoIcon, PencilIcon, QuoteMarkIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // What the model was given for a reply, per document — streamed by
@@ -250,19 +251,41 @@ function UserText({ text }) {
   ) : <div key={i} className="chatUserText">{p.text}</div>));
 }
 
+// The skill a user message ran (chat/skills.js), as a chip ahead of its
+// text: a copy of the transcript's text writes it as "/name" (the copy
+// serializer reads `data-mention`, shared/ui/Widgets.jsx). `onDrop` gives
+// it the × that drops the skill (an edited message's).
+function SkillChip({ skill, onDrop = null }) {
+  return (
+    <div className="chatMsgSkillRow">
+      <span className="uiTag chatMsgSkill" data-mention={`/${skill.name}`} title={t("Ran the skill /{name}", { name: skill.name })}>
+        /{skill.name}
+        {onDrop ? (
+          <button type="button" className="chatMsgSkillDrop" onClick={onDrop}
+            title={t("Send it without the skill")} aria-label={t("Remove the skill /{name}", { name: skill.name })}>
+            <XIcon size={10} />
+          </button>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
 // A sent message edited in place (Gamma AI's): Send goes again from it,
-// replacing it and everything after it.
+// replacing it and everything after it, with the skill it ran unless its
+// chip's × dropped it.
 function EditBubble({ i, editing, onEdit, onResend, replying }) {
-  const resend = () => { const text = editing.text; onEdit(null); onResend(i, text); };
+  const resend = () => { const { text, skill = null } = editing; onEdit(null); onResend(i, text, skill); };
   return (
     <div className="chatBubbleRow user" data-msg-idx={i} data-motion-key={i}>
       <div className="chatMsgCol">
         <div className="chatBubble user chatEditBubble">
+          {editing.skill ? <SkillChip skill={editing.skill} onDrop={() => onEdit({ ...editing, skill: null })} /> : null}
           <AutoGrowTextarea
             autoFocus
             className="chatEditTextarea"
             value={editing.text}
-            onChange={(e) => onEdit({ idx: i, text: e.target.value })}
+            onChange={(e) => onEdit({ ...editing, idx: i, text: e.target.value })}
             onKeyDown={(e) => {
               if (composing(e)) return;
               if (sendsOnEnter(e)) {
@@ -274,7 +297,7 @@ function EditBubble({ i, editing, onEdit, onResend, replying }) {
           <div className="chatEditBtns">
             <button type="button" className="uiBtn sm" onClick={() => onEdit(null)}>{t("Cancel")}</button>
             <button type="button" className="uiBtn sm chatEditSend"
-              disabled={!editing.text.trim() || replying}
+              disabled={(!editing.text.trim() && !editing.skill) || replying}
               onClick={resend}
               title={t("Re-send — replaces this message and everything after it")}>{t("Send")}</button>
           </div>
@@ -314,7 +337,7 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
               ))}
               {(m.passages || []).map((s, j) => (
                 <span key={`q${j}`} className="chatPdfChip" title={s.text}>
-                  <QuoteIcon size={14} />
+                  <QuoteMarkIcon size={14} />
                   {s.page ? t("p. {page}", { page: s.page }) : t("PDF passage")}
                 </span>
               ))}
@@ -351,14 +374,14 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
                           onClick={() => toggleAction(key)}
                           title={open ? t("Hide tool output") : t("Show tool output")}>
                           <Icon size={14} />
-                          <span>{a.declined ? declinedSummary(a, titleOf) : a.summary}</span>
+                          <span>{a.declined ? declinedSummary(a, titleOf) : actionSummary(a)}</span>
                           {chipNote(a) ? <span className="chatToolActionNote">{chipNote(a)}</span> : null}
                           <Chevron open={open} dir="down" size={10} />
                         </button>
                       ) : (
-                        <div className="chatToolActionHead plain" title={a.summary}>
+                        <div className="chatToolActionHead plain" title={actionSummary(a)}>
                           <Icon size={14} />
-                          <span>{a.summary}</span>
+                          <span>{actionSummary(a)}</span>
                         </div>
                       )}
                       {hasDetail ? <Collapse open={open} className="chatToolMore"><ToolCallDetail action={a} /></Collapse> : null}
@@ -382,6 +405,7 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
           {isUser && m.contextPages?.length ? <div className="chatMsgPdfs" data-markdown-copy-ignore="">
             {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={14} /><span className="linkChipText">{p.title}</span></button>)}
           </div> : null}
+          {isUser && m.skill?.name ? <SkillChip skill={m.skill} /> : null}
           {isUser
             ? <UserText text={m.text} />
             : m.text && !(m.error && m.errorKind) ? <ChatMarkdown text={m.text} copyBlocks /> : null}
@@ -428,7 +452,7 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
           {!isUser ? <UsageLine usage={m.usage} /> : null}
           <div className="chatMsgActions">
           <button type="button" className="chatMsgActionBtn" title={t("Copy message")}
-            onClick={() => onCopy(i, m.text)}>
+            onClick={() => onCopy(i, isUser ? skillText(m) : m.text)}>
             <IconSwap swap={copiedIdx === i} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
           </button>
           {canReport && !isUser && m.text && !(m.error && m.errorKind) ? (
@@ -441,7 +465,7 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
           ) : null}
           {onEdit && isUser && !replying ? (
             <button type="button" className="chatMsgActionBtn" title={t("Edit and re-send (removes later messages)")}
-              onClick={() => onEdit({ idx: i, text: m.text })}>
+              onClick={() => onEdit({ idx: i, text: m.text, skill: m.skill || null })}>
               <PencilIcon size={14} />
             </button>
           ) : null}
@@ -460,8 +484,9 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
 // none). The rest are what the rows offer:
 //   titleOf(pageId)          a page a step names; onOpenPage(id) opens one
 //   openActions, toggleAction  the chips unfolded ("<row>:<chip>", "<row>:steps")
-//   editing, onEdit, onResend  a sent message edited and sent again (none:
-//                            no Edit)
+//   editing, onEdit, onResend  a sent message edited and sent again
+//                            ({idx, text, skill}; onResend(i, text, skill);
+//                            none: no Edit)
 //   copiedIdx, onCopy        Copy, and the row that was just copied
 //   canReport                whether a reply can be reported
 //   approvals                Gamma AI's approval cards: {answered, kindLabel,

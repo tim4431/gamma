@@ -63,9 +63,13 @@ from . import ai_permissions, ai_steer
 from .ai_client import UpstreamError, failure_kind, partial_json_object
 from .ai_context import canonical_tool, elide_live_results
 from .ai_protocols.base import reasoning_text, truncated_stop
-from .ai_tools import (CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, MUTATING_TOOLS,
-                       TREE_DELETES, approval_preview, ensure_tally, find_selection, listed_pages, run_agent_tool,
-                       settled_action, skipped_fetch, tool_action, tool_permission, unanswered_fetch)
+from .ai_tools.base import CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, ensure_tally
+from .ai_tools.folders import TREE_DELETES
+from .ai_tools.notes import find_selection
+from .ai_tools.organizing import listed_pages
+from .ai_tools.registry import (MUTATING_TOOLS, STORING_TOOLS, approval_preview, replayed, run_agent_tool,
+                                settled_action, tool_action, tool_permission)
+from .ai_tools.web import skipped_fetch, unanswered_fetch
 from .logbuf import log
 
 # Tool calls of one round that run at the same time. Reads are network- or
@@ -88,7 +92,7 @@ PREVIEW_TOOLS = frozenset({"edit_block", "create_block"})
 # The short arguments a step event repeats, for the label the chat shows
 # while a call runs ("Searching library for …"). Never a note's content.
 STEP_ARGS = ("page_id", "block_id", "query", "title", "folder", "label", "source", "url",
-             "pdf_page", "mode", "question", "thread_id", "sheet_id", "format")
+             "pdf_page", "mode", "question", "thread_id", "sheet_id", "format", "name")
 
 # What the model hears for a call the user did not allow (with what they want
 # done instead, when they said it), or did not answer in time.
@@ -390,9 +394,10 @@ class AgentLoop:
         """Reopen the provider with this round's results. The valve on a
         long reply: once the rounds' results outgrow their budget the oldest
         become stubs, and a provider that still calls the prompt too long
-        gets one retry with only the last round's results — None instead
-        when the client left while it was refused."""
-        elide_live_results(self.conversation.messages)
+        gets one retry with only the last round's results, the skills
+        loaded in this reply elided too — None instead when the client left
+        while it was refused."""
+        elide_live_results(self.conversation.messages, replay=replayed)
         try:
             return self.open_round(self.conversation)
         except UpstreamError as e:
@@ -400,7 +405,8 @@ class AgentLoop:
                 raise
             if self._left():
                 return None
-            elide_live_results(self.conversation.messages, keep_rounds=1, budget=0)
+            elide_live_results(self.conversation.messages, keep_rounds=1, budget=0, keep_replayed=False,
+                               replay=replayed)
             log.info("[ai_agent] tool round too long for the provider, retrying with earlier results elided")
             return self.open_round(self.conversation)
 
@@ -482,7 +488,7 @@ class AgentLoop:
             if changes:
                 # What this message may still change: a call naming several
                 # pages changes at most that many, or is refused whole before
-                # any card (ai_tools._batch_answer). The gate's preview reads
+                # any card (ai_tools.organizing._batch_answer). The gate's preview reads
                 # the same scope.
                 self.scope["changes_left"] = None if self.max_changes is None else self.max_changes - self.mutations
             if self.gate:
@@ -699,7 +705,9 @@ class ApprovalGate:
         self.stopped = stopped
 
     def asks(self, name: str) -> bool:
-        return self.scope["permissions"].get(tool_permission(name)) == "ask"
+        # A tool that only stores a file asks nobody: the note write that
+        # shows the file asks, with its picture on the card.
+        return name not in STORING_TOOLS and self.scope["permissions"].get(tool_permission(name)) == "ask"
 
     def run(self, name: str, call: dict, armed):
         """Yield the card event if there is one, then return

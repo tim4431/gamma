@@ -14,7 +14,7 @@ import { TOURS } from "../../../src/guide/tours/index.js";
 // secret, a desktop user agent) with local agents on and the stand-ins of
 // backend/tests/fake_agents/ in place of the CLIs, so no real agent ever
 // runs: the SyncTeX sample paper as a work folder with its .tex sources
-// tracked, no Feedback button anywhere, Codex turned on for the computer by
+// tracked, Codex turned on for the computer by
 // the vault's maker; a passage of main.tex and one of a library PDF
 // commented with Send to Codex ticked, each a turn of its thread answered
 // there under Codex's name, the .tex edited and shown so, a question of
@@ -62,6 +62,9 @@ const GUIDE_ASK = "Is night the right time?";
 const STEER_ASK = "tighten the method";
 const STEER_REPLY = "Tightened the method.";
 const STEER = "keep the equation numbers";
+// A message that runs the built-in skill /summarize: what it works on, and Codex's reply to it.
+const SKILL_ASK = "for a journal club";
+const SKILL_REPLY = "Summarized for the journal club.";
 const GUIDE_REPLY = "Night is right.";
 const GUIDE_ASK_2 = "Is day the right time to open?";
 const GUIDE_REPLY_2 = "Day is right.";
@@ -127,6 +130,7 @@ export async function localAgentScenarios(env) {
           body: LIB_QUESTION } }], delay: 0, typing: 0, chat: LIB_REPLY },
         [SESSION_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: SESSION_REPLY },
         [STEER_ASK]: { edits: [], ask: [], delay: 4, typing: 0, chat: STEER_REPLY },
+        [SKILL_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: SKILL_REPLY },
         [GUIDE_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: GUIDE_REPLY },
         [GUIDE_ASK_2]: { edits: [], ask: [], delay: 0, typing: 0, chat: GUIDE_REPLY_2 } } }),
   } });
@@ -134,7 +138,6 @@ export async function localAgentScenarios(env) {
     await server.start();
     await server.manage("create-user", "la-user", "la-pw");
     const user = await new Account(server, "la-user", "la-pw").login();
-    const home = `${server.base}/?ws=${user.ws}`;
     const at = (id) => `${server.base}/?page=${id}&ws=${user.ws}`;
     const desktop = (opts = {}) => user.context(browser, { userAgent: DESKTOP_UA, ...opts });
     // What the page asks the desktop shell, recorded as window.shellAsks: no shell runs here.
@@ -193,7 +196,7 @@ export async function localAgentScenarios(env) {
       await until(() => tick.isChecked(), { what: "Send to Codex ticked" });
       await fresh.locator(".commentField .cm-content").click();
       await page.keyboard.type(body);
-      await page.keyboard.press("Shift+Enter");
+      await page.keyboard.press("Enter");
     };
     // The thread whose first comment is `body` on the page, once Codex's
     // reply `reply` is its second comment.
@@ -290,28 +293,6 @@ export async function localAgentScenarios(env) {
       assertEq(link.agent ?? null, null, "the folder has no agent yet");
     });
 
-    await step("local-agents: no Feedback button is left: not in the synced folder's list, the vault chip's menu or the Comments window", async () => {
-      const ctx = await desktop();
-      const page = await openPage(ctx, `${home}&folder=${link.folder_id}`);
-      try {
-        await page.locator('[data-guide="home.select"]').waitFor({ timeout: 15000 });
-        assertEq(await page.getByRole("button", { name: "Feedback", exact: true }).count(), 0, "none in the folder's list bar");
-        await page.goto(at(main.id));
-        await waitForPdf(page, 1);
-        await page.locator(".vaultChip").click();
-        const card = page.locator(".vaultPopover");
-        await card.waitFor();
-        assertEq(await card.getByText("Feedback…", { exact: true }).count(), 0, "none in the vault chip's menu");
-        await page.locator(".vaultChip").click();
-        await card.waitFor({ state: "detached" });
-        await openComments(page);
-        assertEq(await page.locator(".dockWindow:has(.commentsPanel)").getByRole("button", { name: "Feedback", exact: true }).count(), 0,
-          "none in the Comments window");
-        assertEq(await page.getByRole("button", { name: "Feedback", exact: true }).count(), 0, "none in the page header");
-        assertNoProblems(page);
-      } finally { await ctx.close(); }
-    });
-
     await step("local-agents: the vault's maker turns Codex on for the computer", async () => {
       const turned = await user.api("/api/local-agents/codex", { method: "PATCH", body: { enabled: true } });
       assertEq(JSON.stringify([turned.name, turned.label, turned.enabled, turned.runs, turned.mine]),
@@ -349,7 +330,7 @@ export async function localAgentScenarios(env) {
         await thread.locator(".cmMentionChip", { hasText: "@codex" }).waitFor();
         await until(() => tick.isChecked(), { what: "@codex ticks the box" });
         await page.keyboard.type("fix this only");
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         // the chip follows the turn, with Stop, then the agent's reply lands under its name
         const chip = thread.locator(".commentTurn .stateTag");
         await until(async () => (await chip.innerText().catch(() => "")).trim().startsWith("Codex is working"),
@@ -397,7 +378,7 @@ export async function localAgentScenarios(env) {
         assertEq((await thread.locator(".commentField .cm-placeholder").last().innerText()).trim(), "Reply to Codex…");
         assertEq(await thread.locator(".commentSend").last().getAttribute("aria-label"), "Send to Codex", "the button says what it starts");
         await page.keyboard.type("keep the British spelling");
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         await thread.locator(".commentItem.reply", { hasText: CHAT_REPLY }).nth(1).waitFor({ timeout: 40000 });
         assertNoProblems(page);
       } finally { await ctx.close(); }
@@ -580,7 +561,7 @@ export async function localAgentScenarios(env) {
         await fresh.locator(".commentField .cm-content").click();
         await page.keyboard.press("End");
         await page.keyboard.type(GUIDE_ASK.slice(2));
-        await page.keyboard.press("Shift+Enter");
+        await page.keyboard.press("Enter");
         await answered(paper.id, GUIDE_ASK, GUIDE_REPLY);
         assertEq(await page.locator("[data-guide-offer]").count(), 0, "the hint had this load's one offer");
         await page.reload();
@@ -628,7 +609,7 @@ export async function localAgentScenarios(env) {
         await dock.locator(".chatEmpty", { hasText: "Ask Codex about this file" }).waitFor();
         await selectOnPdf(page, 1, "The penalty");
         await dock.locator(".chatSelChips").getByText("PDF passage", { exact: true }).waitFor();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("tighten this sentence");
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("tighten this sentence");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.locator(".chatBubble.user", { hasText: "tighten this sentence" }).waitFor();
         assertEq(await dock.locator(".chatSelChips").count(), 0, "the passage went with the message");
@@ -662,7 +643,7 @@ export async function localAgentScenarios(env) {
       await waitForPdf(page, 1);
       let dock = await codexSide(page);
       await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor();
-      await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("and the next one too");
+      await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("and the next one too");
       await dock.getByRole("button", { name: "Send", exact: true }).click();
       await dock.getByRole("button", { name: "Stop Codex", exact: true }).waitFor({ timeout: 10000 });
       await ctx.close(); // the tab goes; the turn does not
@@ -690,13 +671,20 @@ export async function localAgentScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await codexSide(page);
-        const box = dock.getByRole("textbox", { name: "Message Codex", exact: true });
+        const box = dock.getByRole("combobox", { name: "Message Codex", exact: true });
         await box.fill(STEER_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).waitFor({ timeout: 10000 });
         await until(async () => (await conversation()).messages.at(-1).state === "running", { timeout: 15000, what: "Codex works" });
+        // A turn takes a steer once Codex has begun its own (its turn's id,
+        // codex.py _steer); before that the steer is refused (409) and the
+        // chat sends the message as the next one. The message is running
+        // from the runner's start, before Codex is up: a loaded machine
+        // widens that.
+        await until(() => heard().some((e) => e.in?.method === "turn/start" && JSON.stringify(e.in.params.input).includes(STEER_ASK)),
+          { timeout: 15000, what: "Codex began its turn" });
         await box.fill(STEER);
-        await box.press("Enter");
+        await box.press("ControlOrMeta+Enter"); // queued: Enter would steer it at once
         const row = dock.locator(".chatQueueRow", { hasText: STEER });
         await row.getByRole("button", { name: "Steer", exact: true }).click();
         const steered = dock.locator(".chatBubble.user", { hasText: STEER });
@@ -713,13 +701,39 @@ export async function localAgentScenarios(env) {
         "Codex heard it under its id");
     });
 
+    // A skill run in the chat (docs/dev/skills.md), picked from the menu and sent to Codex; what its
+    // prompt says of the skill is the backend's test (test_local_agents_skills.py).
+    await step("local-agents: a message that runs a skill goes to Codex with it, picked from the / menu, and the bubble shows its chip", async () => {
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await codexSide(page);
+        const box = dock.getByRole("combobox", { name: "Message Codex", exact: true });
+        await box.fill("/summ");
+        await page.getByRole("listbox", { name: "Skills" }).getByRole("option", { name: /summarize/ }).waitFor();
+        await box.press("Enter");
+        assertEq(await box.inputValue(), "/summarize ", "the menu's pick");
+        await box.pressSequentially(SKILL_ASK);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await dock.locator(".chatBubble.ai", { hasText: SKILL_REPLY }).waitFor({ timeout: 40000 });
+        assertEq((await dock.locator(".chatBubble.user").last().locator(".chatMsgSkill").innerText()).trim(), "/summarize",
+          "the bubble's chip");
+        await until(async () => (await conversation()).messages.at(-1).state === "done", { timeout: 20000, what: "the turn ends" });
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const asked = (await conversation()).messages.findLast((m) => m.role === "user");
+      assertEq(JSON.stringify(asked.skill), JSON.stringify({ id: "builtin:summarize", name: "summarize", args: SKILL_ASK }),
+        "the message posted and stored the skill it ran");
+    });
+
     await step("local-agents: Stop ends Codex's turn, and New chat keeps the conversation in History", async () => {
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
       try {
         await waitForPdf(page, 1);
         const dock = await codexSide(page);
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("rewrite the whole method");
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("rewrite the whole method");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).click({ timeout: 10000 });
         await dock.locator(".chatBubble.ai", { hasText: "(stopped)" }).waitFor({ timeout: 20000 });
@@ -747,7 +761,7 @@ export async function localAgentScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await codexSide(page);
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(message);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(message);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         const card = dock.locator(".chatAsk");
         await card.waitFor({ timeout: 20000 });
@@ -799,7 +813,7 @@ export async function localAgentScenarios(env) {
     });
 
     // Step 3c: the rest of the computer side.
-    await step("local-agents: the passage chip names its source line, the strip's menu asks the shell, and a model and effort chosen reach Codex as its reply is typed", async () => {
+    await step("local-agents: the passage chip names its source line, the strip's menu asks the shell, and a model, effort and speed chosen reach Codex as its reply is typed", async () => {
       const before = heard().length;
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
@@ -830,12 +844,22 @@ export async function localAgentScenarios(env) {
           !(await items.allInnerTexts()).some((s) => s.includes("Hidden")), "the models Codex lists, not its hidden ones");
         await items.filter({ hasText: "GPT Fake Mini" }).click();
         await modelChip.click();
-        await page.locator(".uiSelectMenu .ctxMenuItem").filter({ hasText: /^\s*medium\s*$/i }).click();
-        await until(async () => /GPT Fake Mini · medium/i.test(await modelChip.innerText()), { what: "the chip shows the choice" });
+        const sections = page.locator(".uiSelectMenu .ctxMenuLabel");
+        await until(async () => (await sections.allInnerTexts()).some((s) => /effort/i.test(s)), { what: "the menu's sections" });
+        assert(!(await sections.allInnerTexts()).some((s) => /speed/i.test(s)), "a model with no other tier offers no speed");
+        await items.filter({ hasText: /^\s*GPT Fake\s*$/ }).click();
+        await modelChip.click();
+        assert((await sections.allInnerTexts()).some((s) => /speed/i.test(s)) &&
+          (await items.allInnerTexts()).some((s) => /Default \(standard\)/.test(s)), "its speeds, the default named");
+        await items.filter({ hasText: /^\s*medium\s*$/i }).click();
+        await modelChip.click();
+        await items.filter({ hasText: /^\s*fast\s*$/i }).click();
+        await until(async () => /GPT Fake · medium/i.test(await modelChip.innerText())
+          && await dock.locator(".chatModelChip .chatSpeedGlyph").count() === 1, { what: "the chip shows the choice, the speed its glyph" });
 
         const replies = dock.locator(".chatBubble.ai");
         const earlier = await replies.count();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("say it slowly");
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("say it slowly");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await until(async () => (await replies.count()) > earlier, { timeout: 10000, what: "the new turn's bubble" });
         // the reply grows: seen part-way before it is whole
@@ -849,12 +873,16 @@ export async function localAgentScenarios(env) {
         const first = CHAT_REPLY.split(" ")[0];
         assert([...seen].some((s) => s.includes(first) && !s.includes(CHAT_REPLY)),
           `a part of the reply was seen before the whole: ${JSON.stringify([...seen])}`);
+        // (the row is drawn once the chat hears the turn ended, after the server says so)
+        await until(async () => (await dock.locator(".chatMsgModel .chatSpeedGlyph").count()) === 1,
+          { what: "the reply's model row: the speed it ran at" });
         assertNoProblems(page);
       } finally { await ctx.close(); }
       const since = heard().slice(before);
       const thread = since.find((e) => ["thread/start", "thread/resume"].includes(e.in?.method))?.in.params;
       const turn = since.find((e) => e.in?.method === "turn/start")?.in.params;
-      assertEq(JSON.stringify([thread?.model, turn?.effort]), JSON.stringify(["gpt-fake-mini", "medium"]), "the model and the effort chosen");
+      assertEq(JSON.stringify([thread?.model, turn?.effort, turn?.serviceTierForTurn]), JSON.stringify(["gpt-fake", "medium", "priority"]),
+        "the model, the effort and the speed chosen");
     });
 
     // Step 2.8 of docs/research/agents-as-participants-plan.md: a chat with no AI service.
@@ -892,7 +920,7 @@ export async function localAgentScenarios(env) {
         await page.getByRole("group", { name: "Works in" }).getByRole("menuitemradio", { name: "Notes", exact: true }).click();
         await dock.locator(".chatEmpty", { hasText: "it works in the directory you chose" }).waitFor();
         await until(async () => (await place.innerText()).trim() === "Notes", { what: "the chip names the pick" });
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("what is this paper about?");
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill("what is this paper about?");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         // the reply in the chat's own transcript: its steps pill, its text, what it changed
         await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor({ timeout: 40000 });
@@ -957,7 +985,7 @@ export async function localAgentScenarios(env) {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
         await dock.locator(".computerStrip").waitFor();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(READ_ASK);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(READ_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         // the answer quotes the highlight and its note, which only Gamma's tools gave it
         const reply = dock.locator(".chatBubble.ai", { hasText: "From Gamma:" });
@@ -1002,7 +1030,7 @@ export async function localAgentScenarios(env) {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
         await dock.locator(".computerStrip").waitFor();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(COMMENT_ASK);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(COMMENT_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.locator(".chatBubble.ai", { hasText: "Commented:" }).waitFor({ timeout: 40000 });
         const called = heard().slice(before).find((e) => e.gamma === "comment");
@@ -1083,7 +1111,7 @@ export async function localAgentScenarios(env) {
         await pop.waitFor({ state: "detached" });
         await dock.locator(".chatBubble.user", { hasText: TERMINAL.ask }).waitFor({ timeout: 15000 });
         await dock.locator(".chatBubble.ai", { hasText: TERMINAL.reply }).waitFor();
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(SESSION_ASK);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(SESSION_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.locator(".chatBubble.ai", { hasText: SESSION_REPLY }).waitFor({ timeout: 40000 });
         pop = await history();

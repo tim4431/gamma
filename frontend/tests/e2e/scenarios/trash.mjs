@@ -138,7 +138,13 @@ export async function trashScenarios(env) {
       const chip = page.locator(".blockRow", { hasText: "see" }).locator(".blockRefChip.trashedRef");
       await chip.waitFor({ timeout: 15000 });
       assertEq(await chip.innerText(), "Linked away", "the chip names the page, not its id");
-      assertEq(await chip.getAttribute("title"), "“Linked away” is in Recently deleted.");
+      // Its link card (shared/ui/LinkCard.jsx) says where the page went.
+      await chip.hover();
+      const linkCard = page.locator(".linkCard");
+      await linkCard.locator(".citePreviewPage", { hasText: "In Recently deleted" }).waitFor();
+      assertEq(await linkCard.locator(".citePreviewTitle").innerText(), "Linked away", "the card names the page");
+      await page.mouse.move(0, 0);
+      await linkCard.waitFor({ state: "detached" });
       const card = page.locator(".blockEmbedCard.gone");
       await card.waitFor();
       assertEq(await card.innerText(), "“Linked away” is in Recently deleted.", "the card says where its source went");

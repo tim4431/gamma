@@ -194,7 +194,7 @@ explorer's look.
   vault writes none). An agent started in a terminal reads them with no
   connection.
 - **The tools.** In the one registry the chat and MCP share
-  (`ai_tools.py`): `list_annotations` and `read_annotation` in place of
+  (`ai_tools/annotations.py`): `list_annotations` and `read_annotation` in place of
   `list_feedback` and `read_feedback`; `comment` (a new thread on a
   passage, an area, a range of lines or a page, or a reply), `resolve`,
   and `highlight`. Gamma AI gets them by being in the registry, so it

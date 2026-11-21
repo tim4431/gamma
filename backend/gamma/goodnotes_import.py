@@ -4,8 +4,10 @@ a ``.goodnotes.zip`` backup) → one Gamma page per notebook, with its PDF
 or its sheets of paper, its handwriting, shapes, text boxes, pictures and
 recordings (docs/dev/import_export.md "GoodNotes notebooks").
 
-It is a source of the reviewed import (routers/imports.py): a preview,
-then a commit run as a background job, through what every note app's
+The note apps' import reads a notebook through ``Import``
+(gamma/note_app_import.py ``import_note_apps``, the reviewed import's
+``note-apps`` source): a preview, then a commit run as a background job,
+through what every note app's
 import shares (gamma/note_app_import.py: the guards on the upload, one
 notebook at a time, the commit's transaction, the storing of files). A
 notebook is read by gamma/goodnotes.py and placed by
@@ -30,24 +32,9 @@ from .goodnotes_export import PAPER_KEY
 from .logbuf import log
 from .note_app_import import Skip, Stop, compose_pdf, page_kind
 from .pdf_text import page_raster
-from .storage import display_filename, name_segment, store_pdf
+from .storage import store_pdf
 
 MAX_STICKER_SIDE = 1024          # px: a sticker's PDF rendered for its pictures, its longer side at most this
-
-
-def import_goodnotes(ws: str, data, conn, folder: str = "", *, name: str = "", actor: str = "",
-                     preview: bool = False, selected: set[str] | None = None, progress=None) -> dict:
-    """Import the GoodNotes notebooks in the upload ``data`` into ``ws``,
-    through the open pages.db connection ``conn``: one .goodnotes, or a .zip
-    of them. The parameters, the report and the refusals are the Notability
-    import's (``notability_import.import_notes``): one page per notebook
-    below the folder ``folder``, made by ``actor``; a ``preview`` writes
-    nothing; ``selected`` the notebooks' paths to import (None: all);
-    400 for an upload with no notebook."""
-    name = name_segment(display_filename(name))  # the notebook's path when it is the upload's top
-    run = Import(ws, conn, folder, actor, preview, progress)
-    return run.run_upload(data, selected, refused=gn.NO_NOTEBOOKS_REASON,
-                          find=lambda entries: gn.find_notebooks(entries, name), nested=gn.nested_zip)
 
 
 class Import(app.AppImport):

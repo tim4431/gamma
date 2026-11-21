@@ -495,15 +495,15 @@ def test_arxiv_id_from_source_url_is_trusted(guest, monkeypatch):
     assert r.json()["source"] == "arxiv"
 
 
-def test_lookup_switch_fails_fast(monkeypatch):
-    """GAMMA_METADATA_LOOKUP=off (the browser suite): every registry call
-    fails before it connects, and the lookups find nothing."""
-    monkeypatch.setattr(metadata, "METADATA_LOOKUP", False)
+def test_lookup_switch_fails_fast(server_option):
+    """Paper lookups switched off in Settings (the browser suite): every
+    registry call fails before it connects, and the lookups find nothing."""
+    server_option("metadata_lookup", False)
     try:
         metadata._http_get("https://api.crossref.org/works")
         raise AssertionError("the switched-off lookup went out")
     except OSError as e:
-        assert "GAMMA_METADATA_LOOKUP" in str(e)
+        assert "switched off in Settings" in str(e)
     assert metadata._crossref_search(REAL_TITLE) == []
     assert metadata._fetch_arxiv("2601.00001") is None
 

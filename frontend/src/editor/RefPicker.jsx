@@ -11,6 +11,34 @@ import { MarkedText } from "../search/SearchPanel";
 import FileIcon from "../shared/ui/FileIcon.jsx";
 import { t } from "../shared/i18n/i18n.js";
 
+// The rows themselves, each kind under its title (`heads`: a row kind →
+// its section title, beyond pages and blocks): the picker's, and the link
+// card's Link field's (shared/ui/LinkCard.jsx), whose rows may lead with an
+// address ({kind: "url", title, icon}).
+export function RefRows({ rows, selected, query, onPick, heads }) {
+  return rows.map((r, i) => (
+    <React.Fragment key={`${r.kind}:${r.id}`}>
+      {r.kind !== rows[i - 1]?.kind ? (
+        <div className="refPopupHead">{heads?.[r.kind] || (r.kind === "page" ? t("Pages") : t("Blocks"))}</div>
+      ) : null}
+      <button
+        type="button"
+        className={`refPopupItem${i === selected ? " selected" : ""}`}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onPick(r)}
+      >
+        <span className="refPopupIcon">
+          {r.icon || (r.kind === "page" ? <FileIcon path={r.file} format={r.format} size={16} /> : <span className="refPopupDot" />)}
+        </span>
+        <span className="refPopupBody">
+          <span className="refPopupText"><MarkedText text={r.title} query={query} lead={r.kind === "block" ? 48 : 0} /></span>
+          {r.meta ? <span className="refPopupMeta">{r.meta}</span> : null}
+        </span>
+      </button>
+    </React.Fragment>
+  ));
+}
+
 export function RefPickerPopup({ rows, selected, anchor, query, partial = false, onPick }) {
   const [ref, style] = useCaretAnchored(anchor, false, [rows]);
   useEffect(() => {
@@ -18,23 +46,7 @@ export function RefPickerPopup({ rows, selected, anchor, query, partial = false,
   }, [selected, ref]);
   return (
     <div ref={ref} className="refPopup" data-guide="editor.refSearch" style={style}>
-      {rows.map((r, i) => (
-        <React.Fragment key={`${r.kind}:${r.id}`}>
-          {r.kind !== rows[i - 1]?.kind ? <div className="refPopupHead">{r.kind === "page" ? t("Pages") : t("Blocks")}</div> : null}
-          <button
-            type="button"
-            className={`refPopupItem${i === selected ? " selected" : ""}`}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => onPick(r)}
-          >
-            <span className="refPopupIcon">{r.kind === "page" ? <FileIcon path={r.file} format={r.format} size={16} /> : <span className="refPopupDot" />}</span>
-            <span className="refPopupBody">
-              <span className="refPopupText"><MarkedText text={r.title} query={query} lead={r.kind === "block" ? 48 : 0} /></span>
-              {r.meta ? <span className="refPopupMeta">{r.meta}</span> : null}
-            </span>
-          </button>
-        </React.Fragment>
-      ))}
+      <RefRows rows={rows} selected={selected} query={query} onPick={onPick} />
       <div className="refPopupFooter">
         {partial ? <div>{t("Block search stopped early — type more to narrow it.")}</div> : null}
         {t("↑↓ choose · Enter link · Esc keep text")}

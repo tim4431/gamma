@@ -12,8 +12,10 @@ model gets the paper where it asked for it.
 
 A wait that nobody answers gives up (:data:`IDLE_TIMEOUT`), and the request
 stays open for six hours: its card remains under the reply, and it is listed
-in Background tasks until the PDF arrives or the user lets it go. Skipping
-settles it at once and can tell the model what to do instead.
+in Background tasks until the PDF arrives or the user lets it go (the card's
+Dismiss, or the row's Stop). Skipping settles it at once and can tell the
+model what to do instead. A reply the user stops (or whose connection
+drops) lets go of every request it asked for (routers/ai.py).
 
 The PDF's text is kept for the account alone, in memory like any fetched
 document, and the next ``fetch_paper`` of the same source reads it. The PDF
@@ -75,25 +77,28 @@ def _prune(now: float):
 
 
 def open_request(user_id: str, source: str, *, wall: str, url: str, pdf_url: str = "",
-                 detail: str = "") -> dict:
+                 detail: str = "", title: str = "") -> dict:
     """The waiting request for ``source`` — a new one, or the account's
     request for the same work that is still waiting (a model retrying a
-    source it was told to leave gets the same card)."""
+    source it was told to leave gets the same card). ``title``: the paper's
+    title as the model gave it, "" when it gave none; it names the request
+    in Background tasks, where a host alone says little."""
     if not url.lower().startswith(("https://", "http://")):
         raise ValueError("a handoff opens an http(s) page")
     now = time.time()
     key = source_key(source)
+    title = " ".join(str(title or "").split())[:300]
     with _lock:
         _prune(now)
         mine = [r for r in _requests.values() if r["user_id"] == user_id]
         for req in mine:
             if req["key"] == key and req["status"] == WAITING:
-                req.update(wall=wall, detail=detail)
+                req.update(wall=wall, detail=detail, title=title or req["title"])
                 return dict(req)
         for req in mine[:max(0, len(mine) - MAX_PER_ACCOUNT + 1)]:
             del _requests[req["id"]]
         req = {"id": secrets.token_urlsafe(18), "user_id": user_id, "key": key, "source": source,
-               "url": url, "pdf_url": pdf_url, "host": urlsplit(url).hostname or "",
+               "url": url, "pdf_url": pdf_url, "host": urlsplit(url).hostname or "", "title": title,
                "wall": wall, "detail": detail, "status": WAITING, "created": now,
                "created_at": page_now(), "watched": 0.0, "note": "", "background": False,
                "done_at": 0.0, "from_url": "", "skip_note": "", "doc": None, "pdf": None}
@@ -287,7 +292,7 @@ def public(req: dict) -> dict:
     what the user said when they skipped."""
     doc = req.get("doc") or {}
     return {"id": req["id"], "source": req["source"], "url": req["url"],
-            "pdf_url": req["pdf_url"], "host": req["host"], "wall": req["wall"],
+            "pdf_url": req["pdf_url"], "host": req["host"], "title": req.get("title", ""), "wall": req["wall"],
             "detail": req["detail"], "status": req["status"],
             "created_at": req.get("created_at", ""),
             "watched": bool(req["watched"]), "note": req.get("note", ""),

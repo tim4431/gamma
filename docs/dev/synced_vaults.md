@@ -39,7 +39,18 @@ Code:
 - `gamma/routers/folder_links.py`: `/api/folder-links*`.
 - `gamma/vault/`: the engine, a package whose `__init__` imports nothing
   (`folder_links` imports it inside its functions to break a cycle):
-  - `sync.py`: a folder vault's rounds (`Round`, `sync`, `sync_page`).
+  - `sync.py`: a folder vault's rounds (`sync`, `sync_page`), the whole
+    round (`run`): open, push, pull.
+  - `round.py`: one round's state and the steps its parts share (`Round`),
+    a file as a round read it (`Read`), a note's base (`Base`).
+  - `journal.py`: what a round that died left in the journal, settled.
+  - `push.py`: push, the scan against the rows (`_classify`), the guard,
+    directories renamed, files moved, removed and deselected.
+  - `pages.py`: a changed or new file into its page: a note merged, a
+    document read in place, a new page.
+  - `pull.py`: pull, Gamma's changes onto the disk.
+  The parts are functions taking the round, and import one way: `round`,
+  `journal`, `pages`, then `push` and `pull`, then `sync`.
   - `kinds.py`: the class registry, what a file is to a vault by its name
     and what a round does with each class ("The classes").
   - `remote.py`: what a round reads and writes Gamma through and what both
@@ -81,7 +92,7 @@ Code:
   (`notesLock.js`), Gamma's file editor (`FileSourceDialog.jsx`), *Add to
   library…* (`FolderPickerDialog.jsx`); the merge chip's side in
   `frontend/src/collaboration/conflictKinds.js` and `MergeResolver.jsx`.
-- `desktop/main.js`, `desktop/lib/keeping.js`, `desktop/ui/bar.html`,
+- `desktop/lib/vaults.js`, `desktop/main.js`, `desktop/lib/keeping.js`, `desktop/ui/bar.html`,
   `desktop/preload.js`, `desktop/lib/sidecar.js`: the shell's part ("The
   desktop app").
 
@@ -356,7 +367,7 @@ carries another document goes. A vault's file (its page has a `vault_files`
 row of a class read in place, `pdf` or `file`) is its round's alone: one
 replacer per file (`_in_vault`). The round also refreshes the row of a file
 touched with the same bytes (`linked_files.restat`, from
-`Round._push_file`), which otherwise read as nothing until its bytes
+`pages._push_file`), which otherwise read as nothing until its bytes
 changed.
 
 **The upload route** (`GET /api/uploads/<name>`): a name with no file,
@@ -441,8 +452,8 @@ desktop app asks first whether to make its project a work folder,
 desktop/docs/architecture.md "Opening files and folders"). Refused, before
 anything is made: a binary (`Gamma cannot show <name>: open it in another
 app.`), and a file of another format than PDF past the keep limit
-(`config.vault_keep_bytes`, 64 MB unless `GAMMA_VAULT_KEEP_MB` says
-otherwise: `<name> is too large for Gamma to show here (over <n> MB).`),
+(`server_options.vault_keep_bytes`, 64 MB unless an admin changed it in
+Settings → Server → Work folders: `<name> is too large for Gamma to show here (over <n> MB).`),
 measured before it is read through; a PDF has no limit.
 
 Inside a vault (`_directory_vault_page`), each refused before any round: a
@@ -775,7 +786,8 @@ case, so a change under `docs/` runs it too.
 
 `vault.links` turns one block's text between the file's space, where the
 lens works, and Gamma's. Gamma holds a link to a page or a block as
-`[[id]]` (`![[id]]` embeds a block) and a picture as its upload's address;
+`[[id]]` (`![[id]]` embeds a block, `[[id|words]]` shows its own words:
+[mentions.md](mentions.md)) and a picture as its upload's address;
 the file says `[[Title]]`, `[[dir/Title|alias]]`, `[text](<a b.md>)`,
 `![[fig.png|300]]`. `to_gamma(file_text, memo, ctx, base)` reads a block's
 file text with a memo of how each link was written, keyed by what it
@@ -784,11 +796,24 @@ its hash, which changes when the picture does); `written` writes Gamma's
 text back, each link as the memo remembers it where it can and in the
 vault's habit otherwise.
 
+**A mention's words.** A wikilink's alias is the mention's words
+(`[[Title|alias]]` ↔ `[[id|alias]]`), and so is a Markdown link's label
+when it says more than the page's name: the note's file name, a file
+page's file name, a page's title, in any case and spacing
+(`[the plan](Plan.md)` ↔ `[[id|the plan]]`, `[Plan](Plan.md)` ↔ `[[id]]`;
+`label_alias`). An embed's alias is none, as in Obsidian. In a table's row
+the pipe is `\|` on both sides (`note_markup.table_pipe`). Words edited in
+Gamma change the remembered link's alias or label and keep its target as
+written; words removed take a wikilink's alias off and give a Markdown link
+the page's name back. A memo from before words were read (`[[id]]` for
+`[[Title|alias]]`) takes them from the file's link the next time its block
+is read.
+
 **Identity first.** The engine calls them only for a block whose text
 changed on that side: a block whose Gamma text is its base's keeps its file
 text, and a block whose file text is its base's keeps its Gamma text. So a
-link no reading gives back as written (`%20`, a title in a link, an alias,
-`![a|300]`) never makes an untouched block read as changed.
+link no reading gives back as written (`%20`, a title in a link, `![a|300]`)
+never makes an untouched block read as changed.
 
 **Resolution** is a Markdown zip's (`markdown_zip_links.resolve_path`):
 relative to the note, then by vault path, then by name anywhere, ignoring
@@ -829,9 +854,9 @@ is, under its content digest's name (`LocalRemote.link_file`: a
 **A work folder's files.** In a work folder's round every file is a page
 (`kinds.FILE`, a PDF's page too), so a note's link to a tracked file that
 has one is a mention of that page, `[[page_id]]`, as a link to a note is
-(`LinkContext.add_page_file`): `[the method](sections/method.tex)`,
-`[[main.pdf]]`, `[fig](fig.png)` and a listed file's `[[big.h5]]`, found by
-its name from another directory too. Gamma draws it as the page's chip,
+(`LinkContext.add_page_file`): `[the method](sections/method.tex)`
+(`[[page_id|the method]]`), `[[main.pdf]]`, `[fig](fig.png)` and a listed
+file's `[[big.h5]]`, found by its name from another directory too. Gamma draws it as the page's chip,
 opens the file's page from it, counts it in backlinks, and keeps it through
 a move on disk (an id, not a path). Three cases keep the upload's address:
 a picture's embed (`![[fig.png]]`, `![](fig.png)`: a `!` and an image's
@@ -883,7 +908,7 @@ rectangles come back if the text does.
 
 ## A round
 
-`vault.sync.sync(link)` is a folder vault's whole round, `Round.run`: open
+`vault.sync.sync(link)` is a folder vault's whole round, `sync.run`: open
 the vault, push, then pull, each where its switch is on, and ask again for
 any relocation run that waits. A round reads and writes Gamma through a
 **remote**, the small interface of what it needs there: the pages below
@@ -1007,10 +1032,10 @@ steps for its files where they differ by class: `read`, `known` (the shape
 `pair_moves` compares), `weight` (the progress bytes), `pending_text` (the
 journal's text), `new`, `change`, `moved`, `left`, `swept`, `link_name`
 (the upload a note's link to it reads), `pull` and `place`. The round
-dispatches to the class (`Round._read`, `_push_file`, `_push_new`, `_left`,
-`_sweep`, `_pull_page`, `_place` …); a step that is one class's alone stays
-a `Round` method the class calls (`_write_notes`, `_copy_pdf`,
-`_merge_into`, `_push_doc`). Pairing a PDF with its notes stays the round's:
+dispatches to the class (`Round._read`, `pages._push_file`, `_push_new`,
+`pull._left`, `_sweep`, `_pull_page`, `_place` …); a step that is one
+class's alone stays a function of its part that the class calls
+(`pull._write_notes`, `_copy_pdf`, `pages._merge_into`, `_push_doc`). Pairing a PDF with its notes stays the round's:
 it is between two classes. The remotes' document calls take the document,
 not a PDF: `link_doc(path, seen, page_id, ext)`, `unlink_doc`,
 `restat_doc`, `replace_doc(…, format=, ext=)`, `store_doc`, `set_doc` (one
@@ -1026,7 +1051,7 @@ since a PDF is a PDF by its name) and its extension off its name
 the file (`{format, name, hash, ext, at: path, size}`), titled by the leaf
 (`main.tex`, `fig.png`), filed in its directory's folder, stamped as a work
 folder's file and never in the library by the switch. A file past the keep
-limit (`config.vault_keep_bytes`, `GAMMA_VAULT_KEEP_MB`, 64; PDFs and notes
+limit (`server_options.vault_keep_bytes`, Settings → Server → Work folders, 64 MB; PDFs and notes
 are never measured, by the stat its read takes, not the scan's) is
 **listed**: its first bytes read for the format, nothing hashed, no `linked_files` row, its document `{…, hash: "", at:
 listed, size}` ([documents.md](documents.md) "The listed state"); one that
@@ -1039,7 +1064,7 @@ stat refresh the row and its linked row (`restat_doc`). A move relinks and
 refiles, the title and `file_name` following the new leaf; a new name that
 says another format or extension (`notes.txt` to `notes.log`, `a.txt` to
 `a.png`) settles the document again with the same hash, the linked row
-under the new name first (`Round._file_doc`); a rename that changes the
+under the new name first (`push._file_doc`); a rename that changes the
 class (`a.txt` to `a.md`) never pairs: a removal and a new page. Gone, it is
 a tombstone and its page goes to Recently deleted as any file's; left out or
 left by a mirror's trash, it stays where it is (an in-place tombstone), and
@@ -1056,7 +1081,7 @@ making every attachment of a vault a library page would fill the library.
 
 ### Push
 
-Push compares the scan with the rows (`Round._classify`, which reads and
+Push compares the scan with the rows (`push._classify`, which reads and
 hashes the new and changed files and writes nothing):
 
 - **Changed**: a stat that moved, or the racy rule (`vault.disk.moved`): a
@@ -1330,7 +1355,7 @@ unmarked folder gets the round above, unchanged. In a work folder:
 - **New pages** are its files: `work_folder`, `file_name` (the file's leaf,
   the PDF's for a paper), `library: true` while the vault's switch says so
   for a note or a PDF (`Kind.in_library`; a file of another format never
-  joins the library by it), and `doc.size` on every document (`Round._create`,
+  joins the library by it), and `doc.size` on every document (`pages._create`,
   `_new_pdf`, `_new_file`). A file of another format is titled by its leaf
   (`main.tex`, `fig.png`), a PDF by its stem. The front matter's `parent:`
   makes no sub-page. New files are made PDFs first, then the other
@@ -1407,7 +1432,7 @@ unmarked folder gets the round above, unchanged. In a work folder:
 **The selection.** `.gammaignore` at the vault's root says what it tracks;
 none is the default, notes, PDFs and pictures (`ignore_rules.DEFAULT_TEXT`),
 so a taken-over vault's pictures become pages.
-`Round._read_rules` reads it once a round, a page's round too. The state's
+`sync._read_rules` reads it once a round, a page's round too. The state's
 `selection` holds the hash of the text the last whole round read (`""` for
 none): a file gone since **stops** the vault ("its .gammaignore is gone: put
 it back, or choose its files again") rather than reading every note and PDF
@@ -1862,7 +1887,7 @@ at any point, the row's state being the commit point:
    second), its own. A PDF keeps its page and identity (`ours`); one changed
    on disk whose page's PDF Gamma replaced too is kept as the client kept it
    (`BOTH_PDF`) until it changes or a force decides. A note gets a base
-   that names none of its blocks (`vault.sync._unknown`): one as the client
+   that names none of its blocks (`vault.round._unknown`): one as the client
    wrote it keeps its hash, so the first pull writes it once more by the
    lens, its old bytes to the history, and its base is known from then on;
    one changed on disk keeps none, so it is kept and reported (`UNKNOWN`)
@@ -2046,7 +2071,7 @@ A file vault of a page on another server pushes through
 ## The desktop app
 
 The shell's part is in [desktop/docs/architecture.md](../../desktop/docs/architecture.md).
-In short, from `desktop/main.js`: the shell starts its local servers with
+In short, from `desktop/main.js` and `desktop/lib/vaults.js`: the shell starts its local servers with
 `GAMMA_FOLDER_LINKS=1` and a secret new at each start (`GAMMA_SHELL_SECRET`,
 `lib/sidecar.js`), and sends it as `X-Gamma-Shell` on the routes that take
 a path, only to a local server of its own (`shellWord`). The ways in are a

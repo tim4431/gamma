@@ -23,6 +23,7 @@
 import { t } from "../shared/i18n/i18n.js";
 import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, isTextRangeBlock, pdfAnchorOf, textSpan } from "../shared/model/blockModel.js";
 import { plainSnippet } from "../search/snippets.js";
+import { CHIP_RE, refWords } from "../editor/refLabels.js";
 import { agentWorking } from "../vault/vaultState.js";
 import { GAMMA, agentWords, madeBy } from "../chat/agents.js";
 
@@ -433,13 +434,13 @@ export function cardedAnchors(anchors, composing, topOf) {
 // without text) and its first comment; the Inbox's snippets too.
 // `labelOf(id)`: a [[link]]'s label as editor/refLabels.js gives it
 // ({content}), so the line names the page rather than its id; a link it
-// does not know stays as written.
+// does not know stays as written, and a [[id|words]] reads as its words.
 export function anchorSnippet(text, max = 80, labelOf = null) {
   let src = String(text || "");
   if (labelOf) {
-    src = src.replace(/(!?)\[\[([a-zA-Z0-9_-]+)\]\]/g, (whole, _bang, id) => {
-      const label = labelOf(id);
-      return label?.content ? label.content : whole;
+    src = src.replace(CHIP_RE, (whole, id, words) => {
+      const label = whole.startsWith("!") ? null : refWords(words);
+      return label || labelOf(id)?.content || whole;
     });
   }
   const line = plainSnippet(src).replace(/\s+/g, " ").trim();

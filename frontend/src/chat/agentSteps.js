@@ -81,6 +81,7 @@ const READ_VERBS = {
   helper: (n) => tn("used {n} helper", "used {n} helpers", n),
   show: (n) => tn("showed you a page", "showed you {n} pages", n),
   export: (n) => tn("exported {n} file", "exported {n} files", n),
+  skill: (n) => tn("loaded a skill", "loaded {n} skills", n),
 };
 
 export function stepsSummary(actions = []) {
@@ -118,6 +119,14 @@ export function chipNote(a) {
   if (a?.delivered) parts.push(t("from your browser"));
   if (a?.ms >= 1000) parts.push(t("{n}s", { n: (a.ms / 1000).toFixed(1) }));
   return parts.join(" · ");
+}
+
+// A call's chip, in the reader's language where the chat words it itself:
+// a skill the agent loaded (load_skill, gamma/ai_tools/skills.py) reads
+// "Loaded skill summarize"; every other call the server's summary.
+export function actionSummary(a) {
+  if (a?.tool === "load_skill" && !a.error && a.args?.name) return t("Loaded skill {name}", { name: a.args.name });
+  return a?.summary || "";
 }
 
 // The site a fetch_url call reads, without its "www.".
@@ -245,6 +254,7 @@ export function runningLabel(step, titleOf = () => "") {
     case "create_page": return args.title ? t("Making the page “{title}”…", { title: args.title }) : t("Making a page…");
     case "export": return title ? t("Exporting “{title}”…", { title }) : t("Exporting…");
     case "backlinks": return t("Finding the notes that link here…");
+    case "load_skill": return args.name ? t("Loading the skill {name}…", { name: args.name }) : t("Loading a skill…");
     default: return t("Working…");
   }
 }

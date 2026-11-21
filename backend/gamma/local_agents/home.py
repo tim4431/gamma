@@ -16,14 +16,16 @@ server, workspace and account):
   takes the queued turn for this computer's run of it (``chat_run_id``: one
   id a turn, so a claim retried after a lost answer, or after this server
   restarted, holds it) → the message, its selections, the conversation's
-  last messages, the model and effort it asks for, what the bucket is
+  last messages, the model, effort and speed it asks for, what the bucket is
   (``about``), where its agent works by an id (``dir``, resolved here by
   ``far_place``: the vault of that server's work folder this channel's
   account keeps here, a directory this computer offers, or one of its own,
   ``far_dir``; anything else is refused with why, a path above all),
   Gamma's tools (``tools``: a turn token of that server and its MCP
   address, taken only where the address is that server's own origin,
-  ``gamma``), and for a comment thread's turn the thread (its entry with
+  ``gamma``), the skill the message ran with its instructions as that
+  server renders them (``skill``, ``_skill``: this computer need not have
+  it; a skill gone there fails the turn there, at the claim), and for a comment thread's turn the thread (its entry with
   its PDF place, ``_on_disk``: in a vault, named by its file's path on this
   disk, its source line computed here from the PDF and the sources on this
   disk, ``annotations.sources.source_in_vault``), its region's pictures
@@ -67,7 +69,9 @@ import time
 from pathlib import Path
 from urllib.parse import quote, urlencode, urlsplit
 
-from .. import config, gamma_sync, remote_servers
+from fastapi import HTTPException
+
+from .. import config, gamma_sync, remote_servers, skills
 from ..db import account_names, connect_pages_db, connect_users_db, page_now
 from ..logbuf import log
 from . import catalog, chats, events, store
@@ -84,7 +88,7 @@ _TOKEN = re.compile(r"^gamma_[A-Za-z0-9_-]{20,128}$")   # a turn's token (``inte
 # (the channel relays them), ``waiting`` that one waits for an answer on this computer alone, ``steers`` the
 # messages steered in that the agent took (runner.py ``_progress``).
 CHAT_FIELDS = ("text", "steps", "asks", "changes", "changed", "built", "error", "fresh", "state", "ended_at", "model",
-               "effort", "waiting", "steers")
+               "effort", "speed", "waiting", "steers")
 NO_SUCH_DIR = "That server named no directory this computer offers it: Gamma ran nothing."
 NOT_KEPT = "The synced folder is no longer kept on this computer."
 NOT_OFFERED = "The directory this conversation works in is no longer offered on this computer."
@@ -111,6 +115,20 @@ def reply_id(turn_id: str, thread_id: str) -> str:
     length)."""
     digest = hashlib.sha256(f"{turn_id}\n{thread_id}".encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest[:9]).decode("ascii")
+
+
+def _skill(raw) -> dict | None:
+    """The claim's ``skill`` (``{name, instructions}``, the instructions
+    that server rendered from the skill the message ran: this computer
+    need not have it) as the prompt takes it: the name a skill's
+    (``skills.safe_name``), the instructions at most ``skills.MAX_RENDERED``
+    characters; ``instructions`` None for one of another shape, so the turn
+    fails rather than run without them. None for a message that ran none."""
+    if not isinstance(raw, dict):
+        return None
+    text = raw.get("instructions")
+    return {"name": skills.safe_name(raw),
+            "instructions": text[:skills.MAX_RENDERED] if isinstance(text, str) and text.strip() else None}
 
 
 def _place(entry: dict) -> dict:
@@ -241,10 +259,12 @@ class LocalChatHome:
 
     def claim(self, turning) -> dict | None:
         """The turn's context, ``{user_id, owner, text, selections,
-        earlier, title, thread_id}`` (the conversation's account, the
+        earlier, title, thread_id, skill}`` (the conversation's account, the
         account whose agent it talks to, the person's message and its
         selections, the conversation's last messages before it, its title,
-        the comment thread it answers, "" for a chat's), while its message
+        the comment thread it answers, "" for a chat's, and the skill the
+        message ran, ``chats.skill_of``: its instructions from that
+        account's catalog now, None where it is gone), while its message
         reads queued; None when it is gone or ended meanwhile (a Stop while
         it waited for a slot ended its message and its row)."""
         conversation, reply = chats.reply_of(self.ws, turning.conversation_id, turning.turn_id)
@@ -256,7 +276,8 @@ class LocalChatHome:
         return {"user_id": conversation["user_id"], "owner": conversation["owner"] or conversation["user_id"],
                 "text": person.get("text") or "",
                 "selections": person.get("selections") or [], "earlier": chats.earlier_of(messages, at, person),
-                "title": conversation["title"], "thread_id": conversation["thread_id"]}
+                "title": conversation["title"], "thread_id": conversation["thread_id"],
+                "skill": chats.skill_of(conversation["user_id"], person)}
 
     def place(self, turning, context: dict) -> dict:
         """Where the turn works (``chats.place_of`` for the conversation's
@@ -304,9 +325,17 @@ class LocalChatHome:
         return workspaces.at_least(workspaces.role_of(self.ws, user_id), "editor")
 
     def cannot_write(self) -> str:
-        from .runner import _cannot_write
+        """Why this server or the workspace takes no writes now, "" when
+        they do: what fails a turn before its agent edits anything."""
+        from .. import hosted, workspaces
 
-        return _cannot_write(self.ws)
+        refused = hosted.read_only()
+        if not refused:
+            try:
+                workspaces.refuse_writes(self.ws)
+            except HTTPException as e:
+                refused = str(e.detail)
+        return refused
 
     def owner_name(self, user_id: str) -> str:
         with connect_users_db() as users:
@@ -332,9 +361,6 @@ class LocalChatHome:
                       for c, source in zip(chosen, sources)]
         return about, selections
 
-    def vault_file(self, turning, link: dict) -> str:
-        return _vault_file(turning, link)
-
     def thread(self, turning, place: dict, context: dict) -> dict | None:
         """The thread a thread's turn answers as it is now
         (``threads.entry_of``), its file named as the vault's rows name it,
@@ -354,10 +380,11 @@ class LocalChatHome:
         return chats.write_reply(self.ws, turning.conversation_id, turning.turn_id, fields)
 
 
-def _vault_file(turning, link: dict) -> str:
+def vault_file(turning, link: dict) -> str:
     """The page's path in the vault as this computer's rows of it name it,
     "" when they name none: what an ask on this computer names, never a
-    word the other server gave."""
+    word the other server gave (``HttpChatHome.where``'s fallback to the
+    claim's path or title is the prompt's alone)."""
     from ..annotations import entries
     from ..vault import store as vault_store
 
@@ -450,10 +477,11 @@ class HttpChatHome:
     def claim(self, turning) -> dict | None:
         """The channel and the turn's agent checked, the turn taken there
         for this computer's run → its context (``{text, selections,
-        earlier, title, thread_id, thread, for}``, a thread's turn's thread
-        as the claim gave it, ``for`` the account there the turn is for,
-        ``{id, username}``; the turn's conversation, bucket, model and effort
-        set on ``turning``, what the bucket is, where it works and Gamma's
+        earlier, title, thread_id, thread, for, skill}``, a thread's turn's thread
+        as the claim gave it, ``skill`` the skill the message ran with the
+        instructions that server rendered (``_skill``), ``for`` the account there the turn is for,
+        ``{id, username}``; the turn's conversation, bucket, model, effort and
+        speed set on ``turning``, what the bucket is, where it works and Gamma's
         tools kept here: ``about``, ``dir``, ``tools``), recorded here
         (``store.claimed_turn``); None when it is not this run's: stopped
         while it waited, the channel gone, its agent off for the channel's
@@ -484,6 +512,7 @@ class HttpChatHome:
         turning.conversation_id = str(turn.get("conversation_id") or turning.conversation_id)
         turning.bucket = str(turn.get("bucket") or turning.bucket)
         turning.model, turning.effort = str(turn.get("model") or ""), str(turn.get("effort") or "")
+        turning.speed = str(turn.get("speed") or "")   # an older server's claim names none: the default
         store.claimed_turn(self.turn_id, link_id=self.link_id, conversation_id=turning.conversation_id,
                            page_id=turning.bucket, agent=turning.agent)
         self.about = answer["about"] if isinstance(answer.get("about"), dict) else {}
@@ -502,10 +531,11 @@ class HttpChatHome:
         thread = answer.get("thread") if isinstance(answer.get("thread"), dict) else None
         person = turn.get("for") if isinstance(turn.get("for"), dict) else {}
         return {"text": str(turn.get("text") or ""), "selections": selections[:chats.MAX_SELECTIONS],
-                "earlier": earlier[-6:], "title": chats.title_of(str(turn.get("title") or "")),
+                "earlier": earlier[-chats.EARLIER:], "title": chats.title_of(str(turn.get("title") or "")),
                 "thread_id": thread_id, "thread": thread if thread_id and thread and thread.get("id") == thread_id
                 else None, "for": {"id": str(person.get("id") or self.account),
-                                   "username": events.one_line(str(person.get("username") or self.username), 64)}}
+                                   "username": events.one_line(str(person.get("username") or self.username), 64)},
+                "skill": _skill(turn.get("skill"))}
 
     def _turned_off(self, turning) -> None:
         """The turn's agent was turned off while the turn waited here: the
@@ -659,12 +689,6 @@ class HttpChatHome:
                 turning._fail("This page is no longer a file of the synced folder.")
         about["work_folder"] = about.get("work_folder") or root.name
         return about, selections
-
-    def vault_file(self, turning, link: dict) -> str:
-        """The page's path from this computer's vault rows alone, "" for
-        none (``where``'s fallback to the claim's path or title is the
-        prompt's): what an ask on this computer names."""
-        return _vault_file(turning, link)
 
     def thread(self, turning, place: dict, context: dict) -> dict | None:
         """The thread a thread's turn answers, as the claim gave it: in a

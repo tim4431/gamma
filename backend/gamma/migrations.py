@@ -63,7 +63,7 @@ import time
 from contextlib import closing, contextmanager, nullcontext
 from pathlib import Path
 
-from . import backups, config
+from . import backups, config, version
 from .blocks_store import FOLDERS, folder_by_path
 from .colors import normalize_color
 from .db import (BUSY_TIMEOUT_S, SCHEMA_VERSION, USERS_SCHEMA, WORKSPACE_PREFS_SCHEMA, WS_VERSION_BASE,
@@ -240,23 +240,65 @@ def _refusal(kind, version: int, message: str) -> MigrationError:
     return error
 
 
+# How Gamma is updated, by the install's channel (``version.channel``): the
+# one step of the guidance for a library a newer Gamma wrote, as the log,
+# the CLI and the 503 JSON say it. The page words it itself, with a button
+# to where the update is (frontend shared/lib/updates.js).
+UPDATE_STEPS = {
+    "ipad": "Open TestFlight on this iPad, update Gamma, then open it again.",
+    "android": "Install the newest Gamma APK from the releases page, then open it again.",
+    "desktop": "Update Gamma: its top bar offers the update when it is ready, and Help → Check for Updates… "
+               "asks now; or install the latest release from the releases page.",
+    "store": "Update Gamma from the Microsoft Store, then open it again.",
+    "mas": "Update Gamma from the Mac App Store, then open it again.",
+    "docker": "Pull the newest image (`docker compose pull && docker compose up -d`), then reload this page.",
+    "checkout": "Update this checkout to the newest commit and start the server again.",
+}
+
+
 def guidance(error: MigrationError) -> dict:
     """What the person running this server should do about ``error``, as
-    ``{"title", "status", "summary", "steps": [str], "fallback": {"lead",
-    "steps": [str]}, "data_dir", "backups_dir", "snapshot"}`` — the one
-    text the startup page, the API's 503, the CLI and the log share
-    (gamma/app.py ``_blocked_app``, ``manage.py migrate``). ``status`` is
+    ``{"kind", "title", "status", "summary", "steps": [str], "fallback":
+    {"lead", "steps": [str]}, "details": [str], "data_dir", "backups_dir",
+    "snapshot"}`` — the one text the startup page, the API's 503, the CLI
+    and the log share (gamma/standby.py, ``manage.py migrate``). ``kind``
+    is ``newer``, ``too_old``, ``workspace`` or ``failed``; ``status`` is
     the one calm line that comes first (the data is intact, the other
     workspaces are served); ``steps`` is the way forward, which for data a
-    newer Gamma wrote is to update this one; ``fallback`` is the other way
-    (staying on this release, going back), folded away on the page and
-    empty when there is none. Nothing below changes the data directory."""
+    newer Gamma wrote is to update this one, in the words of how it was
+    installed (``version.channel``); ``fallback`` is the other way (going back),
+    folded away on the page and empty when there is none; ``details`` are
+    the technical lines the page folds away too. Nothing below changes the
+    data directory."""
     data_dir, backups_dir = str(config.DATA_DIR), str(config.BACKUPS_DIR)
     intact = "Your data is intact. Nothing has been changed."
     none = {"lead": "", "steps": []}
+    if isinstance(error, NewerDataError):
+        where = version.channel()
+        details = [f"This library is at schema version {error.version}; this Gamma reads up to version "
+                   f"{SCHEMA_VERSION}, so it opens nothing rather than guess at the newer layout."]
+        if where in ("docker", "checkout"):
+            details += [
+                "Several Gammas sharing one data directory: update them all, or give each its own directory.",
+                f"To stay on this release instead: the newer Gamma took a snapshot before it upgraded, in "
+                f"{backups_dir}. With the server stopped, `manage.py backups` lists them and `manage.py backups "
+                f"--restore <name>` puts one back; anything saved after that snapshot is not in it.",
+            ]
+        return {
+            "kind": "newer",
+            "title": "Gamma needs an update to open your library",
+            "status": "Your library is safe. Nothing has been changed.",
+            "summary": "A newer version of Gamma last opened this library and saved it in a way this version "
+                       "can't read yet. Update Gamma and everything will be where you left it.",
+            "steps": [UPDATE_STEPS[where]],
+            "fallback": none,
+            "details": details,
+            "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": "",
+        }
     if isinstance(error, TooOldDataError):
         via = UPGRADE_VIA
         return {
+            "kind": "too_old",
             "title": "This Gamma needs an earlier release to upgrade your data first",
             "status": intact,
             "summary": (f"Your data directory is at schema version {error.version}; this Gamma (schema "
@@ -275,30 +317,7 @@ def guidance(error: MigrationError) -> dict:
                 "directory, then install the current version again.",
             ],
             "fallback": none,
-            "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": "",
-        }
-    if isinstance(error, NewerDataError):
-        return {
-            "title": "This data was last opened by a newer Gamma",
-            "status": intact,
-            "summary": (f"Your data directory is at schema version {error.version} and this Gamma reads version "
-                        f"{SCHEMA_VERSION}, so it is standing aside rather than guessing at the newer layout. "
-                        f"Updating this Gamma is all it takes: the newer release opens the data as it is."),
-            "steps": [
-                "Docker: `docker compose pull && docker compose up -d` (or the image tag that wrote the data), "
-                "then reload this page.",
-                "Desktop app: install the latest release from https://github.com/tim4431/gamma/releases and "
-                "open it again.",
-                "Several Gammas sharing one data directory: update them all, or give each its own directory.",
-            ],
-            "fallback": {
-                "lead": "Would you rather stay on this release?",
-                "steps": [
-                    f"The newer Gamma took a snapshot before it upgraded, in {backups_dir}. With the server "
-                    f"stopped, `manage.py backups` lists them and `manage.py backups --restore <name>` puts "
-                    f"one back; anything saved after that snapshot is not in it.",
-                ],
-            },
+            "details": [],
             "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": "",
         }
     if error.workspace:
@@ -306,6 +325,7 @@ def guidance(error: MigrationError) -> dict:
                 f"workspaces/{error.workspace}/." if error.snapshot else
                 "No copy of its databases could be taken, so nothing in it was changed.")
         return {
+            "kind": "workspace",
             "title": "One workspace could not be upgraded yet",
             "status": "Every other workspace is served.",
             "summary": (f"Workspace {error.workspace} stopped at migration step {error.step}; it stays at schema "
@@ -318,12 +338,14 @@ def guidance(error: MigrationError) -> dict:
                 kept,
             ],
             "fallback": none,
+            "details": [],
             "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": error.snapshot,
         }
     back = (f"With the server stopped, `manage.py backups --restore {Path(error.snapshot).name}` restores the "
             f"snapshot from before the upgrade; then run the previous release." if error.snapshot else
             "Go back to the previous release with the snapshot `manage.py backups` lists.")
     return {
+        "kind": "failed",
         "title": "The upgrade paused before it finished",
         "status": "A snapshot from before the upgrade is kept.",
         "summary": (f"Migration step {error.step} failed; the data directory is at schema version "
@@ -335,6 +357,7 @@ def guidance(error: MigrationError) -> dict:
             "upgrade continues where it stopped.",
         ],
         "fallback": {"lead": "Would you rather go back?", "steps": [back]},
+        "details": [],
         "data_dir": data_dir, "backups_dir": backups_dir, "snapshot": error.snapshot,
     }
 
@@ -2372,6 +2395,18 @@ def _v68_far_chats(ws: str, pages: sqlite3.Connection, data) -> None:
                 pages.execute("UPDATE computer_chats SET computer = ? WHERE id = ?", (found[0], conversation_id))
 
 
+def _v70_integration_deletes(conn: sqlite3.Connection) -> None:
+    """``integration_tokens`` gains ``deletes``: whether a connection that
+    may edit notes may also delete them (gamma/mcp_server.py
+    ``DELETE_TOOLS``), which the person allows on its row in Settings; 0 on
+    every token so far, so no grant made before gains it. Re-runnable: the
+    column is added only where ``_columns()`` lacks it. No workspace is
+    touched."""
+    if "deletes" not in _columns(conn, "integration_tokens"):
+        conn.execute("ALTER TABLE integration_tokens ADD COLUMN deletes INTEGER NOT NULL DEFAULT 0")
+    conn.commit()
+
+
 def _v69_far_answers(ws: str, pages: sqlite3.Connection, data) -> None:
     """What a far turn's agent asks is answered here where its computer
     relays its asks (step 4.3 of docs/research/agents-as-participants-plan.md,
@@ -2419,6 +2454,7 @@ STEPS = [
     (66, "agent_ids", _v66_inbox_agents),
     (67, "computer_asks", _v67_computer_asks),
     (68, "far_chats", _v68_computer_dirs),
+    (70, "integration_deletes", _v70_integration_deletes),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

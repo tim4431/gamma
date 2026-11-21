@@ -307,6 +307,24 @@ def fresh_client(**kwargs):
     return c
 
 
+@pytest.fixture
+def server_option():
+    """``server_option(name, value)`` sets a server option (Settings,
+    gamma/server_options.py) for one test; each goes back to its default
+    after it."""
+    from gamma import server_options
+
+    names = []
+
+    def set_option(name, value):
+        names.append(name)
+        server_options.update({name: value})
+
+    yield set_option
+    if names:
+        server_options.update({name: server_options.OPTIONS[name].default for name in names})
+
+
 @pytest.fixture(scope="session")
 def client():
     return session_client()
@@ -462,6 +480,24 @@ def _jobs_end_with_their_test(monkeypatch, _page_ids_kept):
         left = [f"{live.kind} {live.id} ({live.state})" for live in jobs._live.values()]
         left += [f"{job_id} (its ended hook)" for job_id in list(jobs._ending)]  # discarded outside the lock
     assert not left, f"jobs still running {JOB_END_WAIT_S:.0f} s after the test that started them: {left}"
+
+
+@pytest.fixture(autouse=True)
+def _agent_probes_end_with_their_test(monkeypatch):
+    """An agent's probe that a read path started in the background
+    (gamma/local_agents/catalog.py ``cached``, ``known``) ends within the
+    test that started it, and the probes kept are then dropped. One still
+    running into the next test outlives that test's ``catalog.forget()``,
+    keeps its answer after it, and is the answer the next fresh probe takes
+    (callers at the same time share one probe): this computer's own Codex
+    where the test set up the stand-in. Taking ``monkeypatch`` puts the wait
+    before the test's patches are undone, so the probe ends under the
+    stand-ins it started with."""
+    yield
+    from fake_agents import settle_probes
+    from gamma.local_agents import catalog
+    settle_probes()
+    catalog.forget()
 
 
 @pytest.fixture(autouse=True, scope="session")

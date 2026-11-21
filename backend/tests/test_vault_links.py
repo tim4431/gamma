@@ -72,7 +72,7 @@ def assert_identity(text, ctx):
 
 READS = [
     ("[[Note]]", "[[pNote]]"),
-    ("[[Note|an alias]]", "[[pNote]]"),
+    ("[[Note|an alias]]", "[[pNote|an alias]]"),       # its alias: the mention's words
     ("[[Note#Heading]]", "[[hHead]]"),
     ("[[Note#^anchor]]", "[[bAnch]]"),
     ("[[Note#^ANCHOR]]", "[[bAnch]]"),
@@ -87,13 +87,17 @@ READS = [
     ("[[Paper One#^p1]]", "[[bPaper]]"),
     ("[[#^p1]]", "[[bPaper]]"),                          # this note
     ("[[#Nowhere]]", "[[pPaper]]"),                      # a heading it lacks: the note
-    ("[text](../Note.md)", "[[pNote]]"),
-    ("[text](Note.md)", "[[pNote]]"),
-    ("[spaces](<../a b.md>)", "[[pAB]]"),
-    ("[escaped](../a%20b.md)", "[[pAB]]"),
-    ('[title](../Note.md "A title")', "[[pNote]]"),
-    ("[to a block](../Note.md#^anchor)", "[[bAnch]]"),
-    ("[here](#^p1)", "[[bPaper]]"),
+    ("[text](../Note.md)", "[[pNote|text]]"),          # a label saying more than the name: its words
+    ("[text](Note.md)", "[[pNote|text]]"),
+    ("[Note](Note.md)", "[[pNote]]"),                  # one saying the name: none
+    ("[spaces](<../a b.md>)", "[[pAB|spaces]]"),
+    ("[A  B](<../a b.md>)", "[[pAB]]"),                # in any case and spacing
+    ("[escaped](../a%20b.md)", "[[pAB|escaped]]"),
+    ('[title](../Note.md "A title")', "[[pNote|title]]"),
+    ("[to a block](../Note.md#^anchor)", "[[bAnch|to a block]]"),
+    ("[Note](../Note.md#^anchor)", "[[bAnch]]"),
+    ("[here](#^p1)", "[[bPaper|here]]"),
+    ("[Paper One](#^p1)", "[[bPaper]]"),
     ("![[fig.png]]", "![](/api/uploads/f1.png)"),
     ("![[fig.png|300]]", "![|300](/api/uploads/f1.png)"),
     ("![[fig.png|300x200]]", "![|300x200](/api/uploads/f1.png)"),
@@ -104,9 +108,10 @@ READS = [
     ("[[notes.txt]]", "[notes.txt](/api/uploads/t1.txt)"),
     ("[[notes.txt|the notes]]", "[the notes](/api/uploads/t1.txt)"),
     ("[[Paper One.pdf#page=3|p. 3]]", "[p. 3](/api/uploads/pdf1.pdf)"),
-    ("[o](http://127.0.0.1:9100/?ws=w1&page=pOut)", "[[pOut]]"),
-    ("[o](http://127.0.0.1:9100/?ws=w1&block=bOut)", "[[bOut]]"),
-    ("[o](HTTP://127.0.0.1:9100/?ws=w1&page=pOut)", "[[pOut]]"),
+    ("[o](http://127.0.0.1:9100/?ws=w1&page=pOut)", "[[pOut|o]]"),
+    ("[Outside \\[draft\\]](http://127.0.0.1:9100/?ws=w1&page=pOut)", "[[pOut]]"),   # its title, escaped
+    ("[o](http://127.0.0.1:9100/?ws=w1&block=bOut)", "[[bOut|o]]"),
+    ("[o](HTTP://127.0.0.1:9100/?ws=w1&page=pOut)", "[[pOut|o]]"),
 ]
 
 
@@ -152,7 +157,7 @@ def test_a_fence_between_links_keeps_them_apart():
 def test_an_escaped_pipe_in_a_table_comes_back():
     text = "| a | b |\n| --- | --- |\n| [[Note\\|alias]] | ![[fig.png\\|300]] |"
     g, _ = assert_identity(text, note())
-    assert g == "| a | b |\n| --- | --- |\n| [[pNote]] | ![|300](/api/uploads/f1.png) |"
+    assert g == "| a | b |\n| --- | --- |\n| [[pNote\\|alias]] | ![|300](/api/uploads/f1.png) |"
 
 
 def test_an_escaped_caret_is_gammas_caret_and_the_lens_escapes_it_again():
@@ -228,13 +233,13 @@ def test_two_links_to_one_target_are_told_apart_by_alignment():
     """Deleting the first of two mentions of one page leaves
     the second its own spelling."""
     ctx = note()
-    text = "[[Deep Note|the alias]] and [[deep note]]"
+    text = "[[DEEP NOTE]] and [[deep note]]"
     g, memo = read(text, ctx=ctx)
     assert g == "[[pDeep]] and [[pDeep]]"
     assert to_file("and [[pDeep]]", memo, ctx, base=g) == "and [[deep note]]"
-    assert to_file("[[pDeep]] and", memo, ctx, base=g) == "[[Deep Note|the alias]] and"
+    assert to_file("[[pDeep]] and", memo, ctx, base=g) == "[[DEEP NOTE]] and"
     assert to_file("[[pDeep]] and [[pDeep]] and [[pDeep]]", memo, ctx, base=g) == \
-        "[[Deep Note|the alias]] and [[deep note]] and [[Deep Note]]"
+        "[[DEEP NOTE]] and [[deep note]] and [[Deep Note]]"
 
 
 def test_a_renamed_target_stays_a_mention():
@@ -293,6 +298,54 @@ def test_a_mention_and_an_embed_of_one_block_trade_spellings():
     assert to_file("![[bAnch]]", memo, ctx, base=g) == "![[Note#^anchor]]"
 
 
+@pytest.mark.parametrize("habit,expected", [
+    (Habit(), "see [[Deep Note|the deep one]], [[Note#^anchor|that line]] and [[#^p1|here]]"),
+    (Habit(markdown=True), "see [the deep one](Deep%20Note.md), [that line](Note.md#^anchor) and [here](#^p1)"),
+])
+def test_a_mentions_words_are_its_links_alias_or_label(habit, expected):
+    """A ``[[id|words]]`` written in Gamma: a wikilink's alias, a Markdown
+    link's label, in the habit; read back, the same words."""
+    ctx = note(vault(habit))
+    g = "see [[pDeep|the deep one]], [[bAnch|that line]] and [[bPaper|here]]"
+    text, memo = written(g, {}, ctx)
+    assert text == expected
+    assert read(text, memo, ctx)[0] == g
+    assert read(text, {}, ctx)[0] == g
+    outside = written("[[pOut|the draft]]", {}, ctx)[0]
+    assert outside == "[the draft](http://127.0.0.1:9100/?ws=w1&page=pOut)"
+    assert read(outside, {}, ctx)[0] == "[[pOut|the draft]]"
+
+
+def test_a_mentions_words_in_a_tables_row_take_the_escaped_pipe():
+    ctx = note()
+    text = written("| a |\n| --- |\n| [[pDeep|deep]] |", {}, ctx)[0]
+    assert text == "| a |\n| --- |\n| [[Deep Note\\|deep]] |"
+    assert read(text, {}, ctx)[0] == "| a |\n| --- |\n| [[pDeep\\|deep]] |"
+
+
+@pytest.mark.parametrize("was,words,expected", [
+    ("[[deep note|old words]]", "[[pDeep|new words]]", "[[deep note|new words]]"),
+    ("[[deep note|old words]]", "[[pDeep]]", "[[deep note]]"),
+    ("[[deep note]]", "[[pDeep|new words]]", "[[deep note|new words]]"),
+    ("[old words](<../Deep Note.md>)", "[[pDeep|new words]]", "[new words](<../Deep Note.md>)"),
+    ("[old words](<../Deep Note.md>)", "[[pDeep]]", "[Deep Note](<../Deep Note.md>)"),
+    ('[deep note](<../Deep Note.md> "T")', "![[pDeep]]", '[deep note](<../Deep Note.md> "T")'),
+])
+def test_words_edited_in_gamma_keep_the_target_as_written(was, words, expected):
+    ctx = note()
+    g, memo = read(f"see {was}", ctx=ctx)
+    assert to_file(f"see {words}", memo, ctx, base=g) == f"see {expected}"
+
+
+def test_a_memo_from_before_the_words_were_read_takes_them_from_the_file():
+    """A block read when a link's alias was dropped remembers ``[[pNote]]``
+    for ``[[Note|an alias]]``; read again, its mention has the words."""
+    ctx = note()
+    text = "[[Note|an alias]] and more"
+    old = {"links": {"pNote": [["[[pNote]]", "[[Note|an alias]]", 0]]}}
+    assert read(text, old, ctx)[0] == "[[pNote|an alias]] and more"
+
+
 def test_written_reads_back_as_what_was_written():
     ctx = note()
     for g in ("[[pNote]] [[bAnch]] ![[bAnch]] [[pOut]] ![](/api/uploads/f1.png) [x](/api/uploads/t1.txt)",
@@ -325,18 +378,19 @@ def work_vault(habit=None) -> LinkContext:
 
 
 WORK_READS = [
-    ("[the method](sections/method.tex)", "[[pMethod]]"),
+    ("[the method](sections/method.tex)", "[[pMethod|the method]]"),
+    ("[method.tex](sections/method.tex)", "[[pMethod]]"),  # a file page's name: no words
     ("[[sections/method.tex]]", "[[pMethod]]"),
     ("[[method.tex]]", "[[pMethod]]"),                     # by its name, from another directory
     ("[[sections/method.tex#Intro]]", "[[pMethod]]"),      # a file's "#…" names nothing in its page
     ("[[main.pdf]]", "[[pMain]]"),                         # a paper's PDF: the page its note is on
     ("[[figures/fig1.pdf]]", "[[pFig1]]"),
-    ("[[fig1.pdf|the figure]]", "[[pFig1]]"),
-    ("[fig](fig.png)", "[[pPng]]"),                        # a link to a picture: its page
+    ("[[fig1.pdf|the figure]]", "[[pFig1|the figure]]"),
+    ("[fig](fig.png)", "[[pPng|fig]]"),                    # a link to a picture: its page
     ("![[fig.png]]", "![](/api/uploads/f1.png)"),          # an embed: the picture, drawn
     ("![a|300](fig.png)", "![a|300](/api/uploads/f1.png)"),
     ("[[big.h5]]", "[[pBig]]"),                            # a listed file, by its name too
-    ("[big](data/big.h5)", "[[pBig]]"),
+    ("[big](data/big.h5)", "[[pBig|big]]"),
     ("![[huge.png]]", "![[huge.png]]"),                    # a listed picture's embed: no bytes, as typed
 ]
 
@@ -354,7 +408,7 @@ def test_a_papers_note_links_its_own_pdf_as_the_file():
     ctx = work_vault().at("main.md", "pMain", "main.pdf")
     assert assert_identity("[[main.pdf]]", ctx)[0] == "[main.pdf](/api/uploads/m1.pdf)"
     assert assert_identity("[[main.pdf#page=3|p. 3]]", ctx)[0] == "[p. 3](/api/uploads/m1.pdf)"
-    assert assert_identity("[the method](sections/method.tex)", ctx)[0] == "[[pMethod]]"
+    assert assert_identity("[the method](sections/method.tex)", ctx)[0] == "[[pMethod|the method]]"
 
 
 def test_a_kept_folders_link_to_a_file_stays_its_upload():
@@ -392,7 +446,7 @@ def test_a_link_to_a_file_page_keeps_its_spelling_through_an_edit_and_a_move():
     ctx = work_vault().at("notes.md", "pNotes")
     text = "See [the method](sections/method.tex) and [[main.pdf]]."
     g, memo = read(text, ctx=ctx)
-    assert g == "See [[pMethod]] and [[pMain]]."
+    assert g == "See [[pMethod|the method]] and [[pMain]]."
     assert to_file("Now: " + g, memo, ctx, base=g) == "Now: " + text
     moved = LinkContext(address=ADDRESS, page_of=WORK_PAGE_OF.get)
     moved.add_note("notes.md", "pNotes")

@@ -629,7 +629,8 @@ def ub_get_subtree(block_id: str, request: Request):
 
 @router.get("/blocks/{block_id}/backlinks")
 def ub_get_backlinks(block_id: str, request: Request):
-    """Return all blocks that reference `block_id` via [[block_id]] syntax."""
+    """Return all blocks that reference `block_id` via [[block_id]] syntax
+    (or [[block_id|words]])."""
     # Backlinks span the whole library by nature, so a share link can't use
     # them without leaking other pages.
     if share_scope(request) is not None:

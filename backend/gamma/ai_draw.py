@@ -2,7 +2,7 @@
 "Drawing on pages"): shapes as a new handwriting group, a text box, a
 picture and a page of paper. Each is one block a person's client would
 make (handwriting.md "The stroke file", text_boxes.md, pictures.md,
-notebooks.md); the registry (gamma/ai_tools.py ``draw``, ``add_text_box``,
+notebooks.md); the registry (gamma/ai_tools/drawing.py ``draw``, ``add_text_box``,
 ``place_picture``, ``add_sheet``) inserts it through the op path under the
 agent's stamp and records its revert.
 
@@ -448,8 +448,8 @@ def plan_picture(conn, ws: str, surface: Surface, args: dict) -> Made:
     name = upload_name(url) if URL_RE.match(url) else ""
     path = find_upload_file(name, ws) if name else None
     if path is None:
-        raise ValueError("url names no picture this workspace holds: use one clip_region stored, or one a note "
-                         "embeds (read_block shows it)")
+        raise ValueError("url names no picture this workspace holds: use one clip_region (or, where you have it, "
+                         "upload_file) stored, or one a note embeds (read_block shows it)")
     size = image_size(path.read_bytes()) if path.stat().st_size <= STORED_MAX else None
     if not size or not all(size):
         raise ValueError("that file is not a picture this tool can place")

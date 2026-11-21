@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 69
+SCHEMA_VERSION = 70
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -146,7 +146,8 @@ USERS_SCHEMA = [
         workspaces TEXT NOT NULL DEFAULT '',
         edits TEXT NOT NULL DEFAULT '',
         asks INTEGER NOT NULL DEFAULT 1,
-        comments TEXT NOT NULL DEFAULT ''
+        comments TEXT NOT NULL DEFAULT '',
+        deletes INTEGER NOT NULL DEFAULT 0
     )""",
     # mirrors = local workspaces that are offline copies of a workspace on
     # another Gamma server (gamma/sync_engine.py): where it lives, the
@@ -1431,6 +1432,30 @@ PAGES_SCHEMA = [
         deleted_at TEXT NOT NULL
     ) WITHOUT ROWID""",
     "CREATE INDEX IF NOT EXISTS idx_agent_stamps_at ON agent_stamps(deleted_at)",
+    # agent_changes (gamma/mcp_changes.py, docs/dev/mcp.md "Undoing a
+    # change"): each change an MCP connection made here, with what taking it
+    # back needs: `token_id` the connection (integration_tokens.id), `agent`
+    # its stamp then (agents.stamp, JSON), `tool` and `summary` what it did,
+    # `kind` the revert's (ai_revert._PLANS), `block_id` and `page_id` what it
+    # changed, `revert` the tool's revert record (JSON), `undone_at` when it
+    # was taken back ('' while it stands). The newest per connection only,
+    # and none older than mcp_changes.KEEP_DAYS. Each account's own: a
+    # backup carries none (ws_backup.PRIVATE_TABLES), and no mirror or Gamma
+    # export does. Additive: no step (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS agent_changes (
+        id TEXT PRIMARY KEY,
+        token_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        at TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        block_id TEXT NOT NULL,
+        page_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        revert TEXT NOT NULL,
+        undone_at TEXT NOT NULL DEFAULT ''
+    ) WITHOUT ROWID""",
+    "CREATE INDEX IF NOT EXISTS idx_agent_changes_token ON agent_changes(token_id, at)",
     WORKSPACE_PREFS_SCHEMA,
     *CHATS_SCHEMA,
     *COMPUTER_CHATS_SCHEMA,
@@ -2032,7 +2057,11 @@ USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "
                             # gamma/zotero_account.py PREF_KEY: the connected
                             # Zotero account, its API key sealed; never served
                             # by /api/prefs, never in the synced profile.
-                            "zotero-account"})
+                            "zotero-account",
+                            # gamma/skills.py PREF_KEY: the account's own
+                            # skills; only routers/skills.py reads or writes
+                            # it, never synced to Gamma Cloud.
+                            "skills"})
 
 
 def pref_scope(key: str, ws: str) -> str:

@@ -592,6 +592,7 @@ jobs:
           MAC_SIGNED: ${{ secrets.MAC_CERT_P12 != '' && secrets.APPLE_ID != '' }}
           CWS_ITEM_ID: ${{ vars.CWS_ITEM_ID }}
           PLAY_URL: ${{ vars.PLAY_URL }}
+          PRERELEASE: ${{ inputs.prerelease == true }}
         run: |
           ls -la assets
           base="https://github.com/$REPO/releases/download/$TAG"
@@ -608,6 +609,15 @@ jobs:
             local t=${1//-/--}; t=${t//_/__}; t=${t// /%20}; t=${t//\//%2F}
             echo -n "[![$1](https://img.shields.io/badge/$t-$2?style=for-the-badge&logo=$3&logoColor=white)]($4) "
           }
+          # Store badges are pictures: badge <alt> <image> <url> <width>.
+          # Apple's, Microsoft's and Google's come from their own servers, as
+          # each store hands them out; TestFlight's and Android's are drawn in
+          # the repository (docs/assets/badges/) and read at this release's tag.
+          # The width makes each 44 px high (GitHub sets height: auto on every
+          # image, so a height attribute would only cap it), Google's margin
+          # included in its 169.
+          badge() { echo -n "<a href=\"$3\"><img src=\"$2\" alt=\"$1\" width=\"$4\" align=\"middle\"></a> "; }
+          drawn="https://raw.githubusercontent.com/$REPO/$TAG/docs/assets/badges"
           # The changelog: this repo's commit subjects are short and
           # descriptive, PR titles are all "Merge pull request #N from dev".
           # Tidied: no trailing punctuation, no repeats. Every folder whose
@@ -619,6 +629,15 @@ jobs:
           {
             echo "## Download"
             echo
+            # The stores take a release from main that is not a pre-release
+            # (the store job; the Mac App Store's build is made by hand).
+            if [ "$GITHUB_REF" = "refs/heads/main" ] && [ "$PRERELEASE" != "true" ]; then
+              badge "Download on the Mac App Store" "https://toolbox.marketingtools.apple.com/api/v2/badges/download-on-the-mac-app-store/black/en-us" "https://apps.apple.com/us/app/gamma-pdf-reader/id6814705181?mt=12" 172
+              badge "Download from the Microsoft Store" "https://get.microsoft.com/images/en-us%20dark.svg" "https://apps.microsoft.com/detail/9N8WGWR2J2MV" 161
+              echo
+              echo
+              stores=true
+            fi
             [ -n "$exe" ] && btn "Download for Windows" 0078D4 "$win" "$base/$exe"
             [ -n "$dmg" ] && btn "Download for macOS" 000000 apple "$base/$dmg"
             [ -n "$deb" ] && btn "Download for Debian / Ubuntu" A81D33 debian "$base/$deb"
@@ -630,6 +649,9 @@ jobs:
             echo
             echo "<details><summary><b>First launch, install and updates</b></summary>"
             echo
+            if [ -n "$stores" ]; then
+              echo "- **Stores** — the Mac App Store and the Microsoft Store install Gamma signed and keep it up to date. Each takes a release after its store's review, so it can trail this one. The Mac App Store's runs in Apple's sandbox: it opens PDFs from the Finder but not folders, and keeps its data apart from a dmg install's."
+            fi
             if [ "$WIN_SIGNED" = "true" ]; then
               echo "- **Windows** — code-signed (Azure Trusted Signing)."
             else
@@ -658,7 +680,7 @@ jobs:
             if [ "$GITHUB_REF" = "refs/heads/main" ]; then
               echo "## iPad app"
               echo
-              btn "Join the TestFlight beta" 0D96F6 apple "https://testflight.apple.com/join/nTmSHDx6"
+              badge "Get the iPad app beta on TestFlight" "$drawn/testflight-ipad.svg" "https://testflight.apple.com/join/nTmSHDx6" 161
               echo
               echo
               echo "Install Apple's TestFlight app, then open the link on the iPad. The iPad build of this release reaches TestFlight once it has been built and Apple has processed it."
@@ -667,8 +689,8 @@ jobs:
             if [ -n "$apk" ]; then
               echo "## Android app"
               echo
-              btn "Download for Android" 3DDC84 android "$base/$apk"
-              [ -n "$PLAY_URL" ] && btn "Google Play" 414141 googleplay "$PLAY_URL"
+              badge "Download the APK for Android" "$drawn/android-apk.svg" "$base/$apk" 161
+              [ -n "$PLAY_URL" ] && badge "Get it on Google Play" "https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" "$PLAY_URL" 169
               echo
               echo
               echo "Android 10 or later on 64-bit ARM, phones and tablets; a stylus (S Pen, USI, Wacom) writes with the pressure and tilt it reports. Open the APK on the device and allow your browser to install apps when Android asks. The app carries its own Gamma server, so a workspace on the device works with no connection. Update by installing the next release's APK over it${PLAY_URL:+, or install from Google Play, which updates it itself}."

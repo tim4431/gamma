@@ -617,7 +617,7 @@ offers comes from the handlers ChatDock passes (edit, report and revert
 are Gamma AI's; Save to library reads either's text). `useComputerSide`
 holds what `ComputerChat.jsx` held, the strip is `ComputerStrip.jsx`, the
 composer is ChatDock's with what such an agent takes alone (the message
-and the PDF passages: `PaperMentionInput` gains `mentions` and `label`),
+and the PDF passages: `PaperMentionInput`, now `ChatComposerInput`, gains `mentions` and `label`),
 and `computer.css`'s rules are the chat's own in `app.css`;
 `ComputerChat.jsx`, `ComputerAsk.jsx` and `computer.css` are gone. History
 is one popover (`computerChat.historyRows`): `GET /chat/history` also
@@ -763,7 +763,7 @@ folder edits that file; the sync panel no longer names an agent.
   (`comments.py:94`) becomes the threads of a scope.
 - An entry is a thread or a **highlight without one**: its file, place,
   quote, source line, picture and note. `state` filters threads only.
-- The tools in `ai_tools.py` (`:4389`, `:4416`) become
+- The tools in `ai_tools/` become
   `list_annotations` and `read_annotation`; `mcp_server.py`'s `SPREAD`
   and thread arguments follow. `ai_context.py`'s highlights section
   gives a PDF passage its page number, which it lacks today.

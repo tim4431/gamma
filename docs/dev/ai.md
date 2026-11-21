@@ -6,7 +6,7 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 [ai_tools.md](ai_tools.md); how long papers reach the model is
 [ai_context.md](ai_context.md). Code: `gamma/ai_settings.py`,
 `gamma/ai_protocols/` (one adapter per wire), `gamma/ai_client.py`,
-`gamma/ai_catalog.py`, `gamma/ai_context.py`, `gamma/ai_tools.py`,
+`gamma/ai_catalog.py`, `gamma/ai_context.py`, `gamma/ai_tools/`,
 `gamma/chatgpt_oauth.py`, `gamma/routers/ai.py`. PDF translation
 (`gamma/routers/translate.py`), the handwriting selection's Redraw as
 shapes and Convert to text (`gamma/routers/ink_ai.py`) and the stored chat
@@ -88,12 +88,11 @@ model registry from the account's own entries followed by the server's shared
 ones (ids are `<entryId>:<model>`; the wire format comes from the entry's
 `protocol`, never from the provider id; the default model is the account's
 own first model, else the server's first) — AI endpoints must use it, not
-module-level config constants for credentials or model routing. Env vars set
-each protocol's administrator-controlled default base URL
-(`config.AI_BASE_URLS`: `GAMMA_AI_ANTHROPIC_BASE_URL`, or `GAMMA_AI_BASE_URL`
-when it is unset, as older `.env` files name it; `GAMMA_AI_OPENAI_BASE_URL`,
-`GAMMA_AI_CHATGPT_BASE_URL`). Only `GAMMA_` variables count: an
-`ANTHROPIC_BASE_URL` in the environment is not read.
+module-level config constants for credentials or model routing. Each
+protocol's default base URL is the provider's own (`config.AI_BASE_URLS`);
+another endpoint is a connection's own base URL, and no environment
+variable moves the default (an `ANTHROPIC_BASE_URL` a shell exports is not
+read either).
 
 The client offers one connection's models at a time. `providerModels` in
 `chat/modelPrefs.js` cuts the registry down to the active connection (the
@@ -520,7 +519,12 @@ set — some models reject it; see "Reasoning effort" below), optional `speed`
 (the provider's service tier; see "Speed" below), optional `system` override, the message's
 `images` and their budget `max_pictures` ("Pictures" below), and the context PAGES: `pages`
 (several — a report across pages) or, when empty, the one page of `page_id`
-(the open page). A page's PDF attachment, or its text file, is derived
+(the open page). A message that began with `/name` carries `skill: {id,
+name, args}`, and a history item may carry one too: the server renders
+the skill's instructions ahead of the turn's text from the account's
+catalog, by id, on every request, and answers a skill it no longer holds
+with 400 kind `skill` ([skills.md](skills.md#what-the-model-reads)).
+A page's PDF attachment, or its text file, is derived
 server-side from its document (`documents.model.page_document`): the stored
 file it shows (`file_hash`), so a duplicated page reads the original's PDF; a
 text file's numbered lines, head and outline, are built from the page alone
@@ -631,7 +635,9 @@ and a `$$…$$` alone on its line as display math (`remarkLoneDisplayMath`,
 [diagrams.md](diagrams.md)), so a wide formula scrolls in its own box
 instead of widening the transcript. The transcript keeps its scrollbar's
 room (`scrollbar-gutter: stable`), so a reply growing past the window does
-not rewrap it.
+not rewrap it. Its pill's label changing under a long conversation does
+not give the page a scrollbar either (`MorphText`,
+[ui-design.md](ui-design.md#things-that-change-in-place)).
 
 `gather_inputs` returns the context in two parts, and `build_messages`
 places them apart on purpose. The **document part** (the pages' sections:
@@ -856,9 +862,10 @@ tooltip names the tier, since the glyph carries no text). The line comes a
 second time, corrected, when the provider's report says the turn ran at
 another speed than the one asked for (see "Speed" below); the chat keeps
 the latest.
-`GAMMA_MODEL_CATALOG=off` keeps the server from asking models.dev at all (an
-offline server; the browser suite sets it); model facts then come from the
-providers' listings alone.
+The AI model catalog switched off (Settings → Server → Online services,
+server option `model_catalog`) keeps the server from asking models.dev at
+all (an offline server; the browser suite turns it off); model facts then
+come from the providers' listings alone.
 
 ### Speed (service tier)
 
@@ -1022,7 +1029,8 @@ muted "offline" for another computer that is away, an amber "not ready"
 (`.agentProblem`) for one with a problem, the whole sentence its title; it
 stays pickable, and the chat then says why. The chip then reads the agent
 first, "Codex on TIM-PC · GPT-5.5 · high" or "Gamma AI · GPT-5 · high"
-(`agentChoice`, then the model and effort, the model ellipsized first),
+(`agentChoice`, then the model and effort, the model ellipsized first, the
+speed chosen its glyph after them, a computer agent's as Gamma AI's),
 named "Agent, model and reasoning effort"; with Gamma AI alone it is the
 model chip it always was ("GPT-5 · high", "Model, reasoning effort and
 speed"). It is shown in every bucket (a page, a folder, the library) and even when
@@ -1030,7 +1038,7 @@ Gamma AI is off or unset, as long as there is an agent to pick. A viewer
 of the workspace has Gamma AI alone.
 
 The bucket's pick lasts the tab's life (`chat/computer/chatSide.js`
-`useChatAgent`), as a computer agent's model and effort do; a bucket never
+`useChatAgent`), as a computer agent's model, effort and speed do; a bucket never
 picked shows Gamma AI, unless no AI service is connected and a computer's
 agent can answer (`pickAgent`; a pick is the agent's id, another
 computer's `computer:<computer>:<name>`, which History, a thread's *Open
@@ -1117,6 +1125,9 @@ a press keeps an on-screen keyboard up.
   open, attaches the visible part of each page in view, with the
   handwriting on it, as a region the server draws. Both show in the row
   under the chips with a remove button ("Pictures" below).
+- **Skills.** "/" as the message's first character opens the skill
+  picker, and a message that begins with a skill's `/name` runs it
+  ("Running a skill" below).
 - The draft and App's last ask survive the dock remounting
   ([chat_history.md](chat_history.md)).
 
@@ -1149,12 +1160,15 @@ row: Enter keeps, Escape leaves it) and Move up / down.
   A reload loses it, as Codex's.
 - **Steer** hands a queued message to the reply under way. What a message
   sent while a reply runs does is the account's **follow-up** preference
-  (`chatFollowUp`, Settings → AI → Chat, Codex's "Follow-up behavior"):
-  Queue, the default, or Steer, which queues and steers at once. Enter, the
-  send button and a dictation's ↑ do what it says, Ctrl/⌘+Shift+Enter
-  (`enterKey.js` `steersOnEnter`) the other (`followUpSteers`); the box's
-  placeholder ("Queue a follow-up…", "Steer the reply…") and the button's
-  title say which. A message that cannot steer stays queued.
+  (`chatFollowUpMode`, Settings → AI → Chat, Codex's "Follow-up behavior"):
+  Steer, the default, which queues and steers at once, or Queue. Enter, the
+  send button and a dictation's ↑ do what it says, Ctrl/⌘+Enter
+  (`enterKey.js` `othersOnEnter`) the other (`followUpSteers`), as in
+  Codex; the box's placeholder ("Steer the reply…", "Queue a follow-up…")
+  and the button's title say which. A message that cannot steer stays
+  queued. The preference replaced `chatFollowUp` (Queue by default) under a
+  name and key of its own, since a first load stores a preference's default
+  too: every account moved to Steer once, and a choice made since stays.
   The stream's head ends with `{"steer": id}` (`gamma/ai_steer.py`: an
   inbox per streamed reply, in memory, bound to its account, closed when
   the stream ends). `POST /api/ai/chat/steer/{id}` carries the text, the
@@ -1230,15 +1244,19 @@ note, for Gamma AI and a computer's agent alike (`chat/ChatSelectionTip.jsx`,
 - **The popup.** A selection gets the selection popup the PDF's and the
   code view's text get (`TipFrame`, `pdf/selectionTip.js`): a mouse's once
   the hand moves on from the release, a finger's once its handles have been
-  still for 350 ms. It holds **Ask about this** and the ⋯ of the
-  selection's menu; its buttons act on the press, so the selection stays.
-  A press elsewhere, a scroll of the transcript or the selection going puts
-  it away. A workspace viewer's chat has none.
-- **The menu.** A right-click on the selected text, or the popup's ⋯,
-  opens a `ContextMenu`: Ask about this, Copy, and **Create note** ▸ *As it
-  is* / *Structured by AI*. A right-click elsewhere keeps the browser's
-  menu. Every row acts on the selection as it was when the popup or the
-  menu opened.
+  still for 350 ms. Every action is a button of its own, no ⋯: **Ask
+  about this**, **Copy** (a check for a moment), and where a note can be
+  made **Create note** (as it reads) and **Structured note** (rewritten by
+  the AI; greyed with its reason where no AI service is connected), each
+  title saying where the note goes. Ask and the notes act on the press, so
+  the selection stays; Copy on the click, as the system's Copy. A press
+  elsewhere, a scroll of the transcript or the selection going puts it
+  away. A workspace viewer's chat has none.
+- **The menu.** A right-click on the selected text opens the same as a
+  `ContextMenu`: Ask about this, Copy, and **Create note** ▸ *As it is* /
+  *Structured by AI*. A right-click elsewhere keeps the browser's menu.
+  Every action takes the selection as it was when the popup or the menu
+  opened.
 - **What is taken.** The selection's Markdown source, what Ctrl+C puts on
   the clipboard (`shared/ui/Widgets.jsx` `selectionMarkdown`: formulas as
   their TeX, lists, links and emphasis as written; Copy puts the HTML
@@ -1288,7 +1306,7 @@ selected in a reply is quoted into the next message".
 
 ### Mentioning library papers
 
-`chat/PaperMentionInput.jsx` owns the picker. `chat/paperMentions.js` owns mention text edits
+`chat/ChatComposerInput.jsx` owns the picker. `chat/paperMentions.js` owns mention text edits
 and `MAX_CHAT_REFERENCES`, shared with `chat/ChatDock.jsx`. The six-reference UI limit
 mirrors the API's seven-page limit (`pages`, de-duplicated server-side),
 leaving one slot for the current page.
@@ -1318,12 +1336,26 @@ optional notes/highlights. The multi-paper text budget is shared by valid pages;
 selection still centers the open paper's excerpt. Tool-enabled chats also
 receive document maps labelled with page IDs.
 
-Explicit references expand `read_page`, `read_block`, and `search_library`
-access within the current workspace, even outside the original page/folder.
-They never expand the editing scope. PDF and file search hits identify their
+Explicit references put the pages in the chat's tool scope within the current
+workspace, even outside the original page/folder, for reading and for changes
+alike: the read and search tools reach them, and so do the note editors, the
+comment, highlight and drawing tools, and in a folder chat the page organizers,
+each under its own permission. PDF and file search hits identify their
 Gamma page IDs so the assistant can read further or cite the matching paper
 or line, including when titles are identical. References are resolved server-side;
 missing pages and non-page blocks are ignored.
+
+### Running a skill
+
+Type "/" at the start of the composer to pick one of the account's skills
+or a built-in one; a message that begins with `/name` sends its
+instructions ahead of the text after the name. The picker shares the "@"
+picker's shell and key rules (`chat/ComposerPicker.jsx`). The message
+carries `skill: {id, name, args}`, its user bubble a `/name` chip, and it
+never steers: it waits in the queue as a turn of its own. Gamma AI and a
+computer's agent both run skills; the library agent can also load one
+itself with `load_skill`. [skills.md](skills.md) has the format, the
+catalog, the turn the model reads and the Settings sections (Settings → AI → Chat).
 
 ### Pointing the chat at notes
 
@@ -1438,7 +1470,7 @@ Reasoning models burn invisible tokens — keep `max_tokens` generous (empty
 responses raise with the finish reason). `/api/ai/models` feeds the chat
 panel's model chip and the prompt editor (four editable prompts: chat system,
 metadata extraction, PPT citation — defaults in `ai.py` — and the library-agent
-base prompt, default in `ai_tools.py`).
+base prompt, default in `ai_tools/prompt.py`).
 
 ### Pictures
 
@@ -1555,7 +1587,7 @@ note's, and the saved conversation points at them, so `upload_gc.referenced`
 reads the `chats` and `chat_history` rows for `/api/uploads/` names beside
 the blocks ([user_db.md](user_db.md) "Stored files"): a picture lives while
 a chat or a note names it, and 30 days more. A written block may only name
-uploads that exist (`missing_uploads` in `ai_tools.py`); `clip_region`
+uploads that exist (`missing_uploads` in `ai_tools/notes.py`); `clip_region`
 stores a region or a handwriting view for the notes to embed
 ([ai_tools.md](ai_tools.md)).
 
@@ -1577,8 +1609,9 @@ What it can reach depends on where the chat is opened — every chat declares an
 - `"page"` — the page chat (`page_id` = the focused page, with or without a
   document, a PDF or a text file): tools reach only that page — the reading tools plus the note-block
   editors; the page-level organizers (list/rename/move, folders and labels)
-  don't exist there. The reading tools reach the pages inside it too, as
-  attachments widen reading and never editing ([ai_tools.md](ai_tools.md)).
+  don't exist there. The reading tools reach the pages inside it too, for
+  reading only, and every tool reaches the pages attached with @
+  ([ai_tools.md](ai_tools.md)).
 
 The request also carries `permissions`, the tool map of the chat's KIND with
 one state per permission (see below), and `granted`, the permissions this
@@ -1594,6 +1627,10 @@ document in context the system prompt also carries the citation rule
 (`ai_tools.CITATION_PROMPT`): a PDF passage as `[p. N](/?page=…&pdf_page=N&quote=…)`,
 a text file's line as `[<file name>:N](/?page=…&line=N&quote=<the line's
 verbatim text>)` ([pdf_citations.md](pdf_citations.md) "Line links").
+With `load_skill` armed, the prompt ends with the skills the model may
+load, one `- name: description` line each, sorted by name so the block
+reads the same while the account's skills stand
+([skills.md](skills.md#load_skill-the-agent-loads-a-skill-itself)).
 
 The changing tools (rename, move, folders and labels, the note editors) are
 armed only when `auth.can_write` lets the request write: an editor or
@@ -1657,7 +1694,7 @@ sit below its description. Each column offers four presets:
 
 Individual changes show **Custom**. The stored map is account-synced. Its
 localStorage JSON is `gamma-ai-agent-perms` = `{folder, pdf, notes}` →
-`{list, read, block_read, view, search, show, web_search, web_read,
+`{list, read, block_read, view, search, show, skills, web_search, web_read,
 publisher_cookies, save, create, rename, move, restore, delete, organize,
 organize_delete, block_edit, comment, draw}` → `"allow"` / `"ask"` / `"off"`, and a pre-kind flat map is
 applied to every kind on read.
@@ -1707,7 +1744,10 @@ needs no permission of its own. The backend excludes that identity when
 the permission is Off, including from the authenticated text cache. This
 choice requires **Fetch documents**; turning fetching off preserves its stored
 choice. Turning cookie use off does not disconnect publishers or affect
-interactive PDF saves. Plus:
+interactive PDF saves. **Use skills on its own** (`skills`, Allow or Off,
+default Allow) arms `load_skill`, where the account has a skill the
+assistant may load; Off leaves "/" working
+([skills.md](skills.md#load_skill-the-agent-loads-a-skill-itself)). Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
   user-tunable 1–100) — provider round-trips one message may use.
@@ -1859,7 +1899,7 @@ A call of a tool whose permission is Ask waits for the user
    is an error chip, and the model hears that the folder or label changed
    while the card waited (`CHANGED_WHILE_ASKING`). A call naming several pages runs with
    its card's `digest` (`run_agent_tool(…, approved=)`): planned again (a
-   rename, move or label under the write lock, `ai_tools._batch_write`), it
+   rename, move or label under the write lock, `ai_tools.organizing._batch_write`), it
    writes nothing when a listed page or the target changed while the card
    waited (`ai_tools.BATCH_CHANGED`).
    Declined, or unanswered after `APPROVAL_TIMEOUT` (10 minutes), the call
@@ -2049,7 +2089,8 @@ same event. So after Stop the turn streaming ends at its next event, no
 further turn opens, the loop's or a helper's, and only the calls
 already running finish: the round's reads (up to 4, a helper's read in
 flight included) or the one change. A waiting card or paper wait
-returns at once.
+returns at once, and the paper requests the reply asked for go with it
+([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
 
 Every tool call is announced by a `{"step": {id, tool, args}}` line before
 it runs; a batch sends one step with `batch: n` (and `tools` when they are
@@ -2240,7 +2281,11 @@ window too. `_messages` in `ai_protocols/anthropic.py` folds a plain user turn i
 preceding tool_result turn to keep roles alternating. The client sends
 only what is replayed — each turn's `role`, `text` and `actions`, never
 the pictures, coverage and counts saved with it, nor the texts an action
-keeps for reverting (`revert`), nor a batch's per-page `items`. Plain chats never replay
+keeps for reverting (`revert`), nor a batch's per-page `items`; a user
+turn that ran a skill sends its `skill`, whose instructions are rendered
+again from the requester's catalog by id, and a `load_skill` call replays
+its instructions the same way, outside `TOOL_REPLAY_BUDGET` and without
+the replay note ([skills.md](skills.md#replay-across-turns)). Plain chats never replay
 (providers reject tool blocks without tool defs). Renamed tools replay under
 their current name (`ai_context.DEPRECATED_TOOLS`, e.g. the saved
 `search_pdfs` chips of old chats become `search_library` calls), and a model

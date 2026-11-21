@@ -5,6 +5,7 @@ import http from "node:http";
 import path from "node:path";
 import { TOPBAR } from "../../../src/app/topbarItems.js";
 import { VIEWER_TOOLS } from "../../../src/app/viewerToolItems.js";
+import { certificate } from "./https.mjs";
 import { closeEditor, editRow, newPageViaUi, same, tree } from "./notes.mjs";
 
 export async function settingsScenarios(env) {
@@ -744,6 +745,7 @@ export async function settingsScenarios(env) {
       const secret = page.getByRole("textbox", { name: "New integration token" });
       await secret.waitFor();
       assert((await secret.inputValue()).startsWith("gamma_"));
+      const codexToken = await secret.inputValue();
       let connections = await user.api("/api/integrations/tokens");
       assertEq(connections.tokens.length, 1);
       assertEq(JSON.stringify(connections.tokens[0].workspaces), JSON.stringify([user.ws, second.id]));
@@ -794,6 +796,30 @@ export async function settingsScenarios(env) {
       assertEq(JSON.stringify(connections.tokens[0].edit_workspaces), JSON.stringify([user.ws]));
       assertEq(connections.tokens[0].asks, false);
       await page.getByText(/edits notes in .* · changes without asking/).waitFor();
+      // Deleting notes is its own permission, off until ticked
+      await page.getByRole("button", { name: "Choose workspaces", exact: true }).click();
+      const deleting = page.getByRole("checkbox", { name: /May delete notes/ });
+      assert(!await deleting.isChecked(), "a connection that edits deletes nothing yet");
+      await deleting.check();
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await deleting.waitFor({ state: "detached" });
+      assertEq((await user.api("/api/integrations/tokens")).tokens[0].deletes, true);
+      await page.getByText(/edits notes in .* · may delete notes/).waitFor();
+      // A change it makes through MCP is listed under its row, and undone there
+      const target = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Settings undo page" } });
+      const pasted = await fetch(`${server.base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${codexToken}`,
+        "Content-Type": "application/json", Accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2025-11-25" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_block",
+        arguments: { parent_id: target.id, content: "Pasted one\n\nPasted two" } } }) }).then((r) => r.json());
+      assert(!pasted.result.isError && pasted.result.structuredContent.change_id, JSON.stringify(pasted.result));
+      await page.getByRole("button", { name: "Changes", exact: true }).click();
+      const change = page.getByText("Added 2 notes in “Settings undo page”", { exact: true });
+      await change.waitFor();
+      await page.getByRole("button", { name: "Undo", exact: true }).click();
+      await page.getByText("Undone", { exact: true }).waitFor();
+      assertEq((await user.api(`/api/blocks/${target.id}/children`)).children.length, 0, "the paste is gone");
+      await page.getByRole("button", { name: "Changes", exact: true }).click();
+      await change.waitFor({ state: "detached" });
       // Separate authorizations can have the same name. Revoking one must
       // leave the other visible, without claiming the assistant lost access.
       const duplicate = await user.api("/api/integrations/tokens", { method: "POST", body: { name: "Codex test" } });
@@ -1625,7 +1651,7 @@ export async function settingsScenarios(env) {
       const results = page.locator(".settingsSearchResult");
       await results.first().waitFor();
       // the section first, then Server backups' Off-site copies, which points at it
-      assertEq(JSON.stringify(await results.locator(".settingLabel").allInnerTexts()), JSON.stringify(["Bucket", "Off-site copies"]),
+      assertEq(JSON.stringify(await results.locator(".settingLabel").allInnerTexts()), JSON.stringify(["Bucket", "Cloud copies", "Off-site copies"]),
         "an admin's matches");
       assertEq(await results.first().locator("small").innerText(), "Backups", "the match names its pane");
       await results.first().click();
@@ -1707,12 +1733,13 @@ export async function settingsScenarios(env) {
     };
   }
 
-  await step("settings: the Bucket is set up in a dialog with a write-only secret and tested there; a backup task copies its snapshots to it, which come back from Saved snapshots", async () => {
+  await step("settings: the Bucket is set up in a dialog with a write-only secret and tested there; a backup task copies its snapshots to it, which come back from Saved snapshots, and Cloud copies brings back the workspaces only the bucket has", async () => {
     await server.manage("set-admin", "settings-user", "on");
     const before = (await user.api("/api/admin/offsite")).settings;
     const stand = await standInBucket("gamma-e2e");
     const where = `127.0.0.1:${stand.port}/gamma-e2e`;
     const gone = `e2eGone${Date.now().toString(36)}`;
+    const gone2 = `e2eGoneTwo${Date.now().toString(36)}`;
     let task = null;
     // The workspace restored from the bucket: not the open one, whose restore reloads the tab.
     const side = await user.api("/api/workspaces", { method: "POST", body: { name: "Bucket e2e" } });
@@ -1789,32 +1816,65 @@ export async function settingsScenarios(env) {
 
       // The snapshot gone from the server, its copy is a row of its own, restored from there.
       await user.api(`/api/workspaces/${side.id}/backups/${made.name}`, { method: "DELETE" });
-      // A copy of a workspace this server does not have (a lost disk).
-      stand.objects.set(`snapshots/${gone}/${made.name}.zip`, stand.objects.get(object));
-      stand.objects.set(`snapshots/${gone}/workspace.json`, { body: Buffer.from('{"name": "Gone e2e"}'), at: new Date().toISOString() });
+      // Copies of two workspaces this server does not have (a lost disk).
+      for (const [id, name] of [[gone, "Gone e2e"], [gone2, "Gone two"]]) {
+        stand.objects.set(`snapshots/${id}/${made.name}.zip`, stand.objects.get(object));
+        stand.objects.set(`snapshots/${id}/workspace.json`, { body: Buffer.from(JSON.stringify({ name })), at: new Date().toISOString() });
+      }
       // Changed behind the pane's back: the dialog opened again reads it all afresh.
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "detached" });
       await openSettings(page);
       await nav(page, "Backups").click();
       const only = page.locator(".aiProvRow", { hasText: "only in the bucket" });
-      await until(async () => (await only.count()) === 2, { what: "the two copies only the bucket holds" });
+      await until(async () => (await only.count()) === 1, { what: "the copy only the bucket holds, under its workspace" });
       const autoBefore = (await user.api(`/api/workspaces/${side.id}/backups`)).backups.filter((b) => b.auto).length;
       await only.filter({ has: page.getByRole("button", { name: "Restore", exact: true }) }).getByRole("button", { name: "Restore", exact: true }).click();
       await page.getByRole("menuitem", { name: "Replace…", exact: true }).click();
       await page.locator(".confirmModal").getByRole("button", { name: "Replace", exact: true }).click();
       await until(async () => (await user.api(`/api/workspaces/${side.id}/backups`)).backups.filter((b) => b.auto).length > autoBefore,
         { timeout: 30000, what: "the restore from the bucket to keep a Before restore snapshot" });
-      // The other workspace's copy comes back as a new workspace, named as it was.
-      const elsewhere = only.filter({ has: page.getByRole("button", { name: "Restore as new…", exact: true }) });
-      assert((await page.locator(".settingsPane .setSection", { has: page.locator(".uiTag", { hasText: "not on this server" }) }).innerText())
-        .includes("Gone e2e"), "its group names the workspace the bucket recorded");
-      await elsewhere.getByRole("button", { name: "Restore as new…", exact: true }).click();
-      await page.locator(".confirmModal").getByRole("button", { name: "Restore", exact: true }).click();
-      await until(async () => (await user.api("/api/workspaces/mine")).workspaces.some((w) => w.id === gone && w.role === "owner"),
-        { timeout: 30000, what: "the copy to come back as a workspace of its own id" });
+      // Cloud copies: what the bucket holds, and the two workspaces only it has, named as they were.
+      const cloud = page.locator('.settingsPane .setSection[data-setting="Cloud copies"]');
+      await cloud.waitFor();
+      const summary = await page.locator('.settingsPane .settingRow[data-setting="Bucket"] .settingDesc').innerText();
+      assert(/· \d+ copies · \d+ workspaces · /.test(summary), `the bucket's summary: ${summary}`);
+      await row(page, "2 workspaces are only in the cloud").waitFor();
+      for (const name of ["Gone e2e", "Gone two"]) await row(page, name).waitFor();
+      // Browse…: every copy by workspace, found by name.
+      await cloud.getByRole("button", { name: "Browse…", exact: true }).click();
+      const browser = page.getByRole("dialog", { name: "Cloud copies", exact: true });
+      await until(async () => {
+        const names = await browser.locator(".cloudCopiesHead .settingLabel").allInnerTexts();
+        return ["Bucket e2e", "Gone e2e", "Gone two"].every((name) => names.includes(name));
+      }, { what: "the workspaces with copies, here and not" });
+      await browser.getByRole("searchbox", { name: "Find a workspace", exact: true }).fill("two");
+      await until(async () => (await browser.locator(".cloudCopiesGroup").count()) === 1, { what: "the one workspace found by name" });
+      assert((await browser.locator(".cloudCopiesGroup").innerText()).includes("not on this server"), "it says the server lacks it");
+      await browser.getByRole("button", { name: "Close", exact: true }).click();
+      await browser.waitFor({ state: "detached" });
+      // Restore all…: both come back, each as a workspace of its own id, in one job.
+      await row(page, "2 workspaces are only in the cloud").getByRole("button", { name: "Restore all…", exact: true }).click();
+      const pick = page.getByRole("dialog", { name: "Restore workspaces from the cloud", exact: true });
+      assertEq(await pick.getByRole("checkbox").count(), 2, "both offered");
+      await pick.getByRole("button", { name: "Restore 2 workspaces", exact: true }).click();
+      await pick.waitFor({ state: "detached" });
+      await until(async () => {
+        const ids = (await user.api("/api/workspaces/mine")).workspaces.filter((w) => w.role === "owner").map((w) => w.id);
+        return ids.includes(gone) && ids.includes(gone2);
+      }, { timeout: 60000, what: "both copies to come back as workspaces of their own ids" });
+      // The job ends, and keeps its result, only after its last workspace is in place.
+      const listed = (await user.api("/api/jobs")).jobs.find((j) => j.kind === "copies-restore");
+      let restored;
+      await until(async () => {
+        restored = await user.api(`/api/jobs/${listed.id}`);
+        return !["queued", "running"].includes(restored.state);
+      }, { timeout: 30000, what: "the copies' restore job to end" });
+      assertEq(restored.state, "done", "the restore job ended done");
+      assertEq(restored.result?.restored?.length, 2, "one job brought both back");
+      await row(page, "2 workspaces are only in the cloud").waitFor({ state: "detached" });
       // Deleted from the bucket, a copy is gone from there and from the list.
-      await until(async () => (await only.count()) === 2, { what: "both copies, each under its workspace now" });
+      await until(async () => (await only.count()) === 3, { what: "the three copies, each under its workspace now" });
       const zips = () => [...stand.objects.keys()].filter((k) => k.endsWith(".zip")).length;
       const held = zips();
       // its button names what it deletes, red as every irreversible delete is
@@ -1822,7 +1882,7 @@ export async function settingsScenarios(env) {
       assert(await deleteCopy.evaluate((el) => el.classList.contains("danger")), "the delete is a danger button");
       await deleteCopy.click();
       await page.locator(".confirmModal").getByRole("button", { name: "Delete", exact: true }).click();
-      await until(async () => (await only.count()) === 1, { what: "the deleted copy to leave the list" });
+      await until(async () => (await only.count()) === 2, { what: "the deleted copy to leave the list" });
       assertEq(zips(), held - 1, "and the bucket");
       assertNoProblems(page);
     } finally {
@@ -1893,7 +1953,10 @@ export async function settingsScenarios(env) {
   // gamma/gdrive_account.py, docs/dev/debugging.md "Google Drive"): a
   // second server whose Google is the fake one (backend/tests/gdrive_fake.py
   // over HTTP, its device codes asking for a 2 s interval), so nothing
-  // reaches Google. A code asked for and cancelled; another entered, which
+  // reaches Google, the app the fake knows given to the server as Gamma's
+  // own would be (manage.py gdrive-client). It is served over HTTPS, as a
+  // NAS opened from another computer is, so Connect… opens on a code,
+  // cancelled; another entered, which
   // the fake approves, closing the dialog; Test; a backup task copying its
   // snapshot into the folder, which Saved snapshots tags and, the snapshot
   // deleted, lists alone and deletes from Drive; the folder renamed; and
@@ -1923,17 +1986,18 @@ export async function settingsScenarios(env) {
       approve: () => fetch(`${base}/_fake/approve`, { method: "POST" }) };
   }
 
-  await step("settings: Google Drive is connected with a code, tested, copied to by a backup task, read back in Saved snapshots and disconnected", async () => {
+  await step("settings: Google Drive is connected by signing in with a code, tested, copied to by a backup task, read back in Saved snapshots and disconnected", async () => {
     const google = await startFakeGoogle();
-    const drive = new Server({ env: { GAMMA_GOOGLE_DRIVE_CLIENT_ID: "fake-client.apps.googleusercontent.com",
-      GAMMA_GOOGLE_DRIVE_CLIENT_SECRET: "GOCSPX-fake", GAMMA_GOOGLE_OAUTH_BASE: google.base, GAMMA_GOOGLE_API_BASE: google.base } });
+    const drive = new Server({ env: { GAMMA_GOOGLE_OAUTH_BASE: google.base, GAMMA_GOOGLE_API_BASE: google.base } });
     let ctx = null;
     try {
+      drive.tls = (await certificate(drive.dir, "tls")).tls;
       await drive.start();
       await drive.manage("create-user", "drive-admin", "drive-admin-pw");
       await drive.manage("set-admin", "drive-admin", "on");
+      await drive.manage("gdrive-client", "fake-client.apps.googleusercontent.com", "GOCSPX-fake");
       const admin = await new Account(drive, "drive-admin", "drive-admin-pw").login();
-      ctx = await admin.context(browser);
+      ctx = await admin.context(browser, { ignoreHTTPSErrors: true });
       await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
       const page = await openPage(ctx, drive.base);
       await page.waitForSelector(".folderNewBtn");
@@ -1946,22 +2010,21 @@ export async function settingsScenarios(env) {
       assertEq(sections.slice(at - 1, at + 2).join(" › "), "Bucket › Google Drive › Saved snapshots", "where the section sits");
       assertEq(await section.locator(".uiTag.admin").innerText(), "admin", "Google Drive is tagged an admin's");
 
-      // Connect…: the folder, then Google's code while the dialog waits; Cancel stops waiting.
+      // Connect…: Google's code at once, one button to copy it and open Google's page, while the
+      // dialog waits; Cancel stops waiting. Nothing to set up first.
+      assertEq(await page.locator('.settingsPane [data-setting="OAuth client"]').count(), 0, "no app to set up first");
       const connect = page.getByRole("dialog", { name: "Connect Google Drive", exact: true });
-      const code = connect.getByRole("textbox", { name: "Code", exact: true });
+      const code = connect.getByRole("textbox", { name: "Your code", exact: true });
       await row(page, "Not connected").getByRole("button", { name: "Connect…", exact: true }).click();
-      assertEq(await connect.getByRole("textbox", { name: "Folder", exact: true }).inputValue(), "Gamma backups", "the folder's default");
-      await connect.getByRole("button", { name: "Get a code", exact: true }).click();
       await code.waitFor();
       assertEq(await code.inputValue(), "ABCD-0001", "the code Google gave");
-      assertEq(await connect.getByRole("link", { name: /^Open www\.google\.com\/device/ }).getAttribute("href"),
-        "https://www.google.com/device", "the link to Google's page");
+      const openGoogle = connect.getByRole("link", { name: "Copy the code and open Google", exact: true });
+      assertEq(await openGoogle.getAttribute("href"), "https://www.google.com/device", "the button opens Google's page");
       await connect.getByText("Waiting for Google…", { exact: true }).waitFor();
       await connect.getByRole("button", { name: "Cancel", exact: true }).click();
       await connect.waitFor({ state: "detached" });
       assertEq((await admin.api("/api/admin/gdrive")).pending, null, "Cancel stops waiting on the server too");
       await row(page, "Not connected").getByRole("button", { name: "Connect…", exact: true }).click();
-      await connect.getByRole("button", { name: "Get a code", exact: true }).click();
       await code.waitFor();
       assertEq(await code.inputValue(), "ABCD-0002", "a new code");
       await google.approve();
@@ -2031,6 +2094,47 @@ export async function settingsScenarios(env) {
       await page.locator(".confirmModal").getByRole("button", { name: "Disconnect", exact: true }).click();
       await row(page, "Not connected").waitFor();
       assertEq((await google.state()).revoked, 1, "the token was revoked at Google");
+      assertNoProblems(page);
+    } finally {
+      await ctx?.close();
+      await drive.stop();
+      google.stop();
+    }
+  });
+
+  // Where Gamma runs on the computer it is opened on (the desktop app; the
+  // suite's servers are at 127.0.0.1), Connect… opens Google's page, no code:
+  // here the stand-in's, which allows at once and sends the browser back to
+  // the server's callback, which makes the connection; the dialog, waiting,
+  // sees it and closes.
+  await step("settings: where Gamma runs on this computer, Google Drive connects on Google's page, no code", async () => {
+    const google = await startFakeGoogle();
+    const drive = new Server({ env: { GAMMA_GOOGLE_OAUTH_BASE: google.base, GAMMA_GOOGLE_API_BASE: google.base,
+      GAMMA_GOOGLE_ACCOUNTS_BASE: google.base } });
+    let ctx = null;
+    try {
+      await drive.start();
+      await drive.manage("create-user", "page-admin", "page-admin-pw");
+      await drive.manage("set-admin", "page-admin", "on");
+      await drive.manage("gdrive-client", "--desktop", "fake-desktop.apps.googleusercontent.com", "GOCSPX-desktop");
+      const admin = await new Account(drive, "page-admin", "page-admin-pw").login();
+      ctx = await admin.context(browser);
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const page = await openPage(ctx, drive.base);
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Backups").click();
+      await row(page, "Not connected").getByRole("button", { name: "Connect…", exact: true }).click();
+      const connect = page.getByRole("dialog", { name: "Connect Google Drive", exact: true });
+      const go = connect.getByRole("link", { name: "Continue with Google", exact: true });
+      await go.waitFor();
+      assertEq(await connect.getByRole("textbox", { name: "Your code", exact: true }).count(), 0, "no code to enter");
+      const [tab] = await Promise.all([ctx.waitForEvent("page"), go.click()]);
+      await tab.getByText("Google Drive is connected", { exact: true }).waitFor({ timeout: 20000 });
+      assert(tab.url().startsWith(`${drive.base}/api/admin/gdrive/callback?`), `back at the server: ${tab.url()}`);
+      await tab.close();
+      await connect.waitFor({ state: "detached", timeout: 20000 });
+      await row(page, "someone@gmail.com").waitFor();
       assertNoProblems(page);
     } finally {
       await ctx?.close();
@@ -2329,9 +2433,10 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  // Data → Duplicate… (docs/dev/workspaces.md "Copies between workspaces"):
+  // Manage → Duplicate… (docs/dev/workspaces.md "Copies between workspaces"):
   // a new personal workspace with a copy of every page, made by a job; the
   // dialog offers the copy's name, and the pill says it is done and opens it.
+  // The row's Data menu no longer has it.
   await step("settings: Duplicate… copies every page into a new personal workspace, which the pill opens", async () => {
     const source = await user.api("/api/workspaces", { method: "POST", body: { name: "Dup source" } });
     await user.api(`/api/blocks?ws=${source.id}`, { method: "POST", body: { parent_id: "root", content: "Duplicated page" } });
@@ -2339,9 +2444,13 @@ export async function settingsScenarios(env) {
     try {
       await openSettings(page);
       await nav(page, "Workspaces").click();
-      await page.locator(".settingsPane .aiProvRow").filter({ hasText: "Dup source" })
-        .getByRole("button", { name: "Data", exact: true }).click();
-      await page.locator(".ctxMenuItem", { hasText: "Duplicate…" }).click();
+      const sourceRow = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Dup source" });
+      await sourceRow.getByRole("button", { name: "Data", exact: true }).click();
+      await page.locator(".ctxMenuItem", { hasText: "Export everything (.zip)" }).waitFor();
+      assertEq(await page.locator(".ctxMenuItem", { hasText: "Duplicate…" }).count(), 0, "the Data menu has no Duplicate…");
+      await page.keyboard.press("Escape");
+      await sourceRow.getByRole("button", { name: "Manage", exact: true }).click();
+      await page.getByRole("button", { name: "Duplicate…", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Duplicate “Dup source”", exact: true });
       await dialog.waitFor();
       assertEq(await dialog.getByRole("textbox").inputValue(), "Dup source (copy)");
@@ -3102,6 +3211,92 @@ export async function settingsScenarios(env) {
       await page.getByText("Loading tasks…", { exact: true }).waitFor({ state: "detached", timeout: 5000 });
       assertNoProblems(page);
     } finally { await ctx.close(); } // settings-user stays an admin for the steps below
+  });
+
+  // Settings → Server › Zotero sign-in (SettingsZoteroApp.jsx,
+  // gamma/zotero_oauth.py `app`): this server's own Zotero app, saved with
+  // its secret write-only beside the callback URL to register it with, then
+  // removed. Saving asks nothing of zotero.org.
+  await step("settings: Server › Zotero sign-in saves this server's Zotero app, its secret write-only, and removes it", async () => {
+    await server.manage("set-admin", "settings-user", "on");
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Server").click();
+      // (a section's data-setting is its heading's; its rows follow it, and only Zotero's says "Not set up" here)
+      await page.locator('.settingsPane .setSection[data-setting="Zotero sign-in"]').waitFor();
+      await row(page, "Not set up").getByRole("button", { name: "Set up…", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Set up a Zotero app", exact: true });
+      assertEq(await dialog.getByRole("link", { name: "Open", exact: true }).getAttribute("href"), "https://www.zotero.org/oauth/apps",
+        "the link to register an app");
+      const callback = await dialog.getByRole("textbox", { name: "Callback URL", exact: true }).inputValue();
+      assert(callback.startsWith("http") && callback.endsWith("/api/zotero/oauth/callback"), `the callback URL to register: ${callback}`);
+      await dialog.getByRole("textbox", { name: "Client key", exact: true }).fill("gamma-e2e-key");
+      await dialog.getByLabel("Client secret", { exact: true }).fill("gamma-e2e-secret");
+      await dialog.getByRole("button", { name: "Save", exact: true }).click();
+      await dialog.waitFor({ state: "detached" });
+      const saved = row(page, "This server's Zotero app");
+      assertEq(await saved.locator(".settingDesc").innerText(), "gamma-e2e-key · people connect Zotero by signing in at zotero.org",
+        "the row names the saved app");
+      const read = await user.api("/api/admin/zotero-app");
+      assert(read.client_key === "gamma-e2e-key" && !JSON.stringify(read).includes("gamma-e2e-secret"),
+        "the secret never reaches the browser");
+      await saved.getByRole("button", { name: "Edit…", exact: true }).click();
+      const editor = page.getByRole("dialog", { name: "Edit the Zotero app", exact: true });
+      assertEq(await editor.getByLabel("Client secret", { exact: true }).getAttribute("placeholder"), "secret set — type to replace");
+      await editor.getByRole("button", { name: "Remove…", exact: true }).click();
+      await page.locator(".confirmModal").getByRole("button", { name: "Remove", exact: true }).click();
+      await row(page, "Not set up").waitFor();
+      assertEq((await user.api("/api/admin/zotero-app")).client_key, "", "removed on the server");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // The server options of Settings (SettingsServerOptions.jsx,
+  // gamma/server_options.py), once environment variables: Server › Online
+  // services' switches, and Tool usage › Online search for every account,
+  // whose OpenAlex key is write-only. The suite's servers start with paper
+  // lookups off (harness.mjs OFFLINE), which this step leaves as it found.
+  await step("settings: Server › Online services and Tool usage › Online search for every account are server options an admin sets", async () => {
+    await server.manage("set-admin", "settings-user", "on");
+    const { ctx, page } = await setup();
+    const options = async () => (await user.api("/api/admin/settings")).options;
+    try {
+      await openSettings(page);
+      await nav(page, "Server").click();
+      const lookups = page.getByRole("checkbox", { name: "Paper lookups", exact: true });
+      assert(!(await lookups.isChecked()), "the suite's servers start with paper lookups off");
+      await lookups.click();
+      await until(async () => (await options()).metadata_lookup === true, { what: "paper lookups on" });
+      await lookups.click();
+      await until(async () => (await options()).metadata_lookup === false, { what: "paper lookups off again" });
+      assert(!(await page.getByRole("checkbox", { name: "AI model catalog", exact: true }).isChecked()), "the catalog off too");
+
+      await nav(page, "Tool usage").click();
+      const section = page.locator('.settingsPane .setSection[data-setting="Online search for every account"]');
+      await section.waitFor();
+      await row(page, "SearXNG for every account").getByRole("button", { name: "Set up…", exact: true }).click();
+      const searx = page.getByRole("dialog", { name: "SearXNG for every account", exact: true });
+      await searx.getByRole("textbox", { name: "Instance URL", exact: true }).fill("http://searx.lan:8080/");
+      await searx.getByRole("button", { name: "Save", exact: true }).click();
+      await searx.waitFor({ state: "detached" });
+      assertEq(await row(page, "SearXNG for every account").locator(".settingDesc").innerText(), "http://searx.lan:8080");
+      await row(page, "OpenAlex key for every account").getByRole("button", { name: "Set up…", exact: true }).click();
+      const openalex = page.getByRole("dialog", { name: "OpenAlex key for every account", exact: true });
+      await openalex.getByLabel("API key", { exact: true }).fill("oa-e2e-key");
+      await openalex.getByRole("button", { name: "Save", exact: true }).click();
+      await openalex.waitFor({ state: "detached" });
+      const saved = await options();
+      assert(saved.searxng_url === "http://searx.lan:8080" && saved.openalex_key_set === true, `saved: ${JSON.stringify(saved)}`);
+      assert(!JSON.stringify(await user.api("/api/admin/settings")).includes("oa-e2e-key"), "the key never reaches the browser");
+      for (const name of ["SearXNG for every account", "OpenAlex key for every account"]) {
+        await row(page, name).getByRole("button", { name: "Remove", exact: true }).click();
+        await row(page, name).getByRole("button", { name: "Set up…", exact: true }).waitFor();
+      }
+      const cleared = await options();
+      assert(!cleared.searxng_url && !cleared.openalex_key_set, "both removed");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
   });
 
   await step("settings: a shared AI provider from Server is a read-only connection for every account", async () => {

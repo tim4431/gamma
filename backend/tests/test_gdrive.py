@@ -1,31 +1,36 @@
 """Google Drive as a backup destination (gamma/gdrive.py,
 gamma/gdrive_account.py, docs/dev/debugging.md "Google Drive") against an
 in-memory Google (tests/gdrive_fake.py): connecting through the device
-flow, the client's files (folders made as needed, a name replaced rather
-than doubled, chunked and resumed uploads, renewed tokens, Google's
-refusals), a backup task copying its snapshots there and pruning them, and
-the admin's routes: the connection, the copies' listing, download, restore
-and delete."""
+flow through Gamma's own Google app (or a server's own), the client's files (folders made as needed, a name replaced rather than
+doubled, chunked and resumed uploads, renewed tokens, Google's refusals), a
+backup task copying its snapshots there and pruning them, and the admin's
+routes: the connection, the copies' listing, download, restore and
+delete."""
 
 import io
 import json
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from conftest import account_of, login, make_page, make_user, workspace_of
+from conftest import account_of, fresh_client, login, make_page, make_user, workspace_of
 from gamma import backup_schedule as tasks, db, gdrive, gdrive_account, snapshot_copies, workspaces, ws_backup
 from gamma.routers.backup_tasks import TaskInput
-from gdrive_fake import FakeGoogle
+from gdrive_fake import CLIENT_ID, CLIENT_SECRET, DESKTOP_ID, DESKTOP_SECRET, FakeGoogle
 
 
 @pytest.fixture
-def google(monkeypatch):
+def google(client, monkeypatch):
+    """The fake Google, Gamma's own app (its two clients) registered there."""
     fake = FakeGoogle().install(monkeypatch)
     monkeypatch.setattr(gdrive_account, "_pending", None)
     monkeypatch.setattr(gdrive_account, "_last_error", "")
+    monkeypatch.setattr(gdrive_account, "_browser", {})
+    monkeypatch.setattr(gdrive_account.config, "GOOGLE_DRIVE_CLIENT", (CLIENT_ID, CLIENT_SECRET))
+    monkeypatch.setattr(gdrive_account.config, "GOOGLE_DRIVE_DESKTOP_CLIENT", (DESKTOP_ID, DESKTOP_SECRET))
     yield fake
     with db.connect_users_db() as conn:
-        conn.execute("DELETE FROM settings WHERE key = 'gdrive'")
+        conn.execute("DELETE FROM settings WHERE key IN ('gdrive', 'gdrive_client', 'gdrive_desktop_client')")
         conn.commit()
 
 
@@ -115,15 +120,81 @@ def test_reconnecting_and_disconnecting_revoke_the_old_token(client, google):
 
 def test_a_connection_through_another_client_or_none_cannot_be_used(client, google, monkeypatch):
     _connect(google)
-    monkeypatch.setenv("GAMMA_GOOGLE_DRIVE_CLIENT_ID", "another.apps.googleusercontent.com")
+    # a code answered just as the client changed: the connection names the old one
+    gdrive_account._set_raw(gdrive_account.CLIENT_KEY, json.dumps({
+        "client_id": "another.apps.googleusercontent.com", "client_secret": gdrive_account.seal("GOCSPX-o")}))
     assert "another Google OAuth client" in gdrive_account.status()["problem"]
     assert not gdrive_account.ready()
-    monkeypatch.delenv("GAMMA_GOOGLE_DRIVE_CLIENT_ID")
-    monkeypatch.delenv("GAMMA_GOOGLE_DRIVE_CLIENT_SECRET")
+    gdrive_account._set_raw(gdrive_account.CLIENT_KEY, "")
+    monkeypatch.setattr(gdrive_account.config, "GOOGLE_DRIVE_CLIENT", ("", ""))  # a build without Gamma's app
+    monkeypatch.setattr(gdrive_account.config, "GOOGLE_DRIVE_DESKTOP_CLIENT", ("", ""))
     view = gdrive_account.status()
-    assert view["available"] is False and "GAMMA_GOOGLE_DRIVE_CLIENT_ID" in view["problem"]
-    with pytest.raises(gdrive.DriveConfigError, match="GAMMA_GOOGLE_DRIVE_CLIENT_ID"):
+    assert view["available"] is False and "no Google app" in view["problem"]
+    with pytest.raises(gdrive.DriveConfigError, match="no Google app"):
         gdrive_account.start()
+
+
+def test_a_server_may_use_a_google_app_of_its_own(client, google, capsys):
+    """Gamma's own app by default; one given with manage.py gdrive-client
+    in its place, its secret sealed; a change of app disconnects (revoking
+    the token); --remove goes back to Gamma's."""
+    import manage
+    _connect(google)  # through Gamma's app
+    token = next(t for t, ok in google.refresh.items() if ok)
+    for bad in (["", "s"], ["123-abc", "s"], [CLIENT_ID, "a b"], [CLIENT_ID]):
+        with pytest.raises(SystemExit):
+            manage.gdrive_client(bad)
+    own = "own.apps.googleusercontent.com"
+    manage.gdrive_client([own, "GOCSPX-own"])
+    assert "this server's own app" in capsys.readouterr().out
+    assert gdrive_account.status()["connected"] is False and google.refresh[token] is False
+    with db.connect_users_db() as conn:
+        assert "GOCSPX-own" not in conn.execute("SELECT value FROM settings WHERE key = 'gdrive_client'").fetchone()[0]
+    assert gdrive_account.oauth_client().id == own
+    with pytest.raises(gdrive.DriveConfigError, match="refused"):  # the stand-in Google does not know it
+        gdrive_account.start()
+    manage.gdrive_client(["--remove"])
+    assert gdrive_account.oauth_client().id == CLIENT_ID  # Gamma's again
+    assert gdrive_account.start()["pending"]
+
+
+def test_googles_page_signs_in_where_gamma_is_opened_on_its_own_computer(client, google):
+    """Gamma opened at a loopback address (the desktop app): Connect… opens
+    Google's page, which sends the browser back to the callback with a code,
+    traded with its PKCE verifier; the connection is made through Gamma's
+    "Desktop app" client and renewed by it. Opened elsewhere, Gamma connects
+    with a code. A used sign-in or a refusal says why."""
+    make_user("gd_page", "gd-page-pw", is_admin=1)
+
+    def admin_at(base):
+        c = fresh_client(base_url=base)
+        assert c.post("/api/login", json={"username": "gd_page", "password": "gd-page-pw"}).status_code == 200
+        return c
+
+    def browser(location):  # the system browser Google sends back: no Gamma session
+        back = urlsplit(location)
+        return fresh_client(base_url="http://127.0.0.1:9100").get(f"{back.path}?{back.query}")
+
+    far, here = admin_at("http://nas.example:9001"), admin_at("http://127.0.0.1:9100")
+    assert far.get("/api/admin/gdrive").json()["browser"] is False
+    assert far.post("/api/admin/gdrive/authorize", json={}).status_code == 400
+    assert here.get("/api/admin/gdrive").json()["browser"] is True
+    url = here.post("/api/admin/gdrive/authorize", json={"folder": "From the page"}).json()["url"]
+    query = parse_qs(urlsplit(url).query)
+    assert url.startswith(f"{google.base}/o/oauth2/v2/auth?") and query["client_id"] == [DESKTOP_ID]
+    assert query["redirect_uri"] == ["http://127.0.0.1:9100/api/admin/gdrive/callback"]
+    assert query["scope"] == [gdrive.SCOPE] and query["access_type"] == ["offline"]
+    location = google.authorize(url)  # the person allows
+    page = browser(location)
+    assert page.status_code == 200 and "Google Drive is connected" in page.text
+    view = here.get("/api/admin/gdrive").json()
+    assert view["connected"] and (view["email"], view["folder"], view["error"]) == ("someone@gmail.com", "From the page", "")
+    google.expire_access()
+    assert gdrive_account.client().check() == (0, False)  # renewed through the "Desktop app" client
+    assert "already used" in browser(location).text
+    google.browser_deny = True
+    assert "not allowed" in browser(google.authorize(here.post("/api/admin/gdrive/authorize", json={}).json()["url"])).text
+    assert here.get("/api/admin/gdrive").json()["error"] == "Google Drive access was not allowed."
 
 
 def test_a_folder_must_be_one_name(client, google):
@@ -354,6 +425,38 @@ def test_the_copies_in_drive_through_the_api(drive, google):
     assert boss.get("/api/admin/offsite/snapshots?store=drive").status_code == 400
     assert boss.post("/api/jobs/bucket-download", json={"ws": ws, "name": snap["name"],
                                                          "store": "drive"}).status_code == 400
+
+
+def test_several_copies_come_back_as_new_workspaces_in_one_job(drive, google):
+    """Cloud copies' Restore all: the workspaces this server lacks, each
+    from its copy, in one job; a copy that cannot be restored is reported,
+    its workspace goes again, and the rest go on."""
+    make_user("gd_many", "gd-many-pw", is_admin=1)
+    make_user("gd_many_member", "gd-many-member-pw")
+    boss, member = login("gd_many", "gd-many-pw"), login("gd_many_member", "gd-many-member-pw")
+    ws = workspace_of("gd_many")
+    make_page(boss, "Brought back")
+    snap = ws_backup.create(ws, label="manual", uploads=False)
+    zipped = (ws_backup.store_dir(ws) / f"{snap['name']}.zip").read_bytes()
+    lost = [workspaces.new_workspace_id() for _ in range(2)]
+    broken = workspaces.new_workspace_id()
+    for gone in lost:
+        drive.put_bytes(f"snapshots/{gone}/{snap['name']}.zip", zipped)
+    drive.put_bytes(f"snapshots/{broken}/{snap['name']}.zip", b"not a zip")
+    items = [{"ws": w, "name": snap["name"], "store": "drive", "label": f"Lost {i}"}
+             for i, w in enumerate(lost + [broken])]
+    assert member.post("/api/jobs/bucket-restore-many", json={"items": items}).status_code == 403
+    assert boss.post("/api/jobs/bucket-restore-many", json={"items": items + items[:1]}).status_code == 400
+
+    job = _job(boss, "bucket-restore-many", {"items": items})
+    assert job["state"] == "done", job["error"]
+    assert job["kind"] == "copies-restore" and job["params"]["count"] == 3
+    assert [r["workspace"] for r in job["result"]["restored"]] == lost
+    assert [(f["ws"], f["name"]) for f in job["result"]["failed"]] == [(broken, "Lost 2")]
+    assert all(workspaces.role_of(w, account_of("gd_many")) == "owner" for w in lost)
+    assert not workspaces.get(broken)  # its workspace went again
+    job = _job(boss, "bucket-restore-many", {"items": [items[2]]})
+    assert job["state"] == "failed" and "no copy could be restored: Lost 2" in job["error"]
 
 
 # --- the transport ---------------------------------------------------------------------

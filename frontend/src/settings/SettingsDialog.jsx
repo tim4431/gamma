@@ -21,9 +21,11 @@ import { AppearanceSettings } from "./SettingsAppearance";
 import { ToolbarSettings } from "./SettingsToolbars";
 import { AgentToolMatrix } from "./AssistantTools";
 import { OnlineSearchSettings } from "./OnlineSearch";
+import { SearchServicesForEveryone } from "./SettingsServerOptions";
 import { KeyboardSettings } from "./SettingsKeyboard";
 import { AiSettings, gammaAiConnection } from "./SettingsAi";
 import { SettingsAgents } from "./SettingsAgents";
+import { SkillsSettings } from "./SettingsSkills";
 import { IntegrationSettings } from "./SettingsIntegrations";
 import { UsersSettings } from "./SettingsUsers";
 import { WorkspacesSettings } from "./SettingsWorkspace";
@@ -231,7 +233,7 @@ function ReadingSettings({ value }) {
           onChange={value.setPdfSaveLocal}
         />
         {/* Only the desktop app reads it, from the account's profile on the
-            server it opens a file on (desktop/main.js addsToLibrary). */}
+            server it opens a file on (desktop/lib/systemFiles.js addsToLibrary). */}
         {IS_DESKTOP ? (
           <Toggle
             icon={FolderPlusIcon}
@@ -957,10 +959,10 @@ function ChatDefaults({ value, ai }) {
           options={[["", t("Default")], ...SPEED_ORDER.map((v) => [v, t(SPEED_LABELS[v])])]} />
       </Row>
       <Row icon={CornerDownRightIcon} label={t("Follow-up while a reply runs")}
-        hint={t("{key} does the other", { key: chordLabel("Mod-Shift-Enter") })}
-        title={t("What Enter and Send do with a message you send while a reply is still running: Queue keeps it until the reply ends and sends it then; Steer hands it to the reply at once, which takes it in at its next step.")}>
-        <Segmented value={ai.chatFollowUp} onChange={ai.setChatFollowUp}
-          options={[["queue", t("Queue")], ["steer", t("Steer")]]} />
+        hint={t("{key} does the other", { key: chordLabel("Mod-Enter") })}
+        title={t("What Enter and Send do with a message you send while a reply is still running: Steer hands it to the reply at once, which takes it in at its next step; Queue keeps it until the reply ends and sends it then.")}>
+        <Segmented value={ai.chatFollowUpMode} onChange={ai.setChatFollowUpMode}
+          options={[["steer", t("Steer")], ["queue", t("Queue")]]} />
       </Row>
       <Toggle
         icon={RectSelectIcon}
@@ -1023,7 +1025,7 @@ function ContextSize({ value }) {
 
 // The master switch and each chat kind's permissions, the two fetching and
 // reading helpers, the online search services and the tool limits.
-function ToolUsageSettings({ value }) {
+function ToolUsageSettings({ value, admin, setStatus }) {
   return (
     <>
       <Section title={t("Tools")} scope="account" prefs={SECTION_PREFS.tools["Tools"]}>
@@ -1045,6 +1047,7 @@ function ToolUsageSettings({ value }) {
       <Section title={t("Online search")}>
         <OnlineSearchSettings />
       </Section>
+      {admin ? <SearchServicesForEveryone setStatus={setStatus} /> : null}
       <Section title={t("Tool limits")} scope="account" prefs={SECTION_PREFS.tools["Tool limits"]}>
         <Row icon={RefreshIcon} label={t("Tool rounds")}
           hint={t("AI ↔ tool round-trips per message")}
@@ -1445,11 +1448,12 @@ export default function SettingsDialog({
                   <PaneHead icon={MessageSquareIcon} title={t("Chat")} />
                   <ChatDefaults value={context} ai={aiValue} />
                   <PromptsSettings value={prompts} />
+                  <SkillsSettings canEdit={who.signedIn} confirm={workspace?.confirm} setStatus={workspace?.setStatus} />
                   <ContextSize value={context} />
                 </> : null}
                 {pane === "tools" ? <>
                   <PaneHead icon={SlidersIcon} title={t("Tool usage")} />
-                  <ToolUsageSettings value={context} />
+                  <ToolUsageSettings value={context} admin={!!users?.isAdmin} setStatus={library?.setStatus} />
                 </> : null}
                 {pane === "integrations" ? <IntegrationSettings key={getCurrentWorkspace()} workspaceId={getCurrentWorkspace()} setStatus={library?.setStatus} /> : null}
                 {pane === "account" ? <>

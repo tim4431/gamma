@@ -420,7 +420,7 @@ def clip(payload: ClipRequest, request: Request):
 
 def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
     """The clip ingest for a writer of ``ws``, which the caller has checked:
-    ``POST /api/clip`` and the chat agent's save_paper (gamma/ai_tools.py).
+    ``POST /api/clip`` and the chat agent's save_paper (gamma/ai_tools/web.py).
     Raises HTTPException like the route."""
     source_url = (payload.source_url or "").strip()
     pdf_url = (payload.pdf_url or "").strip()

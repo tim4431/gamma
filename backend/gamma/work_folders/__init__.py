@@ -7,4 +7,8 @@ is in); ``filing`` is the op rule, who may change a file's filing, name,
 document and life, and the folder tree inside a work folder; ``paths``
 turns a file page into its path in its work folder and a path back into
 its pages, with the one rule for naming a work folder; ``file_search`` is
-the rule quick open finds a file by, its name or a fragment of its path."""
+the rule quick open finds a file by, its name or a fragment of its path;
+``ignore_rules`` reads and writes ``.gammaignore``, ``selection`` is the
+tracking dialog's tree, preview and save, ``takeover`` takes a vault from
+before work folders over and lets one go, ``detach`` is Detach, and
+``elsewhere`` says whether a clone or a Zotero link keeps a workspace."""

@@ -39,7 +39,10 @@ key optional):
 - ``deltas``: the pieces ``item/agentMessage/delta`` sends of the final
   message when ``initialize`` did not opt out of them (its words by
   default), ``typing`` seconds between two;
-- ``models``: what ``model/list`` lists (``MODELS`` by default, two a page);
+- ``models``: what ``model/list`` lists (``MODELS`` by default, two a page:
+  the default one with a fast tier, ``priority``, the other with none);
+- ``config``: what ``config/read`` answers beside its MCP server (a
+  ``service_tier``, the user's default speed);
 - ``fail``: ``exit`` (dies after turn/start, a line on stderr), ``garbage``
   (lines that are not JSON, then exits), ``not_signed_in``, ``sandbox_not_ready``, ``hang``
   (never ends its turn, ignores the interrupt; with ``grandchild`` it starts
@@ -170,13 +173,17 @@ def wait_for(predicate, timeout: float | None):
 state = {"turn": None, "interrupted": False, "config": None, "policy": None, "quiet": [], "steered": []}
 
 
-def _model(model: str, name: str, efforts: list[str], effort: str, default: bool = False, hidden: bool = False):
+def _model(model: str, name: str, efforts: list[str], effort: str, default: bool = False, hidden: bool = False,
+           tiers: tuple = ()):
     return {"id": model, "model": model, "displayName": name, "description": f"{name}, a stand-in",
             "hidden": hidden, "isDefault": default, "defaultReasoningEffort": effort,
-            "supportedReasoningEfforts": [{"reasoningEffort": e, "description": e} for e in efforts]}
+            "supportedReasoningEfforts": [{"reasoningEffort": e, "description": e} for e in efforts],
+            "serviceTiers": [{"id": t, "name": t.title(), "description": t} for t in tiers],
+            "additionalSpeedTiers": ["fast" if t == "priority" else t for t in tiers], "defaultServiceTier": None}
 
 
-MODELS = [_model("gpt-fake", "GPT Fake", ["low", "medium", "high"], "medium", default=True),
+MODELS = [_model("gpt-fake", "GPT Fake", ["low", "medium", "high"], "medium", default=True,
+                 tiers=("priority", "ultrafast")),
           _model("gpt-fake-hidden", "Hidden", ["low"], "low", hidden=True),
           _model("gpt-fake-mini", "GPT Fake Mini", ["low", "medium"], "low")]
 MODEL_PAGE = 2   # model/list's page: the listing takes two

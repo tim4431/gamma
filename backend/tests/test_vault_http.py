@@ -22,7 +22,7 @@ import pytest
 
 from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, mark_work_folder,
                       work_props, workspace_of)
-from gamma import folder_links, gamma_sync
+from gamma import folder_links, gamma_sync, server_options
 from gamma.vault import http_remote as vault_http, kinds, store as vault_store, sync as vault_sync
 from gamma.vault.local_remote import LocalRemote
 from gamma import ops as ops_module
@@ -360,7 +360,7 @@ def test_a_work_folders_file_of_another_server_is_stored_there_whatever_shape_th
     sent the round's document, read in place, which nothing is there: the
     page read as a build of this computer, and a mirror of that workspace
     stopped carrying the file."""
-    monkeypatch.setenv("GAMMA_VAULT_KEEP_MB", "1")
+    monkeypatch.setattr(server_options, "vault_keep_bytes", lambda: 1 << 20)
     folder = make_folder(owner, "VH work shapes")
     mark_work_folder(owner, folder)
     root = disk / "VH work shapes"

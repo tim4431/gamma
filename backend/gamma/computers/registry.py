@@ -98,6 +98,7 @@ class _Live:
         self.written = 0.0         # time.monotonic() when ``seen_at`` was last written
         self.shown = False         # whether the account's windows were last told it is online
         self.sessions = False      # whether its last announce says it answers the asks of its sessions
+        self.skills = False        # whether it says it runs a turn's skill (the instructions with the claim)
 
 
 _live: dict[str, _Live] = {}
@@ -128,9 +129,11 @@ def _flag(value, field: str) -> bool | None:
 
 def _models(value) -> list[dict]:
     """An assistant's ``models`` as kept (step 4d, the chat's model chip):
-    ``[{id, label, efforts, effort, default}]`` (``events.model``), at most
-    ``MAX_MODELS`` with ``MAX_EFFORTS`` efforts each, one without an id
-    left out. ValueError for another shape."""
+    ``[{id, label, efforts, effort, default, speeds, speed}]``
+    (``events.model``: the speeds those it knows), at most ``MAX_MODELS``
+    with ``MAX_EFFORTS`` efforts each, one without an id left out (an older
+    computer announces no speeds: its models offer none). ValueError for
+    another shape."""
     from ..local_agents import events  # local: the agents' package is loaded where an agent is named
 
     if value is None:
@@ -143,7 +146,7 @@ def _models(value) -> list[dict]:
             raise ValueError("A model is an object.")
         efforts = item.get("efforts")
         found = events.model(item.get("id"), item.get("label"), efforts[:MAX_EFFORTS] if isinstance(efforts, list)
-                             else [], item.get("effort"), item.get("default"))
+                             else [], item.get("effort"), item.get("default"), item.get("speeds"), item.get("speed"))
         if found is not None and all(m["id"] != found["id"] for m in kept):
             kept.append(found)
     return kept
@@ -194,7 +197,9 @@ def normalise(body) -> dict:
     directories it offers them (``dirs``, ``_dirs_of``; none while no
     agent is on), and whether it answers what this server asks of its
     agents' sessions (``sessions``: gamma/computers/sessions.py; false from
-    an app before that). An older app's announce, whose assistants carry no
+    an app before that) and whether it runs a turn's skill (``skills``:
+    the instructions the claim carries, ``far_turns.claim``; false from an
+    app before that, which would run the arguments alone). An older app's announce, whose assistants carry no
     ``enabled``, has on the agent its folder vaults name. ValueError for a
     body of another shape, and for this server's own computer id (a far
     turn's token would then write as this computer's agent)."""
@@ -248,7 +253,8 @@ def normalise(body) -> dict:
     return {"computer": {"id": computer_id, "name": name.strip()}, "app": _text(body.get("app"), "app"),
             "vaults": kept, "assistants": there, "asks": bool(_flag(body.get("asks"), "asks")),
             "dirs": dirs if any(a["enabled"] for a in there) else [],
-            "sessions": bool(_flag(body.get("sessions"), "sessions"))}
+            "sessions": bool(_flag(body.get("sessions"), "sessions")),
+            "skills": bool(_flag(body.get("skills"), "skills"))}
 
 
 def _kept_here(ws: str, vaults: list[dict]) -> list[dict]:
@@ -338,7 +344,7 @@ def announce(user_id: str, username: str, ws: str, token_id: str, body) -> dict:
         if live is None:
             live = _live[token_id] = _Live(user_id)
         live.version, live.written = secrets.token_urlsafe(8), time.monotonic()
-        live.sessions = found["sessions"]
+        live.sessions, live.skills = found["sessions"], found["skills"]
         live.pending = [reason for reason in live.pending if reason != "announce"]
         version = live.version
         came = _beat(token_id, live)
@@ -451,16 +457,16 @@ def forget(token_id: str) -> None:
 
 def _fail_held(ws: str, token_id: str) -> None:
     """The turns of ``ws`` the runs of the computer behind ``token_id`` hold
-    running fail (``chats.fail_held``): its channel was taken back (the
+    running fail (``far_turns.fail_held``): its channel was taken back (the
     token revoked, replaced or expired). Never raises."""
-    from ..local_agents import chats
+    from ..local_agents import far_turns
 
     def words(agent: str) -> str:
         label = _label(agent) if agent in AGENTS else "the agent"
         return f"The computer's channel was taken back before {label} finished."
 
     try:
-        chats.fail_held(ws, token_id, words)
+        far_turns.fail_held(ws, token_id, words)
     except Exception as e:  # noqa: BLE001 — the computer goes all the same
         log.warning(f"[computers] the chat turns held by computer token {token_id} in workspace {ws}: {e}")
 
@@ -507,7 +513,7 @@ def _refusal(row, owner: str):
     take a turn of the account ``owner``'s agent there: ``(agent, person,
     kind, dir) → words`` ("" when it would), ``person`` the account the turn
     is for, ``kind`` and ``dir`` where its conversation works
-    (``chats.dir_of``)."""
+    (``far_turns.dir_of``)."""
     def refused(agent: str, person: str, kind: str, dir: str) -> str:
         label = _label(agent) if agent in AGENTS else "the agent"
         if row is None:
@@ -529,10 +535,10 @@ def _end_orphaned(ws: str, user_id: str, computer_id: str) -> None:
     """The turns queued in ``ws`` for the computer ``computer_id`` of the
     account ``user_id`` (its own and its co-authors') that it would not take
     as it last announced there, a valid token's row (``_refusal``), or every
-    one where it is shown no more, fail with why (``chats.fail_queued``):
+    one where it is shown no more, fail with why (``far_turns.fail_queued``):
     none would take them, and an agent turned on there again later must not
     run them unasked. Never raises."""
-    from ..local_agents import chats
+    from ..local_agents import far_turns
 
     try:
         with connect_users_db() as conn:
@@ -541,7 +547,7 @@ def _end_orphaned(ws: str, user_id: str, computer_id: str) -> None:
                 "ON t.id = c.token_id AND t.user_id = c.user_id AND t.expires_at > ? WHERE c.workspace_id = ? "
                 "AND c.user_id = ? AND c.computer = ? ORDER BY c.seen_at DESC LIMIT 1",
                 (int(time.time()), ws, user_id, computer_id)).fetchone()
-        chats.fail_queued(ws, user_id, computer_id, _refusal(row, user_id))
+        far_turns.fail_queued(ws, user_id, computer_id, _refusal(row, user_id))
     except Exception as e:  # noqa: BLE001 — the announce and the computer's end go on all the same
         log.warning(f"[computers] the chat turns queued in workspace {ws} for {user_id}: {e}")
 
@@ -942,6 +948,16 @@ def answers(token_id: str) -> bool:
     with _lock:
         live = _live.get(token_id)
         return live is not None and live.sessions
+
+
+def runs_skills(token_id: str) -> bool:
+    """Whether the computer behind ``token_id`` runs a turn's skill, as its
+    announce since it was last online said: a turn that ran one is
+    refused for a computer that does not (routers/local_agents.py
+    ``_far_turn_started``)."""
+    with _lock:
+        live = _live.get(token_id)
+        return live is not None and live.skills
 
 
 def own_computer(user_id: str, ws: str, computer_id: str) -> dict | None:

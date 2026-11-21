@@ -20,7 +20,7 @@ from .blocks_store import TRASH, block_to_dict
 from .documents.model import page_document
 from .highlights import is_highlight, is_ink, is_link, page_of
 from .markdown_import import EMPTY_ITEM_RE
-from .note_markup import obsidian_image_sizes
+from .note_markup import BLOCK_REF_RE, obsidian_image_sizes, ref_alias
 from .notebook import is_sheet
 from .picture import is_picture, markdown_of, picture_page
 from .recording import heading as recording_heading, is_recording, segments_of
@@ -152,11 +152,6 @@ def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_fi
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
-# [[id]] mention / ![[id]] synced-block embed — the same id charset the
-# editor's mdPreprocess matches.
-_BLOCK_REF_RE = re.compile(r"(!?)\[\[([A-Za-z0-9_-]+)\]\]")
-
-
 def _link_label(text, fallback):
     """First line of a target's content as a markdown-safe link label."""
     first = (text or "").strip().split("\n")[0].strip()
@@ -168,8 +163,9 @@ def resolve_block_links(md, resolve_ref, page_file=None, page_id=None, nested=Fa
     """Rewrite ``[[id]]`` mentions and ``![[id]]`` embeds for the readable
     export. A mention becomes ``[first line](<target file>)`` when its page is
     part of the export (``page_file``: page id → zip filename) and just the
-    text when it isn't; an embed materializes the synced block's content, with
-    a ``from`` attribution when the source lives on another page. ``page_id``
+    text when it isn't, a ``[[id|words]]`` its words in place of the line;
+    an embed materializes the synced block's content, with a ``from``
+    attribution when the source lives on another page. ``page_id``
     is the page being rendered (same-page targets don't link to their own
     file); ``nested`` marks content already inside an embed, where further
     embeds degrade to mentions so transclusion can't recurse. An id the
@@ -200,10 +196,10 @@ def resolve_block_links(md, resolve_ref, page_file=None, page_id=None, nested=Fa
                 return f"{content} *(from {title})*"
             return content
         # A mention — or an embed degrading to one (nested, or empty target).
-        label = _link_label(content, block_id)
+        label = ref_alias(m) or _link_label(content, block_id)
         return f"[{label}]({href})" if href else label
 
-    return _BLOCK_REF_RE.sub(repl, md)
+    return BLOCK_REF_RE.sub(repl, md)
 
 
 def block_text(node) -> str:

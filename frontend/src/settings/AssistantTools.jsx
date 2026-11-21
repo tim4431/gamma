@@ -3,7 +3,7 @@ import { t } from "../shared/i18n/i18n.js";
 import { MenuSelect } from "../shared/ui/Menus";
 import { BanIcon, BookIcon, CheckIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FileTextIcon, FolderIcon,
   FolderMinusIcon, FoldersIcon, GlobeIcon, HelpCircleIcon, HistoryIcon, ListIcon, LocateIcon, MessageSquareIcon, OutlineIcon,
-  PagesIcon, PenIcon, PencilIcon, SearchIcon, ShapesIcon, ShieldIcon, TrashIcon } from "../shared/ui/Icons";
+  PagesIcon, PenIcon, PencilIcon, SearchIcon, ShapesIcon, ShieldIcon, SlashIcon, TrashIcon } from "../shared/ui/Icons";
 import { permGroup, permState, permStates, permissionPreset, presetPermissions, toolsForKind } from "../chat/chatSettings.js";
 
 // One catalog for the comparison table, the current chat's quick settings
@@ -20,6 +20,7 @@ const PERMISSIONS = [
   ["view", EyeIcon, t("View pages and handwriting"), t("Look at figures, tables, scanned pages and your handwriting")],
   ["search", SearchIcon, t("Search library"), t("Find text in your notes and PDFs")],
   ["show", LocateIcon, t("Show pages"), t("Open a page for you at a PDF page, a passage or a note")],
+  ["skills", SlashIcon, t("Use skills on its own"), t("Load one of your skills when a request fits it")],
   ["web_search", GlobeIcon, t("Search online"), t("Search the web and Crossref, arXiv and OpenAlex, and follow papers' citations")],
   ["web_read", CloudDownloadIcon, t("Fetch documents"), t("Read a web page, DOI or URL without saving it to your library")],
   ["publisher_cookies", ShieldIcon, t("Use journal sign-ins"), t("Use connected publisher cookies when fetching documents")],
@@ -96,7 +97,7 @@ export function AgentToolMatrix({ perms, setPerms, disabled }) {
           <span className="settingDesc">{t("Allow runs a tool without asking. Ask shows you each call first, with what it would change. Off never offers it.")}</span>
         </th>
         {CHAT_KIND_ROWS.map(([kind, Icon, label, hint, , short]) => <th key={kind} scope="col" data-setting={label}>
-          <span className="agentToolKind" title={`${label} — ${hint}`}><Icon size={15} />{short}</span>
+          <span className="agentToolKind" title={`${label} — ${hint}`}><Icon size={14} />{short}</span>
           <PermissionPreset kind={kind} perms={perms} setPerms={setPerms} disabled={disabled} />
         </th>)}
       </tr></thead>

@@ -13,7 +13,8 @@ import gamma.web_fetch as web_fetch
 import gamma.openalex as openalex
 import gamma.routers.metadata as metadata_mod
 import gamma.routers.pdf as pdf_mod
-from gamma.ai_tools import agent_system, run_agent_tool
+from gamma.ai_tools.prompt import agent_system
+from gamma.ai_tools.registry import run_agent_tool
 
 from ai_fixtures import folder, org  # noqa: F401  (org is a fixture)
 

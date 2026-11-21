@@ -1,24 +1,25 @@
 // Text selected in the chat's transcript (docs/dev/ai.md "Selecting the
 // transcript"): a popup under it, as over a PDF's or a code view's text
 // (shared/ui/TipFrame.jsx, pdf/selectionTip.js: a mouse's waits for the hand
-// to move on from the release, a finger's once its handles settle), with
-// Ask about this and the ⋯ of the selection's menu; a right-click on the
-// selection opens that menu at the pointer. The menu: Ask about this, Copy,
+// to move on from the release, a finger's once its handles settle), whose
+// buttons are every action at once: Ask about this, Copy, and where a note
+// can be made Create note and Structured note. A right-click on the
+// selection opens the same as a menu at the pointer: Ask about this, Copy,
 // and Create note ▸ As it is / Structured by AI.
 //
-// What every row takes is the selection's Markdown source
+// What every action takes is the selection's Markdown source
 // (shared/ui/Widgets.jsx selectionMarkdown), read when the popup or the
-// menu opens, so a row acts on it even after the press took the selection
+// menu opens, so it acts on it even after the press took the selection
 // away. `box`: the transcript's scroll box (null while none); `onAsk(md)` quotes
-// it into the composer, `onCopy(md, html)` copies it, `note` how a note is made
-// here — {where: the menu row's title, structured: "" or why the AI can't,
-// make(md, structured)} — or null where no note can be made.
+// it into the composer, `onCopy(md, html)` copies it (true once it has),
+// `note` how a note is made here — {where: where it goes, structured: "" or
+// why the AI can't, make(md, structured)} — or null where no note can be made.
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { selectionMarkdown } from "../shared/ui/Widgets";
 import { TipFrame } from "../shared/ui/TipFrame.jsx";
-import { TipTool } from "../shared/ui/SelectionTip.jsx";
-import { ContextMenu, MenuButton, MenuItem, SubMenuItem, menuGroups } from "../shared/ui/Menus";
+import { TipCopy, TipDivider, TipTool } from "../shared/ui/SelectionTip.jsx";
+import { ContextMenu, MenuItem, SubMenuItem, menuGroups } from "../shared/ui/Menus";
 import { keepSelection } from "../shared/ui/press.js";
 import { nearRelease, tipAnchor, tipWaiter } from "../pdf/selectionTip.js";
 import { lastPointer } from "../shared/lib/pointer.js";
@@ -110,7 +111,7 @@ export default function ChatSelectionTip({ box, onAsk, onCopy, note = null }) {
     document.addEventListener("mouseup", onMouseUp);
     document.addEventListener("selectionchange", onSelectionChange);
     box.addEventListener("scroll", onScroll, { passive: true });
-    // ui-allow context-menu: a hold on the text is the system's selection, so a finger or a pen reaches this menu through the popup's ⋯
+    // ui-allow context-menu: a hold on the text is the system's selection, so a finger or a pen has these rows as the popup's buttons
     box.addEventListener("contextmenu", onContextMenu);
     return () => {
       clearTimeout(timer);
@@ -131,17 +132,30 @@ export default function ChatSelectionTip({ box, onAsk, onCopy, note = null }) {
     if (clear) window.getSelection()?.removeAllRanges();
   };
   const ask = (md) => { done(true); onAsk(md); };
+  const makeNote = (md, structured) => { done(true); note.make(md, structured); };
+  const structuredTitle = note?.structured || t("Rewritten by the AI into headings and bullet points, with nothing added");
   return (
     <>
       {tip ? createPortal(
         <TipFrame anchor={tipAnchor(tip)}>
-          <div className={`plainTip ${TIP}`}>
+          <div className={`plainTip ${TIP}`} onMouseDown={keepSelection}>
             <div className="colorRow">
               <TipTool label={t("Ask about this")} title={t("Quote the selection in your next message")} onPress={() => ask(tip.md)}>
                 <MessageSquareIcon size={14} />
               </TipTool>
-              <MenuButton label={t("Selection actions")} className="colorBtn linkTipBtn" onMouseDown={keepSelection}
-                open={(e) => { const { md, html } = tip; setTip(null); setMenu({ md, html, x: e.clientX, y: e.clientY }); }} />
+              <TipCopy copy={() => onCopy(tip.md, tip.html)} />
+              {note ? (
+                <>
+                  <TipDivider />
+                  <TipTool label={t("Create note")} title={`${t("Create note")}\n${note.where}`} onPress={() => makeNote(tip.md, false)}>
+                    <NotebookPenIcon size={14} />
+                  </TipTool>
+                  <TipTool label={t("Structured note")} title={`${t("Structured note")}\n${structuredTitle}`} disabled={!!note.structured}
+                    onPress={() => makeNote(tip.md, true)}>
+                    <SparklesIcon size={14} />
+                  </TipTool>
+                </>
+              ) : null}
             </div>
           </div>
         </TipFrame>, document.body) : null}
@@ -154,10 +168,9 @@ export default function ChatSelectionTip({ box, onAsk, onCopy, note = null }) {
             note ? (
               <SubMenuItem key="note" id="note" icon={NotebookPenIcon} label={t("Create note")} title={note.where}>
                 <MenuItem icon={AlignLeftIcon} title={t("The selected text as it reads here")}
-                  onClick={() => { done(true); note.make(menu.md, false); }}>{t("As it is")}</MenuItem>
-                <MenuItem icon={SparklesIcon} disabled={!!note.structured}
-                  title={note.structured || t("Rewritten by the AI into headings and bullet points, with nothing added")}
-                  onClick={() => { done(true); note.make(menu.md, true); }}>{t("Structured by AI")}</MenuItem>
+                  onClick={() => makeNote(menu.md, false)}>{t("As it is")}</MenuItem>
+                <MenuItem icon={SparklesIcon} disabled={!!note.structured} title={structuredTitle}
+                  onClick={() => makeNote(menu.md, true)}>{t("Structured by AI")}</MenuItem>
               </SubMenuItem>
             ) : null,
           ])}

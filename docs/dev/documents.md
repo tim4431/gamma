@@ -140,8 +140,8 @@ A stored doc holds to these rules, and `document` refuses anything else:
 
 ### The listed state
 
-A work folder's file past the keep limit (`config.vault_keep_bytes`,
-`GAMMA_VAULT_KEEP_MB`, 64 unless set, read when asked) is listed without its
+A work folder's file past the keep limit (`server_options.vault_keep_bytes`,
+Settings → Server → Work folders, 64 MB unless an admin changed it) is listed without its
 bytes: the vault's file class hashes nothing and serves nothing, and the
 page's document is
 
@@ -367,13 +367,13 @@ highlight relocation, translation memory, the text index's live set
 (`gamma/search/index.py` `purge_unused`: a copy keeps the rows of the file
 it shows), the
 Zotero link's comparison of files, a folder chat's PDF search
-(`ai_tools._scope_pages`), and on the client `pdfStored`, the viewer's `fileId`, the translation scope, the
+(`ai_tools.base._scope_pages`), and on the client `pdfStored`, the viewer's `fileId`, the translation scope, the
 annotated PDF's translation (`translateExport.exportFile`,
 `folderTranslation.folderPapers`) and the chat's PDF ids.
 
 **Read in place** (`in_place`) is asked as itself only where a page read
 in place is set apart for its file: `linked_files.open_file` and its carry,
-and the client's `duplicable`, `isOpenedFile` and `pdfLinked`. The paper
+and the client's `fileRules(…).duplicate`, `isOpenedFile` and `pdfLinked`. The paper
 readers ask the library rule (`library_document`, `is_library_pdf`, and
 `SQL_LIBRARY_PDF` in the statements;
 [work_folders.md](work_folders.md#the-library-rule)), which keeps this
@@ -1055,10 +1055,11 @@ them:
   `duplicatePage`). A stored file is shown as a copy of it, an address is
   kept without the original's URL hash (an upload's address making it a
   copy of that upload), and a file read in place is shown from its stored
-  copy, which `duplicable` never offers; null for no document.
+  copy, which `fileRules(…).duplicate` never offers (explorer/workFolders.js);
+  null for no document.
 
 The library's rows (`library/libraryUtils.js` `pageBlocksOf`) carry
-`_doc`, the page's view. `duplicable` leaves out pages read in place,
+`_doc`, the page's view. `fileRules(…).duplicate` leaves out pages read in place,
 `pageKindLabel(doc)` says the format's word (`formatLabel`: "PDF",
 "LaTeX", "Picture", "File"; a language's word is `LANGUAGE_LABELS`', the
 server's `formats.LANGUAGE_NAMES` too, which the chat's context names it
@@ -1401,13 +1402,13 @@ pages with `backend/tests/conftest.py` `doc_props(hash, *, url, name, at,
 copy, format, ext, size)`, which builds `{"doc": …}` through `document`; only the migration's
 and the restore's tests write the flat keys, on purpose.
 
-## As built (step 3)
+## Documents of other formats
 
-Step 3 of [research/file-explorer.md](../research/file-explorer.md) "In
-steps": any file as a page. The model's part is above (the listed state,
-`size` on every writer, `stored_format`, `vault_extension`, the viewer
-registry, a picture's regions as `image_position` highlights, migration
-step 55), and with it:
+Any file is a page ([research/file-explorer.md](../research/file-explorer.md)
+step 3). The model's part is above: the listed state, `size` on every
+writer, `stored_format`, `vault_extension`, the viewer registry, a
+picture's regions as `image_position` highlights, migration step 55. The
+rest:
 
 - **Documents of other formats in the library** ("Writing a document"
   above): a stored file of any format attached by its name (`file`), one
@@ -1432,8 +1433,7 @@ step 55), and with it:
   temporary names and executables out, `uploadOneFile` makes a library page (by-file),
   `attachFile` the open page's document (`{file}` to the attachment
   routes), `promoteChip` a chip's page by its format. The library's drop
-  and *Upload files…* take any file (no `accept`, `PAGE_FILE_ACCEPT` is
-  gone), a file a native app hands over that is no picture, note or
+  and *Upload files…* take any file (no `accept`), a file a native app hands over that is no picture, note or
   archive is a page (`openedFiles.openedKind`), and a file chip of every
   format offers *Add to library* (`FileChip`: the lookup by stored name,
   `rememberDocPage(name, page)`). In App, `uploadFiles` routes every file
@@ -1465,7 +1465,7 @@ step 55), and with it:
 - **The tables kept apart:** `FileChip.KINDS` (its words are finer than
   formats, and the tooltip's alone), and the hex-only parsers
   `pdfSource.docIdOf` and `FileChip.parseUploadUrl`.
-- **Left for later:** the highlight menu opened on a region shows the
+- **Known gaps:** the highlight menu opened on a region shows the
   PDF's rows (a region has no rows of its own yet); the AI title is offered
   for a PDF alone (`docId` is a PDF's); the chat's context and `read_block`
   draw a PDF's area pictures, not a region's; a region exports as a note in
@@ -1473,4 +1473,3 @@ step 55), and with it:
   *Opened files* page to another server is for a PDF alone (the page
   itself takes every format with a viewer); a listed file's head is not shown as text; the keep limit is
   an environment setting ([work_folders.md](work_folders.md) "Known gaps").
-  The whole list is the plan's "As built (step 3)".

@@ -39,7 +39,7 @@ export const PANE_READS = {
     { path: "/server-config", later: true }],
   backups: ({ admin }) => [{ path: "/workspaces/mine", then: (d) => (d?.workspaces || []).map((w) => backupsOf(w.id)) },
     "/backup-tasks", admin && "/admin/offsite", admin && "/admin/gdrive"],
-  server: () => ["/admin/server-info", "/admin/settings", "/admin/ai-providers",
+  server: () => ["/admin/server-info", "/admin/settings", "/admin/zotero-app", "/admin/ai-providers",
     "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
   proxy: () => ["/admin/proxy"],
   integrations: () => ["/integrations/tokens"],
@@ -49,7 +49,7 @@ export const PANE_READS = {
   agents: ({ signedIn, desktop }) => [signedIn && "/computers", signedIn && desktop && "/computer-links",
     signedIn && desktop && { path: "/local-agents/people", later: true }],
   translation: ({ lang }) => ["/translate/engines", "/translations/stats", termsOf(lang)],
-  tools: () => ["/ai/search-services"],
+  tools: ({ admin }) => ["/ai/search-services", admin && "/admin/settings"],
   maintenance: () => ["/quota", "/metadata/status"],
 };
 export const backupsOf = (id) => `/workspaces/${encodeURIComponent(id)}/backups`;

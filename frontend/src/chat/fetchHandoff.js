@@ -29,6 +29,22 @@ export function replyHandoffs(actions) {
   return [...seen.values()];
 }
 
+// A reply the user stopped lets go of the paper requests it asked for, as
+// each card's Dismiss would (the server does too as the reply ends,
+// routers/ai.py): their ids, from its calls' actions and from the cards it
+// waited on ({"handoff"} lines whose action never came), once each.
+export function stoppedRequests(actions, waited = []) {
+  const ids = [...(actions || []).map((a) => a?.handoff?.id), ...(waited || []).map((h) => h?.id)];
+  return [...new Set(ids.filter(Boolean))];
+}
+
+// The stopped reply's actions, each request marked dismissed: its cards say
+// so at once, ask the server nothing and never hand it to Gamma Connector.
+export function letGoOf(actions) {
+  return (actions || []).map((a) => (a?.handoff?.id && !a.handoff.settled
+    ? { ...a, handoff: { ...a.handoff, settled: "dismissed" } } : a));
+}
+
 // The card's state from the server's view of the request (null while the
 // first answer is out) and whether the user opened the page from it. A tab
 // the user closed before the PDF came (note "closed") is watched no more.

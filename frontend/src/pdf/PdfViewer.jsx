@@ -37,8 +37,10 @@ import { MenuButton } from "../shared/ui/Menus";
 import { lastPointer } from "../shared/lib/pointer.js";
 import { composing, heldAlone, isHeldKey } from "../shared/lib/hotkeys.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
-import { citationRuns, runChars } from "./pdfCitation.js";
-import { noteBadgeAnchor } from "./noteAnchor.js";
+import { locateCitation } from "./pdfCitation.js";
+import { runChars } from "./pageChars.js";
+import { COLUMN_GAP, noteBadgeAnchor } from "./noteAnchor.js";
+import { readsBefore, viewportRects } from "./textOrder.js";
 import { inTextLayer, nearRelease, tipAnchor, tipWaiter } from "./selectionTip.js";
 import { beginPenSelect, penSelecting } from "./penSelect.js";
 import { nativeHost, postToHost } from "../shared/lib/host.js";
@@ -56,7 +58,7 @@ import { stampLabel } from "../chat/agents.js";
 import { HighlightReview, useHighlightReview } from "./HighlightReview.jsx";
 import { pastLastPage, reviewList, waitingForAccept } from "./highlightReview.js";
 import { TipFrame } from "../shared/ui/TipFrame.jsx";
-import { TipComment, TipCopy, TipDivider, TipMoveHere, TipTool } from "../shared/ui/SelectionTip.jsx";
+import { TipAddHere, TipComment, TipCopy, TipDivider, TipMoveHere, TipTool } from "../shared/ui/SelectionTip.jsx";
 import { t } from "../shared/i18n/i18n.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
 import { SCALE_VAR, installViewerZoom, scaledPx } from "../shared/lib/viewerZoom.js";
@@ -587,6 +589,15 @@ export async function openPdfDocument(url, { ranged = false } = {}) {
 // moveMode: a highlight waits to be moved (App's moveHighlightId): the
 // selection popup offers only Move here, and highlights let the pointer
 // through, so the text under them can be selected.
+// extendId: the highlight that waits for another passage of its page (App's
+// extendHighlightId; shared/model/highlightParts.js): the selection popup
+// offers only Add to the highlight, and the selection reaches
+// onSelectionFinished with {first}, whether it reads before the highlight
+// (pdf/textOrder.js; null when the text layer cannot tell). That
+// highlight lets the pointer through, so the text beside it and under it
+// can be selected, and an area drag is no passage. A press on another
+// highlight is onJoinHighlight(id, first) instead of a jump: that one
+// joins the waiting one, `first` whether it reads before it.
 // commentMargin: what the comment cards beside the pages read (App's
 // CommentMarginContext value, comments/marginSlot.jsx: the threads, the
 // active card's `target`, the handlers), or null for no margin (a phone, a
@@ -630,7 +641,7 @@ export async function openPdfDocument(url, { ranged = false } = {}) {
 // that one and opens its card (the Document menu's Review, `follow`; App
 // after a move started from the card, `done` what it did and scroll
 // false).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onPenSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateSelection = null, onTranslateBrief, onTranslateLookup, translateRecall = null, translateKeeps = true, onAddTerm = null, translateCtlRef, onTranslateState, onParagraphContext, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, anchors = null, marginRef = null, onMarginLost, onPageInView, pageFlow = "down", zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onPenSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateSelection = null, onTranslateBrief, onTranslateLookup, translateRecall = null, translateKeeps = true, onAddTerm = null, translateCtlRef, onTranslateState, onParagraphContext, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, extendId = "", onJoinHighlight, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, anchors = null, marginRef = null, onMarginLost, onPageInView, pageFlow = "down", zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   // Which way the pages run (pdf/pageLayout.js; Settings → Reading › PDFs ›
@@ -711,10 +722,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // parent state change recreates the handler closures. The wrappers always
   // dispatch to the latest handlers via the ref.
   const cbRef = useRef({});
-  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onPenSelection, onTranslate, onTranslateSelection, onTranslateBrief, onTranslateLookup, onTranslateState, onHighlightAction, onParagraphContext };
+  // The highlight waiting for another passage (extendId), for the press and
+  // selection listeners, which subscribe once.
+  const extendIdRef = useRef(extendId);
+  extendIdRef.current = extendId;
+  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onPenSelection, onTranslate, onTranslateSelection, onTranslateBrief, onTranslateLookup, onTranslateState, onHighlightAction, onParagraphContext, onJoinHighlight };
   const stableCbs = useMemo(() => ({
     onJump: (...a) => cbRef.current.onJump?.(...a),
-    onHighlightJump: (...a) => cbRef.current.onHighlightJump?.(...a),
+    // while a highlight waits for another passage, a press on another one joins it
+    onHighlightJump: (id, ...a) => (extendIdRef.current && id !== extendIdRef.current && cbRef.current.onJoinHighlight
+      ? cbRef.current.onJoinHighlight(id, joinOrder(id)) : cbRef.current.onHighlightJump?.(id, ...a)),
     onLinkHighlight: (...a) => cbRef.current.onLinkHighlight?.(...a),
     onHighlightContext: (...a) => cbRef.current.onHighlightContext?.(...a),
     onHighlightThread: (...a) => cbRef.current.onHighlightThread?.(...a),
@@ -854,6 +871,22 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     hlsPrevRef.current = map;
     return map;
   }, [highlights, displayedUrl, url]);
+  // A highlight of the shown document by id, with its page; null for none.
+  function shownHighlight(id) {
+    for (const [pn, list] of hlsPrevRef.current) {
+      const h = list.find((x) => x.id === id);
+      if (h) return { h, pn };
+    }
+    return null;
+  }
+  // Whether highlight `id` reads before the one waiting for another passage
+  // (pdf/textOrder.js): null when they are on different pages, or the page
+  // or its text layer cannot tell.
+  function joinOrder(id) {
+    const a = shownHighlight(id), b = shownHighlight(extendIdRef.current);
+    const pageEl = a && b && a.pn === b.pn ? viewerRef.current?.querySelector(`.pdfPageWrap[data-page="${a.pn}"]`) : null;
+    return pageEl ? readsBefore(pageEl.querySelector(".textLayer"), viewportRects(pageEl, a.h.position), viewportRects(pageEl, b.h.position)) : null;
+  }
 
   // The comment anchors grouped per page, for the document on screen, a
   // page's slice kept while it reads the same, as the highlights are.
@@ -939,7 +972,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           const items = tc.items;
           // Page string: runs joined by their PDF line break or a space,
           // each char tagged with its source run (-1 = synthetic filler).
-          const chars = runChars(items.map((it) => ({ text: it.str, hasEOL: it.hasEOL })), { fillSpaces: true });
+          const chars = runChars(items.map((it) => ({ text: it.str, hasEOL: it.hasEOL })));
           const { norm, src } = normalizeChars(chars);
           text = {
             items, pageStr: norm.join(""), transform: vp.transform, width: vp.width, height: vp.height,
@@ -1581,17 +1614,23 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     review.ghost(id);
   };
 
-  // Wait for this document, then mount only the cited page. Matching happens
-  // after its actual text layer has rendered, including on zoom changes.
+  // Wait for this document, scroll to the cited page and ask the server
+  // where the quote stands (pdfCitation.js): the active citation is then the
+  // place found, on the page it names (the cited one or one beside it), and
+  // only that page is mounted for it.
   const [activeCitation, setActiveCitation] = useState(null);
   useEffect(() => {
-    let cancelled = false;
     setActiveCitation(null);
-    if (citation && pdfDoc && displayedUrl === url && citation.page <= pdfDoc.numPages) {
-      Promise.resolve(scrollToPositionRef.current?.({ position: { pageNumber: citation.page }, behavior: "auto" }))
-        .then(() => { if (!cancelled) setActiveCitation(citation); });
-    }
-    return () => { cancelled = true; };
+    if (!citation || !pdfDoc || displayedUrl !== url || citation.page > pdfDoc.numPages) return;
+    const ctl = new AbortController();
+    const shown = Promise.resolve(scrollToPositionRef.current?.({ position: { pageNumber: citation.page }, behavior: "auto" }));
+    const found = citation.quote ? locateCitation(citation, { signal: ctl.signal }) : null;
+    Promise.all([shown, found]).then(([, place]) => {
+      if (ctl.signal.aborted) return;
+      const page = place?.page >= 1 && place.page <= pdfDoc.numPages ? place.page : citation.page;
+      setActiveCitation({ ...citation, page, place });
+    });
+    return () => ctl.abort();
   }, [citation, pdfDoc, displayedUrl, url]);
   useEffect(() => {
     if (!activeCitation) return;
@@ -1997,6 +2036,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const confirmRef = useRef(null);
   confirmRef.current = confirmSelection;
   const onAreaSelected = useCallback((sel) => {
+    if (extendIdRef.current) return; // a box is no passage to add
     setSelPopup({ kind: "area", ...sel, scroll: viewerScroll() });
     // The region goes to the chat as its page and box (chat/chatPictures.js
     // regionPicture); the server draws it from the document.
@@ -2115,17 +2155,23 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       // popup's ⋯ opens: the one the selection starts in (transSelect.js).
       const on = found.on || (cbRef.current.onParagraphContext ? selectionOnPage(sel, transUrlRef.current, translateKeyRef.current) : null);
       const para = on && [on.from, ...on.blocks].find((b) => b >= 0 && hasMenu(on.entry.paras[b]));
+      // A passage for the highlight waiting for one: whether it reads first,
+      // measured now, while the text layer and the rects agree.
+      const waiting = extendIdRef.current ? shownHighlight(extendIdRef.current) : null;
+      const first = waiting?.pn === pageNumber
+        ? readsBefore(pageEl.querySelector(".textLayer"), lineRects, viewportRects(pageEl, waiting.h.position)) : null;
       const snap = {
         text, rect, point: nearRelease(point, seen), lineRects, pageNumber,
         pageLeft: pageRect.left, pageTop: pageRect.top, pageW, pageH, scroll: viewerScroll(),
         ...(found.shown ? { shown: seen } : null),
         ...(translated ? { translated: true, copy } : null),
         ...(para != null ? { para: { pn: on.pn, i: para } } : null),
+        ...(extendIdRef.current ? { first } : null),
       };
       // A selection in a translation stands for whole blocks, so one over a
       // paragraph highlighted from it before is that highlight: its bar, as
       // the highlighter's for a highlight it made, and no second one.
-      const had = found.same && !moveModeRef.current ? found.same : null;
+      const had = found.same && !moveModeRef.current && !extendIdRef.current ? found.same : null;
       if (had) {
         if (released && highlighterRef.current) window.getSelection()?.removeAllRanges();
         if (cbRef.current.onHighlightAction) showTip({ ...snap, kind: "made", id: had });
@@ -2138,7 +2184,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       // a bar of its own ("made": its colour, comment, link), shown as
       // the popup would be. A tap after a finger's selection also sends a
       // mouseup; that one still gets the popup.
-      if (released && highlighterRef.current && !moveModeRef.current && (!point || lastPointer() !== "touch")) {
+      if (released && highlighterRef.current && !moveModeRef.current && !extendIdRef.current && (!point || lastPointer() !== "touch")) {
         const id = confirmRef.current(snap, "", null, { highlighter: true });
         if (id && cbRef.current.onHighlightAction) showTip({ ...snap, kind: "made", id });
         return;
@@ -2148,10 +2194,13 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     // A selection of the text layer's: {pageEl, text, lineRects, rect}, rects
     // in viewport px, one per line. pdf.js's text layer has many spans per
     // line and getClientRects() gives one rect per span, so those that share
-    // a line merge. A span standing down under a translation (.transMasked)
-    // is not selected, but the range still has its rects: they go, so a drag
-    // between two blocks left original over a translated one between them
-    // highlights those two alone.
+    // a line merge, unless a column's gutter lies between them
+    // (noteAnchor.js COLUMN_GAP): a selection from the foot of one column
+    // into the top of the next covers the two parts, not the gutter and the
+    // lines beside them that share their height. A span standing down under
+    // a translation (.transMasked) is not selected, but the range still has
+    // its rects: they go, so a drag between two blocks left original over a
+    // translated one between them highlights those two alone.
     function layerSelection(range, text) {
       const node = range.startContainer;
       const textEl = (node?.nodeType === 3 ? node.parentElement : node)?.closest?.(".textLayer");
@@ -2169,19 +2218,19 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         .sort((a, b) => a.top - b.top || a.left - b.left);
       const lineRects = [];
       for (const cr of raw) {
-        const last = lineRects[lineRects.length - 1];
-        if (last) {
-          const overlap = Math.min(last.bottom, cr.bottom) - Math.max(last.top, cr.top);
-          const minH = Math.min(last.bottom - last.top, cr.bottom - cr.top);
-          if (overlap >= minH * 0.5) {
-            last.left = Math.min(last.left, cr.left);
-            last.right = Math.max(last.right, cr.right);
-            last.top = Math.min(last.top, cr.top);
-            last.bottom = Math.max(last.bottom, cr.bottom);
-            continue;
-          }
+        const line = lineRects.find((l) => {
+          const overlap = Math.min(l.bottom, cr.bottom) - Math.max(l.top, cr.top);
+          const minH = Math.min(l.bottom - l.top, cr.bottom - cr.top);
+          return overlap >= minH * 0.5 && Math.max(cr.left - l.right, l.left - cr.right) <= minH * COLUMN_GAP;
+        });
+        if (line) {
+          line.left = Math.min(line.left, cr.left);
+          line.right = Math.max(line.right, cr.right);
+          line.top = Math.min(line.top, cr.top);
+          line.bottom = Math.max(line.bottom, cr.bottom);
+        } else {
+          lineRects.push({ ...cr });
         }
-        lineRects.push({ ...cr });
       }
       return { pageEl, text, lineRects, rect: masked.length ? null : range.getBoundingClientRect() };
     }
@@ -2326,7 +2375,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       : [{ x1, y1, x2, y2 }];
     // The page size once: every rect is in its frame (shared/model/blockModel.js).
     const position = { pageNumber: sel.pageNumber, width: curW, height: curH, boundingRect: { x1, y1, x2, y2 }, rects: lineRects };
-    return onSelectionFinished(position, sel.text, () => { window.getSelection()?.removeAllRanges(); setSelPopup(null); }, { color, commentText, ...(extra || {}) });
+    return onSelectionFinished(position, sel.text, () => { window.getSelection()?.removeAllRanges(); setSelPopup(null); },
+      { color, commentText, ...("first" in sel ? { first: sel.first } : null), ...(extra || {}) });
   }
   function handleSelConfirm(commentText, color, extra) {
     if (selPopup) confirmSelection(selPopup, commentText, color, extra);
@@ -2429,6 +2479,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           baseWidth={pageWidths[i] || 0} baseHeight={pageHeights[i] || 0} across={across}
           marginLeft={withMargin ? pageMargin(i + 1) : null} pageTop={pageTops[i] || 0} marginScale={withMargin ? scale : 0}
           activeHl={targetPage === i + 1 ? activeHl : null}
+          extendId={extendId && hlsByPage.get(i + 1)?.some((h) => h.id === extendId) ? extendId : ""}
           highlights={hlsByPage.get(i + 1) || EMPTY_MARKS} anchors={anchorsByPage.get(i + 1) || EMPTY_MARKS} onJump={stableCbs.onJump}
           // what a highlight, a link highlight or an outside link does on a
           // press, only when this viewer was told: else none, and the press
@@ -2476,15 +2527,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             onLink={made ? () => madeAction("link") : () => handleSelConfirm("", null, { link: true })}
             onComment={selComment ? (made ? () => madeAction("comment") : (color) => handleSelConfirm("", color, { comment: true })) : null}
             onMove={moveMode ? () => handleSelConfirm("", null) : null}
+            onExtend={extendId && !moveMode ? () => handleSelConfirm("", null) : null}
             // the system's Copy, where the host turns its menu off for this popup:
             // what was selected, the translation's words over a translation
             copy={nativeHost()?.editMenu && selPopup.kind !== "area" ? (selPopup.copy ?? selPopup.text) : null}
             // the paragraph menu, on a page that shows its translation
-            menu={selPopup.para && !moveMode && onParagraphContext && onTranslate
+            menu={selPopup.para && !moveMode && !extendId && onParagraphContext && onTranslate
               ? (e) => openParaMenu({ ...selPopup.para, x: e.clientX, y: e.clientY }) : null}
             // a selection that places a moved highlight is not read, so not
             // translated; nor is one in a translation, which is translated already
-            translate={!moveMode && selTranslate && selPopup.kind !== "area" && !selPopup.translated && selPopup.text && onTranslate ? {
+            translate={!moveMode && !extendId && selTranslate && selPopup.kind !== "area" && !selPopup.translated && selPopup.text && onTranslate ? {
               text: selPopup.text, auto: selTranslate === "auto", langLabel: translateLangLabel, lang: langOfKey(translateKey),
               // A quick one-off text: the paper's brief rides along when it is
               // made already, never waited for. The page is the selected
@@ -2574,13 +2626,16 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
 // pages above; marginScale: the zoom, beside a margin only (0 otherwise:
 // a page outside margin mode takes no scale, so a zoom does not render it);
 // activeHl: the highlight whose card is the active one, drawn stronger.
+// extendId: the page's highlight waiting for another passage (PdfViewer's
+// extendId), drawn stronger too; it and the page's link regions let the
+// pointer through, so the text under them can be selected.
 // anchors: the page's comment anchors, which its margin's cards stand beside.
 // zoom: the viewer's pageScale store; baseWidth × baseHeight: the page's
 // size at scale 1 as the viewer knows it, until pdf.js measures it.
 // across: the pages run across, side by side (pdf/pageLayout.js).
 // textRev: the revision of the words the server recognized on this page
 // (pdf/ocrState.js pageRevision), under which its text layer is built.
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom, textRev = 0, highlights, anchors, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, baseWidth = 0, baseHeight = 0, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, onParaMenu = null, toolArmed, marks, across = false, marginLeft = null, pageTop = 0, marginScale = 0, activeHl = null }) {
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom, textRev = 0, highlights, anchors, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, baseWidth = 0, baseHeight = 0, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, onParaMenu = null, toolArmed, marks, across = false, marginLeft = null, pageTop = 0, marginScale = 0, activeHl = null, extendId = "" }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -2595,7 +2650,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
   const page = loaded?.doc === pdfDoc ? loaded.page : null;
   const [paintedPage, setPaintedPage] = useState(null); // the pdf.js page whose first pixels have landed
   const [basePaints, setBasePaints] = useState(0); // counts the whole-page bitmap's paints (pageRaster onBase)
-  const [textReady, setTextReady] = useState(null); // {page, layer, runs}: the built pdf.js text layer
+  const [textReady, setTextReady] = useState(null); // {page, layer, boxes}: the built pdf.js text layer
   const [visible, assumeVisible] = useWithin(wrapRef, RENDER_MARGIN, pageNumber); // inside the look-ahead: rendered
   const renderVisible = visible || forceRender;
   // Highlights, find marks and link boxes are drawn only inside the
@@ -2768,8 +2823,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
         await layer.render();
         if (cancelled) return;
         textScaleRef.current = measuredAt;
-        setTextReady({ page, layer, runs: citationRuns(tc.items, layer.textDivs),
-          boxes: textRuns(tc.items.filter((it) => typeof it.str === "string"), vpBase.transform) });
+        setTextReady({ page, layer, boxes: textRuns(tc.items.filter((it) => typeof it.str === "string"), vpBase.transform) });
 
         // Link annotations (in-PDF references + external URLs), stored at
         // scale 1 and placed in JSX as fractions of the box.
@@ -2794,7 +2848,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
 
   // Once a zoom settles (`rest`) the spans are re-measured at the new size,
   // which is what pdf.js's own viewer does in place of a rebuild: the
-  // selection, the spans and the citation runs all survive. Not while a zoom
+  // selection and the spans survive. Not while a zoom
   // still runs (a layer built mid-train measured at the live scale): the
   // settled value is on its way, and with it this effect.
   useEffect(() => {
@@ -2960,8 +3014,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
       <div ref={textRef} className="textLayer" data-guide="pdf.textLayer" style={{
         userSelect: readOnly || toolArmed ? "none" : "text", WebkitUserSelect: readOnly || toolArmed ? "none" : "text",
       }} />
-      <PdfCitationOverlay citation={citation} wrapRef={wrapRef}
-        ready={textReady?.page === page ? textReady : null} />
+      <PdfCitationOverlay citation={citation} wrapRef={wrapRef} />
       {overlays && shownLinks.map((l, i) => (
         <div
           key={`lnk-${i}`}
@@ -3021,7 +3074,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
         // Its threads as cards in the margin beside the page (they leave
         // the badge), and the active card's highlight drawn stronger.
         const carded = marginLeft != null && (h.threadCount || 0) > 0;
-        const active = activeHl === h.id;
+        const active = activeHl === h.id || extendId === h.id;
+        // waiting for another passage: the text under it may be part of it
+        const through = !!extendId && (extendId === h.id || isLink);
         const strong = "color-mix(in srgb, var(--hl-line, var(--hl-dark-line)) 35%, var(--hl))";
         // Area notes (Ctrl+drag rectangles) draw as an outline with a faint
         // wash — a solid multiply fill would tint the figure underneath.
@@ -3074,7 +3129,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
             data-guide-recent={ri === 0 && recentHl === h.id ? "" : undefined}
             className={[flashId === h.id ? "pdfHlFlash" : "", lost ? "pdfHlLost" : ""].filter(Boolean).join(" ") || undefined}
             style={{
-            position: "absolute", zIndex: 2, ...(passive ? { pointerEvents: "none" } : { cursor: "pointer" }),
+            position: "absolute", zIndex: 2, ...(passive || through ? { pointerEvents: "none" } : { cursor: "pointer" }),
             left: pctX(r.x1, storedW), top: pctY(r.y1, storedH),
             width: `max(1px, ${pctX(r.x2 - r.x1, storedW)})`,
             height: `max(1px, ${pctY(r.y2 - r.y1, storedH)})`,
@@ -3112,7 +3167,8 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
               if (isLink) onLinkHighlight?.(h);
               else onHighlightJump?.(h.id, e.ctrlKey || e.metaKey);
               // a highlight with cards: its card becomes the active one
-              if (carded) onHighlightThread?.(h.id, e.currentTarget);
+              // (not while the press joins it to the one waiting)
+              if (carded && !extendId) onHighlightThread?.(h.id, e.currentTarget);
             }}
             {...menuPress(openMenu)}
           />);
@@ -3308,7 +3364,7 @@ const SEL_TRANSLATE_MAX = 5000;
 // which has one, is off). `menu`: the opener of the paragraph menu of a
 // page that shows its translation, for the ⋯ that is a finger's and a
 // pen's way to it (MenuButton): their hold selects.
-function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null, menu = null, recolor = false, onRestyle = null, area = false, onDismiss = null,
+function PlainTip({ onConfirm, onLink, onComment, translate, onMove, onExtend = null, copy = null, menu = null, recolor = false, onRestyle = null, area = false, onDismiss = null,
   own = null, onSave = null, onRemove = null }) {
   const [trans, setTrans] = useState(null); // {status: "loading"|"done"|"error", text, open}
   const ctlRef = useRef(null);
@@ -3336,6 +3392,7 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
   }, []);
   const fold = () => setTrans((prev) => ({ ...prev, open: !prev.open }));
   if (onMove) return <div className="plainTip"><TipMoveHere onMove={onMove} /></div>;
+  if (onExtend) return <div className="plainTip"><TipAddHere onAdd={onExtend} /></div>;
   // Every button acts on the mouse's press, which keeps the PDF selection
   // (shared/ui/press.js tipPress).
   return (

@@ -5,7 +5,8 @@ edit preview and the cursor / attached-block focus section."""
 import json
 import re
 
-from gamma.ai_tools import agent_system, run_agent_tool
+from gamma.ai_tools.prompt import agent_system
+from gamma.ai_tools.registry import run_agent_tool
 
 from ai_fixtures import ALLOW_ALL, FakeResp, ai_provider, children, folder, notes, org, props  # noqa: F401  (fixtures)
 
@@ -195,6 +196,93 @@ def test_create_block_placement(notes):
                              {"parent_id": ids["page"], "content": "x",
                               "after_id": ids["child"]})
     assert "after_id" in text and text.startswith("error")
+
+
+PASTE = ("# Setup\nWe trained on \\(N\\) runs.\n\n- first\n  - nested\n- second\n\n| x | y |\n|---|---|\n| 1 | 2 |\n\n"
+         "```py\nx = 1\n\ny = 2\n```\n\n\\[\nE = mc^2\n\\]")
+
+
+def _tree(c, parent):
+    return [(props(c, b)["content"], _tree(c, b)) for b in children(c, parent)]
+
+
+def test_create_block_pastes_markdown_as_the_editors_blocks(notes):
+    """A Markdown passage becomes, in one call, the blocks the editor's Paste
+    as → Blocks makes: the heading holds what follows it, list items nest by
+    indentation, a table, a fence with a blank line in it and display math
+    are one block each, in order, each stamped with the agent; split: false
+    keeps it one block, as the old one-block call did."""
+    from gamma.ai_tools.registry import approval_preview
+    c, ids = notes
+    stamp = {"id": "t1", "name": "Codex", "for": "tim"}
+    scope = {**folder(ids["sandbox"]), "agent": stamp}
+    page = _math_page(c, ids, "pasted")
+    preview, _ = approval_preview(ids["ws"], scope, "create_block", {"parent_id": page, "content": PASTE})
+    assert preview["count"] == 8
+    text, action = run_agent_tool(ids["ws"], scope, "create_block", {"parent_id": page, "content": PASTE})
+    assert text.startswith("ok — added 8 blocks in “pasted”:"), text
+    assert _tree(c, page) == [("# Setup", [
+        ("We trained on $N$ runs.", []),
+        ("- first", [("- nested", [])]),
+        ("- second", []),
+        ("| x | y |\n|---|---|\n| 1 | 2 |", []),
+        ("```py\nx = 1\n\ny = 2\n```", []),
+        ("$$\nE = mc^2\n$$", [])])]
+    assert action["block_ids"][0] == action["block_id"] == children(c, page)[0] and len(action["block_ids"]) == 8
+    assert all(props(c, b)["properties"]["agent"] == stamp for b in action["block_ids"])
+    whole = _math_page(c, ids, "one block")
+    text, action = run_agent_tool(ids["ws"], scope, "create_block", {"parent_id": whole, "content": "- a\n- b", "split": False})
+    assert text.startswith("ok — created block") and _tree(c, whole) == [("- a\n- b", [])]
+    assert action["revert"]["after"] == "- a\n- b"
+
+
+def test_a_paste_lands_where_it_is_asked_to_and_stays_together(notes):
+    """after_id puts the paste after that sibling, its blocks together, the
+    parent's own id puts them first, none puts them last; a block the person
+    adds after that sibling while the question waits follows the paste. A
+    paste past one batch's blocks writes nothing."""
+    c, ids = notes
+    scope = folder(ids["sandbox"])
+    page = _math_page(c, ids, "placed")
+    first = c.post("/api/blocks", json={"parent_id": page, "content": "first"}).json()["id"]
+    last = c.post("/api/blocks", json={"parent_id": page, "content": "last", "before": props(c, first)["position"]}).json()["id"]
+    paste = {"parent_id": page, "content": "pasted one\n\npasted two", "after_id": first}
+    from gamma.ai_tools.registry import approval_preview
+    preview, _ = approval_preview(ids["ws"], scope, "create_block", paste)
+    assert preview["after"] == "first" and preview["count"] == 2
+    typed = c.post("/api/blocks", json={"parent_id": page, "content": "typed meanwhile", "before": props(c, first)["position"],
+                                        "after": props(c, last)["position"]}).json()["id"]
+    assert children(c, page) == [first, typed, last]
+    _, action = run_agent_tool(ids["ws"], scope, "create_block", paste)
+    assert children(c, page) == [first, *action["block_ids"], typed, last]
+    _, top = run_agent_tool(ids["ws"], scope, "create_block", {"parent_id": page, "content": "on top", "after_id": page})
+    assert children(c, page)[0] == top["block_id"]
+    text, _ = run_agent_tool(ids["ws"], scope, "create_block",
+                             {"parent_id": page, "content": "\n".join(f"- item {i}" for i in range(501))})
+    assert text.startswith("error: that makes 501 blocks") and len(children(c, page)) == 6
+    # a block already first is already there
+    text, _ = run_agent_tool(ids["ws"], scope, "move_block", {"block_id": top["block_id"], "parent_id": page,
+                                                               "after_id": page})
+    assert text == "ok — the block is already first"
+    _, moved = run_agent_tool(ids["ws"], scope, "move_block", {"block_id": last, "parent_id": page, "after_id": page})
+    assert children(c, page)[0] == last
+
+
+def test_a_link_into_the_library_is_stored_host_free(notes):
+    """Over MCP the results hand out absolute links; one of this workspace
+    written into a note is stored as the editor stores a pasted one, /?…,
+    and another server's link stays as written."""
+    c, ids = notes
+    base = f"https://gamma.example/?ws={ids['ws']}"
+    scope = {**folder(ids["sandbox"]), "link_base": base}
+    page = _math_page(c, ids, "linked")
+    content = f"See [Methods]({base}&page=abc&pdf_page=3) and [theirs](https://other.example/?ws=x&page=y)"
+    _, action = run_agent_tool(ids["ws"], scope, "create_block", {"parent_id": page, "content": content})
+    assert props(c, action["block_id"])["content"] == \
+        "See [Methods](/?page=abc&pdf_page=3) and [theirs](https://other.example/?ws=x&page=y)"
+    run_agent_tool(ids["ws"], scope, "edit_block", {"block_id": action["block_id"], "mode": "append",
+                                                    "content": f"Also [the fit]({base}&block=xyz)"})
+    assert props(c, action["block_id"])["content"].endswith("\nAlso [the fit](/?block=xyz)")
 
 
 def test_an_undo_brings_an_agents_block_back_stamped(notes):
@@ -508,14 +596,15 @@ def test_create_block_writes_backslash_math_in_dollars(notes):
     """Notes write math only in dollars: a model's \\( … \\) and \\[ … \\]
     (GPT's habit) are stored as $ … $ and $$ … $$, and so recorded for the
     revert and the approval card; an escaped bracket stays as written."""
-    from gamma.ai_tools import approval_preview
+    from gamma.ai_tools.registry import approval_preview
     c, ids = notes
     scope = folder(ids["sandbox"])
     page = _math_page(c, ids, "math in dollars")
     content = "where \\( x \\) is the position and\n\\[\nE = mc^2\n\\]"
-    preview, _ = approval_preview(ids["ws"], scope, "create_block", {"parent_id": page, "content": content})
+    one = {"parent_id": page, "content": content, "split": False}
+    preview, _ = approval_preview(ids["ws"], scope, "create_block", one)
     assert preview["diff"] == [["ins", "where $x$ is the position and\n$$\nE = mc^2\n$$"]]
-    text, action = run_agent_tool(ids["ws"], scope, "create_block", {"parent_id": page, "content": content})
+    text, action = run_agent_tool(ids["ws"], scope, "create_block", one)
     assert text.startswith("ok"), text
     assert props(c, action["block_id"])["content"] == "where $x$ is the position and\n$$\nE = mc^2\n$$"
     assert action["revert"]["after"] == "where $x$ is the position and\n$$\nE = mc^2\n$$"

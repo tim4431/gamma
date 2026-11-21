@@ -272,7 +272,7 @@ try {
   const scaleTicked = await page.locator('.commentNew .commentSendTo input').last().isChecked();
   await sleep(350);
   await shot(page, '4-scale-typed');
-  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.press('Enter');
   take.mark('sentScale');
   await sleep(1000);
   await shot(page, '5-scale-sent');
@@ -323,7 +323,7 @@ try {
   take.mark('typedMask');
   const maskTicked = await page.locator('.commentNew .commentSendTo input').last().isChecked();
   await sleep(350);
-  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.press('Enter');
   take.mark('sentMask');
   await sleep(1000);
   // the pointer off the figure, toward the Inbox, while Codex works
@@ -372,7 +372,7 @@ try {
   await typeText(page, ASK.footnote, { ms: 34 });
   take.mark('typedFootnote');
   await sleep(350);
-  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.press('Enter');
   take.mark('sentFootnote');
   await take.until('answered', 120000);
   await sleep(1500);

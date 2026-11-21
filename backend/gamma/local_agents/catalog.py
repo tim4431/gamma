@@ -180,18 +180,20 @@ def _probe(agent: Agent, models: bool = True) -> dict:
     return _answer(agent.name, found=True, version=version, ready=True, models=offered)
 
 
-def refused_choice(name: str, models: list[dict], model: str, effort: str) -> str:
-    """Why a turn of the agent ``name`` may not ask for ``model`` and
-    ``effort`` ("" for none, the agent's default), "" when it may: the
-    model one of ``models`` (the probe's), the effort one of the efforts of
-    that model, or of the agent's default model when none is chosen."""
+def refused_choice(name: str, models: list[dict], model: str, effort: str, speed: str = "") -> str:
+    """Why a turn of the agent ``name`` may not ask for ``model``,
+    ``effort`` and ``speed`` ("" for none, the agent's default), "" when it
+    may: the model one of ``models`` (the probe's), the effort and the speed
+    ones of that model's, or of the agent's default model's when none is
+    chosen."""
     by_id = {m["id"]: m for m in models}
     if model and model not in by_id:
         return f"{label(name)} does not offer that model on this computer."
-    if effort:
-        chosen = by_id.get(model) if model else next((m for m in models if m["default"]), None)
-        if chosen is None or effort not in chosen["efforts"]:
-            return f"{label(name)} does not offer that effort for this model."
+    chosen = by_id.get(model) if model else next((m for m in models if m["default"]), None)
+    if effort and (chosen is None or effort not in chosen["efforts"]):
+        return f"{label(name)} does not offer that effort for this model."
+    if speed and (chosen is None or speed not in chosen.get("speeds", [])):
+        return f"{label(name)} does not offer that speed for this model."
     return ""
 
 
@@ -208,7 +210,7 @@ def _current(name: str, hit: dict, asked: float, fresh: bool, models: bool) -> b
 def probe(name: str, *, fresh: bool = False, models: bool = True) -> dict:
     """``{name, label, found, version, ready, problem, models, at}`` of the
     agent ``name`` (``models`` what it offers, ``[{id, label, efforts,
-    effort, default}]``: events.model), asked anew when ``fresh`` or older
+    effort, default, speeds, speed}]``: events.model), asked anew when ``fresh`` or older
     than ``PROBE_TTL_S``. Without ``models`` (a run's start, which needs
     only whether the agent is ready) the models are not asked again: a
     ready agent keeps those of the last probe that listed them, and when

@@ -10,8 +10,9 @@ PDF ingest and the extension's dedup; ``by-file`` is the same for a stored
 file named with its extension.)
 
 Every endpoint but ``by-docs`` and ``summaries`` (any member, or for
-``summaries`` a share, which reads the pages it reaches), ``family`` (any
-member, or a share that reaches the page) and ``POST /pages`` needs an
+``summaries`` a share, which reads the pages it reaches), ``family`` and
+``citation`` (any member, or a share that reaches the page) and ``POST
+/pages`` needs an
 editor of the workspace (``require_ws(write=True)``): a share token never
 changes a page's attachment (page properties stay the owner's, same rule
 as PUT /blocks/{id} under a share). ``POST /pages`` also takes an edit
@@ -232,6 +233,39 @@ def page_family(page_id: str, request: Request):
 
     return {"ancestors": [{"id": i, "title": rows[i][1] or "Untitled"} for i in ancestors],
             "sub_pages": [sub_page(i) for i in kids]}
+
+
+@router.get("/pages/{page_id}/citation")
+def page_citation(page_id: str, pdf_page: int, quote: str, request: Request):
+    """Where a chat citation's ``quote`` of PDF page ``pdf_page`` (1-based)
+    stands in the page's PDF, for the viewer to mark
+    (docs/dev/pdf_citations.md "AI citation links"):
+    ``highlight_relocate.cite``'s answer, the passage found on that page or
+    one beside it, by the finder a replaced PDF's highlights are placed
+    by. Any member, or a share that reaches the page; a member's request
+    fetches a PDF shown from a URL and not yet stored, as the chat does
+    when it reads one (``ai_context.pdf_path``), a share's reads only what
+    is stored. 400 for an empty quote or one past ``CITE_MAX_QUOTE``, a
+    page without a PDF or a ``pdf_page`` it does not have, 404 for no such
+    live page or a PDF not stored (``NOT_STORED``), 403 as ``family``'s."""
+    if not quote.strip() or len(quote) > highlight_relocate.CITE_MAX_QUOTE:
+        raise HTTPException(status_code=400, detail="the quote is empty or longer than "
+                                                    f"{highlight_relocate.CITE_MAX_QUOTE} characters")
+    scope = share_scope(request)
+    ws = resolve_ws(request)
+    with connect_pages_db(ws) as conn:
+        assert_block_in_scope(conn, page_id, scope)
+        view = page_document(_load_page(conn, page_id)["properties"])
+    if not is_pdf(view):
+        raise HTTPException(status_code=400, detail="the page has no PDF")
+    from ..ai_context import pdf_path  # a URL-opened PDF: fetched as the chat fetches it
+    path = pdf_path(ws, file_hash(view), fetch=scope is None) if file_hash(view) else None
+    if path is None:
+        raise HTTPException(status_code=404, detail=NOT_STORED)
+    try:
+        return highlight_relocate.cite(path, quote, pdf_page)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
 
 
 class DocsLookup(BaseModel):

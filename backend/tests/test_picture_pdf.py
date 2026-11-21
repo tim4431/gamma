@@ -38,7 +38,7 @@ from conftest import files_in
 from gamma import ink as inkmod
 from gamma import notebook, picture, text_box
 from gamma.ai_context import placed_label
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.logseq_graph_export import _render_block
 from gamma.markdown_export import render_readable
 from gamma.obsidian_export import VaultContext, render_vault_page

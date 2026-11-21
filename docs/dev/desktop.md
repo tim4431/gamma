@@ -36,7 +36,8 @@ where they are"); `/api/health` (a 200, or the 503 with
 `error: data_directory_not_upgradable` a server answers when it cannot
 upgrade its data directory — up either way, and the window then shows that
 server's guidance page, [migrations.md](migrations.md)); `/api/session` +
-`/api/login` for the silent first login; the `/api/folder-links` routes
+`/api/login` for the silent first login (that page answers both too, so
+its admin can save a copy of each workspace); the `/api/folder-links` routes
 (the sync panel, the vault dialog, `POST /hint` when a window gets the
 focus), a work folder made with `choose` (paused, choosing, no round) and
 the `?ws=<id>&folder=<id>&track=<link id>` URL the shell then loads, on

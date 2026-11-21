@@ -201,6 +201,12 @@ _SPACES_RE = re.compile(r" {2,}")
 _WORD_RE = re.compile(r"\S+")
 _LINE_NUMBER_RE = re.compile(r"[0-9]{1,5}")
 _DIGIT_RE = re.compile(r"[0-9]")
+_WORD_HYPHEN_RE = re.compile(r"([^\W\d_]+)-(?=([^\W\d_]+))")  # a hyphen between two words' letters
+# A reference mark after a word and before its punctuation, as the folded
+# text reads it: "sequence159,160." or "decoupling78.". Several digits, or a
+# list or range, since a single raised digit is as often a power (x2, cm3)
+# (PageText.without_marks; the geometry decides).
+_MARK_RE = re.compile(r"(?<=[^\W\d_]{3})([0-9]{2,}(?:[,-][0-9]+)*|[0-9]+(?:[,-][0-9]+)+)(?=[.,;:!?])")
 
 
 def _fold(ch: str) -> str:
@@ -320,6 +326,7 @@ class PageText:
         self.word_texts = self.text.split()
         self._first_pos = None
         self._word_index = None
+        self._bare = None
 
     def char(self, gi: int) -> str:
         return self._chars[gi]
@@ -376,6 +383,49 @@ class PageText:
                 where.setdefault(core, []).append(j)
             self._word_index = (where, cores, frozenset(cores))
         return self._word_index
+
+    def without_marks(self):
+        """The text without its reference marks, made on first use: ``(text,
+        at)``, ``at[i]`` the index in ``self.text`` of its ``i``-th
+        character; None for a page with none. A mark is what ``_MARK_RE``
+        reads after a word and before its punctuation, set as a
+        superscript (``_raised``). A quote copied from the text often
+        leaves such a mark out, and baseline numbers never are one."""
+        if self._bare is None:
+            marks = [m.span(1) for m in _MARK_RE.finditer(self.text) if self._raised(*m.span(1))]
+            if not marks:
+                self._bare = ()
+            else:
+                parts, at, last = [], array("I"), 0
+                for s, e in marks:
+                    parts.append(self.text[last:s])
+                    at.extend(range(last, s))
+                    last = e
+                parts.append(self.text[last:])
+                at.extend(range(last, len(self.text)))
+                self._bare = ("".join(parts), at)
+        return self._bare or None
+
+    def _raised(self, s: int, e: int) -> bool:
+        """Whether ``text[s:e]`` is set as a superscript after the letter
+        before it: each of its glyphs 0.45 to 0.82 of that letter's height
+        and raised by 0.18 to 0.65 of it, starting at most that height past
+        it, and the punctuation after it back on the letter's baseline. The
+        boxes are in PDF user space, bottom under top: in text set turned
+        on its page the test fails, and its marks stay part of the text."""
+        letter, after = self.box(self.glyph_at[s - 1]), self.box(self.glyph_at[e])
+        size = letter[3] - letter[1]
+        if size <= 0 or not has_box(after) or abs(after[1] - letter[1]) >= 0.15 * size:
+            return False
+        first = self.box(self.glyph_at[s])
+        if not -0.2 * size <= first[0] - letter[2] <= size:
+            return False
+        for gi in range(self.glyph_at[s], self.glyph_at[e - 1] + 1):
+            box = self.box(gi)
+            if not (has_box(box) and 0.45 * size <= box[3] - box[1] <= 0.82 * size
+                    and 0.18 * size <= box[1] - letter[1] <= 0.65 * size):
+                return False
+        return True
 
 
 def glyphs_under(page: PageText, quads) -> list[int]:
@@ -653,7 +703,9 @@ class Match(NamedTuple):
     order, the text between them not the passage's; empty when
     ``start``..``end`` is all of it. ``below``: the best place found,
     whose confidence is under the one a match is applied from, given only
-    to a caller that asks (``find_passage``'s ``closest``)."""
+    to a caller that asks (``find_passage``'s ``closest``). ``twin``:
+    another place of its page, apart from it, ranks as high (two copies
+    of a passage nothing tells apart)."""
     page: int
     start: int
     end: int
@@ -661,6 +713,7 @@ class Match(NamedTuple):
     part: bool = False
     spans: tuple = ()
     below: bool = False
+    twin: bool = False
 
 
 class Piece(NamedTuple):
@@ -683,19 +736,69 @@ def _edges(needle: str, context) -> tuple[bool, bool]:
             needle[-1].isalnum() and not (after and after[0].isalnum()))
 
 
+@lru_cache(maxsize=256)
+def _hyphens_optional(needle: str):
+    """``needle`` as a pattern in which each hyphen inside a word may be
+    missing from the text, or None for a needle without one. ``PageText``
+    joins a word hyphenated at a line's end whole, and cannot tell a
+    compound's own hyphen there ("Carr-Purcell-" + "Meiboom", "π-" +
+    "pulses") from typesetting; a quote copied from the text keeps it. A
+    hyphen between two letters alone ("x-y") or beside a digit ("53-70")
+    is no word's, and stays."""
+    parts, last = [], 0
+    for m in _WORD_HYPHEN_RE.finditer(needle):
+        if max(len(m.group(1)), len(m.group(2))) > 1:
+            parts.append(re.escape(needle[last:m.end(1)]) + "-?")
+            last = m.end(1) + 1
+    if not parts:
+        return None
+    parts.append(re.escape(needle[last:]))
+    return re.compile("".join(parts))
+
+
 def _exact(text: str, needle: str, edges: tuple[bool, bool], lo: int = 0, hi: int | None = None):
-    """The starts of ``needle``'s copies in ``text`` that start from ``lo``
-    to ``hi`` and lie on word edges where ``edges`` (``_edges``) asks:
-    "ion" in "motion" or "fig. 1" in "fig. 12" is not the passage."""
+    """The ``(start, end)`` of ``needle``'s copies in ``text`` that start
+    from ``lo`` to ``hi`` and lie on word edges where ``edges``
+    (``_edges``) asks: "ion" in "motion" or "fig. 1" in "fig. 12" is not
+    the passage. A hyphen inside one of its words may be missing from the
+    copy (``_hyphens_optional``)."""
     need_start, need_end = edges
     hi = len(text) if hi is None else hi
-    at = text.find(needle, lo)
-    while 0 <= at <= hi:
-        end = at + len(needle)
+    pattern = _hyphens_optional(needle)
+    for at, end in _copies(text, needle, pattern, lo, hi):
         if not ((need_start and at > 0 and text[at - 1].isalnum())
                 or (need_end and end < len(text) and text[end].isalnum())):
-            yield at
-        at = text.find(needle, at + 1)
+            yield at, end
+
+
+def _copies(text: str, needle: str, pattern, lo: int, hi: int):
+    """Every ``(start, end)`` of ``needle`` in ``text`` that starts from ``lo``
+    to ``hi``, overlapping ones too: by ``pattern`` when there is one."""
+    if pattern is None:
+        at = text.find(needle, lo)
+        while 0 <= at <= hi:
+            yield at, at + len(needle)
+            at = text.find(needle, at + 1)
+        return
+    m = pattern.search(text, lo)
+    while m and m.start() <= hi:
+        yield m.span()
+        m = pattern.search(text, m.start() + 1)
+
+
+def _exact_copies(page: PageText, needle: str, edges: tuple[bool, bool]) -> list[tuple[int, int]]:
+    """``needle``'s exact copies on ``page`` (``_exact``), or, with none,
+    the copies its text has once its reference marks are left out
+    (``PageText.without_marks``): a quote that leaves out "159,160" in
+    "sequence159,160." is that passage, word for word. Such a copy is
+    ``(start, end)`` in the page's text, the marks inside it covered, one
+    at its end only when the needle runs on to the punctuation after it."""
+    copies = list(_exact(page.text, needle, edges))
+    bare = None if copies else page.without_marks()
+    if bare:
+        text, at = bare
+        copies = [(at[s], at[e - 1] + 1) for s, e in _exact(text, needle, edges)]
+    return copies
 
 
 def _piece_hits(page: PageText, piece: Piece, wlo: int, whi: int, exact_chars: int) -> list[tuple]:
@@ -710,7 +813,7 @@ def _piece_hits(page: PageText, piece: Piece, wlo: int, whi: int, exact_chars: i
         return []
     text = piece.text
     lo, hi = page.word_starts[wlo], page.word_ends[whi - 1]
-    hits = [(0.0, at, at + len(text)) for at in _exact(page.text, text, _edges(text, piece.context), lo, hi - len(text))]
+    hits = [(0.0, at, end) for at, end in _exact(page.text, text, _edges(text, piece.context), lo, hi - len(text))]
     if hits or len(text) < exact_chars:
         return hits
     words = text.split()
@@ -811,9 +914,9 @@ def _by_pieces(pages: dict, pieces: list[Piece], tick=None, *, exact_chars: int 
     found, tried = [], set()
     for page_no, page in pages.items():
         _breathe()
-        for at in _exact(page.text, anchor.text, edges):
-            tried.add((page_no, at, at + len(anchor.text)))
-            found.append(chain(page_no, at, at + len(anchor.text)))
+        for at, end in _exact(page.text, anchor.text, edges):
+            tried.add((page_no, at, end))
+            found.append(chain(page_no, at, end))
     if any(found) or len(anchor.text) < exact_chars:
         return [m for m in found if m]
     words = _words_of(anchor.text)
@@ -856,7 +959,8 @@ def find_passage(pages: dict, needle: str, *, hint_page: int = 1, context: tuple
     place nearest the old one by ``near(page, start, end)``, a distance the
     caller measures (``place_all`` measures it between the candidate's
     glyphs and the highlight's rectangles, each as fractions of its own
-    page).
+    page). The best is marked ``twin`` when another candidate of its page,
+    apart from it, scores as high.
 
     The best candidate is the answer when its confidence reaches
     ``min_match`` (1.0 for a needle shorter than ``exact_chars``), else
@@ -877,7 +981,7 @@ def find_passage(pages: dict, needle: str, *, hint_page: int = 1, context: tuple
     found = []
     for page_no, page in pages.items():
         _breathe()
-        found.extend(Match(page_no, at, at + len(needle), 1.0) for at in _exact(page.text, needle, edges))
+        found.extend(Match(page_no, at, end, 1.0) for at, end in _exact_copies(page, needle, edges))
     fits: dict = {}
 
     def fit(m: Match) -> float:
@@ -919,11 +1023,16 @@ def find_passage(pages: dict, needle: str, *, hint_page: int = 1, context: tuple
     if not found:
         return None
 
+    def score(m: Match) -> float:
+        return m.confidence + CONTEXT_WEIGHT * fit(m) if has_context else m.confidence
+
     def rank(m: Match):
-        score = m.confidence + CONTEXT_WEIGHT * fit(m) if has_context else m.confidence
-        return -score, abs(m.page - hint_page), near(m.page, m.start, m.end) if near else 0.0
+        return -score(m), abs(m.page - hint_page), near(m.page, m.start, m.end) if near else 0.0
 
     best = min(found, key=rank)
+    top = score(best)
+    if any(m.page == best.page and (m.end <= best.start or m.start >= best.end) and score(m) == top for m in found):
+        best = best._replace(twin=True)
     if best.confidence >= (min_match if rough else 1.0):
         return best
     return best._replace(below=True) if rough and closest is not None and best.confidence >= closest else None
@@ -1105,38 +1214,100 @@ class Doc:
         return dict(self._texts)
 
 
-QUOTE_REACH = 1  # the pages either side of the one an agent names that its quote is looked for on too
+QUOTE_REACH = 1  # the pages either side of the one a quote names that it is looked for on too
+CITE_MAX_QUOTE = 2000  # the longest quote a citation link carries (ai_tools.citation_prompt, gammaLinks.js MAX_QUOTE)
 
 
-def place_quote(src, quote: str, page_no: int) -> tuple[dict | None, str, float]:
-    """Where an agent's ``quote`` of PDF page ``page_no`` (1-based) stands
-    in the file ``src`` (what ``Doc`` takes), for a highlight it makes
-    (gamma/annotations/places.py): ``(position, spelled, 1.0)``, the stored
-    position of an exact copy ``find_passage`` finds on that page or the
-    ``QUOTE_REACH`` pages either side (the named page first among equals;
-    exact as the search folds text: case, dashes, quotes, ligatures, a word
-    hyphenated at a line's end, the spaces), and its text as the file
-    spells it. Anything less is no place for an agent's quote, which it
-    copied from the text: ``(None, spelled, confidence)`` of the closest
-    passage, from ``CLOSEST_MIN`` alike on, else ``(None, "", 0.0)``.
-    ValueError for a page the file does not have (or past ``MAX_PAGES``),
-    or an exact copy with no glyph box to draw over."""
+class Quoted(NamedTuple):
+    """Where ``find_quote`` found a quote: the PDF ``page``, the stored
+    ``position`` of the glyphs it covers (None for a place under the
+    threshold, ``below``, or one without a glyph box), its text as the
+    file ``spelled`` it, its ``confidence`` (1.0 for an exact copy) and
+    whether another place of its page reads as alike (``twin``)."""
+    page: int
+    position: dict | None
+    spelled: str
+    confidence: float
+    below: bool
+    twin: bool
+
+
+def find_quote(src, quote: str, page_no: int) -> Quoted | None:
+    """Where a ``quote`` someone copied from PDF page ``page_no`` (1-based)
+    stands in the file ``src`` (what ``Doc`` takes): ``find_passage`` over
+    that page and the ``QUOTE_REACH`` pages either side, the named page
+    first among equals, with no context. Exact as the search folds text
+    (case, dashes, quotes, ligatures, a word hyphenated at a line's end,
+    the spaces), a hyphen inside a word or a reference mark the quote
+    leaves out (``_exact_copies``); else rough from ``ROUGH_APPLY``; else
+    the closest place from ``CLOSEST_MIN``, ``below``. None when nothing
+    reads that alike. ValueError for a page the file does not have (or
+    past ``MAX_PAGES``).
+
+    The named page is read alone first, and the pages beside it only when
+    it holds no exact copy: reading a page is most of the time a lookup
+    takes (about 150 ms, the search a few), and an exact copy there wins
+    over any beside it, as the named page wins a tie."""
     with Doc(src) as doc:
         if not 1 <= page_no <= doc.count:
             raise ValueError(f"the PDF has no page {page_no}" + (f" (it has {doc.count})" if doc.count else ""))
-        pages = {n: doc.text(n) for n in range(max(1, page_no - QUOTE_REACH), min(doc.count, page_no + QUOTE_REACH) + 1)}
-        match = find_passage(pages, normalize_quote(quote), hint_page=page_no, closest=CLOSEST_MIN)
+        needle = normalize_quote(quote)
+        pages = {page_no: doc.text(page_no)}
+        match = find_passage(pages, needle, hint_page=page_no, closest=CLOSEST_MIN)
+        if match is None or match.confidence < 1.0:
+            pages = {n: doc.text(n) for n in range(max(1, page_no - QUOTE_REACH),
+                                                   min(doc.count, page_no + QUOTE_REACH) + 1)}
+            match = find_passage(pages, needle, hint_page=page_no, closest=CLOSEST_MIN)
         if match is None:
-            return None, "", 0.0
+            return None
         spans = _spans(match)
-        spelled = _spelled(pages[match.page], spans)
-        if match.confidence < 1.0:
-            return None, spelled, match.confidence
-        boxes = _boxes(pages, match, spans)
-        if not boxes:
-            raise ValueError(f"that passage of PDF page {match.page} has no glyph drawn to mark: comment on the "
-                             "page instead")
-        return _position(match.page, doc.frame(match.page), boxes), spelled, match.confidence
+        boxes = [] if match.below else _boxes(pages, match, spans)
+        return Quoted(match.page, _position(match.page, doc.frame(match.page), boxes) if boxes else None,
+                      _spelled(pages[match.page], spans), match.confidence, match.below, match.twin)
+
+
+def place_quote(src, quote: str, page_no: int) -> tuple[dict | None, str, float]:
+    """Where an agent's ``quote`` of PDF page ``page_no`` stands in the file
+    ``src``, for a highlight it makes (gamma/annotations/places.py):
+    ``(position, spelled, 1.0)`` for an exact copy ``find_quote`` finds,
+    the first on its page. Anything less is no place for an agent's quote,
+    which it copied from the text: ``(None, spelled, confidence)`` of the
+    closest passage, from ``CLOSEST_MIN`` alike on, else ``(None, "",
+    0.0)``. ValueError for a page the file does not have, or an exact copy
+    with no glyph box to draw over."""
+    found = find_quote(src, quote, page_no)
+    if found is None:
+        return None, "", 0.0
+    if found.confidence < 1.0:
+        return None, found.spelled, found.confidence
+    if found.position is None:
+        raise ValueError(f"that passage of PDF page {found.page} has no glyph drawn to mark: comment on the "
+                         "page instead")
+    return found.position, found.spelled, found.confidence
+
+
+def cite(src, quote: str, page_no: int) -> dict:
+    """Where a chat citation's ``quote`` of PDF page ``page_no`` is drawn
+    (``GET /api/pages/{id}/citation``, docs/dev/pdf_citations.md): the place
+    ``find_quote`` finds as ``{"status": "matched", "page", "match",
+    "rects"}``, ``match`` 1.0 for an exact copy, else its confidence to two
+    decimals and at most 0.99, ``rects`` ``[x1, y1, x2, y2]`` fractions of
+    the page as shown (top-left origin, four decimals); ``{"status":
+    "ambiguous", "page"}`` when another place of that page reads as alike
+    (``twin``: two copies, which a quote without context cannot tell
+    apart); ``{"status": "missing"}`` when nothing reads alike from
+    ``ROUGH_APPLY``. ValueError as ``find_quote``'s."""
+    found = find_quote(src, quote, page_no)
+    if found is None or found.below or found.position is None:
+        return {"status": "missing"}
+    if found.twin:
+        return {"status": "ambiguous", "page": found.page}
+    pos = found.position
+    w, h = _size(pos)
+    rects = [[round(_clamp01(v), 4) for v in (r["x1"] / w, r["y1"] / h, r["x2"] / w, r["y2"] / h)]
+             for r in pos["rects"]]
+    match = 1.0 if found.confidence >= 1.0 else min(round(found.confidence, 2), 0.99)
+    return {"status": "matched", "page": found.page, "match": match, "rects": rects}
 
 
 def page_highlights(conn, page_id: str, *, unplaced: bool = False) -> list[tuple[str, dict]]:

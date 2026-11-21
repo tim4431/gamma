@@ -119,6 +119,9 @@ def test_colored_runs_keep_only_their_colors():
 def test_refs_read_as_the_text_they_name():
     html = note_html(node("see [[blk1]] and ![[gone]]"), resolve_ref=resolve_ref)
     assert html == "<p>see Ref text and gone</p>"
+    # a [[id|words]] reads as its words; an embed's are none
+    html = note_html(node("see [[blk1|the plan]] and ![[blk1|x]]"), resolve_ref=resolve_ref)
+    assert html == "<p>see the plan and Ref text</p>"
 
 
 def test_images():
@@ -446,6 +449,7 @@ def test_store_images_puts_each_data_uri_in_storage():
     ("> quoted <u>words</u>", "quoted words"),
     ("```\ncode\n```", "code"),
     ("see [[blk1]] and https://x.org/p", "see blk1 and https://x.org/p"),
+    ("see [[blk1|the plan]]", "see the plan"),
 ])
 def test_title_text(content, title):
     assert title_text(content) == title

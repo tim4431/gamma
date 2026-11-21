@@ -64,9 +64,9 @@ test("the agent named whose and where, and the send button saying what it starts
   assert.equal(agentName(FAR), "Codex on TIM-PC");
   assert.equal(agentName({ ...FAR, lentBy: "alice" }), "alice's Codex on TIM-PC", "a co-author's");
   assert.equal(agentName(null), "");
-  assert.deepEqual(sendLabel(FAR, "Send reply", "Shift+Enter"),
-    { label: "Send to Codex on TIM-PC", title: "Send to Codex on TIM-PC (Shift+Enter)" }, "ticked");
-  assert.deepEqual(sendLabel(null, "Comment", "Shift+Enter"), { label: "Comment", title: "Comment (Shift+Enter)" }, "unticked");
+  assert.deepEqual(sendLabel(FAR, "Send reply", "Enter"),
+    { label: "Send to Codex on TIM-PC", title: "Send to Codex on TIM-PC (Enter)" }, "ticked");
+  assert.deepEqual(sendLabel(null, "Comment", "Enter"), { label: "Comment", title: "Comment (Enter)" }, "unticked");
 });
 
 test("an edit that newly names an agent says saving sends it there, or why the server will not", () => {

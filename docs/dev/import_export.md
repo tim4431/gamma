@@ -287,7 +287,7 @@ Import → Summary.
 
 - The review is a background job ([tasks.md](tasks.md)):
   `POST /api/jobs/import-preview` takes the file, its `source` (`zotero`,
-  `markdown-zip`, `markdown-file`, `obsidian`, `gamma`, `note-apps`, `notability`, `goodnotes`), an optional `folder` (the
+  `markdown-zip`, `markdown-file`, `obsidian`, `gamma`, `note-apps`), an optional `folder` (the
   destination folder's id, `""` the library's top; 400 when it is no
   folder, or is a work folder or one of its directories, which follow the
   disk ([work_folders.md](work_folders.md); `import_review.destination`))
@@ -781,7 +781,14 @@ The rest of this section holds for every dialect unless it says otherwise:
   `[Sub](Parent%20<id>/Sub%20<id>.md)`, whose balanced `( )` stay unencoded
   as in `Tasks%20(grid%20view)%20<id>.csv`, Gamma's `[label](Page-id.md)` and
   `*(from [title](file.md))*`) and Obsidian wikilinks (`[[Note]]`,
-  `[[Note|alias]]`, `[[folder/Note]]`) alike. A target is resolved relative
+  `[[Note|alias]]`, `[[folder/Note]]`) alike. A wikilink's alias is the
+  mention's words, `[[id|alias]]` ([mentions.md](mentions.md) "Page links
+  with words of their own"; `\|` in a table's cell, which resolves the note
+  too), and so is a Markdown link's label when it says more than the note's
+  file name or title, in any case and spacing, and holds no bracket
+  (`label_alias`; `[[One]](Two.md)` reads its wikilink first). A note of
+  Notion's keeps no label (`label_words`): Notion labels a link with the
+  page's title, marks and all. An embed's alias is none. A target is resolved relative
   to the note, then as an exact vault path, then by basename anywhere in the
   zip (nearest directory wins), case-insensitively — Obsidian's own rule.
   `[[Note#Heading]]` and `[[Note#^id]]` point at that heading block
@@ -1270,7 +1277,7 @@ rechecks the current library, and leaves actual results and warnings in the dial
 
 ## Notability notes
 
-`POST /api/import/notability` (View menu ≡ → Import… → Notability & GoodNotes;
+`POST /api/import/note-apps` (View menu ≡ → Import… → Notability & GoodNotes;
 `gamma/notability_import.py`, which reads a note through
 `gamma/notability.py` and `gamma/notability_archive.py` and places it through
 `gamma/notability_map.py`) imports Notability's "Note" export. A `.note` is a
@@ -1284,10 +1291,9 @@ shared with the [GoodNotes import](#goodnotes-notebooks)
 (`gamma/note_app_import.py`). The upload is one `.note` or `.ntb`, several picked together (the
 dialog packs them into one `.zip`), a `.zip` of them (a library's export),
 or a zip of an unzipped note folder (`.nbn`, iCloud's form). Each note
-becomes one page. It is a source of the
-reviewed import above (`source` `note-apps` from the dialog's card, which
-reads GoodNotes notebooks in the same upload; `notability` alone for
-scripts), so the import itself is the
+becomes one page. It is read by the
+reviewed import's `note-apps` source above, which reads GoodNotes
+notebooks in the same upload, so the import itself is the
 `import` job. The format, its sources and what was decided where they
 disagree are in [research/notability-format.md](../research/notability-format.md).
 
@@ -1721,15 +1727,15 @@ the same way.
 
 ## GoodNotes notebooks
 
-`POST /api/import/goodnotes` (View menu ≡ → Import… → Notability & GoodNotes;
+`POST /api/import/note-apps` (View menu ≡ → Import… → Notability & GoodNotes;
 `gamma/goodnotes_import.py`, which reads a notebook through
 `gamma/goodnotes.py`, `gamma/goodnotes_codec.py` and `gamma/rtf.py` and
 places it through `gamma/goodnotes_map.py`) imports GoodNotes' own format,
 the `.goodnotes` its iPad, iPhone and Mac apps export. The upload is one
 `.goodnotes`, several picked together (the dialog packs them into one
 `.zip`), a `.zip` of a folder's export, or a `.goodnotes.zip` backup. Each
-notebook becomes one page. It is a source of the reviewed import (`source`
-`note-apps` from the dialog's card, `goodnotes` alone for scripts), and it shares the run over the upload, its guards, the
+notebook becomes one page. It is read by the reviewed import's `note-apps`
+source, with Notability's notes in the same upload, and it shares the run over the upload, its guards, the
 commit, the storing of pictures and the report with the Notability import
 (`gamma/note_app_import.py`): what [Notability notes](#notability-notes)
 says of one note at a time, of folders, of a 507 and a note skipped, of the
@@ -1976,7 +1982,7 @@ computed by the same function on the note's own layout:
 - Its file goes under `Images/` as it is. An animated GIF is its still
   frame under `Images/` and the GIF under `Assets/<id>/media.gif`, as
   Notability keeps one. Notability takes no SVG, so an SVG is a PNG of it,
-  `SVG_PNG_SIDE` (2048) px on its longer side; one that does not draw is
+  `pdf_image.SVG_DRAW_SIDE` (2048) px on its longer side; one that does not draw is
   left out and said ("picture svg"). Two pictures that show one file are
   written as two files.
 - A surface's pictures come before its boxes in `zIndex`, and both before
@@ -2125,7 +2131,7 @@ A highlight's notes stay behind, counted as notes.
   whole goes as it is; any other is its pixels upright (the EXIF
   orientation the browser applies), cut to its crop and flipped, a JPEG
   again for a JPEG and a PNG for anything else, an SVG drawn first
-  (`SVG_PNG_SIDE`). One file per picture file and look.
+  (`pdf_image.SVG_DRAW_SIDE`). One file per picture file and look.
 
 **Left out, and said:** the notes (beside the page, under a highlight or
 a recording), recordings, a sheet on a PDF page, handwriting or a picture
@@ -2175,7 +2181,7 @@ non-highlight subtree one note written by `zotero_notes.note_html`, the
 inverse of the import's tree, its first block as its own element and the
 blocks under it as one list, as the page shows them (so a Zotero note's
 later paragraphs come back to Zotero as list items): headings, lists numbered or not, quotes, code,
-math, tables and links, a `[[ref]]` as the text it names, an image's alt and
+math, tables and links, a `[[ref]]` as the text it names (a `[[id|words]]` as its words), an image's alt and
 width as its `<img>`'s. A note page (`zotero_note` equal to `zotero_key`)
 goes back as a standalone note, its title an `<h1>` and then its blocks,
 and is left out when notes are off. The page's "Attachments" block is no
@@ -2692,7 +2698,8 @@ outside code to `![alt|N](url)`. Block links resolve against the export set
 (`resolve_block_links` + `_MarkdownBuilder.begin`'s page-id → filename map):
 a `[[ref]]` or PDF link region whose target page is in the same export
 becomes a relative link to that page's .md — so a folder zip is
-self-contained — and reads as plain text otherwise; a `![[embed]]`
+self-contained — and reads as plain text otherwise, its label the target's
+first line or a `[[id|words]]`'s words; a `![[embed]]`
 materializes the synced block's content with a *(from …)* attribution,
 nested embeds degrading to mentions; ids the resolver doesn't know stay as
 typed) and
@@ -2936,7 +2943,8 @@ one page.
 - **Links**: `[[id]]` / `![[id]]` whose target is in the export become
   `[[Title]]` for a page (`[[dir/Title]]` when two exported pages share a
   name — Obsidian's rule), `[[Title#^id]]` / `![[Title#^id]]` for a block
-  (`[[#^id]]` on the same page), and the target block gets ` ^id` written:
+  (`[[#^id]]` on the same page), a `[[id|words]]` the same with `|words` as
+  its alias (`\|` in a table's row), and the target block gets ` ^id` written:
   on its bullet line in a list, at the end of a paragraph, on its own line
   after a fence / table / quote / callout, a block that ends in a fence (text
   after a closing line would leave it open) or, under the bullet, a block that
@@ -3050,7 +3058,9 @@ changes a row and no block code:
   percent-encoded as Notion's own are; a mention of a block links its page;
   one outside the export is its label. A block's label is its first line less
   a list marker, or its page's title when that line has no words, as a code
-  block's or an image's has not.
+  block's or an image's has not; a `[[id|words]]`'s label is its words, and
+  on a line of its own it stays a link, not a page block, whose title would
+  be the page's.
 - **Images and other files**: an uploaded image goes in the page's directory
   (`Paper/<sha>.png`), its `|300` size gone, and an image from the web stays at
   its address. Handwriting is rendered as an SVG beside it, untried in Notion.

@@ -106,16 +106,19 @@ const passages = (selections) =>
 // What a message posts (POST /api/local-agents/chat/turns): the id the
 // client minted (the same on a retry, so the turn is made once), the
 // bucket, the text trimmed, the PDF passages selected, and what was chosen
-// for the conversation (`choice`: {agent, model, effort, dir}): the agent
-// picked, the model and effort, neither sent when it is the agent's
-// default, and where a conversation that begins works (`dir`: an offered
-// directory's id, "" for one of its own; null, not sent, for the
-// conversation's own).
-export function turnBody(id, bucket, text, selections = [], choice = null) {
+// for the conversation (`choice`: {agent, model, effort, speed, dir}): the
+// agent picked, the model, effort and speed, none sent when it is the
+// agent's default, and where a conversation that begins works (`dir`: an
+// offered directory's id, "" for one of its own; null, not sent, for the
+// conversation's own), and the skill the message runs (`skill`: {id, name,
+// args}, chat/skills.js splitSkill; its text is then the arguments).
+export function turnBody(id, bucket, text, selections = [], choice = null, skill = null) {
   return {
     id, bucket, text: String(text || "").trim(), selections: passages(selections),
+    ...(skill ? { skill } : {}),
     ...(choice?.agent ? { agent: choice.agent } : {}),
     ...(choice?.model ? { model: choice.model } : {}), ...(choice?.effort ? { effort: choice.effort } : {}),
+    ...(choice?.speed ? { speed: choice.speed } : {}),
     ...(choice?.dir != null ? { dir: choice.dir } : {}),
   };
 }
@@ -149,20 +152,23 @@ export function lastEnded(conversation) {
   return (conversation?.messages || []).findLast((m) => m.role === "agent" && m.ended_at)?.ended_at || null;
 }
 
-// The model and effort a conversation goes on with: the person's choice
-// for it in this tab (`picked`), else what its newest turn ran with (the
-// agent's message keeps `model` and `effort`, null for the default; one
-// from before it kept them says nothing), each kept only while the agent
-// still lists it; "" is the agent's default. `shown` is the model the chip
-// names: the one chosen, else the agent's default, else its first.
+// The model, effort and speed a conversation goes on with: the person's
+// choice for it in this tab (`picked`), else what its newest turn ran with
+// (the agent's message keeps `model`, `effort` and `speed`, null for the
+// default; one from before it kept them says nothing), each kept only
+// while the agent still lists it; "" is the agent's default. `shown` is
+// the model the chip names: the one chosen, else the agent's default, else
+// its first.
 export function modelChoice(models, conversation = null, picked = null) {
   const listed = models || [];
-  const ran = (conversation?.messages || []).findLast((m) => m.role === "agent" && ("model" in m || "effort" in m));
-  const said = picked || (ran ? { model: ran.model || "", effort: ran.effort || "" } : null);
+  const ran = (conversation?.messages || []).findLast((m) => m.role === "agent"
+    && ("model" in m || "effort" in m || "speed" in m));
+  const said = picked || (ran ? { model: ran.model || "", effort: ran.effort || "", speed: ran.speed || "" } : null);
   const model = listed.some((m) => m.id === said?.model) ? said.model : "";
   const shown = listed.find((m) => m.id === model) || listed.find((m) => m.default) || listed[0] || null;
   const effort = said?.effort && (shown?.efforts || []).includes(said.effort) ? said.effort : "";
-  return { model, effort, shown };
+  const speed = said?.speed && (shown?.speeds || []).includes(said.speed) ? said.speed : "";
+  return { model, effort, speed, shown };
 }
 
 // What the model chip reads: the model's name and the effort chosen
@@ -225,7 +231,7 @@ function askedStep(step, path) {
 }
 
 const ASKED = new Set(["asked", "allowed", "declined"]);
-// Gamma's tools that write as the agent (gamma/ai_tools.py WRITING_TOOLS,
+// Gamma's tools that write as the agent (gamma/ai_tools/registry.py WRITING_TOOLS,
 // gamma/local_agents/events.py GAMMA_WRITES): a call of one is worded as a
 // write.
 const GAMMA_WRITES = new Set(["comment", "resolve", "highlight"]);
@@ -321,14 +327,14 @@ export function turnChanges(message) {
 }
 
 // The person's message a failed turn answered, what Retry sends again
-// ({text, selections}); null when there is none or the turn is not the
-// conversation's newest.
+// ({text, selections, skill}: `skill` null for a message that ran none);
+// null when there is none or the turn is not the conversation's newest.
 export function retryOf(conversation, message) {
   const messages = conversation?.messages || [];
   const at = messages.indexOf(message);
   const asked = at > 0 ? messages[at - 1] : null;
-  if (message?.state !== "failed" || at !== messages.length - 1 || asked?.role !== "user" || !asked.text) return null;
-  return { text: asked.text, selections: asked.selections || [] };
+  if (message?.state !== "failed" || at !== messages.length - 1 || asked?.role !== "user" || !(asked.text || asked.skill)) return null;
+  return { text: asked.text || "", selections: asked.selections || [], skill: asked.skill || null };
 }
 
 // How a turn ended, when it did not answer: the reason it failed (the
@@ -600,12 +606,13 @@ export function stripLine(info, live = null, now = new Date()) {
   return { text: info.folder ? `${here} · ${info.folder}` : here, kind: "ready" };
 }
 
-// Whether a message can go now: something written, no turn of the
-// conversation still to end, and an agent that is not known to be unable
-// to run (the server refuses the rest, with its reason). Another computer
-// that is away takes none: the server queues nothing for it.
-export function canSend(info, conversation, text) {
-  return !!String(text || "").trim() && !liveTurn(conversation) && !info?.turn && !info?.paused
+// Whether a message can go now: something written or a skill to run
+// (`skill`), no turn of the conversation still to end, and an agent that
+// is not known to be unable to run (the server refuses the rest, with its
+// reason). Another computer that is away takes none: the server queues
+// nothing for it.
+export function canSend(info, conversation, text, skill = null) {
+  return (!!String(text || "").trim() || !!skill) && !liveTurn(conversation) && !info?.turn && !info?.paused
     && info?.ready !== false && !awayFrom(info);
 }
 
@@ -640,7 +647,8 @@ export function stepChip(step) {
 // The conversation in the shape the chat's transcript draws Gamma AI's in
 // (chat/ChatTranscript.jsx), `info` the strip's facts (the server's
 // `computer`, else the picked agent's: chat/agents.js stripFacts). A
-// person's message is {id, role: "user", text, passages: [{text, page}]};
+// person's message is {id, role: "user", text, passages: [{text, page}],
+// skill?} (`skill` the {id, name, args} it ran, its chip);
 // the agent's {id, role: "ai", turnId, label, text, partial, pill, actions,
 // asks, files, notice, threads, model, effort}: `partial` while its turn
 // is queued or running (the reply as it is typed), `pill` the steps pill's {label,
@@ -668,7 +676,9 @@ export function shownMessages(conversation, info) {
   const models = info?.models || [];
   const vault = info?.dir?.kind === "vault";
   return (conversation?.messages || []).flatMap((m) => {
-    if (m.role === "user") return [{ id: m.id, role: "user", text: m.text || "", passages: passagesOf(m.selections) }];
+    if (m.role === "user") {
+      return [{ id: m.id, role: "user", text: m.text || "", passages: passagesOf(m.selections), ...(m.skill ? { skill: m.skill } : {}) }];
+    }
     const live = isLive(m);
     const by = m.label || label;
     const model = models.find((x) => x.id === m.model)?.label || m.model || "";
@@ -678,6 +688,7 @@ export function shownMessages(conversation, info) {
         id: `${m.id}:${k}`, role: "ai", turnId: m.turn_id, label: by, text: part.text, partial: false,
         pill: { label: turnLabel({ ...m, state: "done", steps: part.steps }, label), waiting: false, queued: false },
         actions: part.steps.map(stepChip), asks: [], files: null, notice: "", threads: [], model, effort: m.effort || "",
+        speed: m.speed || "",
       }] : []),
       { id: `${m.id}:steer:${part.steer.id}`, role: "user", text: part.steer.text, steered: true,
         passages: passagesOf(part.steer.selections) },
@@ -695,7 +706,7 @@ export function shownMessages(conversation, info) {
       asks: live ? m.asks || [] : [],
       files: files ? { ...files, vault } : null,
       notice: m.fresh ? freshLine(by) : "", threads: m.threads || [],
-      model, effort: m.effort || "",
+      model, effort: m.effort || "", speed: m.speed || "",
       ...(m.state === "failed" ? { ...(text ? {} : { error: true }), errorKind: "agent", errorProvider: by, errorSaid: endText(m) } : {}),
     }];
   });

@@ -14,7 +14,7 @@ import pytest
 
 from conftest import account_of, doc_props, login, make_page, make_user, thread_on, workspace_of
 from gamma import agents, ai_revert, ink as inkmod, storage
-from gamma.ai_tools import run_agent_tool
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.blocks_store import load_props
 from gamma.db import connect_pages_db
 from gamma.ops import apply_ops

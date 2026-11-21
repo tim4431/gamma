@@ -44,7 +44,7 @@ A thread on a range of a text file (a highlight with `text_position`,
 (`gamma/annotations/anchors.py`; [annotations.md](annotations.md) "The anchor").
 A note under a range takes the range's place. No version of the file is
 kept for it (`kept.KEPT_FORMATS`: the range carries the text around it,
-which is all its run needs), and its feedback entry names the file's own
+which is all its run needs), and its annotation entry names the file's own
 lines as its source, never SyncTeX's. When the file changes, the range is
 placed again by its quote ([highlight_relocation.md](highlight_relocation.md#text-files))
 and the thread follows its block; its card and its popover say it moved
@@ -345,7 +345,7 @@ of the page or the picture then, the region picture's crop, and a range's
 first and last line (`lines`). `comments.create` computes it from the rows, under
 its lock; the source line SyncTeX maps it to is added after the commit
 (`gamma/annotations/kept.py`). It never changes with the block: it is the
-place as commented, which the feedback reader compares with the block now.
+place as commented, which the annotations reader compares with the block now.
 A reply holds none, and nothing is backfilled for a root from before step
 54, whose place is read from its block. While its thread is open, the file
 it names is held from the upload sweep ([user_db.md](user_db.md) "What
@@ -449,9 +449,9 @@ once write one item. Each recipient's open page sockets then get a nudge
 characters of the text at the time: the note, the comment, the root
 comment for `resolved`, the page title or folder name for `shared`, the
 workspace's name for `invited`. A `[[link]]` in it is written as the words
-it shows (`inbox._named_refs`: a page's title, a note's first line, read from
-the workspace's pages.db), so the Inbox never shows a bare id; a link to
-nothing found stays as written.
+it shows (`inbox._named_refs`: a `[[id|words]]`'s words, else a page's
+title, a note's first line, read from the workspace's pages.db), so the
+Inbox never shows a bare id; a link to nothing found stays as written.
 
 **Reach.** `inbox.reach(ws, page_id, user_ids, via="")` answers
 `{user_id: share_token | ""}`. It gives `""` to an account with a role in
@@ -791,13 +791,13 @@ popover.
 Left out: the outliner's keys, "Paste as", image and file upload, sheets,
 embeds, presence carets and object drags.
 
-**The composer's keys.** `sendsOnShiftEnter` (`chat/enterKey.js`) and
-`composing` (`shared/lib/hotkeys.js`) decide Return. Enter breaks the line as in a note,
+**The composer's keys.** `sendsOnEnter` (`chat/enterKey.js`), the chat
+composer's, and `composing` (`shared/lib/hotkeys.js`) decide Return. Enter
+sends, as in the chat. Shift+Enter breaks the line as in a note,
 continuing a list or a quote (`mdLines.enterPlan`) outside a code fence or
-`$$…$$`. Shift+Enter and Ctrl/⌘+Enter send. On an on-screen keyboard
-Return breaks the line, Shift or not, and the button sends; Ctrl/⌘+Enter
-still sends from a tablet's keyboard. An edit's Save follows the same
-rule. While a picker, the "/" menu or the completion is open, it takes
+`$$…$$`. On an on-screen keyboard Return breaks the line and the button
+sends; Ctrl/⌘+Enter sends on either, for a tablet's keyboard. An edit's
+Save follows the same rule. While a picker, the "/" menu or the completion is open, it takes
 ↑ ↓ Enter Tab and Escape first. The field keeps its own undo history
 (`ownHistory`), so Ctrl/⌘+Z stays out of the page's block history, and F2
 stays with it too. The history starts afresh when the field's text is set
@@ -811,8 +811,8 @@ chat composer's `chatCircleBtn` at the size of a line of text
 is on the text's line while the text is one line, and at its last line
 once it wraps. The text is in the rendered comment's type and grows up to
 40vh, then scrolls. The button's hover title names the key
-(`"{label} ({hint})"` with `chordLabel("Shift-Enter")`: "Comment
-(Shift+Enter)", "⇧↩" on a Mac; `chordLabel("Mod-Enter")` on an on-screen
+(`"{label} ({hint})"` with `chordLabel("Enter")`: "Comment
+(Enter)", "↩" on a Mac; `chordLabel("Mod-Enter")` on an on-screen
 keyboard), and its accessible name is the plain action. An edit's field
 has Cancel and Save in a bar under its box, where the length warning shows
 too. Escape cancels an edit, and it closes once the server has it. The
@@ -851,7 +851,7 @@ share's visitor, whom the server would refuse); the tick's rules are
 - Ticked, the field says what it will start: its placeholder is *Ask
   Codex…* (a new comment) or *Reply to Codex…* (`tickedPlaceholder`), the
   round send button is named *Send to Codex* with *Send to Codex
-  (Shift+Enter)* as its title (`sendLabel`; unticked, the field's own
+  (Enter)* as its title (`sendLabel`; unticked, the field's own
   *Comment* or *Send reply*), and the bar says why the agent cannot
   answer now (its problem, or its computer offline, which the server
   refuses: `sendNote`). The comment posts `to`, the agent's id, or `""`
@@ -1032,7 +1032,7 @@ old first line, where its tag stands), in a column of its own beside the
 text (below, "The code view's column"). A note's threads, the
 page's own and the notes pane's controls keep the popover, and the notes
 pane has no comments section. On the server a thread on a region is a
-`region` anchor and a feedback entry of that kind ([annotations.md](annotations.md)
+`region` anchor and an annotation entry of that kind ([annotations.md](annotations.md)
 "The anchor").
 
 **When it shows.** While the document has a highlight with an open thread,
@@ -1382,13 +1382,13 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   `marginLayout.test.mjs` (a page's left edge and the stacking),
   `inboxText.test.mjs` (sentences, days, jumps, listings, marks, rings),
   `selectionTip.test.mjs`, `refLists.test.mjs`, `enterKey.test.mjs`
-  (`sendsOnShiftEnter`), `slashCommands.test.mjs` (a comment's commands)
+  (`sendsOnEnter`), `slashCommands.test.mjs` (a comment's commands)
   and `collabSession.test.mjs` (the `comments` and `inbox` messages).
 - Browser: the `comments` group (`tests/e2e/scenarios/comments.mjs`), with
   two editors, a viewer and a link visitor without an account. It covers a
   thread from each control, live replies, resolve, the Comments window, the
-  composer as a note's editor (pickers, math, the "/" menu, Enter and
-  Shift+Enter, the send button), drafts, `?thread=` and Copy link, Report
+  composer as a note's editor (pickers, math, the "/" menu, Enter sending
+  and Shift+Enter breaking the line, the send button), drafts, `?thread=` and Copy link, Report
   on another's comment and the admin resolving it in Settings → Server, the
   selection popup's Comment, and the PDF margin's cards (placement,
   activation, a reply, Escape, Resolve, no margin at fit-width; beside

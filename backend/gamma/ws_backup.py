@@ -59,6 +59,7 @@ from .db import (DATA_SCHEMA, PAGES_SCHEMA, account_names, connect_pages_db, con
                  page_now, register_functions, safe_ws_id, ws_dir)
 from .logbuf import log
 from .note_app_import import page_kind
+from .note_markup import BLOCK_REF_RE
 from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db,
                         normalize_pages_db, page_changes, page_ops_batch_id, pages_db_chats)
 from .search import index as text_index
@@ -73,7 +74,7 @@ FORMAT = "gamma-backup-1"
 # with the agent on its computer: computer_chats, and their turns run on
 # another computer: computer_chat_runs): empty in every zip, never replaced
 # by a restore.
-PRIVATE_TABLES = ("workspace_prefs", "page_follows", "computer_chats", "computer_chat_runs")
+PRIVATE_TABLES = ("workspace_prefs", "page_follows", "computer_chats", "computer_chat_runs", "agent_changes")
 SCRUB_CHUNK = 64 << 20             # bytes of zeros per row when a copy's free pages are overwritten
 MAX_PER_WORKSPACE = 20             # manual snapshots per workspace
 MAX_SCHEDULED_PER_WORKSPACE = 100  # scheduled ones per workspace, every task together
@@ -125,16 +126,30 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
     the bytes written so far of the estimated total. Returns the manifest."""
     from . import workspaces  # local: workspaces imports seed, which imports db
 
+    info = workspaces.get(ws) or {}
+    owner = workspaces.personal_owner(ws)
+    with connect_users_db() as conn:
+        names = account_names(conn, [owner, by])
+    named = {"workspace_name": info.get("name", ""), "kind": info.get("kind", ""),
+             "user": names.get(owner) or next(  # whose it is
+                 (m["username"] for m in workspaces.members(ws) if m["role"] == "owner"), ""),
+             "exported_by": names.get(by, "")}
+    return zip_files(ws, dest, named, uploads=uploads, label=label, progress=progress, scheduled=scheduled,
+                     task_id=task_id, auto=auto)
+
+
+def zip_files(ws: str, dest: Path, named: dict, *, uploads: bool = True, label: str = "", progress=None,
+              scheduled: bool = False, task_id: str = "", auto: bool = False) -> dict:
+    """The zip ``write_zip`` writes, from the workspace's files alone:
+    ``named`` gives the manifest's ``workspace_name``, ``kind``, ``user``
+    and ``exported_by``, which ``write_zip`` reads from users.db and the
+    standby page from a users.db it may only read (gamma/standby.py)."""
     progress = progress or jobs.no_progress
     root = ws_dir(ws)
     db_files = [root / n for n in ("pages.db", "data.db") if (root / n).exists()]
     estimate = storage.usage(ws) if uploads else 0
     done, total = 0, sum(_size(f) for f in db_files) + estimate
     progress(done=done, total=total, unit="bytes")
-    info = workspaces.get(ws) or {}
-    owner = workspaces.personal_owner(ws)
-    with connect_users_db() as conn:
-        names = account_names(conn, [owner, by])
     checks, stored, missing = {}, [], []
     # strict_timestamps=False: an upload dated before 1980 goes in as 1980 (backups.stream_zip)
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as z:
@@ -168,11 +183,7 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
         manifest = {
             "format": FORMAT,
             "workspace": ws,
-            "workspace_name": info.get("name", ""),
-            "kind": info.get("kind", ""),
-            "user": names.get(owner) or next(  # whose it is
-                (m["username"] for m in workspaces.members(ws) if m["role"] == "owner"), ""),
-            "exported_by": names.get(by, ""),
+            **named,
             "exported_at": page_now(),
             "label": label,
             "scheduled": scheduled,
@@ -190,6 +201,41 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
         base = f"workspaces/{safe_ws_id(ws)}"
     integrity.record({f"{base}/{name}": result for name, result in checks.items()}, "workspace backup")
     return manifest
+
+
+def slug(name: str, ws: str) -> str:
+    """A workspace's name as a file name's part (``ws`` for one with none)."""
+    return "".join(c if c.isalnum() else "-" for c in name).strip("-")[:40] or ws
+
+
+def export_name(name: str, ws: str, uploads: bool) -> str:
+    """What a workspace's export zip is saved as."""
+    return f"gamma-export{'' if uploads else '-db'}-{slug(name, ws)}-{page_now()[:10]}.zip"
+
+
+def export_all_name(username: str, uploads: bool) -> str:
+    """What Export all's zip is saved as."""
+    return f"gamma-export-all{'' if uploads else '-db'}-{username}-{page_now()[:10]}.zip"
+
+
+def write_bundle(dest: Path, parts: list[tuple[str, str, object]], progress=None) -> None:
+    """Several workspaces' export zips in one, each as ``<name>-<id>.zip``
+    (stored: they are compressed), each restoring on its own through
+    /api/import-data: Export all's zip. ``parts`` is ``[(ws, name,
+    write)]``, ``write(path, progress)`` writing that workspace's zip
+    (``write_zip``, or ``zip_files`` on the standby page). ``progress``
+    hears each workspace."""
+    progress = progress or jobs.no_progress
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_STORED) as bundle:
+        for n, (ws, name, write) in enumerate(parts):
+            progress(done=n, total=len(parts), unit="workspaces", item=name)
+            inner = Path(f"{dest}.{ws}.zip")
+            try:
+                write(inner, lambda **_: progress())
+                bundle.write(inner, f"{slug(name, ws)}-{ws}.zip")
+            finally:
+                inner.unlink(missing_ok=True)
+    progress(done=len(parts), total=len(parts), unit="workspaces", item="")
 
 
 def _strip_private(copy: Path) -> None:
@@ -631,7 +677,7 @@ def _review_import(ws, tdir, upload_names):
             top_folders = filed if parent and not destination_id else []
             blocks = fetch_subtree(src, row[0])
             ids = {b[0] for b in blocks}
-            references = {ref for b in blocks for ref in re.findall(r"\[\[([A-Za-z0-9_-]+)\]\]", b[3] or "")}
+            references = {m[2] for b in blocks for m in BLOCK_REF_RE.finditer(b[3] or "")}
             page_chats = ids & chats.keys()
             claimed_chats.update(page_chats)
             uploads = upload_refs([{"content": b[3], "props": json.loads(b[4] or "{}")} for b in blocks]

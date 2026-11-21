@@ -200,6 +200,12 @@ class Dialect:
         """Whether a ``[[Note]]`` in the note is a link, not text."""
         return True
 
+    def label_words(self, plan) -> bool:
+        """Whether a Markdown link's label in the note, when it says more than
+        the note it links to is named, is the words of the mention it becomes
+        (``[[id|words]]``): a person's own, not a title an export wrote."""
+        return True
+
     def absent_csv(self, leaf: str):
         """The stem (lower-cased) of the note that stands for a CSV the zip
         does not hold, ``leaf`` being the file a link names; else None."""

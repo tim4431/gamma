@@ -997,6 +997,18 @@ def test_a_mention_in_a_list_a_quote_and_a_table_resolves():
     assert [blocks[0].rich, blocks[1].rich, blocks[2].attrs["rows"][0][0]] == [link, link, link]
 
 
+def test_a_mention_with_words_shows_them():
+    """``[[id|words]]``: its words in place of the page's title, still a
+    link to it; on a line of its own, a link, not a page block (whose title
+    would be the page's)."""
+    assert model_of(node("see [[B|that page]] and [[a1|it]]"), page_id="B") == [
+        Block("paragraph", [text("see "), text("that page"), text(" and "), text("it", link="A.md")])]
+    assert model_of(node("[[B|that page]]"), page_id="A") == [
+        Block("paragraph", [text("that page", link="B.md")])]
+    blocks = model_of(node("| [[B\\|the cell]] |\n| --- |"), page_id="A")
+    assert blocks[0].attrs["rows"][0][0] == [text("the cell", link="B.md")]
+
+
 def test_a_mention_of_a_person_or_a_date_stays():
     assert model_of(node("@tim on @2026-10-09")) == [
         Block("paragraph", [("raw", "@tim", {}), text(" on "), ("raw", "@2026-10-09", {})])]

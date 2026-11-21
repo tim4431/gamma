@@ -67,6 +67,20 @@ _sessions: dict[str, Session] = {}
 _lock = threading.Lock()
 
 
+def file_extension(name: str) -> str:
+    """The extension a ``file`` upload named ``name`` is stored under
+    (``stored_extension``): 400 for an executable, or a drawing, which
+    always fits one request. An MCP assistant's ticket is refused by it
+    before a byte travels (gamma/mcp_upload.py)."""
+    try:
+        ext = stored_extension(name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if ext == ".ink":
+        raise HTTPException(status_code=400, detail="a drawing is uploaded in one request")
+    return ext
+
+
 def start(ws: str, size: int, name: str = "", kind: str = "pdf") -> Session:
     """Open an upload of ``size`` bytes into the workspace: the quota (507,
     ``check_upload_allowed``) is checked here, before a byte travels, and a
@@ -77,14 +91,7 @@ def start(ws: str, size: int, name: str = "", kind: str = "pdf") -> Session:
         raise HTTPException(status_code=400, detail="an upload needs a size")
     if kind not in ("pdf", "file"):
         raise HTTPException(status_code=400, detail="kind must be 'pdf' or 'file'")
-    ext = ".pdf"
-    if kind == "file":
-        try:
-            ext = stored_extension(name)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        if ext == ".ink":
-            raise HTTPException(status_code=400, detail="a drawing is uploaded in one request")
+    ext = file_extension(name) if kind == "file" else ".pdf"
     check_upload_allowed(ws, size)
     stale = []
     with _lock:

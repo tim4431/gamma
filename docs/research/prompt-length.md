@@ -3,7 +3,7 @@
 Can the chat's fixed instructions get shorter without the replies getting
 less accurate or the tools being used worse? Read from the code in October
 2026 (`routers/ai.py` `_SYSTEM_PROMPT`, `FIGURE_PROMPT`, `_chat_prompt`;
-`ai_tools.py` `CITATION_PROMPT`, `AGENT_PROMPT`, `agent_system`, `TOOLS`).
+`ai_tools/` `CITATION_PROMPT`, `AGENT_PROMPT`, `agent_system`, `TOOLS`).
 Nothing was changed and no provider was called. The numbers come from a
 script that builds the system prompt and tool specs the way `_chat_prompt`
 does and counts them with `tiktoken`'s `o200k_base`. Claude's tokenizer
@@ -117,7 +117,7 @@ that ask is in it.
 
 ## The edit modes, and how other tools ask for edits
 
-`edit_block` has five modes (`EDIT_MODES` in `ai_tools.py`;
+`edit_block` has five modes (`EDIT_MODES` in `ai_tools/notes.py`;
 [dev/ai_tools.md](../dev/ai_tools.md) "edit_block"):
 
 - `replace` sends the block's whole new text. It is refused unless the
@@ -258,7 +258,7 @@ Recommendation steps 1 and 2 are built:
   `delete_block` is armed too. "You cannot delete blocks" is gone; what the
   agent cannot delete is pages, folders and files ("Deleting pages stays
   impossible" in the restore line, and the module docstring of
-  `ai_tools.py`).
+  `ai_tools/`).
 - **Editing.** One "Note editing" paragraph, armed with the permission,
   replaces the old one and the separate `delete_block` paragraph. It says
   only what the specs cannot: the ids to use (from `read_block` or the

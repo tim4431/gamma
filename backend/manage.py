@@ -20,6 +20,9 @@ Usage:
   python manage.py set-member <workspace-id> <username> <owner|editor|viewer|none>
   python manage.py set-access <workspace-id> <private|public> [viewer|editor]
   python manage.py sweep-guests [--all]            # delete expired guest accounts now (--all: every guest)
+  python manage.py set-option <name> <value> ...   # server options of Settings (gamma/server_options.py)
+  python manage.py gdrive-client [--desktop] <id> <secret>  # this server's own Google app for Drive, in place of Gamma's
+  python manage.py gdrive-client [--desktop] --remove       # back to Gamma's
   python manage.py setup                           # idempotent: missing personal workspaces + workspace files
   python manage.py migrate [--status] [--dry-run] [--global-only]
                                                    # upgrade the data directory (also runs at server start),
@@ -194,6 +197,49 @@ def sweep_guests(everyone=False):
     print(f"Deleted {len(gone)} guest account(s)" + (f": {', '.join(gone)}" if gone else "."))
 
 
+def gdrive_client(args):
+    """A Google OAuth client of this server's own for Drive backups, in
+    place of Gamma's: the "TVs and Limited Input devices" one a code is
+    asked through, or with ``--desktop`` the "Desktop app" one of Google's
+    page on this computer (drive.file); ``--remove`` goes back to Gamma's.
+    A change of client disconnects Drive."""
+    from gamma import gdrive_account
+
+    desktop = "--desktop" in args
+    args = [a for a in args if a != "--desktop"]
+    try:
+        if args == ["--remove"]:
+            gdrive_account.remove_client(desktop=desktop)
+            print("Google Drive uses Gamma's app again.")
+        elif len(args) == 2:
+            gdrive_account.set_client(args[0], args[1], desktop=desktop)
+            print("Google Drive uses this server's own app.")
+        else:
+            print("Usage: python manage.py gdrive-client [--desktop] <client-id> <client-secret> | --remove")
+            sys.exit(1)
+    except ValueError as e:
+        print(e)
+        sys.exit(1)
+
+
+def set_options(args):
+    """Server options of Settings (gamma/server_options.py) as name/value
+    pairs, all checked before any is saved: an admin's way without the
+    page, and the browser suite's before a server starts."""
+    from gamma import server_options
+
+    if not args or len(args) % 2:
+        print("Usage: python manage.py set-option <name> <value> [<name> <value> ...]; names: "
+              + ", ".join(server_options.OPTIONS))
+        sys.exit(1)
+    try:
+        server_options.update(dict(zip(args[::2], args[1::2])))
+    except ValueError as e:
+        print(e)
+        sys.exit(1)
+    print("Set " + ", ".join(args[::2]) + ".")
+
+
 def rename_user(old, new):
     """Rename an account: its username (and a personal workspace named
     after it). Everything else names the account by its id, so sessions,
@@ -348,6 +394,8 @@ def migrate(status_only: bool = False, dry_run: bool = False, global_only: bool 
                 print(guide["fallback"]["lead"])
                 for step in guide["fallback"]["steps"]:
                     print(f"  - {step}")
+            for line in guide["details"]:
+                print(f"  - {line}")
             sys.exit(2)
         if not dry_run:
             print(f"Snapshot of the databases before the upgrade: {result['backup']}")
@@ -578,6 +626,10 @@ def main():
         set_member(args[0], args[1], args[2])
     elif cmd == "sweep-guests":
         sweep_guests(everyone="--all" in args)
+    elif cmd == "set-option":
+        set_options(args)
+    elif cmd == "gdrive-client":
+        gdrive_client(args)
     elif cmd == "setup":
         setup()
     else:

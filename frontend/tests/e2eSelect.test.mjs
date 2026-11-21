@@ -130,7 +130,7 @@ test("a change selects the groups that exercise it", () => {
   // text in search and the chat: the index, the one text reader, the path pair, the line link's
   // readers, the Files group and the code view's mark select the group that drives them all
   for (const file of ["backend/gamma/search/indexer.py", "backend/gamma/documents/text.py", "backend/gamma/routers/search.py",
-    "backend/gamma/work_folders/paths.py", "backend/gamma/mcp_links.py", "backend/gamma/ai_tools.py", "frontend/src/search/SearchPanel.jsx",
+    "backend/gamma/work_folders/paths.py", "backend/gamma/mcp_links.py", "backend/gamma/ai_tools/reading.py", "frontend/src/search/SearchPanel.jsx",
     "frontend/src/documents/viewers/textMark.js", "frontend/src/documents/viewers/TextViewer.jsx"]) assert.ok(pick([file]).includes("text-search"), file);
   assert.ok(pick(["backend/gamma/work_folders/paths.py"]).includes("work-folders"), "the annotation entries name their files by it");
   // anchors in text: the ladder, the shared write, the code view's marks and popup, the margin, the entries and the vault's round

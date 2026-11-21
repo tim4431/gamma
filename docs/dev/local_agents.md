@@ -14,18 +14,13 @@ folder's, one the computer offers, one of its own), with Gamma's tools, and
 shows what the agent is doing as it goes. The owner may name co-authors who
 use the agent too, on the files of a synced folder ("A co-author's turn").
 
-The design, the survey of both CLIs and the later steps (`@codex` in a
-comment, the chat window's agent side, a remote server seeing the
-computer) are the research note [agent-collab.md](../research/agent-collab.md);
-this is step 1 as built. Backend: the package `gamma/local_agents/` and
+The design and the survey of both CLIs are the research notes
+[agent-collab.md](../research/agent-collab.md) and
+[agents-as-participants-plan.md](../research/agents-as-participants-plan.md).
+Backend: the package `gamma/local_agents/` and
 `gamma/routers/local_agents.py`, with small parts in `gamma/comments.py`,
 `gamma/folder_links.py`, the folder-links router and `gamma/routers/shell.py`
-(the shell's word). Step 2.1 of
-[agents-as-participants-plan.md](../research/agents-as-participants-plan.md)
-made the agents the computer's, where they were each vault's; its step 3.7
-removed the Feedback dialog's Send, whose requests an agent here once
-claimed and answered (vaults.db keeps its `agent_runs` and `agent_threads`
-tables, unread: "What this computer keeps").
+(the shell's word).
 
 | Module | What |
 |---|---|
@@ -39,6 +34,7 @@ tables, unread: "What this computer keeps").
 | `threads.py` | a comment sent to an agent: its thread's turn, the thread's prompt's entry, its end written in the thread ("A comment sent to an agent") |
 | `mention.py` | a comment's `@name` read as the agent it is sent to ("A comment sent to an agent") |
 | `chats.py` | the chat's computer side: a bucket's conversations with the agent, and a thread's ("The chat's computer side") |
+| `far_turns.py` | on the server that keeps a conversation, its turns another computer runs: the claim, the writes, the stops, the answers and the turn's token ("The chat on another server's page") |
 | `home.py` | where a turn's conversation lives: this server's pages.db, or another server's over the channel ("Another server's chat") |
 | `store.py` | what this computer keeps, in vaults.db, the people an agent serves among it ("What this computer keeps", "A co-author's turn") |
 | `info.py` | what a vault says of its agent, for the links and a page's chip ("The routes") |
@@ -193,8 +189,8 @@ through all of these.
 `runner.register()`, from `app.create_app`, registers `runner.shutdown` at
 exit. Every turn, a chat's ("The chat's computer side") and a comment
 thread's ("A comment sent to an agent"), waits in the queue of the
-directory its agent works in and runs as a `_ChatTurn` over `_Turning`, the
-turn plumbing this section describes.
+directory its agent works in and runs as a `_ChatTurn`, whose plumbing
+this section describes.
 
 - **The queue.** A turn is queued under `(ws, turn id)` (`runner.queue_chat`;
   a turn of another server's page under `(link id, turn id)`,
@@ -219,7 +215,7 @@ turn plumbing this section describes.
   deadline, is started once more afresh (Claude Code has no fallback of its
   own; Codex falls back to a new thread itself), unless Gamma's tools did
   not start for it (the done's `gamma_down`, `events.GammaDown`: afresh
-  would fail alike, and replace the session; `_Turning._resume_refused`) or
+  would fail alike, and replace the session; `_ChatTurn._resume_refused`) or
   another process holds the session (the done's `busy`,
   `events.SessionBusy`: afresh would fork it). A session a terminal or an
   editor has open fails the turn with why before any process starts
@@ -301,6 +297,16 @@ the chat's reply, or the thread's when it wrote none there. Every text of
 the agent's that Gamma stores to be read rendered is `prompt.inert` first
 ("Trust").
 
+A chat turn whose message ran one of the owner's skills gets a section
+before `## The message`, `## The skill /name`: a line saying the owner
+ran it and that its instructions are part of the owner's request, then the
+instructions in a fenced `markdown` block, rendered at the claim from the
+account's catalog by the skill's id (`chats.skill_of`; a far turn's come
+rendered with its claim, `turn.skill`). A skill gone by then fails the
+turn: it never runs the arguments without the instructions. The earlier
+messages a fresh session is given write such a message as `/name args`
+([skills.md](skills.md#a-computers-agent)).
+
 ## A comment sent to an agent
 
 A person sends a comment to an agent by ticking *Send to Codex* under the
@@ -370,11 +376,11 @@ holds the turn and its end, `mention.py` the `@name`.
   agent that answers in the thread (`agent_id`: `agents.here`, or the far
   computer's agent's, `to` itself). It is queued for this computer's runner
   (`runner.queue_chat`), or, for another computer whose agent `to` names
-  (`chats.remote_of`, refused while it is offline), written to wait for
+  (`far_turns.remote_of`, refused while it is offline), written to wait for
   it (`chats.begin(remote=True)`, working where the thread's conversation
-  or the page's chat with it works, `chats.far_dir`) and that computer
+  or the page's chat with it works, `far_turns.far_dir`) and that computer
   woken: it claims it over its channel as a chat's turn, the claim
-  carrying the thread (`chats.claim`'s `thread`, its entry with its PDF
+  carrying the thread (`far_turns.claim`'s `thread`, its entry with its PDF
   place, whose source line it computes from its own disk). The answer
   is `{agent, conversation_id, turn_id, state}`.
 - **The prompt** (`prompt.build_thread`): the comment as the request; what
@@ -409,8 +415,7 @@ holds the turn and its end, `mention.py` the `@name`.
   so it is written once however often the end is; a failed turn writes its
   error (else "Codex could not finish."), a stopped one "Stopped before
   Codex answered.", one done without a word "Codex finished without a
-  reply." A far turn has no token yet (step 4.2 of the plan): its answer is
-  always this one. A thread sent is a thread answered. Those notes keep
+  reply." A thread sent is a thread answered. Those notes keep
   their English for the readers that know no more (an MCP client's
   `read_annotation`, the annotation files); the comment routes add to each
   what became of its turn (`turn_end`, `{state: "failed" | "stopped" |
@@ -551,7 +556,7 @@ research note and step 4.2 of
   account's turns (and the co-authors its owner named, "A co-author's
   turn", on a synced folder's files alone).
 - **Where a turn works** is named by the NAS by an id, never a path (the
-  listing's and the claim's `dir`, `chats.dir_of` there) and resolved here
+  listing's and the claim's `dir`, `far_turns.dir_of` there) and resolved here
   (`home.far_place`): `vault`, a work folder of that server, the vault of
   it this channel's account made here (`channel.vaults_of`,
   `folder_links.work_vault`: a vault of another channel never answers for
@@ -634,7 +639,7 @@ while the computer is off.
   else the active conversation's while its computer still offers it, else
   the host's own vault, else a computer that keeps the bucket's work
   folder, else this server's own agent, else the first far seat
-  (`chats.remote_of` → `registry.seat_of`); none: 404, a token or the
+  (`far_turns.remote_of` → `registry.seat_of`); none: 404, a token or the
   guest 403, as locally. A conversation keeps its computer as it keeps
   its agent: another one picked begins a new conversation
   (`chats.begin`).
@@ -654,9 +659,9 @@ while the computer is off.
   (`vault/usePageComputer.js`), say the computer came back or went away,
   or its agent got ready or not (`useComputerChat`).
 - **A turn.** `POST /chat/turns` checks the computer is online, the work
-  folder not paused there, the agent ready, the model and effort among
+  folder not paused there, the agent ready, the model, effort and speed among
   the announced ones and `dir` among the directories offered
-  (`chats.far_dir`: the work folder where that computer keeps it, else the
+  (`far_turns.far_dir`: the work folder where that computer keeps it, else the
   one named, else the conversation's while that computer still offers it,
   else one of its own, so a conversation whose directory is no longer kept
   or offered is archived and a new one begins; a co-author's turn outside
@@ -675,7 +680,7 @@ while the computer is off.
   while the channel's account has an agent on here), queues each turn
   where it works (`home.far_place`) under `(channel id, turn id)`, claims
   it for a run it names (the message, the selections with their places,
-  the last 6 messages, the model and effort, what the bucket is, where it
+  the last 6 messages, the model, effort and speed, what the bucket is, where it
   works, Gamma's tools), computes the selections' source lines from its
   disk in a vault, resumes the conversation's session from its own
   vaults.db as locally, runs the agent confined as a local turn (asking
@@ -685,8 +690,8 @@ while the computer is off.
   the last always sent, retried while the NAS cannot be reached, a lost
   one by the next flush (`home.missed`; one refused there waits for the
   next change); a 409 stops the turn. The listing's `steers` are the
-  messages steered into its turns there (`chats.steer_run`, kept in that
-  server's memory and handed out once, `chats.steers_of`), each given to
+  messages steered into its turns there (`far_turns.steer_run`, kept in that
+  server's memory and handed out once, `far_turns.steers_of`), each given to
   its turn here (`runner.steer_relayed`); the message it writes back
   carries their `steers` (`home.CHAT_FIELDS`, checked there by
   `chats.steered_of`). One a restart there loses, or one the agent never
@@ -758,7 +763,7 @@ bucket moved into or out of a work folder kept here) archives the active
 conversation and starts a new one, as another agent does. A page of a work
 folder no vault here keeps, kept by a computer of the account's with an
 agent there, has its turns run on that computer ("The chat on another
-server's page"), until step 4 of the plan links computers in Settings.
+server's page").
 
 The chat draws such a conversation wherever the composer's chip picks a
 computer's agent ("The client"): on a page, a folder or the library, in
@@ -781,7 +786,7 @@ steps").
   own table of the bucket's server's pages.db, `computer_chats`
   (`db.COMPUTER_CHATS_SCHEMA`; step 59 gave it `bucket` and `dir`, step 62
   `thread_id`, [migrations.md](migrations.md)),
-  read and written by `gamma/local_agents/chats.py` only. One row a
+  read and written by `gamma/local_agents/chats.py` and `far_turns.py` only. One row a
   conversation: `id`, `bucket` (a page's id, a folder's or `home`, as
   `chats.bucket`), `dir` (where its agent works: the work folder's id, an
   offered directory's id, or `""` for one of its own), `user_id` (the
@@ -801,20 +806,22 @@ steps").
   (`db.delete_workspace_prefs`); nothing else reads it. Its paths are
   relative to the directory.
 - **Messages.** The person's: `{id, role: "user", text, selections:
-  [{text, page, box}], at}` (at most 20 selections, 2,000 characters a
+  [{text, page, box}], at, skill?}` (`skill` the skill the message ran,
+  `{id, name, args}`, its text the arguments: [skills.md](skills.md#a-computers-agent);
+  at most 20 selections, 2,000 characters a
   quote; the box kept, since the source line is looked up when the turn
   starts). The agent's: `{id, role: "agent", agent, label, turn_id, state:
   queued | running | done | failed | stopped, text, steps: [{id, kind:
   read | edit | run | search | other, status, path? | program?}], asks,
-  changes, changed, built, error, fresh, model, effort, threads?, steers?,
+  changes, changed, built, error, fresh, model, effort, speed, threads?, steers?,
   at, ended_at}`: `asks` what waits for the person ("Asking in the chat"),
   `steers` the messages the person steered into the turn that its agent
   took in (`[{id, text, selections, at, place: {text, steps}}]`, at most
   20, `place` where the reply stood then: the length of its text and how
   many steps had come; `chats.steered_of`),
   `threads` the comment threads its agent opened in the turn (a turn of
-  this server's: `threads.opened`), `model` and
-  `effort` what the turn asked for (null for the agent's default),
+  this server's: `threads.opened`), `model`,
+  `effort` and `speed` what the turn asked for (null for the agent's default),
   `path` relative to the
   directory or `"outside"`, `program` a command's program alone (as `_said`),
   `changes` the changed files (at most 200; `changed` how many),
@@ -836,9 +843,8 @@ steps").
   `MAX_RUNS` slots: one directory never has two agents. A turn belongs to
   the computer: no connection holds it, so closing the tab or the window
   stops nothing.
-- **`_ChatTurn`** (over `_Turning`, "The queue and the turn": the
-  snapshot, `events.start`, the watchdog, following the events, the
-  changed files):
+- **`_ChatTurn`** ("The queue and the turn": the snapshot,
+  `events.start`, the watchdog, following the events, the changed files):
   1. Checks again what its route checked (`home.place`): where it works,
      still the conversation's (`chats.place_of` for its account and
      `dir`: else "The synced folder is no longer kept on this computer.",
@@ -956,27 +962,48 @@ steps").
 
 ### Its model, its typing, a terminal, the sources, Background tasks
 
-- **The model and effort** the agent offers are read with the probe, with
-  no model use (`catalog.probe(models=True)`, kept with it; not re-read at
-  a turn's start, which asks only whether the agent is ready, so a read
-  lists them again once that listing is 10 minutes old, or when there was
-  none: `catalog._listed`): Codex's `model/list` on a short-lived
-  app-server (every page, hidden models left out, 15 s at most; it does
-  the Windows sandbox check in the same process), Claude Code's
+- **The model, effort and speed** the agent offers are read with the
+  probe, with no model use (`catalog.probe(models=True)`, kept with it;
+  not re-read at a turn's start, which asks only whether the agent is
+  ready, so a read lists them again once that listing is 10 minutes old,
+  or when there was none: `catalog._listed`): Codex's `model/list` on a
+  short-lived app-server (every page, hidden models left out, 15 s at
+  most; it does the Windows sandbox check in the same process, and
+  `config/read` for the user's `service_tier`), Claude Code's
   `initialize` on a
   `claude -p --input-format stream-json … --restricted --strict-mcp-config`
   closed before any message. Shape: `[{id, label, efforts, effort (the
-  default), default}]` in `GET /api/local-agents` and the chat's
-  `computer.models`; none listed leaves the agent ready with `models: []`.
-  `POST /chat/turns` takes `model` and `effort`, each one the agent listed
-  (400 otherwise; an effort checked against the chosen model, or the
-  default one); Codex gets them on `thread/start` / `thread/resume`
-  (`model`) and `turn/start` (`effort`), Claude Code as `--model` (none
-  for its `default` entry) and `--effort`, which `--restricted` would not
-  read from the person's settings. The agent's message records them. The
-  composer's chip (`chat/AgentChip.jsx`, Gamma AI's) lists the agent's
-  models, and its efforts and where it works as sections
-  (`useComputerSide`'s `chip`); the choice is the conversation's.
+  default), default, speeds, speed (the default)}]` in `GET
+  /api/local-agents` and the chat's `computer.models`; none listed leaves
+  the agent ready with `models: []`.
+- **A model's speeds** are among `events.SPEEDS` (`flex`, `standard`,
+  `fast`, cheapest first): standard beside the tiers the agent lists for
+  it, none for a model with no other. Codex lists `serviceTiers`
+  (`priority` is its fast one, an older Codex's `additionalSpeedTiers`
+  says `fast`; `ultrafast` is not offered); Claude Code offers standard
+  and fast for a model with `supportsFastMode`. A model's `speed` is the
+  one a turn runs at when none is chosen: Codex's `defaultServiceTier`,
+  else the config's `service_tier` (a config.toml that sets `priority`
+  runs every turn at Fast), else standard; Claude Code's
+  `fast_mode_state` (off under `--restricted`). An older computer
+  announces none, so its models offer no speed on another server.
+- **A turn's choice.** `POST /chat/turns` takes `model`, `effort` and
+  `speed`, each one the agent listed (400 otherwise; an effort and a
+  speed checked against the chosen model, or the default one); Codex
+  gets them on `thread/start` / `thread/resume` (`model`) and
+  `turn/start` (`effort`, and the speed as `serviceTierForTurn`:
+  `codex.TIERS`, `priority`, `default` or `flex`, which leaves the
+  thread's own tier as it was, so the next turn and the person's
+  `codex resume` run at that), Claude Code as `--model` (none for its
+  `default` entry), `--effort` and the `fastMode` setting (`true` for
+  fast, `false` for standard) in its one `--settings`, beside a turn
+  with ask's rule, which `--restricted` would not read from the person's
+  settings. The agent's message records them. The composer's chip
+  (`chat/AgentChip.jsx`, Gamma AI's) lists the agent's models, and the
+  model's efforts and speeds and where it works as sections
+  (`useComputerSide`'s `chip`), each Default naming the model's own
+  where the agent says (*Default (fast)*), the speed chosen drawn as
+  Gamma AI's glyph; the choice is the conversation's.
 - **The reply as it is typed.** A turn's driver streams
   (`stream=True`): Codex keeps
   `item/agentMessage/delta`, Claude Code runs with
@@ -1031,7 +1058,14 @@ steps").
 
 Checked against the real CLIs (Codex 0.167.0, Claude Code 2.1.318): both
 list their models with no model use, stream a reply in deltas, and take a
-chosen model and effort.
+chosen model and effort. Their speeds were read with no model use too:
+Codex's `model/list` names `priority` (*Fast*) on every model and
+`ultrafast` on one, and its `thread/start` takes `fast` (as `priority`),
+`priority`, `flex` and `default` (an unknown tier, or one the model
+lacks, comes back null); Claude Code's `initialize` reports
+`fast_mode_state` `on` under `--restricted` with `--settings
+'{"fastMode":true}'`, and `off` for a model without fast mode. No turn
+was run at a chosen speed against either (it uses the person's plan).
 
 ## Sessions started elsewhere
 
@@ -1341,7 +1375,7 @@ asks: nothing it sends draws, words or answers the card.
   the one word in it that server chose.
 - **What that server learns**, the link relaying no asks: the message's
   `waiting` (`home.CHAT_FIELDS`; `_turn_fields` takes it as a flag,
-  `chats.write_run` and `_end_run` set it false at every end) and the steps
+  `far_turns.write_run` and `_end_run` set it false at every end) and the steps
   as for any turn (`{id, kind, status, program | path | tool}`, a step id
   never this computer's ask id); never `asks`. Integrity, not secrecy: the
   agent's next words may say what it did.
@@ -1389,7 +1423,7 @@ asks: nothing it sends draws, words or answers the card.
   `ASK_TIMEOUT_S` as in the chat. Stop there declines what waits here (the
   drivers' stop), and the list loses it at once.
 - **Background tasks** there read the turn's phase `asking` while its
-  message says `waiting` or holds an ask (`chats.remote_turns`' `asking`),
+  message says `waiting` or holds an ask (`far_turns.remote_turns`' `asking`),
   with `there` for `waiting` (*Waiting for your answer on TIM-PC*; else
   *Waiting for you*).
 
@@ -1400,7 +1434,7 @@ Step 2.7 of
 gives a turn of this server Gamma's read tools, and step 3.3 its writing
 tools (`comment`, `resolve`, `highlight`, [mcp.md](mcp.md) "The Comment
 level"): the agent calls this server's own MCP endpoint ([mcp.md](mcp.md))
-with a token of the turn's (`tools.py`, `runner._Turning._tools`). What it
+with a token of the turn's (`tools.py`, `runner._ChatTurn._tools`). What it
 writes is signed and stamped as this computer's agent, for the turn's owner,
 and the owner can delete it; notes it changes only through the turn's asks.
 
@@ -1457,10 +1491,10 @@ and the owner can delete it; notes it changes only through the turn's asks.
   workspace alone, named with this computer's agent's id there,
   `computer:<its id there>:codex`, so what it writes reads *Codex on
   TIM-PC* there: `agents.of_token`, `registry.far_name`), living
-  `chats.TOKEN_S` (the run's timeout and a minute) and renewed by the
+  `far_turns.TOKEN_S` (the run's timeout and a minute) and renewed by the
   run's writes at most once a minute, replaced by a retried claim's, and
   deleted at the turn's end, however it ends (a write that ends it, a Stop
-  that ends it there, the computer's token taken back: `chats._close`);
+  that ends it there, the computer's token taken back: `far_turns._close`);
   its address is that server's own `/mcp`, its public address
   (Settings → Administration → Server) or the loopback address the claim
   came to, else none (`routers/computers.py` `_mcp_url`: the transport
@@ -1861,9 +1895,9 @@ and nothing of the turn's row.
 | GET | `/api/folder-links/page/{page_id}` | the page's `vault` gains the same `agent` (`folder_links.page_vault`), on a server that runs agents only, and `mine` (whether this account made the vault) on every server. Turning an agent on or off tells each open page of every work folder here `{t: "vault"}` (`folder_links.agents_changed`, `_tell_open_pages`, from `collab.open_pages()`), so its chip and the comments' @ menu read it again |
 | POST, PATCH | `/api/pages/{id}/comments`, `/api/comments/{id}` | a comment sent to an agent (`to`, or its `@name`) is a turn of its thread too, answered as `turn` ("A comment sent to an agent") |
 | GET | `/api/local-agents/chat?bucket=&version=&agent=&thread=&conversation=` | the chat's computer side ("The chat's computer side") of a bucket (a page's id, a folder's or `home`), an account with an agent on here, a co-author an agent here serves (a synced folder's file or folder alone), or the vault's maker on its work folder: `{computer, conversation}`, `computer` the strip (`{agent, label, ready, problem, models, folder, paused, turn, session, folder_id, dir, grants, lent}`, `agent` the one picked (`agent`, while the account turned it on or its owner lends it) or else the account's first (`store.agent_for`, else the first lent), null for none, `session` whether a terminal can continue the conversation (never a co-author's), `ready` and `problem` from `catalog.cached`, `turn` `runner.chat_state` or null, `folder`, `folder_id` and `paused` the work folder's ("", null and false outside one), `dir` where the agent works (`{kind: "vault", name, path}`, the path for the vault's maker alone; `{kind: "offered", id, name}`; null for a directory of its own), `grants` the commands allowed in the conversation in that directory, `[{command, cwd, host}]` (none for a co-author's), `lent` `{by}` for an agent another account lends, else null) and `conversation` the bucket's active one (`{id, title, agent, thread_id, messages, version}`, null for none, and for one of another agent than `agent`), or with `thread` the account's conversation of that comment thread on the bucket, else a co-author's there with the account's agent ("A comment sent to an agent", "A co-author's turn"), or with `conversation` a co-author's chat conversation of the bucket with the account's agent (`chats.lent_one`; null for any other), a co-author's carrying `person`, their username; with `version` the stored one, `{computer, same: true}` |
-| POST | `/api/local-agents/chat/turns` | `{bucket, text, selections?, id?, agent?, model?, effort?, dir?}` → 202 `{conversation, turn: {id, state}}`, `agent` the one picked (left out, the account's first, `store.agent_for`; another computer's turn runs that computer's), `dir` where the conversation works outside a work folder kept here (an offered directory's id, or `""` for one of its own; left out, the active conversation's): another `agent` or a `dir` other than the active conversation's starts a new one (`chats.begin`); 400 for no text, past 20,000 characters, a malformed `id`, a `dir` no offered directory has, or a model or effort the agent did not list; 409 while a turn of the conversation is queued or running ("Codex is still working on the last message…", named by that turn's agent), while the account has no agent on here ("Turn on Codex or Claude Code in Settings → AI → Agents first.") or not the one picked ("Turn on Claude Code in Settings → AI first."), for a folder paused or choosing its files, and for an agent known not to be ready (its problem); 403 when the account is no editor or writes are refused. A repeated `id` (the person's message's) answers the turn it made |
+| POST | `/api/local-agents/chat/turns` | `{bucket, text, selections?, id?, agent?, model?, effort?, dir?, skill?}` → 202 `{conversation, turn: {id, state}}`, `agent` the one picked (left out, the account's first, `store.agent_for`; another computer's turn runs that computer's), `dir` where the conversation works outside a work folder kept here (an offered directory's id, or `""` for one of its own; left out, the active conversation's): another `agent` or a `dir` other than the active conversation's starts a new one (`chats.begin`); `skill` the skill the message runs (`{id, name, args}`, [skills.md](skills.md#a-computers-agent)), 400 `{detail: "The skill /x was deleted or turned off.", kind: "skill"}` (`skills.SkillGone`) for one the account's catalog does not hold; 400 for no text and no skill, past 20,000 characters, a malformed `id`, a `dir` no offered directory has, or a model or effort the agent did not list; 409 while a turn of the conversation is queued or running ("Codex is still working on the last message…", named by that turn's agent), while the account has no agent on here ("Turn on Codex or Claude Code in Settings → AI → Agents first.") or not the one picked ("Turn on Claude Code in Settings → AI first."), for a folder paused or choosing its files, for an agent known not to be ready (its problem), and for a skill turn on another computer that did not announce `skills` ("Update Gamma on TIM-PC to run skills there."); 403 when the account is no editor or writes are refused. A repeated `id` (the person's message's) answers the turn it made |
 | POST | `/api/local-agents/chat/turns/{id}/stop` | `{stopped}` (`runner.stop_chat`); the conversation's account's, or its agent's owner's (`chats.readable`) |
-| POST | `/api/local-agents/chat/turns/{id}/steer` | `{id, text, selections?}` → `{steered: true}`: a message steered into the running turn (`runner.steer_chat`; a turn on another computer kept for it, `chats.steer_run`, and the computer woken). The conversation's own account alone. 400 for no text, past 20,000 characters or a malformed `id`; 404 for a turn of no conversation of the account's; 409 for one that takes none now ("The agent is not taking messages now: …"): queued, ended, or its agent refused it |
+| POST | `/api/local-agents/chat/turns/{id}/steer` | `{id, text, selections?}` → `{steered: true}`: a message steered into the running turn (`runner.steer_chat`; a turn on another computer kept for it, `far_turns.steer_run`, and the computer woken). The conversation's own account alone. 400 for no text, past 20,000 characters or a malformed `id`; 404 for a turn of no conversation of the account's; 409 for one that takes none now ("The agent is not taking messages now: …"): queued, ended, or its agent refused it, and for a body with `skill` ("A message that runs a skill goes as a turn of its own.", which the client then queues) |
 | POST | `/api/local-agents/chat/new` | `{bucket}` → `{conversation: null}`, the active conversation archived whichever its agent; 409 while a turn runs |
 | GET | `/api/local-agents/chat/history?bucket=` | `{conversations: [{id, title, agent, updated_at, turns}], active, lent}`: the archived ones newest first (never a thread's), and the active one as they are listed (`chats.listed`, null for none), whichever its agent, which the chat's History lists while another agent is picked; the account's own on every server, whatever became of its agents (no seat asked); `lent` the chat conversations there, active or archived, of the co-authors the account's agents serve, each with its `person` (`chats.lent_history`), read, stopped, answered and exported, never opened or deleted (404) |
 | GET | `/api/local-agents/chat/history/{id}/export` | a conversation of the account's, active or archived, or a co-author's with the account's agent (`chats.readable`), as a file to keep (`chat_export.export_file` with the agent's label: the person's messages with their passages, the agent's steps in words, its reply, what it changed and how its turn ended); 404 for another account's, as the other history routes; like the list and delete, it asks no seat, so a conversation whose agent was turned off is still the account's to keep |
@@ -1949,11 +1983,12 @@ nobody else learns it exists), 403 for a token or the guest
   computer that is away and an amber "not ready" after one with a problem
   (`computerChat.agentHint`, the sentence the row's title; still
   pickable), then the picked one's models and
-  efforts (Gamma AI's speed too); where a computer's agent works outside a
+  efforts and speeds (Gamma AI's and the computer agent's model's); where a computer's agent works outside a
   synced folder is the bar's folder chip (below, "The strip"), in every
   bucket: a page, a folder, the library. The chip reads the agent, then its model and effort ("Codex on
-  TIM-PC · GPT-5.5 · high", the model ellipsized first), named "Agent,
-  model and reasoning effort". A viewer has Gamma AI alone. The agent shown is the bucket's
+  TIM-PC · GPT-5.5 · high", the model ellipsized first, a speed chosen its
+  glyph after them), named "Agent, model and reasoning effort" (with a
+  speed, "Agent, model, reasoning effort and speed (fast)"). A viewer has Gamma AI alone. The agent shown is the bucket's
   pick for the tab's life (`chatSide.js` `useChatAgent`, beside
   `showInChat`, which the Background tasks rows and a thread's *Open in
   chat* call, so the first screen does not load the side's state), else
@@ -1975,12 +2010,12 @@ nobody else learns it exists), 403 for a token or the guest
   is to end, with `version` so an unchanged one answers `same`, and
   numbers its reads so only the newest lands; `useComputerSide` is what
   ChatDock reads of it (the messages, Stop's turn, whether a message can
-  go, the chip's models and efforts, the Allowed in this chat chip, where
+  go, the chip's models, efforts and speeds, the Allowed in this chat chip, where
   a conversation that begins works, the passages' source lines); and
   `computerChat.shownMessages`, pure, maps each message: the person's to
   `{role: "user", text, passages}` (its passages' pages as the bubble's
   chips), the agent's to `{role: "ai", text, partial, pill, actions,
-  asks, files, notice, model, effort}`: `partial` while its turn is queued
+  asks, files, notice, model, effort, speed}`: `partial` while its turn is queued
   or running (the reply as it is typed, Stop in Send's place), `pill` the
   steps pill's words (`turnLabel`: "Codex is working: Editing
   sections/intro.tex", while queued "Starting Codex…" or "Waiting for
@@ -2149,7 +2184,7 @@ reaches (the page asks of `desktop/preload.js`, [desktop architecture](../../des
 "Pages asking the shell"): `set-agent` (`agent`, `enabled`), `set-agent-runs`
 (`agent`, `ask`) and `agent-dirs` (`dir`: "new", or the id of an offered
 directory to move), each only from a page of a server on this computer.
-The shell's own session acts (main.js `setAgent`, `setAgentRuns`,
+The shell's own session acts (`desktop/lib/thisComputer.js` `setAgent`, `setAgentRuns`,
 `agentDirs`), so its account owns an agent it turns on:
 
 - **Turning one on** asks first (`keeping.agentAsk`: "Turn on Codex on this
@@ -2407,9 +2442,9 @@ are drawn in the bar over the whole window and answered with `POST
 - The chat's computer side: Claude Code builds only where the folder lets
   it ask; no diff or Revert of what it changed (Gamma writes no file the
   disk made: a decision first), no *Attach what I see*, no *Open comments
-  on this page*, no rename of a conversation in History. A far turn has
-  no Gamma's tools (step 4.2), and a server that learned no address of its own from this
-  computer runs its turns without them. The window polls while a turn is to end (no push), so the
+  on this page*, no rename of a conversation in History. A server that
+  learned no address of its own from this computer runs its far turns
+  without Gamma's tools. The window polls while a turn is to end (no push), so the
   typed reply grows in steps of about a second and a half. *Continue in a
   terminal* is unit-tested on every platform but opened for real on none
   yet; on macOS and Linux the terminal is found by name. When Codex silently answers a resume with a new thread,
@@ -2500,8 +2535,9 @@ are drawn in the bar over the whole window and answered with `POST
   for alone, the claim's `about` and `dir`, the queued turns failed by an
   announce that no longer takes them.
 - `tests/test_local_agents_extras.py`: the probe listing the models, a
-  choice one the agent listed, a turn running the model and effort asked
-  for (Codex's thread and turn, Claude Code's flags), both drivers
+  choice one the agent listed, a turn running the model, effort and
+  speed asked for (Codex's thread and turn, the speed the turn's alone;
+  Claude Code's flags; a config's tier the default speed), both drivers
   streaming a chat turn's text, the reply growing then replaced by the
   whole message, the terminal route for Codex and Claude Code (and the
   strip's `session` agreeing with it), the sources of the selections, the
@@ -2640,8 +2676,8 @@ are drawn in the bar over the whole window and answered with `POST
   remote's page refused).
 - The browser group `local-agents` (`frontend/tests/e2e/scenarios/localAgents.mjs`,
   `npm run e2e -- --group local-agents`): the stand-ins through
-  `GAMMA_AGENT_CODEX` / `GAMMA_AGENT_CLAUDE` and `FAKE_AGENT`; no Feedback
-  button anywhere, turning Codex on; `@codex` picked
+  `GAMMA_AGENT_CODEX` / `GAMMA_AGENT_CLAUDE` and `FAKE_AGENT`; turning
+  Codex on; `@codex` picked
   from the @ menu in a reply on the PDF ticking *Send to Codex* (the row,
   the tick, the turn's chip *Codex is working* with Stop, the reply under
   Codex's name, the agent's chip, *Open in chat* showing the thread's
@@ -2661,8 +2697,9 @@ are drawn in the bar over the whole window and answered with `POST
   until allowed once, declined with a note (Codex's steer), allowed in this
   chat and the same command answered unasked in the next turn; the passage
   chip's source line, the strip's menu asking the shell (the asks
-  recorded, no shell in the browser suite), a model and effort chosen in
-  the chip reaching Codex, the reply seen part-way as it is typed, a
+  recorded, no shell in the browser suite), a model, effort and speed
+  chosen in the chip reaching Codex (a model with no other tier offering
+  no speed, the one chosen the chip's glyph and the reply's), the reply seen part-way as it is typed, a
   running turn's Background tasks row and its Stop; with no AI service, a
   library PDF's chat that is Codex's, the setup card picking Codex again
   after Gamma AI, a directory offered picked in the composer's folder chip

@@ -309,7 +309,7 @@ def test_plain_zipped_folder_of_notes(own_library):
     assert by_title["Gamma plans"]["folders"] == [["projects"]]
     assert _filed(own_library, by_title["Gamma plans"]["id"]) == [["projects"]]
     plans = _subtree(own_library, by_title["Gamma plans"]["id"])
-    assert plans["children"][0]["content"] == f"See [[{by_title['2026-09-01']['id']}]]."
+    assert plans["children"][0]["content"] == f"See [[{by_title['2026-09-01']['id']}|daily]]."   # its label: the words
 
 
 def test_a_zipped_logseq_graphs_pictures_keep_their_sizes(guest):
@@ -994,6 +994,26 @@ def test_a_vault_link_to_a_heading_ending_in_a_hash(guest):
     ids = {p["title"]: p["id"] for p in report["pages"]}
     heading = next(c for c in _subtree(guest, ids["Hash Lang"])["children"] if c["content"] == "## Learn C#")
     assert _subtree(guest, ids["Hash Home"])["children"][0]["content"] == f"See [[{heading['id']}]]."
+
+
+def test_a_links_alias_or_label_is_the_mentions_words(guest):
+    """``[[Note|alias]]`` is ``[[id|alias]]``, in a table's cell with its
+    pipe escaped (an escaped pipe resolving the note too); a Markdown link's
+    label is the words when it says more than the note's name; an embed's
+    alias is none."""
+    report = _import(guest, _zip({
+        "AliasVault/.obsidian/app.json": "{}",
+        "AliasVault/Alias Target.md": "The target.\n",
+        "AliasVault/Alias Home.md": ("See [[Alias Target|the target]], [[Alias Target]], ![[Alias Target|x]],\n"
+                                     "[that one](Alias%20Target.md) and [alias target](Alias%20Target.md).\n\n"
+                                     "| a |\n| --- |\n| [[Alias Target\\|in a cell]] |\n"),
+    }))
+    ids = {p["title"]: p["id"] for p in report["pages"]}
+    tid = ids["Alias Target"]
+    text = "\n".join(c["content"] for c in _subtree(guest, ids["Alias Home"])["children"])
+    assert f"See [[{tid}|the target]], [[{tid}]], [[{tid}]],\n[[{tid}|that one]] and [[{tid}]]." in text
+    assert f"| [[{tid}\\|in a cell]] |" in text
+    assert not report["warnings"]
 
 
 def test_a_flat_export_with_a_file_of_no_id(guest):

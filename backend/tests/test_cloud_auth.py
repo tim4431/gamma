@@ -861,6 +861,13 @@ def _cloud_copy(cloud, name):
     return cloud.prefs[f"sub-{name}"]["profile"]["value"]
 
 
+def _settle_now(monkeypatch, name):
+    """The pending push of a change held by a long ``PUSH_DELAY`` goes in 0.2 s:
+    the hook runs again, as for one more change, with the delay short."""
+    monkeypatch.setattr(cloud_sync, "PUSH_DELAY", 0.2)
+    cloud_sync.profile_changed(account_of(name))
+
+
 def test_profile_pull_push_and_debounce(cloud, monkeypatch):
     # a server with no profile yet takes the cloud's at sign-in, before the browser loads
     _elsewhere(cloud, "ca_mia", {"theme": "dark"})
@@ -871,11 +878,21 @@ def test_profile_pull_push_and_debounce(cloud, monkeypatch):
     assert c.get("/api/prefs/profile").json()["value"] == {"theme": "dark"}
     assert cloud_sync.sync_profile(account_of("ca_mia")) == "same"
 
-    # a change here is pushed once it settles: three quick changes, one PUT
-    monkeypatch.setattr(cloud_sync, "PUSH_DELAY", 0.2)
+    # a change here is pushed once it settles: three quick changes, one PUT. "Quick" is
+    # next to the delay, a minute while they are made: at 0.2 s, PATCHes slowed by a
+    # loaded machine settled apart and sent two PUTs
     puts = lambda: [x for x in cloud.calls if x == ("PUT", "/api/me/prefs/profile")]  # noqa: E731
+    monkeypatch.setattr(cloud_sync, "PUSH_DELAY", 60)
+    mia, called_off = account_of("ca_mia"), []
     for theme in ("sepia", "gray", "night"):
+        if mia in cloud_sync._timers:
+            called_off.append(cloud_sync._timers[mia])
         assert c.patch("/api/prefs/profile", json={"set": {"theme": theme}}).status_code == 200
+    assert puts() == [] and mia in cloud_sync._timers and len(called_off) == 2
+    for timer in called_off:  # each change called off the push the one before it started
+        timer.join(5)
+        assert not timer.is_alive()
+    _settle_now(monkeypatch, "ca_mia")
     assert until(lambda: _cloud_copy(cloud, "ca_mia") == {"theme": "night"})
     time.sleep(0.3)
     assert len(puts()) == 1 and not cloud_sync._timers
@@ -1148,10 +1165,12 @@ def test_sync_status(cloud, monkeypatch):
     got = status(c)
     assert got["identity"] == {"linked": True, "username": "ca-tia"}
     assert got["profile"]["state"] == "synced" and got["profile"]["at"].endswith("Z") and not got["profile"]["error"]
-    # a change here is pending until its push lands
-    monkeypatch.setattr(cloud_sync, "PUSH_DELAY", 0.2)
+    # a change here is pending until its push lands (held for a minute, so a slow request
+    # never finds it landed already)
+    monkeypatch.setattr(cloud_sync, "PUSH_DELAY", 60)
     assert c.put("/api/prefs/profile", json={"value": {"theme": "dark"}}).status_code == 200
     assert status(c)["profile"]["state"] == "pending"
+    _settle_now(monkeypatch, "ca_tia")
     assert until(lambda: status(c)["profile"]["state"] == "synced")
     assert cloud.prefs["sub-ca_tia"]["profile"]["value"] == {"theme": "dark"}
     # the account server unreachable: the check's failure is an error with its message; reading it asks nothing

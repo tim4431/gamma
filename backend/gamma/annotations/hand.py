@@ -2,7 +2,7 @@
 agent writes on a page as its account, signed as itself (gamma/agents.py):
 a new comment thread on a place (``places``), a reply, a thread resolved
 (never reopened) and a highlight. The registry's three tools write through
-it (gamma/ai_tools.py ``comment``, ``resolve`` and ``highlight``: Gamma AI's,
+it (gamma/ai_tools/commenting.py ``comment``, ``resolve`` and ``highlight``: Gamma AI's,
 an MCP connection's at the Comment level, a computer agent's turn), and so
 does the end of a thread's turn that its agent left unanswered
 (gamma/local_agents/threads.py ``settle``).

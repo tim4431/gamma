@@ -161,8 +161,10 @@ rows it hands App), `explorer/useFilesTree.js` with `useDirectoryRows.js`
 (its directory reads, first slot and reveal: a second owner, since what it
 needs of App — the page rows, the phone flag — is made after the known
 rows the first feeds), `explorer/useFileSearch.js` (quick open's files,
-QuickOpen's own) and `comments/useInkThreads.js` (what a comment thread on
-an ink group does to the ink) are. State that must
+QuickOpen's own), `comments/useInkThreads.js` (what a comment thread on
+an ink group does to the ink) and `pdf/useHighlightWait.js` (what the PDF's
+next press or selection is for while a note's ⊕ or a highlight waits for
+one: a link, a new place, another passage) are. State that must
 outlive a component, or be read outside React, is a store with listeners
 that components read through `useSyncExternalStore` (`pdf/translateState.js`,
 `recording/recorderStore.js`, `replay/playback.js`,
@@ -176,8 +178,9 @@ that components read through `useSyncExternalStore` (`pdf/translateState.js`,
   `explorer/workFolderActions.js` under `useWorkFolderActions.jsx`,
   `explorer/trackSelection.js` under `TrackDialog.jsx`,
   `explorer/directoryRows.js` under `useDirectoryRows.js`, `layoutKeeping`
-  in `useFilesWindow.js` and `explorer/fileSearch.js` under
-  `useFileSearch.js`.
+  in `useFilesWindow.js`, `explorer/fileSearch.js` under
+  `useFileSearch.js` and `pdf/highlightWait.js` under
+  `useHighlightWait.js`.
 - **An owner is narrow.** It takes the few inputs it reads and returns
   state and stable commands. A hook that takes App's variables wholesale
   moves code without giving it an owner.

@@ -18,7 +18,11 @@
 // An item: {id, text, parts, state: "queued" | "steering"}, `parts` what
 // went with the message from the composer (Gamma AI's pictures, files,
 // passages and notes; a computer agent's passages; for both, the
-// transcript's passages it quotes, `quotes`).
+// transcript's passages it quotes, `quotes`, and the skill it runs,
+// `skill`: {id, name, args}, chat/skills.js splitSkill). `text` is the
+// message as typed, so a row that runs a skill reads "/name args"; the
+// skill was split off it once, as it was queued, and is never read from
+// the text again: an edit of the row says what it runs now (edit).
 import { useCallback, useSyncExternalStore } from "react";
 import { quoteMarkdown, withChatQuotes } from "./chatQuotes.js";
 
@@ -48,9 +52,15 @@ export function remove(key, id) {
   change(key, (q) => (q.items.some((m) => m.id === id) ? withItems(q, q.items.filter((m) => m.id !== id)) : q));
 }
 
-// A queued message's text, edited in its row.
-export function edit(key, id, text) {
-  change(key, (q) => withItems(q, q.items.map((m) => (m.id === id && m.state === "queued" ? { ...m, text } : m))));
+// A queued message's text, edited in its row, with the skill the edited
+// text runs (`skill`, split off it again by the caller; null for none).
+export function edit(key, id, text, skill = null) {
+  const runs = (parts) => {
+    const { skill: _was, ...rest } = parts || {};
+    return skill ? { ...rest, skill } : rest;
+  };
+  change(key, (q) => withItems(q, q.items.map((m) => (m.id === id && m.state === "queued"
+    ? { ...m, text, parts: runs(m.parts) } : m))));
 }
 
 // Moved to `to` (0 … the count: before the message at that index, or last),
@@ -151,12 +161,16 @@ export function quotedText(text, quotes) {
 // (chat/chatQuotes.js), then what the user wrote.
 export const messageText = (text, parts = {}) => withChatQuotes(String(text || "").trim(), parts?.quotes);
 
+// What a queued message sends as its text: the arguments of the skill it
+// runs (its `text` is the message as typed), else its text.
+export const sentText = (item) => (item?.parts?.skill ? item.parts.skill.args || "" : item?.text || "");
+
 // Whether Steer can carry the message: its text, pictures and quoted
-// passages go into the reply; files, attached blocks and handwriting only
-// go with a message of their own.
+// passages go into the reply; files, attached blocks, handwriting and a
+// skill to run only go with a message of their own.
 export function canSteer(item) {
   const parts = item?.parts || {};
-  return !parts.files?.length && (parts.notes || []).every((n) => n.kind === "note");
+  return !parts.skill && !parts.files?.length && (parts.notes || []).every((n) => n.kind === "note");
 }
 
 // The steer request's body (POST /api/ai/chat/steer/{reply}): the text with

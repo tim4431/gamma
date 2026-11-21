@@ -249,7 +249,7 @@ once a bulk trash, when a rule needs it.
 - A file of another format than a note or a PDF has its document at `path`
   (`{format, name, hash, ext, at, size}`; its `ext` is
   `formats.vault_extension`, a blocked one `.bin`) or, past the keep limit
-  (`GAMMA_VAULT_KEEP_MB`, 64), at `listed` with no hash: the page lists it
+  (Settings → Server → Work folders, 64 MB), at `listed` with no hash: the page lists it
   without its bytes ([documents.md](documents.md) "The listed state"). Its
   title is the file's leaf, where a PDF's is its stem.
 - A file never carries `parent_page`: no sub-pages in a work folder.
@@ -692,7 +692,7 @@ case-insensitive and NFC, so one file reads the same on every system and
   folder's picture is a file). Gamma writes a file into a
   directory unasked only once: a vault whose marker names an older app's
   `ignore` globs and that has no file gets them written at its first whole
-  round (`Round._globs_written`: the header, the default, then each glob
+  round (`sync._globs_written`: the header, the default, then each glob
   left out, a `/` at either end dropped as the old scan dropped it, one
   with a `/` inside anchored at the root, a leading `!` or `#` escaped,
   then, where this reading of the glob takes other entries of the
@@ -1114,7 +1114,7 @@ classes" the class `file`.)
 - **Every tracked file is a page**: a note (`notes`), a PDF (`pdf`), or a
   file of any other format, pictures included (`file`: its document the
   file, read where it is, or listed without its bytes past the keep limit,
-  `GAMMA_VAULT_KEEP_MB`). A picture is no longer only what a note links:
+  Settings → Server → Work folders). A picture is no longer only what a note links:
   the default selection makes every picture a page, and a note's
   `![[fig.png]]` keeps its Gamma text `![](/api/uploads/<hash>.png)`, which
   the picture's page's row serves. A PDF by its bytes alone, under another
@@ -1288,7 +1288,7 @@ W:
   the synced folder was detached."), and the desktop app forgets the vault
   as *Stop syncing…* forgets one, its directory as it is but for `.gamma/`. A
   computer offline finds it at its next round. The chat turns queued for a
-  computer in its pages fail at once (`chats.fail_detached`, its pages
+  computer in its pages fail at once (`far_turns.fail_detached`, its pages
   read before the let go unstamps them; a let go refused fails none).
 - **A work folder of another server** kept here is detached through that
   server from the sync panel (`_letting_go`, above), or on that server's
@@ -1385,7 +1385,7 @@ its check.
   pages it reaches, a work folder's files among them. `?within=<folder>`
   lists a folder's pages whatever their flag (the HTTP vault reads it).
 - `block_search(q="")`, the `[[` popup's recent pages (`IN_LISTED`).
-- `ai_tools._run_list_pages` at the root (a file not in the library only
+- `ai_tools.reading._run_list_pages` at the root (a file not in the library only
   where the chat's folder or the `folder` argument files it, a page of the
   chat's context always), `list_labels` and `label=`.
 - `clip.library_folders`: the folders offered are the filing targets, the
@@ -1406,7 +1406,8 @@ its check.
   library; an Opened files PDF may still be looked up by hand),
   `POST /jobs/metadata` (`skipped`, counted when there are some; a batch
   of no library document is 400). Both leave out Opened files PDFs too.
-- `zotero_preview`, as its commit does.
+- The Zotero import's preview, as the import does
+  (`test_a_work_folders_file_of_the_same_pdf_is_no_page_of_the_item`).
 - `ws_backup`'s live documents and its merge, on both sides.
 - On the client: the record lookup on open (`isLibraryPdf`, so an Opened
   files PDF is looked up by hand only), and the Paper metadata button,
@@ -1465,8 +1466,8 @@ into a work folder or one of its directories (`import_review.destination`).
 - A link by path in a block embedded from another note stays a plain link
   (it is relative to that note, which the open note's context does not
   describe).
-- The search's file hits (step 4's `search/hits.py`, for members and the
-  chat) give a path from W's top; only `GET /api/files` and
+- The search's file hits (`search/hits.py`, for members and the chat)
+  give a path from W's top; only `GET /api/files` and
   `GET /api/folders/{id}/at` measure a folder share's paths from the
   shared folder.
 - Quick open's file search reads every file's name for a query with no
@@ -1481,7 +1482,7 @@ into a work folder or one of its directories (`import_review.destination`).
   is resolved on the server and reaches them.
 - Label views list library pages only.
 - A work folder of another server is made of an empty folder of it only
-  (no takeover over HTTP), and no agent answers it yet.
+  (no takeover over HTTP).
 - A deselected file's last edits are pushed until the next whole round.
 - A note's link to a file stays its stored address
   (`/api/uploads/<hash><ext>`), a chip, where the vault does not make it
@@ -1494,8 +1495,6 @@ into a work folder or one of its directories (`import_review.destination`).
   page. A picture replaced on disk leaves a note's
   embed of the old address reading nothing until the note's own text
   changes.
-- The keep limit is an environment setting (`GAMMA_VAULT_KEEP_MB`), not a
-  setting in the app.
 - A clone from before step 1 shows files in its library until it upgrades:
   degraded, not lost.
 - A work folder still choosing runs no round, so a note made in Gamma in

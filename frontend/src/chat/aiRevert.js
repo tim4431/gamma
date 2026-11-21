@@ -1,6 +1,6 @@
 // Taking back the agent's note changes from the reply that made them. Each
 // edit, new note, move or deletion the agent made carries `revert` (what
-// undoing it needs, recorded by its tool — gamma/ai_tools.py), and so do a
+// undoing it needs, recorded by its tool — gamma/ai_tools/), and so do a
 // folder or label it deleted and a page tool's rename, move or label change
 // (`revert.pages`, one page or many); POST /api/ai/revert
 // undoes it as a merge into the notes or the library as they are now
@@ -55,10 +55,12 @@ export function canRevert(a) {
 }
 
 // A reverted change that can be put back. A new note needs the place it
-// was made in, which older actions did not record; a page made needs none.
+// was made in, which older actions did not record; a page made needs none,
+// and a paste of several notes records every block it made (`blocks`).
 export function canRedo(a) {
   return recorded(a) && !!a.reverted
-    && (a.kind !== "create" || a.tool === MADE_REVERTIBLE || typeof a.revert.parent === "string");
+    && (a.kind !== "create" || a.tool === MADE_REVERTIBLE || typeof a.revert.parent === "string"
+      || Array.isArray(a.revert.blocks));
 }
 
 // The actions as the request's history sends them for the replay: the

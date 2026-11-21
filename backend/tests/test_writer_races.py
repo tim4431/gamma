@@ -18,7 +18,8 @@ from conftest import (account_of, doc_props, folder_names, label_names, login, m
                       workspace_of)
 from gamma import blocks_store
 from gamma.ai_context import notes_focus_section
-from gamma.ai_tools import _NOTE_SNIPPET, run_agent_tool
+from gamma.ai_tools.base import _NOTE_SNIPPET
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.app import app
 from gamma.db import connect_pages_db, ws_uploads_dir
 

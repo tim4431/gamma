@@ -28,20 +28,23 @@ from urllib.parse import urlsplit
 
 import bcrypt
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, gdrive, gdrive_account, guests,
-                hosted, integrity, jobs, ocr_auto, offsite, proxy_settings, snapshot_copies, workspaces)
+                hosted, integrity, jobs, ocr_auto, offsite, proxy_settings, server_options, snapshot_copies, workspaces,
+                zotero_oauth)
 from ..backup_store import StoreConfigError
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
+from .zotero import CALLBACK_PATH as ZOTERO_CALLBACK_PATH, oauth_base as zotero_oauth_base
 from ..db import account_name, account_names, connect_users_db
 from ..logbuf import tail as _log_tail
-from .. import version
+from .. import html_page, version
 from ..seed import create_account
 from ..server_settings import (
+    LOOPBACK_HOSTS,
     QUOTA_MB_MAX,
     QUOTA_MB_MIN,
     GUEST_TTL_MAX,
@@ -130,12 +133,13 @@ def get_settings(request: Request):
     the users list), the public URL, the cloud sign-in, the guest settings
     (the sign-in switch, the lifetime and demo mode — each with its source —
     and ``guest_logins_available``) and the automatic text recognition's
-    (``_ocr_auto``) for the admin rows in the Settings dialog; on a hosted
-    container ``hosted`` (``hosted.pane``: the plan's limits, the Plan
-    rows), else null."""
+    (``_ocr_auto``) for the admin rows in the Settings dialog, the server
+    options (``options``: ``server_options.view``); on a hosted container
+    ``hosted`` (``hosted.pane``: the plan's limits, the Plan rows), else
+    null."""
     require_admin(request)
     return {**get_defaults(), **public_url_settings(), **_guests(), **_ocr_auto(), "cloud": _cloud(),
-            "hosted": hosted.pane(),
+            "hosted": hosted.pane(), "options": server_options.view(),
             "quota_mb_range": [QUOTA_MB_MIN, QUOTA_MB_MAX],
             "guest_ttl_hours_range": [GUEST_TTL_MIN, GUEST_TTL_MAX]}
 
@@ -154,6 +158,9 @@ class SettingsUpdateRequest(BaseModel):
     guest_logins: bool | None = None
     guest_ttl_hours: int | None = None     # 1-720
     demo_mode: bool | None = None
+    # The server options (gamma/server_options.py), {name: value}; a secret
+    # left out is kept, "" removes it.
+    options: dict | None = None
     # Scans uploaded with no text recognized by themselves (gamma/ocr_auto.py):
     # refused (400) while GAMMA_OCR_AUTO decides.
     ocr_auto: bool | None = None
@@ -176,6 +183,8 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
             validate_guest_ttl_hours(payload.guest_ttl_hours)
         if payload.guest_logins is not None and not guests.logins_possible():
             raise ValueError("This server takes no guest logins.")
+        if payload.options:
+            server_options.check_admin_change(payload.options)
         if payload.ocr_auto is not None and ocr_auto_settings()["ocr_auto_source"] == "environment":
             raise ValueError("Automatic text recognition is set by GAMMA_OCR_AUTO on this server.")
         if payload.public_url is not None:
@@ -188,6 +197,8 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
             set_guest_ttl_hours(payload.guest_ttl_hours)
         if payload.demo_mode is not None:
             set_demo_mode(payload.demo_mode)
+        if payload.options:
+            server_options.update(payload.options)
         if payload.ocr_auto is not None:
             set_ocr_auto(payload.ocr_auto)
         if any(v is not None for v in (payload.cloud_issuer, payload.cloud_client_id, payload.cloud_client_secret,
@@ -200,7 +211,7 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
     if payload.ocr_auto:
         ocr_auto.resume()  # the files left waiting while it was off start now
     return {**get_defaults(), **public_url_settings(), **_guests(), **_ocr_auto(), "cloud": _cloud(),
-            "hosted": hosted.pane()}
+            "hosted": hosted.pane(), "options": server_options.view()}
 
 
 # Sync def: one call to the account server.
@@ -222,8 +233,7 @@ def _guests() -> dict:
     with its source). ``guest_logins`` is what the server does — the switch
     held to what this server can do — and ``guest_logins_available`` is
     false where it takes no guests whatever the switch says (a hosted
-    container, a share host, GAMMA_GUEST_MAX=0), so the pane leaves the
-    rows out."""
+    container, a share host), so the pane leaves the rows out."""
     return {**guest_settings(), "guest_logins": guests.logins_open(),
             "guest_logins_available": guests.logins_possible()}
 
@@ -497,11 +507,11 @@ def delete_bucket_snapshot(ws: str, name: str, request: Request, store: str = "b
 
 
 # --- Google Drive (gamma/gdrive_account.py) ------------------------------------
-# Settings → Backups → Google Drive: the server's connection, made by
-# Google's device flow. Connect answers the code to enter; while it is
-# shown the pane posts /poll, which asks Google at most once per Google's
-# interval; the GET (``gdrive_account.status``) also answers the code while
-# one waits. The token never leaves the server.
+# Settings → Backups → Google Drive: the server's connection, made by Google's device flow. Connect answers
+# the code to enter; while it is shown the pane posts /poll, which asks
+# Google at most once per Google's interval; the GET
+# (``gdrive_account.status``) also answers the code while one waits. The
+# token and the client's secret never leave the server.
 
 class DriveConnectRequest(BaseModel):
     folder: str = gdrive_account.DEFAULT_FOLDER
@@ -512,9 +522,9 @@ class DriveFolderRequest(BaseModel):
 
 
 def _drive_call(fn, *args):
-    """400 with the reason for a folder that cannot be or no OAuth client
-    (a DriveConfigError is a ValueError), 502 when Google refuses or cannot
-    be reached."""
+    """400 with the reason for a folder or client that cannot be or no
+    OAuth client (a DriveConfigError is a ValueError), 502 when Google
+    refuses or cannot be reached."""
     try:
         return fn(*args)
     except ValueError as e:
@@ -523,13 +533,58 @@ def _drive_call(fn, *args):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+def _gdrive_callback(request: Request) -> str:
+    """Where Google's page sends the browser back: this server's callback
+    at the address the page itself was opened at, when that is a loopback
+    one over plain HTTP (the desktop app, a server opened on its own
+    computer) and the build has Gamma's "Desktop app" client; "" anywhere
+    else, where the pane connects with a code."""
+    url = request.url
+    if url.scheme != "http" or (url.hostname or "").strip("[]") not in LOOPBACK_HOSTS \
+            or gdrive_account.browser_client() is None:
+        return ""
+    return f"http://{url.netloc}/api/admin/gdrive/callback"
+
+
 @router.get("/gdrive")
 def get_gdrive(request: Request):
     """``{available, connected, email, name, folder, connected_at,
     problem, pending: {user_code, verification_url, expires_at, interval}
-    | null, error}``."""
+    | null, error, browser}``; ``browser``: Connect… opens Google's page
+    here rather than showing a code."""
     require_admin(request)
-    return gdrive_account.status()
+    return {**gdrive_account.status(), "browser": bool(_gdrive_callback(request))}
+
+
+class DriveAuthorizeRequest(BaseModel):
+    folder: str = gdrive_account.DEFAULT_FOLDER
+
+
+@router.post("/gdrive/authorize")
+def authorize_gdrive(payload: DriveAuthorizeRequest, request: Request):
+    """Start signing in on Google's page: ``{url}``, the page to open; it
+    comes back to ``/gdrive/callback``. 400 where Gamma is not opened on
+    the server's own computer (connect with a code there)."""
+    require_admin(request)
+    callback = _gdrive_callback(request)
+    if not callback:
+        raise HTTPException(status_code=400, detail="Google's page signs in only where Gamma is opened on the server's "
+                                                    "own computer: connect with a code instead.")
+    return {"url": _drive_call(gdrive_account.start_browser, payload.folder, callback)}
+
+
+@router.get("/gdrive/callback", response_class=HTMLResponse)
+def gdrive_callback(state: str = "", code: str = "", error: str = ""):
+    """Google's page comes back here, in whatever browser it opened in (the
+    system browser of the desktop app, which has no session): the state,
+    unguessable and used once, names the sign-in an admin started. A page
+    that says how it went; the pane, polling, sees the connection."""
+    problem = gdrive_account.finish_browser(state[:128], code[:2048], error[:100])
+    if problem:
+        return HTMLResponse(html_page.page("Google Drive was not connected", problem), headers=html_page.headers())
+    return HTMLResponse(html_page.page("Google Drive is connected",
+                                       "Backups can go to your Drive now. Close this tab and go back to Gamma."),
+                        headers=html_page.headers())
 
 
 # Sync defs from here: each may call Google.
@@ -577,6 +632,50 @@ def test_gdrive(request: Request):
     way."""
     require_admin(request)
     return gdrive_account.test()
+
+
+# --- this server's Zotero app (gamma/zotero_oauth.py) --------------------------
+# Settings → Server → Zotero sign-in: the app an admin registered at
+# zotero.org, through which people connect Zotero by signing in there
+# (routers/zotero.py ``server`` mode). The secret never leaves the server.
+
+class ZoteroAppRequest(BaseModel):
+    client_key: str
+    client_secret: str = ""   # empty keeps the saved secret of the same key
+
+
+def _zotero_app(request: Request) -> dict:
+    """``{client_key, callback_url}``: the saved app's key ("" for none)
+    and the callback URL to register it with, "" while signing in is not
+    offered at this address (no public URL confirmed)."""
+    base = zotero_oauth_base(request)
+    return {"client_key": zotero_oauth.app()[0], "callback_url": f"{base}{ZOTERO_CALLBACK_PATH}" if base else ""}
+
+
+@router.get("/zotero-app")
+def get_zotero_app(request: Request):
+    require_admin(request)
+    return _zotero_app(request)
+
+
+@router.put("/zotero-app")
+def set_zotero_app(payload: ZoteroAppRequest, request: Request):
+    """Save this server's Zotero app: the GET's answer; 400 for a key or
+    secret that cannot be."""
+    require_admin(request)
+    try:
+        zotero_oauth.save_app(payload.client_key, payload.client_secret)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _zotero_app(request)
+
+
+@router.delete("/zotero-app")
+def forget_zotero_app(request: Request):
+    """Forget it; accounts it connected stay connected."""
+    require_admin(request)
+    zotero_oauth.forget_app()
+    return _zotero_app(request)
 
 
 # --- the network proxy (gamma/proxy_settings.py) -----------------------------

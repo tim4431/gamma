@@ -4,7 +4,8 @@ joined on its own line, existing text untouched, and the action says which."""
 import pytest
 from conftest import login, make_folder, make_user, workspace_of
 
-from gamma.ai_tools import join_block_text, run_agent_tool
+from gamma.ai_tools.notes import join_block_text
+from gamma.ai_tools.registry import run_agent_tool
 
 
 def test_join_block_text_rules():
@@ -13,7 +14,14 @@ def test_join_block_text_rules():
     assert join_block_text("", "only", "append") == "only"
     # Paragraph-level constructs (or multi-line text) get a blank line.
     assert join_block_text("intro", "- a point", "append") == "intro\n\n- a point"
-    assert join_block_text("- a\n- b", "- c", "append") == "- a\n- b\n\n- c"
+    # ...but an item, a quote line or a table row meeting its own kind goes on
+    # with the run: one tight list, one quote, one table
+    assert join_block_text("- a\n- b", "- c", "append") == "- a\n- b\n- c"
+    assert join_block_text("1. one", "- [ ] two", "append") == "1. one\n- [ ] two"
+    assert join_block_text("> a", "> b", "append") == "> a\n> b"
+    assert join_block_text("| x | y |\n|---|---|\n| 1 | 2 |", "| 3 | 4 |", "append") == "| x | y |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
+    assert join_block_text("- a", "> quoted", "append") == "- a\n\n> quoted"
+    assert join_block_text("- b\n\nafter the list", "more", "append") == "- b\n\nafter the list\n\nmore"
     assert join_block_text("text", "## Heading", "prepend") == "## Heading\n\ntext"
     assert join_block_text("text\n\n", "\nmore\n", "append") == "text\nmore"
     assert join_block_text("$$x$$", "y", "append") == "$$x$$\n\ny"
@@ -71,14 +79,14 @@ def test_edit_block_append_prepend_replace(page):
     assert text.startswith("error: nothing to add")
     assert _content(c, block) == "fresh text"
     # The armed spec offers the mode with its choices.
-    from gamma.ai_tools import agent_tools
+    from gamma.ai_tools.registry import agent_tools
     spec = next(t for t in agent_tools("page", {}) if t["name"] == "edit_block")
     assert spec["parameters"]["properties"]["mode"]["enum"] == ["replace", "append", "prepend", "patch", "selection"]
     assert list(spec["parameters"]["properties"]) == ["block_id", "mode", "find", "selection", "content"]
 
 
 def test_patch_block_text_rules():
-    from gamma.ai_tools import patch_block_text
+    from gamma.ai_tools.notes import patch_block_text
     assert patch_block_text("a b c", "b", "B") == ("a B c", 2)
     assert patch_block_text("a b c", "b ", "") == ("a c", 2)             # cut
     # Whitespace-relaxed fallback: a wrapped quote still hits once.
@@ -120,7 +128,7 @@ def test_edit_block_patch_cuts_and_replaces_a_passage(page):
                              {"block_id": block, "mode": "patch", "find": "nowhere", "content": ""})
     assert text.startswith("error: `find` text not found")
     assert _content(c, block) == "Setup: 20 mK.\n\nResult: T1 = 310 us, measured twice."
-    from gamma.ai_tools import agent_tools
+    from gamma.ai_tools.registry import agent_tools
     spec = next(t for t in agent_tools("page", {}) if t["name"] == "edit_block")
     assert spec["parameters"]["properties"]["mode"]["enum"] == ["replace", "append", "prepend", "patch", "selection"]
     assert "find" in spec["parameters"]["properties"]
@@ -161,7 +169,7 @@ def test_edit_block_selection_rewrites_only_the_selected_range(page):
 
 
 def test_replace_selection_text_refinds_a_moved_passage():
-    from gamma.ai_tools import replace_selection_text
+    from gamma.ai_tools.notes import replace_selection_text
     sel = {"from": 0, "to": 3, "text": "abc"}
     assert replace_selection_text("xx abc yy", sel, "Z") == ("xx Z yy", 3)
     assert replace_selection_text("abc abc", {"from": 4, "to": 7, "text": "abc"}, "Z") == ("abc Z", 4)

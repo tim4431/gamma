@@ -6,6 +6,7 @@ The backend package. `app.py` assembles the middleware + routers and serves the 
 # Configuration, storage and upgrades
 config.py          env config
 server_settings.py storage limits admins edit at runtime, and their enforcement
+server_options.py  the server options of Settings once environment variables: guests at once, lookups, the model catalog, the vault's keep limit, shared search services
 db.py              schemas, SCHEMA_VERSION, per-workspace DB paths, the connect helpers (closed by their with block), account id ↔ name, user prefs
 db_maintenance.py  SQLite upkeep on the app's every() loop: idle connections closed, a grown WAL truncated, PRAGMA optimize
 migrations.py      versioned data-directory upgrades (snapshot, numbered steps)
@@ -50,7 +51,12 @@ sync_clock.py      the sync engines' clock: when each linked workspace gets a ro
 publish.py         publishing a page to the free share host (docs/dev/mirror.md "Publishing")
 folder_links.py    synced vaults: the links' rows, making, changing and removing one, the tick and the hot loop (docs/dev/synced_vaults.md)
 vault/             the vault engine: a folder of Gamma and a directory kept in step (docs/dev/synced_vaults.md)
-vault/sync.py      a vault's rounds: Round, sync, sync_page (push, then pull)
+vault/sync.py      a vault's rounds: sync, sync_page, the whole round (run: open, push, then pull)
+vault/round.py     one round's state and the steps its parts share: Round, Read, a note's Base
+vault/journal.py   what a round that died left in the journal, settled
+vault/push.py      push: the scan against the rows, the guard, directories renamed, files moved and removed
+vault/pages.py     a changed or new file into its page: a note merged, a document read in place, a new page
+vault/pull.py      pull: Gamma's changes onto the disk
 vault/kinds.py     the class registry: what a file is to a vault by its name (notes, pdf, picture; in a work folder file, any other format as a page), and what a round does with each class
 vault/remote.py    what a round reads and writes Gamma through, shared by both remotes: Page, Info, Layout, Edit, the refusals, remote_for
 vault/local_remote.py  LocalRemote: this server's workspace, in-process
@@ -123,7 +129,7 @@ ai_usage.py        token usage per AI call (users.db ai_usage) and the summary S
 ai_context.py      PDF attachments, extraction, and chat context assembly
 ai_pictures.py     the chat's pictures: one size, the store, the budget, the label lines
 chat_export.py     a chat conversation as Markdown with its pictures (docs/dev/chat_history.md)
-ai_tools.py        the agent's tools: one scope-agnostic registry
+ai_tools/          the agent's tools: one scope-agnostic registry, a module per tool family
 ai_agent.py        the agent tool loop, its two user-facing pauses, and the helper a tool delegates to
 ai_permissions.py  the chat tools' Allow / Ask / Off states and the approvals a reply waits on
 ai_steer.py        the messages a user steers into their chat reply while it runs

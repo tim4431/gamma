@@ -2,7 +2,7 @@
 folder or label it deleted, and putting it back again.
 
 Each note tool's action records what its change needs to be undone and
-redone (``revert`` on the action, gamma/ai_tools.py): an edit the block's
+redone (``revert`` on the action, gamma/ai_tools/): an edit the block's
 text just before and just after the write, a new block the text it was
 made with and where it went, a move the parent and key it left and the
 ones it went to, a deletion every block of the subtree it took. A folder's
@@ -48,7 +48,9 @@ like any other.
 import json
 
 from . import textmerge
-from .ai_tools import BATCH_MAX, cross_page_refusal, text_diff
+from .ai_tools.base import text_diff
+from .ai_tools.notes import cross_page_refusal
+from .ai_tools.organizing import BATCH_MAX
 from .blocks_store import (FOLDERS, LABELS, TRASH, TREES, existing_in, fetch_subtree, filing, free_position,
                            load_props, named, page_root_id, sub_pages, tree_children, write_lock)
 from .db import connect_pages_db
@@ -118,7 +120,9 @@ def _plan_create(conn, block_id: str, revert: dict, force: bool, redo: bool):
     once someone else's work is in it: its text changed, notes under it,
     comment threads on it, or, for handwriting, strokes drawn into it (its
     stroke file is another). A move or a restyle loses nothing and does not
-    stop it."""
+    stop it. A paste of several blocks (``blocks``) is ``_plan_pasted``'s."""
+    if revert.get("blocks") is not None:
+        return _plan_pasted(conn, block_id, revert["blocks"], force, redo)
     row = _row(conn, block_id)
     props = revert.get("props", {})
     if not isinstance(props, dict):
@@ -150,6 +154,58 @@ def _plan_create(conn, block_id: str, revert: dict, force: bool, redo: bool):
         raise RevertError(409, "The note was changed since.", "filled",
                           {"diff": text_diff(current, ""), "children": under, "threads": threads, "drawn": drawn})
     return page_root_id(conn, block_id), [{"op": "delete", "id": block_id}]
+
+
+def _plan_pasted(conn, block_id: str, rows, force: bool, redo: bool):
+    """The blocks a create_block paste made (``rows``: every one, parent
+    first, with its parent, key, text and properties, as a deletion records
+    them) deleted again, top block by top block; a redo makes them again
+    under the same ids. The deletion stops (``filled``, forceable) once
+    someone else's work is in them: a block's text changed, a block under
+    one that the paste did not make, comment threads on one."""
+    if not isinstance(rows, list) or not rows or not all(isinstance(r, list) and len(r) == 5 and isinstance(r[0], str)
+                                                         for r in rows) or rows[0][0] != block_id:
+        raise RevertError(400, MALFORMED)
+    made = {r[0]: r[3] or "" for r in rows}
+    roots = [r[0] for r in rows if r[1] not in made]
+    if redo:
+        if any(_row(conn, root) for root in roots):
+            return page_root_id(conn, roots[0]), None  # back already
+        page_id = page_root_id(conn, rows[0][1])
+        if not page_id:
+            raise RevertError(409, "The note it was added under was deleted.", "gone")
+        return page_id, _put_back(rows)
+    there = [root for root in roots if _row(conn, root)]
+    if not there:
+        return "", None  # deleted already
+    texts, under, threads, changed = [], 0, 0, False
+    for root in there:
+        for sub in fetch_subtree(conn, root):
+            if sub[0] not in made:
+                under += 1
+            else:
+                texts.append(sub[3] or "")
+                changed = changed or (sub[3] or "") != made[sub[0]]
+            threads += _threads_on(conn, sub[0])
+    if (changed or under or threads) and not force:
+        raise RevertError(409, "The notes were changed since.", "filled",
+                          {"diff": text_diff("\n".join(texts), ""), "children": under, "threads": threads,
+                           "drawn": False})
+    return page_root_id(conn, there[0]), [{"op": "delete", "id": root} for root in there]
+
+
+def _put_back(rows) -> list[dict]:
+    """The inserts that make recorded blocks again (``[id, parent, key,
+    text, properties JSON]``, parent first) under their ids."""
+    ops = []
+    for bid, par, position, content, props in rows:
+        try:
+            props = json.loads(props or "{}")
+        except ValueError:
+            props = {}
+        ops.append({"op": "insert", "id": bid, "parent": par, "content": content or "",
+                    "position": position if isinstance(position, str) else None, "props": props})
+    return ops
 
 
 def _plan_made(conn, block_id: str, revert: dict, force: bool, redo: bool):
@@ -240,15 +296,7 @@ def _plan_delete(conn, block_id: str, revert: dict, force: bool, redo: bool):
     page_id = page_root_id(conn, parent)
     if not page_id:
         raise RevertError(409, "The note it was under was deleted.", "gone")
-    ops = []
-    for bid, par, position, content, props in rows:
-        try:
-            props = json.loads(props or "{}")
-        except ValueError:
-            props = {}
-        ops.append({"op": "insert", "id": bid, "parent": par, "content": content or "",
-                    "position": position if isinstance(position, str) else None, "props": props})
-    return page_id, ops
+    return page_id, _put_back(rows)
 
 
 def _plan_tree_delete(conn, block_id: str, revert: dict, force: bool, redo: bool):

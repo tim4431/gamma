@@ -56,7 +56,7 @@ class ShellAccount extends Account {
   }
 }
 
-// The desktop shell's follower of what waits on this computer (main.js
+// The desktop shell's follower of what waits on this computer (lib/agentAskBar.js
 // followAsks): GET /api/local-agents/asks held while nothing changed, read
 // again at once, its newest `{version, asks}` kept; a refusal (`refused`, a
 // bug) or a lost connection (`error`) noted and read again after a pause.
@@ -168,13 +168,13 @@ export async function remoteAskScenarios(env) {
     // a message from alice's page, and the ask it raised on the computer
     const send = async (dock, text) => {
       const before = new Set(waiting().map((a) => a.id));
-      await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(text);
+      await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(text);
       await dock.getByRole("button", { name: "Send", exact: true }).click();
       await dock.locator(".chatBubble.user", { hasText: text }).waitFor();
       return until(() => waiting().find((a) => !before.has(a.id)),
         { timeout: 30000, every: 250, what: `the ask on the computer (${follower.seen.refused || follower.seen.error || `${follower.seen.reads} reads`})` });
     };
-    // the shell's answer, as main.js answerAgentAsk posts it
+    // the shell's answer, as lib/agentAskBar.js answerAgentAsk posts it
     const answer = (ask, decision, account = shell) => computer.fetch(`${computer.base}/api/local-agents/asks/${encodeURIComponent(ask.id)}`,
       { method: "POST", headers: account.headers({ "Content-Type": "application/json" }), body: JSON.stringify({ decision }) });
     // the waiting strip and pill on alice's page, and no card
@@ -418,7 +418,7 @@ export async function remoteAskScenarios(env) {
         }
         await until(async () => (await stripLine(dock)) === `Codex on ${name}`, { what: `the strip names the computer: ${await stripText(dock)}` });
         const asked = new Set(waiting().map((a) => a.id));
-        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(REBUILD);
+        await dock.getByRole("combobox", { name: "Message Codex", exact: true }).fill(REBUILD);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         // the card on the phone: the build, allowed once at most
         const card = dock.locator(".chatAsk");

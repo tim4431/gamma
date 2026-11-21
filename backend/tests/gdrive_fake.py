@@ -3,9 +3,9 @@ flow, tokens and revocation, and the Drive API v3 as gamma/gdrive.py uses
 it (about, files listed by query, folders made, resumable uploads and
 updates, downloads, deletes), with Google's refusals.
 
-``FakeGoogle.install(monkeypatch)`` points gamma at it in-process: the
-client through the environment, ``gdrive._request`` to ``request``, the
-pauses to ``sleeps`` (instant; the pauses asked are kept). A test drives
+``FakeGoogle.install(monkeypatch)`` points gamma at it in-process (the
+test gives gamma the app it knows, ``CLIENT_ID`` and ``CLIENT_SECRET``):
+``gdrive._request`` to ``request``, the pauses to ``sleeps`` (instant; the pauses asked are kept). A test drives
 the device flow with ``approve``, ``deny`` and ``expire``; ``revoke_all``
 makes every refresh token invalid (the person removed the app);
 ``expire_access`` makes the next call's access token answer 401.
@@ -19,6 +19,14 @@ scenario's side: ``python -I backend/tests/gdrive_fake.py --port 0``
 prints ``GOOGLE <base>`` and serves until killed. Every endpoint, OAuth's
 and Drive's, is on the one origin, told apart by path.
 
+Google's authorization page is ``authorize(url)`` in-process and ``GET
+/o/oauth2/v2/auth`` over HTTP: the person allows at once (``browser_deny``
+to refuse), and the browser is sent back to the redirect URI with a code
+bound to the PKCE challenge; the code is traded once, with its verifier
+and redirect URI, by the "Desktop app" client (``DESKTOP_ID``), which
+cannot ask for a device code, as the "TVs" one (``CLIENT_ID``) cannot
+open the page. A refresh token is renewed only by the client that made it.
+
 What it checks as Google does: the client ID and secret, a Bearer token on
 every API call (none on a session's chunks), the device code's states,
 ``drive.file``'s reach (only the files this client made), queries of the
@@ -30,6 +38,8 @@ chunk completing the file. Not checked against Google itself.
 """
 
 import argparse
+import base64
+import hashlib
 import itertools
 import json
 import re
@@ -40,6 +50,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread
 
 CLIENT_ID, CLIENT_SECRET = "fake-client.apps.googleusercontent.com", "GOCSPX-fake"
+DESKTOP_ID, DESKTOP_SECRET = "fake-desktop.apps.googleusercontent.com", "GOCSPX-desktop"
+SECRETS = {CLIENT_ID: CLIENT_SECRET, DESKTOP_ID: DESKTOP_SECRET}
 SCOPE = "https://www.googleapis.com/auth/drive.file"   # gdrive.SCOPE
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 FOLDER = "application/vnd.google-apps.folder"
@@ -64,6 +76,9 @@ class FakeGoogle:
         self.files = {}          # id → {id, name, mimeType, parents, data, created, modified, trashed, mine}
         self.devices = {}        # device_code → {user_code, state, scope}
         self.refresh = {}        # refresh token → valid
+        self.made_by = {}        # refresh token → the client that made it
+        self.codes = {}          # authorization code → {client_id, redirect_uri, challenge, used}
+        self.browser_deny = False
         self.access = {}         # access token → refresh token it came from
         self.sessions = {}       # upload id → {file_id | None, meta, size, data}
         self.calls, self.sleeps, self.failures = [], [], []
@@ -78,10 +93,9 @@ class FakeGoogle:
     def install(self, monkeypatch):
         from gamma import gdrive
 
-        monkeypatch.setenv("GAMMA_GOOGLE_DRIVE_CLIENT_ID", CLIENT_ID)
-        monkeypatch.setenv("GAMMA_GOOGLE_DRIVE_CLIENT_SECRET", CLIENT_SECRET)
         monkeypatch.setenv("GAMMA_GOOGLE_OAUTH_BASE", self.base)
         monkeypatch.setenv("GAMMA_GOOGLE_API_BASE", self.base)
+        monkeypatch.setenv("GAMMA_GOOGLE_ACCOUNTS_BASE", self.base)
         monkeypatch.setattr(gdrive, "_request", self.request)
         monkeypatch.setattr(gdrive, "_sleep", self.sleeps.append)
         monkeypatch.setattr(gdrive, "_tokens", {})
@@ -100,6 +114,14 @@ class FakeGoogle:
 
     def expire(self):
         self._device("expired")
+
+    def authorize(self, url):
+        """The person on Google's authorization page at ``url``: the address
+        the browser is sent back to, with a code and the state (or
+        ``error=access_denied`` when ``browser_deny``)."""
+        reply = self.handle("GET", url, {})
+        assert reply.status == 302, reply
+        return reply.headers["location"]
 
     def revoke_all(self):
         self.refresh = {t: False for t in self.refresh}
@@ -180,6 +202,8 @@ class FakeGoogle:
         headers = {k.lower(): v for k, v in headers.items()}
         if path in ("/device/code", "/token", "/revoke"):
             return self._oauth(path, dict(urllib.parse.parse_qsl((body or b"").decode())))
+        if path == "/o/oauth2/v2/auth":
+            return self._page(query)
         if path == "/upload/session":
             return self._chunk(query["upload_id"], headers, body or b"")
         auth = headers.get("authorization", "")
@@ -218,9 +242,12 @@ class FakeGoogle:
             self.refresh[token] = False
             self.access = {a: r for a, r in self.access.items() if r != token}
             return self._json(200, {})
-        if form.get("client_id") != CLIENT_ID:
+        client = form.get("client_id")
+        if client not in SECRETS:
             return self._oauth_error(401, "invalid_client")
         if path == "/device/code":
+            if client != CLIENT_ID:  # Google: "Invalid client type" for any other kind of client
+                return self._oauth_error(401, "invalid_client")
             code = f"dev-{next(self._ids)}"
             self.devices[code] = {"user_code": f"ABCD-{len(self.devices) + 1:04d}", "state": "pending",
                                   "scope": form.get("scope", "")}
@@ -228,9 +255,20 @@ class FakeGoogle:
                                     "verification_url": "https://www.google.com/device", "expires_in": 1800,
                                     "interval": self.interval})
         assert path == "/token", path
-        if form.get("client_secret") != CLIENT_SECRET:
+        if form.get("client_secret") != SECRETS[client]:
             return self._oauth_error(401, "invalid_client")
         grant = form.get("grant_type")
+        if grant == "authorization_code":
+            held = self.codes.get(form.get("code", ""))
+            verifier = form.get("code_verifier", "").encode("ascii")
+            challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier).digest()).rstrip(b"=").decode("ascii")
+            if (held is None or held["used"] or held["client_id"] != client
+                    or held["redirect_uri"] != form.get("redirect_uri") or held["challenge"] != challenge):
+                return self._oauth_error(400, "invalid_grant")
+            held["used"] = True
+            refresh = f"rt-{next(self._ids)}"
+            self.refresh[refresh], self.made_by[refresh] = True, client
+            return self._json(200, {**self._mint(refresh), "refresh_token": refresh, "scope": self.granted})
         if grant == DEVICE_GRANT:
             device = self.devices.get(form.get("device_code", ""))
             if device is None or device["state"] in ("expired", "used"):
@@ -241,14 +279,30 @@ class FakeGoogle:
                 return self._oauth_error(403, "access_denied")
             device["state"] = "used"
             refresh = f"rt-{next(self._ids)}"
-            self.refresh[refresh] = True
+            self.refresh[refresh], self.made_by[refresh] = True, client
             return self._json(200, {**self._mint(refresh), "refresh_token": refresh, "scope": self.granted})
         if grant == "refresh_token":
             refresh = form.get("refresh_token", "")
-            if not self.refresh.get(refresh):
+            if not self.refresh.get(refresh) or self.made_by.get(refresh, client) != client:
                 return self._oauth_error(400, "invalid_grant")
             return self._json(200, {**self._mint(refresh), "scope": self.granted})
         return self._oauth_error(400, "unsupported_grant_type")
+
+    def _page(self, query):
+        """Google's authorization page, the person allowing at once: the
+        browser sent back with a code (or the refusal)."""
+        back = query.get("redirect_uri", "")
+        if (query.get("client_id") != DESKTOP_ID or query.get("response_type") != "code"
+                or query.get("code_challenge_method") != "S256" or not back.startswith("http://")):
+            return Reply(400, {"content-type": "text/plain"}, b"Error 400: invalid_request")
+        if self.browser_deny:
+            answer = {"error": "access_denied", "state": query.get("state", "")}
+        else:
+            code = f"ac-{next(self._ids)}"
+            self.codes[code] = {"client_id": DESKTOP_ID, "redirect_uri": back,
+                                "challenge": query.get("code_challenge", ""), "used": False}
+            answer = {"code": code, "state": query.get("state", ""), "scope": self.granted}
+        return Reply(302, {"location": f"{back}?{urllib.parse.urlencode(answer)}"})
 
     def _mint(self, refresh):
         access = f"at-{next(self._ids)}"

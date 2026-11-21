@@ -108,10 +108,16 @@ export function sweepRuns() {
 // key}` (PEM files) serves it over https with that certificate, which
 // `fetch` takes as its one authority (a NAS's self-signed certificate,
 // scenarios/https.mjs); a scenario may change it between two starts.
+// The server options a test server starts with (gamma/server_options.py,
+// set by manage.py set-option before it starts): nothing goes out to the
+// paper registries or models.dev. A scenario's `options` add to them.
+const OFFLINE = { metadata_lookup: "off", model_catalog: "off" };
+
 export class Server {
-  constructor({ env = {}, static: serveApp = true, tls = null } = {}) {
+  constructor({ env = {}, options = {}, static: serveApp = true, tls = null } = {}) {
     servers.push(this);
     this.env = env;
+    this.options = { ...OFFLINE, ...options };
     this.serveApp = serveApp;
     this.tls = tls;
     this.agent = null;
@@ -149,8 +155,10 @@ export class Server {
     return stdout;
   }
   // `port`: the one it had (a server started again at its address, with
-  // another certificate); a free one otherwise.
-  async start({ port = 0 } = {}) {
+  // another certificate); a free one otherwise. `setup` false leaves out
+  // manage.py's setup and options, as the Docker entrypoint does for a data
+  // directory the server will refuse (a newer Gamma's: standby.mjs).
+  async start({ port = 0, setup = true } = {}) {
     if (this.serveApp && !fs.existsSync(path.join(DIST, "index.html"))) throw new Error("frontend/dist is missing: run `npm run build` first");
     if (path.isAbsolute(PYTHON) && !fs.existsSync(PYTHON)) throw new Error(`backend venv python not found at ${PYTHON}`);
     fs.mkdirSync(this.dataDir, { recursive: true });
@@ -158,13 +166,16 @@ export class Server {
     // replaces dist/ and would otherwise 500 every page load until it ends.
     const dist = path.join(this.dir, "dist");
     if (this.serveApp) fs.cpSync(DIST, dist, { recursive: true });
-    await this.manage("setup");
+    if (setup) {
+      await this.manage("setup");
+      await this.manage("set-option", ...Object.entries(this.options).flat().map(String));
+    }
     this.port = port || await freePort();
     this.agent = null;
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-c", SERVE, String(this.port), ...(this.tls ? [this.tls.cert, this.tls.key] : [])], {
       cwd: BACKEND, stdio: ["pipe", log, log],
-      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...(this.serveApp ? { GAMMA_STATIC_DIR: dist } : {}), TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", GAMMA_OCR_AUTO: "off", ...this.env },
+      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...(this.serveApp ? { GAMMA_STATIC_DIR: dist } : {}), TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_OCR_AUTO: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {
@@ -503,6 +514,23 @@ export async function arrived(locator) {
     for (let n = el.parentElement; n; n = n.parentElement) all.push(...n.getAnimations());
     return Promise.all(all.filter(finite).map((a) => a.finished.catch(() => {})));
   });
+}
+
+// The box of `locator` once it stays put between two reads 200 ms apart:
+// a page still scrolling to it (a jump to a PDF page) or a card still
+// settling has it elsewhere a moment later, and a press placed by a box
+// read then lands beside it. For a press by coordinates where the locator's
+// own click cannot go (an overlay that takes no pointer).
+export async function atRest(locator, what = "the box at rest") {
+  let last = "", box = null;
+  await until(async () => {
+    box = await locator.boundingBox();
+    const now = JSON.stringify(box);
+    const same = !!box && now === last;
+    last = now;
+    return same;
+  }, { what, every: 200 });
+  return box;
 }
 
 // A press of the mouse's back button over the middle of `over` (a

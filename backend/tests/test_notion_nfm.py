@@ -877,7 +877,10 @@ def test_deep_nesting_stops_and_says_so():
 
 
 def test_long_input_reads_fast():
-    started = time.monotonic()
+    # This thread's CPU time, not the wall clock: a parallel suite's other
+    # workers on a loaded runner stretch the wall clock past any bound, while
+    # a parse gone quadratic on these inputs takes minutes of CPU (~2 s idle).
+    started = time.thread_time()
     read("[" * 50000)
     read("<code>" * 20000)
     read("<b>" * 20000)
@@ -888,7 +891,7 @@ def test_long_input_reads_fast():
     read("<toggle>\n" + "$$\n" * 20001 + "</toggle>")
     read(" " * 50000 + "x")
     read("\n\n".join("<toggle>\na\n</toggle>" for _ in range(5000)))
-    assert time.monotonic() - started < 5
+    assert time.thread_time() - started < 5
 
 
 # --- through both ----------------------------------------------------------------

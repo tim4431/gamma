@@ -6,7 +6,8 @@ import zlib
 
 
 from conftest import require_math_renderer
-from gamma.note_markup import MATH, SUB, SUP, SYMBOLS, TEXT, alt_and_width, latex_spans, obsidian_image_sizes
+from gamma.note_markup import (BLOCK_REF_RE, MATH, SUB, SUP, SYMBOLS, TEXT, alt_and_width, latex_spans,
+                               obsidian_image_sizes, ref_alias, ref_parts, ref_token, table_pipe)
 from gamma.pdf_image import image_xobject
 from gamma.pdf_typeset import CID, font_of
 
@@ -316,3 +317,31 @@ def test_vector_text_refuses_rescaled_svg():
                 '<ellipse cx="1" cy="1" rx="2" ry="1"/>'):
         svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -8 10 10">{bad}</svg>'
         assert _shape_ops(ET.fromstring(svg)) is None
+
+
+# --- [[ref]]s ---------------------------------------------------------------------------
+
+def test_a_ref_holds_an_id_and_the_words_it_shows():
+    """``[[id|words]]`` (``\\|`` a table's cell's pipe): its words, blank
+    ones none; an embed's none; brackets or a line break end no ref."""
+    found = [(m[1], m[2], ref_alias(m)) for m in BLOCK_REF_RE.finditer(
+        "[[a1]] [[a1|the plan]] [[a1\\|cell]] [[a1| ]] ![[a1|x]] [[a1|b]c]] [[a1|b\nc]] [[Two words|x]]")]
+    assert found == [("", "a1", None), ("", "a1", "the plan"), ("", "a1", "cell"), ("", "a1", None), ("!", "a1", None)]
+
+
+def test_a_ref_token_reads_back_as_it_was_written():
+    assert ref_token("a1") == "[[a1]]" and ref_token("a1", "  ") == "[[a1]]"
+    assert ref_token("a1", "the [plan]\nnow") == "[[a1|the plan now]]"
+    assert ref_token("a1", "x", bang="!") == "![[a1]]"
+    assert ref_token("a1", "cell", pipe=table_pipe("| x |\n| [[", 10)) == "[[a1\\|cell]]"
+    assert table_pipe("text [[", 7) == "|"
+    for token in ("[[a1|the plan now]]", "[[a1\\|cell]]"):
+        m = BLOCK_REF_RE.fullmatch(token)
+        assert ref_token(m[2], ref_alias(m), pipe="\\|" if "\\|" in token else "|") == token
+
+
+def test_an_inline_ref_token_is_its_target_and_words():
+    assert ref_parts("[[a1|the plan]]") == ("a1", "the plan")
+    assert ref_parts("[[Some title\\|cell]]") == ("Some title", "cell")
+    assert ref_parts("![[a1|x]]") == ("a1", None)
+    assert ref_parts("[[a1]]") == ("a1", None)

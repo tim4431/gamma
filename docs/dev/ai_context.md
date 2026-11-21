@@ -2,7 +2,7 @@
 
 How the AI chat gets a page's content, why that used to fail on long papers,
 and the measurements behind the current design. Code: `gamma/ai_context.py`
-(context assembly), `gamma/ai_tools.py` (agent tools), `gamma/pdf_text.py`
+(context assembly), `gamma/ai_tools/` (agent tools), `gamma/pdf_text.py`
 (a PDF's extraction), `gamma/documents/text.py` (a text file's lines and
 outline), `gamma/search/` + `gamma/block_index.py` (the document text and
 notes indexes; `gamma/search/indexer.py` extracts documents into the former).
@@ -314,7 +314,7 @@ message, and it doesn't stop fabrication — the tools are the better lever.
 ## What shipped, and why
 
 - **Grounding prompt** (`_SYSTEM_PROMPT` in `routers/ai.py`, plus the
-  mechanical tool-guidance lines `agent_system()` appends in `ai_tools.py`):
+  mechanical tool-guidance lines `agent_system()` appends in `ai_tools/prompt.py`):
   anything stated as being *in these pages or their documents* must come from
   text actually read; look it up first, say "not in their pages" otherwise —
   and say whether a fact comes from a PDF (with its page number) or from the

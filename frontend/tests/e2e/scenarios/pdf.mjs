@@ -4,7 +4,7 @@
 // PDF text on another page.
 import { execFileSync } from "node:child_process";
 import { blockSearchQuery, closeEditor, tree, same, partialBlockSearch } from "./notes.mjs";
-import { PYTHON, arrived, assert, assertEq, fakeAiModels, settingsPane, until } from "../harness.mjs";
+import { PYTHON, arrived, assert, assertEq, atRest, fakeAiModels, settingsPane, until } from "../harness.mjs";
 import { DEFAULT_PALETTE, darkPageColor, darkPageLine } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
@@ -40,6 +40,25 @@ export async function selectPdfText(page, pageNo, needle) {
 // edges: one that starts within Chromium's 20 px autoscroll belt scrolls
 // the viewer under it while it runs, so a span left at an edge by "nearest"
 // (the viewer scrolled to show a card) is brought to the middle.
+// Whether page `pageNo`'s first citation mark lies over the text-layer span
+// holding `text`, in the window. The server draws MuPDF's glyph boxes, which
+// match pdf.js's span across (within 3 px) and hold its middle, a little
+// taller than pdf.js's line box.
+function citationOverText(page, pageNo, text) {
+  return page.evaluate(([pageNo, text]) => {
+    const mark = document.querySelector(`[data-page="${pageNo}"] .pdfCitationMark`)?.getBoundingClientRect();
+    const span = [...document.querySelectorAll(`[data-page="${pageNo}"] .textLayer span`)].find((s) => s.textContent.includes(text));
+    if (!mark || !span) return false;
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    const box = range.getBoundingClientRect();
+    const middle = box.top + box.height / 2;
+    return Math.abs(mark.left - box.left) < 3 && Math.abs(mark.width - box.width) < 3
+      && mark.top <= middle && middle <= mark.bottom && mark.height < 2 * box.height
+      && mark.top >= 0 && mark.top < innerHeight;
+  }, [pageNo, text]);
+}
+
 export async function dragSelectPdfText(page, pageNo, needle, { highlighted = false, moveOn = true } = {}) {
   const measure = () => page.evaluate(([pageNo, needle]) => {
     const span = [...document.querySelectorAll(`[data-page="${pageNo}"] .textLayer span`)].find((s) => s.textContent.includes(needle));
@@ -112,15 +131,7 @@ export function reviewCardHelpers(p) {
   const pressed = async (c, key) => (await stepOf(c, key).getAttribute("aria-pressed")) === "true";
   const pictureLoaded = (c) => until(() => c.locator(".hlReviewShot img").evaluate((img) => img.complete && img.naturalWidth > 0,
     null, { timeout: 1000 }), { what: "the before picture loaded", timeout: 15000 });
-  const atRest = (c) => {
-    let last = "";
-    return until(async () => {
-      const now = JSON.stringify(await c.boundingBox());
-      const same = now === last;
-      last = now;
-      return same;
-    }, { what: "the card at rest", every: 200 });
-  };
+  const cardAtRest = (c) => atRest(c, "the card at rest");
   const look = (c, relative = false) => c.evaluate((el, relative) => {
     const at = el.getBoundingClientRect();
     const box = (r) => [r.left - (relative ? at.left : 0), r.top - (relative ? at.top : 0), r.width, r.height];
@@ -180,7 +191,7 @@ export function reviewCardHelpers(p) {
     return r.height > 0 && r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
   }, id);
   const focusInCard = (c) => c.evaluate((el) => el.contains(document.activeElement)).catch(() => false);
-  return { cardOf, headOf, stepOf, navOf, countOf, pressed, pictureLoaded, atRest, look, sameLook, rowOf, rowBoxes, sameRow, notesOn, focusInCard };
+  return { cardOf, headOf, stepOf, navOf, countOf, pressed, pictureLoaded, atRest: cardAtRest, look, sameLook, rowOf, rowBoxes, sameRow, notesOn, focusInCard };
 }
 
 export async function pdfScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage, flags }, { alice2, second }) {
@@ -297,7 +308,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
 
   // A DOI typed in place of the stored one is looked up by the save, and the
   // status line says what came of it. The suite's server asks no registry
-  // (GAMMA_METADATA_LOOKUP=off), so here doi.org knows nothing: the fields
+  // (paper lookups off, harness.mjs OFFLINE), so here doi.org knows nothing: the fields
   // stay as typed. The found case is the backend's (test_metadata_update.py).
   await step("pdf: a DOI typed into the popover is looked up when the record is saved", async () => {
     const meta = { title: "Rydberg paper", authors: ["A. Writer"], year: "2026", doi: "10.1103/PhysRevA.99.013437",
@@ -494,6 +505,82 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     }, { what: "the note is linked to the clicked highlight" });
     await account.api(`/api/blocks/${loose.id}`, { method: "DELETE" });
     assertNoProblems(page);
+  });
+
+  // A highlight in parts (shared/model/highlightParts.js): its menu's Add a passage… waits for another passage of
+  // its page. A selection is added in the order the page reads, the foot of the left column before the top of the
+  // right one though lower on the page; its note badge stands at the end of the passage, in the right column. A
+  // press on another highlight joins it: its note stays, a plain note under the highlight it joined.
+  await step("pdf: Add a passage… makes one highlight of a sentence a column break cuts, and joins another highlight", async () => {
+    const run = (x, y, text) => ({ x, y, size: 12, font: "F1", text });
+    const tail = "All light pulses come from two", head = "counter-propagating laser beams.", last = "Closing remark of the caption";
+    const pdf = makePdf([{ runs: [run(72, 700, "The sequence starts at the reservoir"), run(72, 680, tail),
+      run(320, 700, head), run(320, 680, "The histogram shows the imaging"), run(320, 660, last)] }]);
+    const up = await account.upload("/api/uploads", pdf, "caption.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Caption paper" } });
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      const mark = (id) => p.locator(`[data-page="1"] div[data-hl-id="${id}"]`);
+      const stored = async (id) => (await account.api(`/api/blocks/${id}`)).properties;
+      // the top of the right column and the caption's last line, each with a note
+      for (const [text, note] of [[head, "Why two beams?"], [last, "Note on the closing remark"]]) {
+        await selectPdfText(p, 1, text);
+        await p.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+        await p.locator(".plainTip .colorBtn").first().click();
+        await p.locator(".blockEditorCm").waitFor({ timeout: 5000 });
+        await p.keyboard.type(note);
+        await closeEditor(p);
+      }
+      const made = await until(async () => {
+        const kids = (await account.api(`/api/blocks/${doc.id}/subtree`)).block.children || [];
+        const hls = kids.filter((b) => b.properties?.pdf_position?.rects && b.content);
+        return hls.length === 2 ? hls : null;
+      }, { what: "two highlights with their notes" });
+      const a = made.find((b) => b.properties.quote === head), b = made.find((b) => b.properties.quote === last);
+      assert(a && b, `the quotes as selected: ${JSON.stringify(made.map((x) => x.properties.quote))}`);
+
+      // the foot of the left column, selected while the highlight waits for it, goes first
+      await mark(a.id).first().click({ button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Add a passage" }).click();
+      await p.waitForSelector(`.attachModeBanner[data-extend-highlight="${a.id}"]`, { timeout: 5000 });
+      await selectPdfText(p, 1, tail);
+      await p.locator(".plainTip .tipAddBtn").click();
+      await p.waitForSelector(".attachModeBanner[data-extend-highlight]", { state: "detached", timeout: 5000 });
+      const two = await until(async () => {
+        const props = await stored(a.id);
+        return props.pdf_position.rects.length === 2 ? props : null;
+      }, { what: "the passage added" });
+      assertEq(two.quote, `${tail} ${head}`, "the quote reads as the page does, the left column's foot first");
+      const [first, second] = two.pdf_position.rects;
+      assert(first.x2 < second.x1 && first.y1 > second.y1, `its rects in reading order: ${JSON.stringify(two.pdf_position.rects)}`);
+      await until(async () => (await mark(a.id).count()) === 2, { what: "both parts drawn" });
+      const badge = await p.locator(`.pdfNoteBadge[data-hl-id="${a.id}"]`).boundingBox();
+      const top = await mark(a.id).nth(1).boundingBox();
+      assert(Math.abs(badge.x - (top.x + top.width)) < 12 && Math.abs(badge.y - top.y) < 16,
+        `the badge ends the passage in the right column: ${JSON.stringify({ badge, top })}`);
+
+      // a press on another highlight of the page joins it, after the rest; its note stays under it
+      await mark(a.id).first().click({ button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Add a passage" }).click();
+      await p.waitForSelector(`.attachModeBanner[data-extend-highlight="${a.id}"]`, { timeout: 5000 });
+      await mark(b.id).click();
+      await p.waitForSelector(".attachModeBanner[data-extend-highlight]", { state: "detached", timeout: 5000 });
+      const joined = await until(async () => {
+        const props = await stored(a.id);
+        return props.pdf_position.rects.length === 3 ? props : null;
+      }, { what: "the highlights joined" });
+      assertEq(joined.quote, `${tail} ${head} ${last}`, "the joined passage reads after the rest");
+      const note = await account.api(`/api/blocks/${b.id}`);
+      assertEq(note.parent_id, a.id, "the joined highlight's note is under the highlight it joined");
+      assertEq(note.content, "Note on the closing remark", "its text kept");
+      assert(!note.properties.pdf_position && !note.properties.quote && !note.properties.color, `a plain note: ${JSON.stringify(note.properties)}`);
+      await until(async () => (await mark(b.id).count()) === 0 && (await mark(a.id).count()) === 3, { what: "one highlight drawn in three parts" });
+      assertNoProblems(p);
+    } finally {
+      await c.close();
+    }
   });
 
   await step("pdf: flipped pages draw every highlight in a dark-tuned colour of its own hue, not screened", async () => {
@@ -896,17 +983,12 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await link.click();
     const mark = page.locator('[data-page="2"] .pdfCitationMark').first();
     await mark.waitFor();
-    const aligned = () => page.evaluate(() => {
-      const mark = document.querySelector('[data-page="2"] .pdfCitationMark').getBoundingClientRect();
-      const span = [...document.querySelectorAll('[data-page="2"] .textLayer span')]
-        .find(s => s.textContent.includes("Page two says hello world"));
-      const range = document.createRange(); range.selectNodeContents(span);
-      const text = range.getBoundingClientRect();
-      return Math.abs(mark.left - text.left) < 3 && Math.abs(mark.top - text.top) < 3
-        && Math.abs(mark.width - text.width) < 3 && mark.top >= 0 && mark.top < innerHeight;
-    });
+    const aligned = () => citationOverText(page, 2, "Page two says hello world");
     await until(aligned, { what: "citation rectangles align with the rendered text" });
-    const box = await mark.boundingBox();
+    // The mark takes no pointer, so the press goes by its box: read once the
+    // jump to page 2 has stopped (read while it still scrolled, the press
+    // landed beside the passage and dismissed it, on CI).
+    const box = await atRest(mark, "the citation at rest");
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     assertEq(await mark.count(), 1, "clicking the highlighted passage keeps it visible");
     const paper = await page.locator('[data-page="2"]').boundingBox();
@@ -1278,8 +1360,10 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await page.reload();
     await page.locator("a.gammaLink-citation", { hasText: "other source" }).click();
     await page.waitForSelector('[data-page="1"] .pdfCitationMark');
-    assert((await page.textContent('[data-page="1"] .textLayer')).includes(quote), "citation resolved against the requested document");
-    for (const [text, message] of [["This passage does not exist.", "could not be located"], ["Repeated source passage.", "More than one passage"]]) {
+    // The mark is drawn from the server's answer, before the text layer is built.
+    await until(async () => (await page.textContent('[data-page="1"] .textLayer')).includes(quote), { what: "citation resolved against the requested document" });
+    await until(() => citationOverText(page, 1, quote), { what: "the mark lies over the quoted line" });
+    for (const [text, message] of [["This passage does not exist.", "could not be found"], ["Repeated source passage.", "More than one passage"]]) {
       await page.goto(`${server.base}/?page=${target.id}&pdf_page=1&quote=${encodeURIComponent(text)}&ws=${account.ws}`);
       await page.locator('.pdfCitationNotice', { hasText: message }).waitFor();
       assertEq(await page.locator('.pdfCitationMark').count(), 0, "unresolved reference does not highlight guessed text");
@@ -1291,7 +1375,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await waitForPdf(page);
   });
 
-  await step("pdf: fuzzy citations align with source glyphs and reject changed numbers or competing passages", async () => {
+  await step("pdf: approximate citations align with source glyphs, say how alike they read and refuse competing passages", async () => {
     const text = "We carefully measured 53 atoms under stable experimental conditions";
     const quote = text.replace("carefully", "carefuly");
     const pdf = makePdf([{ lines: [text], box: [900, 792] }, { lines: [text, text], box: [900, 792] }]);
@@ -1300,23 +1384,19 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     const before = await account.api(`/api/blocks/${target.id}/subtree`);
     const href = (number, value) => `${server.base}/?page=${target.id}&pdf_page=${number}&quote=${encodeURIComponent(value)}&ws=${account.ws}`;
     await page.goto(href(1, quote));
-    await page.locator('.pdfCitationNotice', { hasText: "approximate text match" }).waitFor();
-    const aligned = () => page.evaluate(text => {
-      const mark = document.querySelector('[data-page="1"] .pdfCitationMark')?.getBoundingClientRect();
-      const span = [...document.querySelectorAll('[data-page="1"] .textLayer span')].find(s => s.textContent === text);
-      if (!mark || !span) return false;
-      const range = document.createRange(); range.selectNodeContents(span);
-      const box = range.getBoundingClientRect();
-      return ['left', 'top', 'width', 'height'].every(k => Math.abs(mark[k] - box[k]) < 3);
-    }, text);
+    await page.locator('.pdfCitationNotice', { hasText: /approximate text match \(\d\d% alike\)/ }).waitFor();
+    const aligned = () => citationOverText(page, 1, text);
     await until(aligned, { what: "approximate citation covers the actual source glyphs" });
     await page.keyboard.press("Escape");
     await until(async () => await page.locator('.pdfCitationMark, .pdfCitationNotice').count() === 0, { what: "fuzzy citation and notice dismiss together" });
-    for (const [number, value, message] of [[1, quote.replace("53", "54"), "could not be located"], [2, quote, "More than one passage"]]) {
-      await page.goto(href(number, value));
-      await page.locator('.pdfCitationNotice', { hasText: message }).waitFor();
-      assertEq(await page.locator('.pdfCitationMark').count(), 0, "unsafe or ambiguous approximate citation has no highlight");
-    }
+    // A misquoted number reads almost alike: the passage the model meant is
+    // shown, its notice saying the quote is not the page's text.
+    await page.goto(href(1, quote.replace("53", "54")));
+    await page.locator('.pdfCitationNotice', { hasText: "approximate text match" }).waitFor();
+    await until(aligned, { what: "a misquoted number marks the passage it misquotes" });
+    await page.goto(href(2, quote));
+    await page.locator('.pdfCitationNotice', { hasText: "More than one passage" }).waitFor();
+    assertEq(await page.locator('.pdfCitationMark').count(), 0, "an ambiguous approximate citation has no highlight");
     const after = await account.api(`/api/blocks/${target.id}/subtree`);
     assertEq(JSON.stringify(after.block.children), JSON.stringify(before.block.children), "fuzzy citation creates no annotations or notes");
     assertNoProblems(page);
@@ -1607,6 +1687,51 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await p.close();
     } finally { await c.close(); }
     await account.api(`/api/blocks/${linking.id}`, { method: "DELETE" });
+  });
+
+  // A Gamma link kept as a link region's address (a highlight's copied
+  // block link pasted into the link dialog before it knew one, here
+  // written against another host) opens in place, not the external-link
+  // prompt; Change link… offers the highlight it names, on this same paper,
+  // which turns the region into a link to it, and pressing it lands there.
+  await step("pdf: a Gamma link to a highlight on the same paper opens in place, and Change link… makes it a highlight link", async () => {
+    const up = await account.upload("/api/uploads", makePdf([["See Extended Data Fig. 5 here", "Extended Data Fig. 5 caption", "Also see the caption"]]), "crossref.pdf", "application/pdf");
+    const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Cross-ref paper" } });
+    const at = (y1, y2) => { const r = { x1: 60, y1, x2: 480, y2 }; return { pageNumber: 1, width: 612, height: 792, boundingRect: r, rects: [r] }; };
+    const target = await account.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "",
+      properties: { quote: "Extended Data Fig. 5 caption", color: "#ffe28fa6", pdf_position: at(80, 102) } } });
+    const blockUrl = `https://elsewhere.example/?block=${target.id}&ws=${account.ws}`;
+    const region = await account.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "",
+      properties: { quote: "Also see the caption", color: "rgba(140, 180, 255, 0.35)", pdf_position: at(106, 128), link_url: blockUrl } } });
+    const stored = async () => (await account.api(`/api/blocks/${region.id}`)).properties;
+    const flash = `[data-page="1"] [data-hl-id="${target.id}"].pdfHlFlash`;
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${paper.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      await p.click(`[data-page="1"] div[data-hl-id="${region.id}"]`);
+      await p.waitForSelector(flash, { timeout: 8000 });
+      assertEq(await p.locator(".linkPromptModal").count(), 0, "no external-link prompt");
+      await p.waitForSelector(flash, { state: "detached", timeout: 8000 });
+
+      await p.click(`[data-page="1"] div[data-hl-id="${region.id}"]`, { button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Change link…" }).click();
+      const change = p.getByRole("dialog", { name: "Change reference link" });
+      await change.waitFor();
+      const lead = change.locator('[role="option"][aria-selected="true"]');
+      await until(async () => (await lead.innerText()).includes("Extended Data Fig. 5 caption"), { what: "the highlight leads" });
+      assert((await lead.innerText()).includes("Cross-ref paper"), "named by its paper");
+      await p.keyboard.press("Enter");
+      const props = await until(async () => { const pr = await stored(); return pr.link_block_id === target.id && pr; }, { what: "a link to the highlight" });
+      assertEq(props.link_page_id, paper.id, "on the same paper");
+      assert(!props.link_url, "no longer an address");
+
+      await p.click(`[data-page="1"] div[data-hl-id="${region.id}"]`);
+      await p.waitForSelector(flash, { timeout: 8000 });
+      assertNoProblems(p);
+      await p.close();
+    } finally { await c.close(); }
+    await account.api(`/api/blocks/${paper.id}`, { method: "DELETE" });
   });
 
   // Settings → Reading › PDFs › Smooth wheel scrolling (shared/lib/smoothWheel.js).

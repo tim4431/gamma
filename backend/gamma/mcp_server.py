@@ -1,7 +1,8 @@
 """MCP transport adapter over the same tools Gamma chat executes directly,
-plus three of its own: the workspaces the connection reads, reading a
-pasted Gamma link (``mcp_links``) and exporting a page as a file
-(``mcp_export``); for a connection the user gave the Comment level in some
+plus four of its own: the workspaces the connection reads, reading a
+pasted Gamma link (``mcp_links``), exporting a page as a file
+(``mcp_export``) and, where it edits, storing a file for a note to show
+(``mcp_upload``); for a connection the user gave the Comment level in some
 of its workspaces (integrations.comment_grant; a write token's workspace, a
 turn's), the registry's writing tools there (``WRITING_TOOLS``: ``comment``,
 ``resolve``, ``highlight``, written as the connection's agent,
@@ -46,13 +47,20 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .ai_permissions import APPROVAL_TIMEOUT
-from .ai_tools import (WRITING_TOOLS, agent_tools, approval_preview, citation_prompt, gamma_link, mcp_tools,
-                       run_agent_tool)
+from .ai_tools.base import gamma_link
+from .ai_tools.prompt import citation_prompt
+from .ai_tools.registry import (STORING_TOOLS, WRITING_TOOLS, agent_tools, approval_preview, mcp_tools,
+                                run_agent_tool)
 from .agents import of_connection, stamp
+from . import hosted
 from .integrations import Connection, set_asks
 from .server_settings import mcp_allowed_hosts
 from .mcp_export import EXPORT_DESCRIPTION, EXPORT_SCHEMA, export_page
 from .mcp_links import LINK_SCHEMA, holders, resolve_link
+from .mcp_upload import UPLOAD_DESCRIPTION, UPLOAD_SCHEMA, upload_file
+from . import mcp_changes
+from .ai_revert import RevertError
+from .workspaces import is_deleting
 from .version import VERSION
 from .workspaces import list_for_user
 
@@ -71,18 +79,30 @@ NOT_COMMENTING = ("This connection may only read. To let it comment, reply, reso
 WRITING = {name: ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=name == "resolve",
                                  openWorldHint=False) for name in WRITING_TOOLS}
 # The chat registry's tools a connection gets in the workspaces the user let
-# it edit: writing, adding and moving notes and storing a picture for them,
+# it edit: writing, pasting and moving notes and storing a picture for them,
 # and drawing and placing on a page (shapes, a text box, a picture, a page of
-# paper: each one new block). Never deleting, and nothing of pages, folders or
-# settings. Each runs as the chat's does (ai_tools.run_agent_tool, client
-# "ai", the account's), signed as the connection.
+# paper: each one new block), and making a page (create_page). With them,
+# this adapter's own upload_file (gamma/mcp_upload.py), which stores a file
+# for a note to show, and list_changes and undo_change (gamma/mcp_changes.py),
+# which take back what it changed. Deleting a note (DELETE_TOOLS) only where
+# the person allowed that too, on its row in Settings (``Connection.deletes``);
+# nothing of existing pages, folders or settings. Each runs as the chat's
+# does (ai_tools.run_agent_tool, client "ai", the account's), signed as the
+# connection, and each change with a revert record is journaled
+# (mcp_changes.record).
 DRAWING_TOOLS = frozenset({"draw", "add_text_box", "place_picture", "add_sheet"})
-EDIT_TOOLS = frozenset({"edit_block", "create_block", "move_block", "clip_region"}) | DRAWING_TOOLS
+EDIT_TOOLS = frozenset({"edit_block", "create_block", "move_block", "clip_region", "create_page"}) | DRAWING_TOOLS
+DELETE_TOOLS = frozenset({"delete_block"})
 NOT_EDITING = ("This connection may only read. To let it change notes, allow it to edit a workspace in Gamma: "
                "Settings → AI → Integrations, Choose workspaces on its row.")
-# edit_block's replace overwrites a note's text; the others add or move.
-EDITING = {name: ToolAnnotations(readOnlyHint=False, destructiveHint=name == "edit_block", idempotentHint=False,
-                                 openWorldHint=False) for name in EDIT_TOOLS}
+NOT_DELETING = ("This connection may not delete notes. To let it, in Gamma: Settings → AI → Integrations, Choose "
+                "workspaces on its row, turn on May delete notes. Meanwhile undo_change takes back its own changes.")
+# edit_block's replace overwrites a note's text and delete_block takes a
+# note; the others add or move.
+EDITING = {name: ToolAnnotations(readOnlyHint=False, destructiveHint=name in ("edit_block", "delete_block"),
+                                 idempotentHint=False, openWorldHint=False) for name in EDIT_TOOLS | DELETE_TOOLS}
+# The adapter's own tools that a connection gets where it edits.
+OWN_EDIT_TOOLS = frozenset({"upload_file", "list_changes", "undo_change"})
 # What Gamma's question about a change asks besides yes or no (the client's
 # Accept and Decline): whether to stop asking for this connection.
 REMEMBER = {"type": "object", "properties": {"remember": {
@@ -93,8 +113,10 @@ REMEMBER = {"type": "object", "properties": {"remember": {
 QUESTION_LINES = 24
 QUESTION_CONTEXT = 1
 QUESTION_WIDTH = 240
-# A Markdown link or picture, which a kept line shows by its text alone.
+# A Markdown link or picture, which a kept line shows by its text alone;
+# a stored picture or file, which every line names (``_shown``).
 _LINK = re.compile(r"(!?)\[([^\]]*)\]\([^)\s]*\)")
+_UPLOAD_LINK = re.compile(r"(!?)\[([^\]]*)\]\((?:https?://[^/\s)]+)?/api/uploads/[^)\s]*\)")
 # What the model hears when a change was not allowed, as the chat's agent
 # does (ai_agent.DECLINED, UNANSWERED), or could not be asked about.
 DECLINED = ("declined: the user did not allow this change when Gamma asked, so nothing was changed. Do not "
@@ -105,9 +127,11 @@ CANNOT_ASK = ("Gamma asks the user before each change this connection makes, and
               "its question (MCP elicitation), so nothing was changed. Tell the user: restart the assistant if "
               "it can show questions from MCP servers, or in Gamma, Settings → AI → Integrations, open Choose "
               "workspaces on this connection's row and turn off Ask before each change.")
-# The request body either transport takes, and the stateful sessions: how
-# many at once, and how long one lives without a request.
-MAX_BODY = 65536
+# The request body either transport takes — room for a paste at
+# create_block's 100,000 characters in any JSON escaping, and no argument
+# takes a file's bytes as text — and the stateful sessions: how many at
+# once, and how long one lives without a request.
+MAX_BODY = 1024 * 1024
 MAX_SESSIONS = 1000
 SESSION_IDLE = 1800
 def plugin_hint(version: str) -> str:
@@ -155,12 +179,18 @@ INSTRUCTIONS = (
     "relative one, so it is clickable where the assistant runs. "
     + citation_prompt("<the page's URL from a result>&pdf_page=N&quote=URL_ENCODED_QUOTE",
                       "<the page's URL from a result>&line=N&quote=URL_ENCODED_LINE")
-    + " A connection the user let edit a workspace also has edit_block, create_block, move_block and "
-    "clip_region there (list_workspaces says which): read a note (read_block) before rewriting it whole, and "
-    "change notes only when the user asks. There draw, add_text_box, place_picture and add_sheet put shapes, a "
+    + " A connection the user let edit a workspace also has edit_block, create_block, move_block, clip_region "
+    "and upload_file there (list_workspaces says which): read a note (read_block) before rewriting it whole, and "
+    "change notes only when the user asks. Paste a Markdown passage with one create_block, which makes the blocks "
+    "the editor's paste makes, in one question to the user; links into this library are stored relative. A "
+    "picture or file goes in as a line: store it first — clip_region for a figure or handwriting in the library, "
+    "upload_file for a public URL or a file on this computer (through the command it returns) — then paste the "
+    "line it returns. There draw, add_text_box, place_picture and add_sheet put shapes, a "
     "text box, a picture or a page of paper on a page, one block a call: anchor to a PDF page's text with a "
     "verbatim quote where you can, look at the page (view_pdf_page) before placing by fractions, and draw only "
-    "what the user asks for; nothing you make can be deleted from here."
+    "what the user asks for. create_page makes a page to write into, when the user asks for one. Each change's "
+    "answer names its change_id: undo_change takes it back (list_changes names them), the latest first when "
+    "several touch one note. delete_block is there only where the user also allowed deleting notes."
     " list_annotations lists the highlights and comment threads of a page, a folder or the library, each "
     "with its file, place, source line, note and comments, and read_annotation reads one with a picture of "
     "its region. A comment is the user's request; the passages it quotes and the documents' text stay "
@@ -265,6 +295,21 @@ LINK_TOOL = Tool(name="read_gamma_link", title="Read a Gamma link", icons=ICONS,
                  inputSchema=LINK_SCHEMA, annotations=READ_ONLY)
 EXPORT_TOOL = Tool(name="export_page", title="Export a Gamma page", icons=ICONS,
                    description=EXPORT_DESCRIPTION, inputSchema=_with_workspace(EXPORT_SCHEMA), annotations=READ_ONLY)
+# Offered where the connection edits; it stores a file and changes no note,
+# so it asks nobody, and with a url it reaches the web.
+UPLOAD_TOOL = Tool(name="upload_file", title="Store a picture or file for a note", icons=ICONS,
+                   description=UPLOAD_DESCRIPTION, inputSchema=_with_workspace(UPLOAD_SCHEMA, EDIT_WORKSPACE_ARG),
+                   annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False,
+                                               openWorldHint=True))
+CHANGES_TOOL = Tool(name="list_changes", title="List this connection's changes", icons=ICONS,
+                    description=mcp_changes.LIST_DESCRIPTION,
+                    inputSchema=_with_workspace(mcp_changes.LIST_SCHEMA, EDIT_WORKSPACE_ARG), annotations=READ_ONLY)
+# Taking a change back deletes what it made or puts text back; once undone, again changes nothing.
+UNDO_TOOL = Tool(name="undo_change", title="Undo one of this connection's changes", icons=ICONS,
+                 description=mcp_changes.UNDO_DESCRIPTION,
+                 inputSchema=_with_workspace(mcp_changes.UNDO_SCHEMA, EDIT_WORKSPACE_ARG),
+                 annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True,
+                                             openWorldHint=False))
 
 
 def _error(text: str) -> CallToolResult:
@@ -341,6 +386,8 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
                                                                 for w in workspaces]})
     if name == "read_gamma_link":
         return _read_link(connection, base, arguments["url"])
+    if name in ("list_changes", "undo_change"):  # before _targets takes the workspace argument out
+        return _changes(connection, base, name, arguments, names)
     try:
         targets = _targets(workspaces, names, name, arguments)
     except ValueError as exc:
@@ -356,6 +403,15 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
             content.append(EmbeddedResource(type="resource", resource=BlobResourceContents(
                 uri=uri, mimeType=media_type, blob=base64.b64encode(data).decode("ascii"))))
         return CallToolResult(content=content)
+    if name == "upload_file":
+        found, refused = _writes(connection, base, name, {**arguments, "workspace": targets[0]})
+        if refused:
+            return refused
+        try:
+            text, stored = upload_file(found[0], user_id, connection.token_id, base, arguments)
+        except ValueError as exc:
+            return _error(str(exc))
+        return CallToolResult(content=[TextContent(type="text", text=text)], structuredContent=stored)
     if len(targets) > 1:
         # One section per workspace: its name, its link shapes, its result.
         sections = []
@@ -367,7 +423,10 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
         return CallToolResult(content=[TextContent(type="text", text="\n\n".join(sections))],
                               structuredContent={"workspaces": targets})
     ws = targets[0]
-    allowed = EDIT_TOOLS if name in EDIT_TOOLS else WRITING_TOOLS if name in WRITING_TOOLS else READ_TOOLS
+    if name in DELETE_TOOLS and not connection.deletes:
+        return _error(NOT_DELETING)
+    changing = name in EDIT_TOOLS | DELETE_TOOLS
+    allowed = (EDIT_TOOLS | DELETE_TOOLS) if changing else WRITING_TOOLS if name in WRITING_TOOLS else READ_TOOLS
     if allowed is not READ_TOOLS:
         found, refused = _writes(connection, base, name, {**arguments, "workspace": ws})
         if refused:
@@ -384,10 +443,11 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
     result = f"{head}\n\n{result}"
     # What the call located, as data too — the page (with its URL),
     # the block, the PDF page or pages, a text file's lines and path, and
-    # what a writing tool wrote (its thread, its comment, the entry's link);
-    # the hits' own links are in the text.
-    structured = {key: action[key] for key in ("page_id", "block_id", "pdf_page", "pdf_pages", "lines", "line",
-                                               "path", "thread_id", "comment_id", "link")
+    # what a change made (a writing tool's thread, comment and entry link, a
+    # paste's blocks, the file clip_region stored); the hits' own links are
+    # in the text.
+    structured = {key: action[key] for key in ("page_id", "block_id", "block_ids", "pdf_page", "pdf_pages", "lines",
+                                               "line", "path", "thread_id", "comment_id", "link", "upload")
                   if action.get(key)}
     if structured.get("page_id"):
         structured["url"] = gamma_link(scope, structured["page_id"])
@@ -395,6 +455,12 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
             result += "\n\nPage URL: " + structured["url"]
     if structured and len(workspaces) > 1:
         structured["workspace_id"] = ws
+    # A change with a revert record is journaled, and its answer names how
+    # to take it back (gamma/mcp_changes.py).
+    change_id = mcp_changes.record(ws, connection.token_id, scope.get("agent"), name, action) if changing else ""
+    if change_id:
+        structured["change_id"] = change_id
+        result += f'\n\nChange {change_id}: undo_change(change_id="{change_id}") takes it back.'
     # view_pdf_page's and view_ink's picture: an image the client shows the model.
     images = [ImageContent(type="image", data=data, mimeType=media_type)
               for media_type, data in action.get("images") or []]
@@ -402,9 +468,81 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
                           structuredContent=structured or None)
 
 
+def _change_of(connection: Connection, arguments: dict):
+    """``(ws, change)``: the connection's own change ``change_id`` in the
+    workspace named, else in any it edits; or the refusal."""
+    names = {w["id"]: w["name"] for w in list_for_user(connection.user_id) if w["id"] in connection.workspaces}
+    wanted = arguments.get("workspace")
+    try:
+        spaces = _targets(connection.workspaces, names, "undo_change", {"workspace": wanted}) if wanted \
+            else list(connection.editable)
+    except ValueError as exc:
+        return _error(str(exc))
+    change_id = str(arguments.get("change_id") or "")
+    for ws in spaces:
+        if ws not in connection.editable:
+            continue
+        change = mcp_changes.find(ws, change_id)
+        if change and change["token_id"] == connection.token_id:
+            return ws, change
+    return _error("No change of this connection is " + repr(change_id) + " where it edits; list_changes names them.")
+
+
+def _changes(connection: Connection, base: str, name: str, arguments: dict, names: dict) -> CallToolResult:
+    """``list_changes`` and ``undo_change`` (gamma/mcp_changes.py)."""
+    if name == "list_changes":
+        wanted = arguments.get("workspace")
+        try:
+            spaces = _targets(connection.workspaces, names, name, {"workspace": wanted}) if wanted \
+                else list(connection.editable)
+        except ValueError as exc:
+            return _error(str(exc))
+        spaces = [ws for ws in spaces if ws in connection.editable]
+        if not spaces:
+            return _error(NOT_EDITING)
+        limit = max(1, min(int(arguments.get("limit") or 20), 100))
+        found = sorted(((ws, c) for ws in spaces for c in mcp_changes.listed(ws, connection.token_id, limit)),
+                       key=lambda pair: pair[1]["at"], reverse=True)[:limit]
+        if not found:
+            return CallToolResult(content=[TextContent(type="text", text="This connection has made no change here yet.")])
+        lines = [f"- [{c['id']}] {mcp_changes.when(c)} · {c['summary']}" + (" (undone)" if c["undone"] else "")
+                 + (f" — workspace {names.get(ws, ws)}" if len(spaces) > 1 else "")
+                 + (f" — {_link_base(base, ws)}&page={c['page_id']}" if c["page_id"] else "") for ws, c in found]
+        return CallToolResult(content=[TextContent(type="text", text="This connection's changes, newest first "
+                                                   "(undo_change takes one back):\n" + "\n".join(lines))],
+                              structuredContent={"changes": [{"change_id": c["id"], "at": c["at"], "summary": c["summary"],
+                                                              "undone": c["undone"], "page_id": c["page_id"],
+                                                              "workspace_id": ws} for ws, c in found]})
+    if refused := hosted.read_only():
+        return _error(refused)
+    found = _change_of(connection, arguments)
+    if isinstance(found, CallToolResult):
+        return found
+    ws, change = found
+    if change["undone"]:
+        return CallToolResult(content=[TextContent(type="text", text=f"ok — “{change['summary']}” was undone already")])
+    if is_deleting(ws):
+        return _error("This workspace is being deleted — no changes are possible.")
+    try:
+        mcp_changes.undo(ws, change, actor=connection.user_id, force=arguments.get("force") is True)
+    except RevertError as exc:
+        if exc.status == 409 and exc.conflict in ("filled", "changed", "moved"):
+            lost = "".join(text for kind, text in (exc.preview or {}).get("diff") or () if kind == "del").strip()
+            return _error(f"{exc.detail} Undoing “{change['summary']}” anyway would lose what was done since"
+                          + (f" (it would take out: {lost[:400]})" if lost else "")
+                          + ". Tell the user; call undo_change again with force: true only if they agree.")
+        return _error(f"“{change['summary']}” cannot be undone: {exc.detail}")
+    return CallToolResult(content=[TextContent(type="text", text=f"ok — undid “{change['summary']}”")],
+                          structuredContent={"change_id": change["id"], "page_id": change["page_id"]})
+
+
 def _shown(line: str, kept: bool = False) -> str:
-    """One line of the question, cut to ``QUESTION_WIDTH``; a kept line's
-    links read as their text, a picture as [picture: its caption]."""
+    """One line of the question, cut to ``QUESTION_WIDTH``: a stored
+    picture or file named, [picture: its caption] or [file: its name], and
+    on a kept line every other link read as its text, a picture as
+    [picture: its caption]; an added or removed line's other links stay as
+    written, so the person sees where they go."""
+    line = _UPLOAD_LINK.sub(lambda m: _stored(m.group(1), m.group(2)), line)
     if kept:
         line = _LINK.sub(lambda m: f"[picture: {m.group(2)}]" if m.group(1) else m.group(2), line)
     line = line.rstrip()
@@ -444,8 +582,13 @@ def _lines(diff) -> tuple[list[str], int, int]:
     return out, removed, added
 
 
-def _count(n: int) -> str:
-    return f"{n} line" if n == 1 else f"{n} lines"
+def _stored(bang: str, text: str) -> str:
+    what, caption = "picture" if bang else "file", text.split("|", 1)[0].strip()
+    return f"[{what}: {caption}]" if caption else f"[{what}]"
+
+
+def _count(n: int, what: str = "line") -> str:
+    return f"{n} {what}" if n == 1 else f"{n} {what}s"
 
 
 def _question(connection: Connection, name: str, preview: dict, link: str) -> str:
@@ -461,13 +604,25 @@ def _question(connection: Connection, name: str, preview: dict, link: str) -> st
         verb = "remove text from" if removed and not added else "add text to" if added and not removed else "change"
         head = f"{who} wants to {verb} a note in {where}."
     elif name == "create_block":
-        head = f"{who} wants to add a note to {where}{under}."
+        count = preview.get("count") or 1
+        after = (f", after “{preview['after']}”" if preview.get("after")
+                 else ", at the top" if preview.get("first") else "")
+        head = f"{who} wants to add {'a note' if count == 1 else f'{count} notes'} to {where}{under}{after}."
     elif name == "move_block":
         source = f" from “{preview['src_title']}”" if preview.get("src_title") else ""
         head = f"{who} wants to move a note{source} to {where}{under}."
         moved = [line for part in preview.get("diff") or () for line in part[1].split("\n") if line.strip()]
         lines = ["  " + _shown(line, kept=True) for line in moved[:QUESTION_CONTEXT * 4]]
-    elif name in DRAWING_TOOLS:  # one block on a PDF page or a page of paper (gamma/ai_draw.py)
+    elif name == "create_page":
+        place = (f" in {preview['to']}" + (" (a new folder)" if preview.get("new_folder") else "") if preview.get("to")
+                 else f" inside “{preview['inside']}”" if preview.get("inside") else " at the top of the library")
+        head = f"{who} wants to make the page {where}{place}."
+        lines = []
+    elif name == "delete_block":
+        under = preview.get("children") or 0
+        head = (f"{who} wants to delete a {preview.get('what') or 'note'} in {where}"
+                + (f" with the {_count(under, 'note')} under it" if under else "") + ". undo_change can bring it back.")
+    else:  # a drawing tool: one block on a PDF page or a page of paper (gamma/ai_draw.py)
         on = (f"page {preview['pdf_page']} of {where}" if preview.get("pdf_page")
               else f"a page of paper in {where}" if preview.get("sheet") else where)
         beside = (f" beside “{preview['place']['quote']}”"
@@ -476,12 +631,12 @@ def _question(connection: Connection, name: str, preview: dict, link: str) -> st
                 "add_text_box": f"{who} wants to add a text box to {on}{beside}.",
                 "place_picture": f"{who} wants to place a picture on {on}{beside}.",
                 "add_sheet": f"{who} wants to add {preview.get('what') or 'a page of paper'} to {where}."}[name]
-    else:  # clip_region: a picture stored for a note to embed
-        page = f", page {preview['pdf_page']}" if preview.get("pdf_page") else ""
-        head = f"{who} wants to save a picture of {preview.get('what') or 'part of a page'} from {where}{page}."
     if name in ("edit_block", "create_block") and (removed or added):
-        head += " It " + " and ".join(part for part in (removed and "removes " + _count(removed),
-                                                         added and "adds " + _count(added)) if part) + "."
+        # "It adds 23 lines, 1 picture and 1 file.": what a paste shows besides its text
+        said = [part for part in (removed and "removes " + _count(removed), added and "adds " + _count(added)) if part]
+        said = [" and ".join(said)] + [_count(n, what) for n, what in ((preview.get("picture_count"), "picture"),
+                                                                        (preview.get("file_count"), "file")) if n]
+        head += " It " + (", ".join(said[:-1]) + " and " + said[-1] if len(said) > 1 else said[0]) + "."
     return "\n\n".join(part for part in (head, "\n".join(lines), link and f"Open in Gamma: {link}") if part)
 
 
@@ -491,7 +646,11 @@ def _writes(connection: Connection, base: str, name: str, arguments: dict):
     comment in) changes, else the refusal: ``((ws, scope), None)`` or
     ``(None, CallToolResult)``. The scope carries the connection's stamp
     (``agents.stamp``): who a comment is signed as, what a block it makes
-    keeps as ``properties.agent``."""
+    keeps as ``properties.agent``. A hosted server its plan made read-only
+    refuses every one, before anyone is asked, as its /api refuses a write
+    (app.read_only_gate)."""
+    if refused := hosted.read_only():
+        return None, _error(refused)
     listed = {w["id"]: w for w in list_for_user(connection.user_id) if w["id"] in connection.workspaces}
     names = {w: item["name"] for w, item in listed.items()}
     try:
@@ -514,6 +673,8 @@ def _preview(connection: Connection, base: str, name: str, arguments: dict):
     """What a change would do, for Gamma's question: ``(question, digest)``,
     or the call's answer when it could not change anything (a wrong id,
     nothing to do), which asks nobody, as in the chat."""
+    if name == "undo_change":
+        return _undo_question(connection, base, arguments)
     found, refused = _writes(connection, base, name, arguments)
     if refused:
         return refused
@@ -524,6 +685,25 @@ def _preview(connection: Connection, base: str, name: str, arguments: dict):
     preview = preview or {}
     link = gamma_link(scope, preview["page_id"]) if preview.get("page_id") else ""
     return _question(connection, name, preview, link), str(preview.get("digest") or "")
+
+
+def _undo_question(connection: Connection, base: str, arguments: dict):
+    """Gamma's question about taking one of the connection's changes back,
+    or the answer when there is nothing to take back."""
+    if refused := hosted.read_only():
+        return _error(refused)
+    found = _change_of(connection, dict(arguments))
+    if isinstance(found, CallToolResult):
+        return found
+    ws, change = found
+    if change["undone"]:
+        return CallToolResult(content=[TextContent(type="text", text=f"ok — “{change['summary']}” was undone already")])
+    who = of_connection(connection).label
+    question = (f"{who} wants to undo its change “{change['summary']}”, made {mcp_changes.when(change)}"
+                + (f", in “{change['page_title']}”" if change["page_title"] else "") + "."
+                + (" Someone changed it since: undoing it anyway loses that." if arguments.get("force") is True else ""))
+    link = f"{_link_base(base, ws)}&page={change['page_id']}" if change["page_id"] else ""
+    return question + (f"\n\nOpen in Gamma: {link}" if link else ""), ""
 
 
 def _read_link(connection: Connection, base: str, url: str) -> CallToolResult:
@@ -580,7 +760,12 @@ class GammaMCP:
                 tools += [Tool(name=s["name"], description=s["description"], icons=ICONS,
                                inputSchema=_with_workspace(s["parameters"], EDIT_WORKSPACE_ARG),
                                annotations=EDITING[s["name"]])
-                          for s in agent_tools("folder", allowed_tools=EDIT_TOOLS)]
+                          for s in agent_tools("folder", allowed_tools=EDIT_TOOLS)] + [UPLOAD_TOOL, CHANGES_TOOL, UNDO_TOOL]
+            if conn.deletes:
+                tools += [Tool(name=s["name"], description=s["description"], icons=ICONS,
+                               inputSchema=_with_workspace(s["parameters"], EDIT_WORKSPACE_ARG),
+                               annotations=EDITING[s["name"]])
+                          for s in agent_tools("folder", allowed_tools=DELETE_TOOLS)]
             return tools
 
         @self.server.list_resources()
@@ -597,11 +782,14 @@ class GammaMCP:
                 # call a tool it was never offered, unvalidated.
                 if not conn.commentable:
                     return _error(NOT_COMMENTING)
-            elif name in EDIT_TOOLS:
+            elif name in EDIT_TOOLS | DELETE_TOOLS | OWN_EDIT_TOOLS:
                 # likewise: refused before dispatch to a connection that edits nothing
                 if not conn.editable:
                     return _error(NOT_EDITING)
-                if conn.asks:
+                if name in DELETE_TOOLS and not conn.deletes:
+                    return _error(NOT_DELETING)
+                # storing a file and listing changes ask nobody: the note write that shows the file does
+                if conn.asks and name not in STORING_TOOLS and name not in ("upload_file", "list_changes"):
                     return await self._ask(conn, request, name, dict(arguments))
             # Legacy chat aliases have no public MCP schema; reject before
             # dispatch so they cannot bypass the SDK's input validation.

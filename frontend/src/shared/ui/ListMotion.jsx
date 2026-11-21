@@ -33,6 +33,8 @@
 // the list aims at what is drawn, so it lands nothing. Boxes are the
 // window's, and a glide is turned into its item's own pixels, under any
 // zoom around the list or on the item itself (a button's Interface size).
+// The scroller around the list does not scroll while it moves along an
+// axis the list fits at rest (holdScroll).
 import React from "react";
 import { listGlides, longestMs, reducedMotion, sameKeys } from "./motion.js";
 import { LONGEST_MS, standBack, standing, stillCopy } from "./leave.js";
@@ -45,6 +47,52 @@ const BAND = 150;
 const MOVING = 60;
 const MOST = 8;
 
+// What moves is drawn past the place the list rests in: an item gliding
+// from where it stood, a copy leaving from there, one rising in. A scroller
+// whose box follows its list (a popover that shrank with it) would hold
+// more than it shows for as long as that lasts, and show a scroll bar for
+// a moment. So the nearest scroller around the list stops scrolling
+// (motion.css [data-scroll-held]) along each axis the list fits at rest,
+// until every list moving in it has landed; one that scrolls at rest is
+// left alone. `held`: scroller -> how many lists hold each axis.
+const held = new Map();
+
+function scrollerOf(el) {
+  for (let box = el; box && box !== document.body; box = box.parentElement) {
+    const style = getComputedStyle(box);
+    if (style.overflowX !== "visible" || style.overflowY !== "visible") return { box, style };
+  }
+  return null;
+}
+
+function markHeld(box) {
+  const n = held.get(box);
+  const axes = ["x", "y"].filter((axis) => n[axis] > 0);
+  if (axes.length) box.dataset.scrollHeld = axes.join(" ");
+  else { delete box.dataset.scrollHeld; held.delete(box); }
+}
+
+// Holds the scroller around `root` still along the axes it fits now, the
+// list laid out at rest; what it returns lets it go.
+function holdScroll(root) {
+  const found = root && scrollerOf(root.parentElement);
+  if (!found) return null;
+  const { box, style } = found;
+  const axes = [
+    ...(style.overflowX === "auto" && box.scrollWidth <= box.clientWidth ? ["x"] : []),
+    ...(style.overflowY === "auto" && box.scrollHeight <= box.clientHeight ? ["y"] : []),
+  ];
+  if (!axes.length) return null;
+  const n = held.get(box) || { x: 0, y: 0 };
+  for (const axis of axes) n[axis] += 1;
+  held.set(box, n);
+  markHeld(box);
+  return () => {
+    for (const axis of axes) n[axis] -= 1;
+    markHeld(box);
+  };
+}
+
 const shapeOf = (props) => (props.shape !== undefined ? props.shape : props.keys);
 const sameOf = (props) => props.same || (props.shape === undefined && props.keys ? sameKeys : Object.is);
 
@@ -53,6 +101,7 @@ export default class ListMotion extends React.Component {
   gliding = new Set(); // the glides under way
   entering = new Set(); // new items coming in now
   copies = new Set(); // copies of items gone, on their way out
+  release = null; // lets the scroller around the list scroll again (holdScroll)
   timer = null;
 
   componentDidMount() {
@@ -85,10 +134,13 @@ export default class ListMotion extends React.Component {
   componentDidUpdate(_prev, _state, before) {
     if (!before) return;
     this.settle(); // an item still gliding starts again from where it was seen
+    // (a motion cut short keeps its hold: what is still drawn of it would read as the list's)
+    if (!this.release) this.release = holdScroll(this.root.current);
     this.play(before, this.read());
     for (const { copy, at, scrolls } of before.leaving) this.standCopy(copy, at, scrolls);
     clearTimeout(this.timer);
     this.timer = setTimeout(this.land, LONGEST_MS);
+    this.rest();
   }
 
   // Whether anyone can see the list move.
@@ -210,6 +262,7 @@ export default class ListMotion extends React.Component {
     const done = () => {
       if (!this.gliding.delete(glide)) return;
       if (![...this.gliding].some((g) => g.effect?.target === el)) delete el.dataset.moving;
+      this.rest();
     };
     glide.onfinish = done;
     glide.oncancel = done;
@@ -235,6 +288,14 @@ export default class ListMotion extends React.Component {
     this.entering.clear();
     for (const copy of this.copies) copy.remove();
     this.copies.clear();
+    this.rest();
+  };
+
+  // Once nothing is under way, the scroller around the list scrolls again.
+  rest = () => {
+    if (!this.release || this.gliding.size || this.entering.size || this.copies.size) return;
+    this.release();
+    this.release = null;
   };
 
   busy = () => this.gliding.size > 0 || this.entering.size > 0;
@@ -249,6 +310,8 @@ export default class ListMotion extends React.Component {
     const el = e.target;
     if (this.entering.delete(el)) delete el.dataset.entering;
     else if (this.copies.delete(el)) el.remove();
+    else return;
+    this.rest();
   };
 
   render() {

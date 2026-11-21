@@ -11,7 +11,8 @@ import zipfile
 import pytest
 
 from conftest import account_of, drop_user, fresh_client, login, make_user
-from gamma import ai_tools, jobs, workspaces, ws_backup
+from gamma import jobs, workspaces, ws_backup
+from gamma.ai_tools import registry
 from gamma.db import ws_dir
 
 PW = "dj-pass-12345"
@@ -207,7 +208,7 @@ def test_a_workspace_being_deleted_takes_no_more_changes(monkeypatch):
         shared = visitor.get(f"/api/share/{token}").json()
         assert shared["deleting"] is True and shared["can_edit"] is False and shared["role"] == "edit"
         # an AI turn that armed its changing tools before the delete has each call refused
-        result, action = ai_tools.run_agent_tool(doomed, {"type": "folder", "can_write": True}, "rename_page",
+        result, action = registry.run_agent_tool(doomed, {"type": "folder", "can_write": True}, "rename_page",
                                                  {"page_id": page["id"], "title": "Renamed"})
         assert result == "error: this workspace is being deleted — no changes are possible" and action["error"]
         with pytest.raises(workspaces.WorkspaceDeleting):

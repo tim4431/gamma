@@ -9,12 +9,12 @@ import re
 import pytest
 
 from conftest import account_of, doc_props, login, make_folder, make_user, workspace_of
-from gamma.ai_tools import agent_tools
+from gamma.ai_tools.registry import agent_tools
 
 ALL_TOOLS = agent_tools("folder")  # the full registry, for the wire tests
 ALL_PERMS = ("list", "read", "block_read", "view", "search", "show", "web_search", "web_read",
              "save", "create", "rename", "move", "restore", "delete", "organize", "organize_delete", "block_edit",
-             "comment", "draw")
+             "comment", "draw", "skills")
 # Every tool runs without asking: for chats whose changes are not about approvals.
 ALLOW_ALL = {k: "allow" for k in ALL_PERMS}
 

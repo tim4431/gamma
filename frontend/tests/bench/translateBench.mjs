@@ -322,7 +322,7 @@ async function translateLive(docs, opts) {
   const { Server, Account } = await import("../e2e/harness.mjs");
   // The model catalog on, as on a real server: the effort a translation
   // asks for by default is the model's lowest level, which it looks up.
-  const server = new Server({ env: { GAMMA_MODEL_CATALOG: "on" } });
+  const server = new Server({ options: { model_catalog: "on" } });
   try {
     await server.start();
     await server.manage("create-user", "bench", "bench-pw");

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { clipPayload, lookupQuery, paperIds, paperPage, replyPapers } from "../src/chat/chatPapers.js";
+import { clipPayload, lookupQuery, paperIds, paperLabel, paperPage, replyPapers } from "../src/chat/chatPapers.js";
 
 test("a source's DOI and arXiv id, however they are spelled", () => {
   assert.deepEqual(paperIds("doi:10.1103/PhysRevB.27.1031"), { doi: "10.1103/physrevb.27.1031", arxiv: "" });
@@ -53,6 +53,35 @@ test("a reply's papers: what it read, what was blocked, what it links — once e
   assert.equal(linked.title, "Josephson junction review");
   assert.equal(bare.title, "", "the registry names it when the list opens");
   assert.deepEqual(replyPapers(undefined, ""), []);
+});
+
+test("a PDF read from a repository and a link to the same title are one paper", () => {
+  const actions = [
+    { kind: "fetch", tool: "fetch_paper", args: { source: "https://repository.example.de/files/Li_2022_NJP.pdf" },
+      url: "https://repository.example.de/files/Li_2022_NJP.pdf", title: "Robust polarization gradient cooling of trapped ions", pdf: true },
+    { kind: "fetch", tool: "fetch_paper", args: { source: "https://lab.example.edu/uploads/07_enhanced.pdf" },
+      url: "https://lab.example.edu/uploads/07_enhanced.pdf", title: "", pdf: true },
+  ];
+  const text = "See [Robust Polarization-Gradient Cooling of Trapped Ions](https://doi.org/10.1088/1367-2630/ac6233) "
+    + "and [Enhanced laser cooling](https://doi.org/10.1103/other).";
+  const papers = replyPapers(actions, text);
+  assert.equal(papers.length, 3, "the repository's PDF and the DOI link are one row; the untitled PDF stays apart");
+  const [li, enhanced] = papers;
+  assert.equal(li.doi, "10.1088/1367-2630/ac6233");
+  assert.equal(li.pdfUrl, "https://repository.example.de/files/Li_2022_NJP.pdf", "saved with the PDF the reply read");
+  // Two identifiers that differ are two works, whatever their titles.
+  const twins = replyPapers([], "[A title long enough](https://doi.org/10.1234/a) and [A title long enough](https://doi.org/10.1234/b)");
+  assert.equal(twins.length, 2);
+
+  // How each shows: never a raw address.
+  assert.deepEqual(paperLabel(li), { name: "Robust polarization gradient cooling of trapped ions",
+    where: "doi:10.1088/1367-2630/ac6233", href: "https://repository.example.de/files/Li_2022_NJP.pdf" });
+  assert.deepEqual(paperLabel(enhanced), { name: "07 enhanced", where: "lab.example.edu",
+    href: "https://lab.example.edu/uploads/07_enhanced.pdf" });
+  assert.deepEqual(paperLabel({ doi: "10.1234/x", source: "doi:10.1234/x", title: "" }),
+    { name: "doi:10.1234/x", where: "", href: "https://doi.org/10.1234/x" });
+  assert.equal(paperLabel({ url: "https://www.lab.example/report", source: "https://www.lab.example/report", title: "" }).name,
+    "lab.example");
 });
 
 test("saving goes through the clip endpoint with the paper's identifiers", () => {

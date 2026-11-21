@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  NEEDS_YOU, autoOpens, canContinue, connectorNote, continuePrompt, handoffHint, handoffState, openRoute,
-  pollDelay, replyHandoffs, wallHeadline, watchNote,
+  NEEDS_YOU, autoOpens, canContinue, connectorNote, continuePrompt, handoffHint, handoffState, letGoOf, openRoute,
+  pollDelay, replyHandoffs, stoppedRequests, wallHeadline, watchNote,
 } from "../src/chat/fetchHandoff.js";
 
 const card = (id, source = `doi:${id}`) => ({ id, host: "journals.example.org", wall: "captcha", source });
@@ -25,6 +25,20 @@ test("a request the reply skipped starts settled, so its card asks nobody", () =
   // One the wait gave up on is still open: its card follows the server.
   const [waiting] = replyHandoffs([{ kind: "fetch", handoff: a }]);
   assert.equal(waiting.settled, undefined);
+});
+
+test("a stopped reply lets go of every request it asked for, and its cards start dismissed", () => {
+  const a = card("a"), b = card("b"), c = card("c");
+  const actions = [{ kind: "fetch", handoff: a }, { kind: "read" }, { kind: "fetch", handoff: { ...a } }, null];
+  // b's card was up when Stop came, before its action; c only a card
+  assert.deepEqual(stoppedRequests(actions, [b, { ...b }, c]), ["a", "b", "c"]);
+  assert.deepEqual(stoppedRequests(undefined, undefined), []);
+  const kept = letGoOf([{ kind: "fetch", handoff: a }, { kind: "fetch", handoff: b, skipped: true }, { kind: "read" }]);
+  assert.deepEqual(replyHandoffs(kept).map((h) => [h.id, h.settled]), [["a", "dismissed"], ["b", "dismissed"]]);
+  assert.deepEqual(kept[2], { kind: "read" });
+  assert.equal(handoffState({ status: replyHandoffs(kept)[0].settled }), "dismissed");
+  // what the reply held is left as it was
+  assert.equal(a.settled, undefined);
 });
 
 test("the card's state follows the server and what the user did here", () => {

@@ -20,10 +20,8 @@ turn of the thread's own conversation, [local_agents.md](local_agents.md)
 [research/file-explorer.md](../research/file-explorer.md) section 7 (step 2
 of "In steps"; step 3 adds a picture's regions and the whole picture); the
 reader of any page is step 3.1 of
-[research/agents-as-participants-plan.md](../research/agents-as-participants-plan.md),
-whose step 3.7 removed Send's requests, the request file and the Feedback
-dialog (migration step 65 drops their tables); the surveys behind the
-SyncTeX reader and the pictures are research notes.
+[research/agents-as-participants-plan.md](../research/agents-as-participants-plan.md);
+the surveys behind the SyncTeX reader and the pictures are research notes.
 
 | Module | What |
 |---|---|
@@ -882,9 +880,11 @@ by nothing. An area is the rectangle a person's Ctrl+drag makes, an area
 highlight with no quote in the page's own frame (`pdf_text.page_sizes`).
 The passage finder is `places.passage_at`, which the chat's drawing tools
 anchor to as well ([ai_tools.md](ai_tools.md) "Drawing on pages"). A PDF quote is looked for on its page and the ones
-either side (`highlight_relocate.place_quote`: `find_passage` over those
-pages, the named one first among equals, the text folded as a relocation
-folds it) and drawn over the glyphs it covers (`rects_for_span`, the page's
+either side (`highlight_relocate.place_quote` over `find_quote`, the finder
+a chat citation is marked by too, [pdf_citations.md](pdf_citations.md#ai-citation-links):
+`find_passage` over those pages, the named one first among equals, the text
+folded as a relocation folds it, a hyphen inside a word or a reference mark
+the quote leaves out still exact) and drawn over the glyphs it covers (`rects_for_span`, the page's
 display frame, `highlights.position`); a range's quote near its lines
 (`text_anchors.find_range`, its fold), its context written as a selection
 writes it (`highlights.span_text`). The agent copied the quote from the

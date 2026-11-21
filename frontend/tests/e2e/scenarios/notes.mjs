@@ -22,9 +22,23 @@ export function row(page, text) {
   return page.locator(".blockRow", { hasText: text }).first();
 }
 
+// A press that opens a block's editor (`body`, its .blockBody): halfway
+// across the block, level with the middle of its first rendered piece, never
+// the block's own middle. In a block of a paragraph and a list that is the gap
+// between them, and a press there once the gap's line has drawn under the
+// pointer, as a loaded machine draws it in time, opens a new line in the gap
+// instead (clickToSource.js gapInSource). Halfway across, the press misses an
+// object narrower than the row (a table), whose press would select it.
+export async function pressToEdit(body) {
+  const piece = body.locator(".blockRendered > :not([data-markdown-copy-ignore])").first();
+  if (!(await piece.count())) return body.click();
+  const [b, k] = [await body.boundingBox(), await piece.boundingBox()];
+  await body.click({ position: { x: b.width / 2, y: k.y - b.y + k.height / 2 } });
+}
+
 // Click a rendered block to open its editor, caret at the end.
 export async function editRow(page, text) {
-  await row(page, text).locator(".blockBody").click();
+  await pressToEdit(row(page, text).locator(".blockBody"));
   await page.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
   await page.keyboard.press("End");
 }
@@ -1126,9 +1140,16 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await p.waitForSelector(".blockRow .blockRendered", { timeout: 15000 });
     // The tree as nested [content, ...children], the server's.
     const shape = async () => (await tree(alice2, made.id)).map(function line(b) { return [b.content, ...b.children.map(line)]; });
-    const held = (want, what) => until(async () => same(await shape(), want), { what: what || `tree ${JSON.stringify(want)}` });
+    const held = async (want, what) => {
+      let got;
+      try {
+        return await until(async () => same((got = await shape()), want), { what: what || `tree ${JSON.stringify(want)}` });
+      } catch (e) {
+        throw new Error(`${e.message}; the server's tree: ${JSON.stringify(got)}`);
+      }
+    };
     const edit = async (id) => {
-      await p.locator(`.blockRowWrap[data-block-id="${id}"] > .blockRow .blockBody`).click();
+      await pressToEdit(p.locator(`.blockRowWrap[data-block-id="${id}"] > .blockRow .blockBody`));
       await p.waitForFunction((id) => document.activeElement?.closest(".blockRowWrap")?.dataset.blockId === id, id, { timeout: 5000 });
       await p.keyboard.press("ControlOrMeta+End");
     };
@@ -1623,6 +1644,109 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
+  // [[id|words]] (docs/dev/mentions.md "Page links with words of their own"):
+  // the chip shows the words, what it links to its hover title, in the
+  // rendered view and the editor; a "|" ends the picker's query, and
+  // [[exact title|words]] typed by hand links that page with the words.
+  await step("notes: a [[id|words]] link shows its words, titled by its page; a | ends the picker's query and [[exact title|words]] links with them", async () => {
+    const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Aliased Link Target" } });
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Alias source" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "alblock", parent: src.id, position: "a0", content: `see [[${target.id}|the target]] now` }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      const chip = row(p2, "now").locator(".blockRefChip");
+      await until(async () => (await chip.innerText()) === "the target", { what: "the chip shows its words" });
+      // Its link card names the page (the words show at once, the card's
+      // title once the target's label arrives).
+      await chip.hover();
+      const cardTitle = p2.locator(".linkCard .citePreviewTitle");
+      await until(async () => (await cardTitle.count()) && (await cardTitle.innerText()) === "Aliased Link Target",
+        { what: "its card names the page" });
+      await p2.mouse.move(0, 0);
+      await p2.locator(".linkCard").waitFor({ state: "detached" });
+      await editRow(p2, "now");
+      const cmChip = p2.locator(".blockEditorCm .cmRefChip");
+      assertEq(await cmChip.innerText(), "the target", "the editor's chip shows the words too");
+      assertEq(await cmChip.getAttribute("title"), "Aliased Link Target");
+      await p2.keyboard.type(" [[Aliased Link Tar");
+      const picker = p2.locator('.refPopup[data-guide="editor.refSearch"]');
+      await picker.waitFor();
+      await p2.keyboard.type("get|");
+      await picker.waitFor({ state: "hidden" });
+      await p2.keyboard.type("my words]] end");
+      await until(async () => (await tree(alice2, src.id))[0]?.content === `see [[${target.id}|the target]] now [[${target.id}|my words]] end`,
+        { what: "the typed title linked its page, keeping the words" });
+      await closeEditor(p2);
+      assertEq(JSON.stringify(await row(p2, "now").locator(".blockRefChip").allInnerTexts()), JSON.stringify(["the target", "my words"]));
+      await row(p2, "now").locator(".blockRefChip", { hasText: "my words" }).click();
+      await until(() => new URL(p2.url()).searchParams.get("block") === target.id, { what: "the chip opens its page" });
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
+  // The link card (shared/ui/LinkCard.jsx): a hover previews where a link
+  // goes, a right-click pins the card, its ✎ edits the words; Ctrl+K on
+  // selected words opens its form, whose Link field searches pages; an
+  // address pasted over words links them.
+  await step("notes: a link's card previews its page, edits its words; Ctrl+K links selected words to a page; an address pasted over words links them", async () => {
+    const target = await alice2.api("/api/pages", { method: "POST", body: { title: "Card Link Target" } });
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Card source" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "lcblock", parent: src.id, position: "a0", content: `see [[${target.id}]] here` }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    const content = async () => (await tree(alice2, src.id))[0]?.content;
+    try {
+      const chip = row(p2, "here").locator(".blockRefChip");
+      await chip.hover();
+      const card = p2.locator(".linkCard");
+      await card.waitFor();
+      assertEq(await card.locator(".citePreviewTitle").innerText(), "Card Link Target", "the card names the page");
+      assert((await card.locator(".citePreviewOpen").innerText()).startsWith("Open page"), "and opens it");
+      await chip.click({ button: "right" });
+      await card.getByRole("button", { name: "Edit link" }).click();
+      const words = card.locator(".linkCardForm .linkCardInput").first();
+      assertEq(await words.getAttribute("placeholder"), "Card Link Target", "empty words show the page's title");
+      await words.fill("my words");
+      await p2.keyboard.press("Enter");
+      await until(async () => (await content()) === `see [[${target.id}|my words]] here`, { what: "the card's words saved" });
+      await card.waitFor({ state: "detached" });
+      assertEq(await row(p2, "here").locator(".blockRefChip").innerText(), "my words");
+
+      await editRow(p2, "here");
+      await p2.keyboard.type(" and the target");
+      for (let i = 0; i < "the target".length; i++) await p2.keyboard.press("Shift+ArrowLeft");
+      await p2.keyboard.press("Control+k");
+      const form = p2.locator(".linkCard .linkCardForm");
+      await form.waitFor();
+      await p2.waitForFunction(() => document.activeElement?.classList.contains("linkCardInput"));
+      assertEq(await p2.evaluate(() => document.activeElement.placeholder), "Search pages or paste a link", "the cursor is in Link");
+      await p2.keyboard.type("Card Link Tar");
+      await form.locator(".refPopupItem.selected", { hasText: "Card Link Target" }).waitFor();
+      await p2.keyboard.press("Enter");
+      await form.locator(".linkCardTarget", { hasText: "Card Link Target" }).waitFor();
+      await p2.waitForFunction(() => document.activeElement?.classList.contains("linkCardInput"));
+      await p2.keyboard.press("Enter");
+      await until(async () => (await content()) === `see [[${target.id}|my words]] here and [[${target.id}|the target]]`,
+        { what: "Ctrl+K linked the selected words to the page" });
+
+      await p2.keyboard.type(" read paper");
+      for (let i = 0; i < "paper".length; i++) await p2.keyboard.press("Shift+ArrowLeft");
+      await p2.evaluate(() => {
+        const data = new DataTransfer();
+        data.setData("text/plain", "https://example.org/paper");
+        document.activeElement.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+      });
+      await until(async () => (await content())?.endsWith(" read [paper](https://example.org/paper)"), { what: "the paste linked the words" });
+      await closeEditor(p2);
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
   // Notion's /page: a new page inside this one (a sub-page, with no folders
   // of its own: it is filed where its top is), linked where the command was
   // typed and opened with its title ready.
@@ -1973,9 +2097,15 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     // source) — and in the editor the table stays a table.
     const tableFrame = frameOf(withTable.id, "table");
     await tableFrame.waitFor();
-    await tableFrame.scrollIntoViewIfNeeded();
+    // The page's pictures in first, and the press placed in the frame when it
+    // is made: a picture that loaded after the box was read pushed the table
+    // down under a press measured before. The left margin halfway down: the
+    // corner handle is at the top left, the + strips along the right and the
+    // bottom, and the paragraph below lies over the frame's bottom edge (its
+    // negative margin), where a press is that paragraph's.
+    await p.waitForFunction(() => [...document.images].every((img) => img.complete));
     const fb = await tableFrame.boundingBox();
-    await p.mouse.click(fb.x + fb.width - 1, fb.y + fb.height - 1); // the margin, clear of the corner handle
+    await tableFrame.click({ position: { x: 1, y: fb.height / 2 } });
     await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
     await p.locator(".blockEditorCm .cmTableWidget").waitFor();
     assertEq(await p.locator(".mdObjectSelected").count(), 0, "the margin press did not select the table");

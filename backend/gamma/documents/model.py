@@ -11,7 +11,7 @@ extension, so its stored name is ``hash + ext`` (``stored_name``); ``at``
 where the bytes are read from: ``store`` (the uploads), ``path`` (a file on
 this computer, gamma/linked_files.py), ``url`` (an address, which only
 this one carries) or ``listed`` (a work folder's file too large to hash
-and serve, config.vault_keep_bytes: no hash, no address, never a copy,
+and serve, server_options.vault_keep_bytes: no hash, no address, never a copy,
 its ``size`` required, and never a PDF or a Markdown file, which no limit
 measures); ``size`` its bytes when a writer knows them (every attach and
 replace, and every document a work folder's vault makes); ``copy`` true on
@@ -267,7 +267,7 @@ def in_place(view) -> bool:
 
 def is_listed(view) -> bool:
     """Whether the document is a work folder's file listed without its
-    bytes (too large to keep, config.vault_keep_bytes): no hash, no
+    bytes (too large to keep, server_options.vault_keep_bytes): no hash, no
     address, nothing to read, store or look up; ``library.follows`` still
     keeps its page following the disk."""
     return view is not None and view["at"] == "listed"

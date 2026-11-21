@@ -617,7 +617,7 @@ stay where they were (`gamma/workspace_copy.py`):
   picked, each with the pages inside it, into a workspace the account may
   edit. Anyone who may read the pages may copy them out, as anyone may
   export them.
-- **Duplicate…**, in a workspace's Data menu in Settings → Workspaces
+- **Duplicate…**, in a workspace's Manage page in Settings → Workspaces
   (a clone's or a Zotero link's **More**), copies every page into a new
   personal workspace of the account. Recently deleted and *Opened files*
   stay behind.

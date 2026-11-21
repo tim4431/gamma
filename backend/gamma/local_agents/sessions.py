@@ -553,8 +553,8 @@ def agent_message(agent: str, *, text: str, steps: list[dict], state: str, error
     runner's shape of a turn's, ended ``state``)."""
     return {"id": new_block_id(), "role": "agent", "agent": agent, "label": catalog.label(agent),
             "turn_id": new_block_id(), "state": state, "text": text, "steps": steps, "asks": [], "changes": [],
-            "changed": 0, "built": False, "error": error, "fresh": False, "model": None, "effort": None, "at": at,
-            "ended_at": ended_at, "from_session": True}
+            "changed": 0, "built": False, "error": error, "fresh": False, "model": None, "effort": None,
+            "speed": None, "at": at, "ended_at": ended_at, "from_session": True}
 
 
 # --- asked by another server ----------------------------------------------------------------------------

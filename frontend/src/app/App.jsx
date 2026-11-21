@@ -3,7 +3,9 @@ import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { TabGroups } from "../workspace/TabGroups";
 import PagePane, { keepPaneTree } from "../workspace/PagePane";
-import { activate as activateGroupIn, activeGroup, groupById, groupOf, groupsOf, isSingle, joinAll, moveTab, normalizeLayout, reconcile as reconcileGroups, removeGroup, removeTab, reorderGroup, resizeSplit, singleLayout, splitGroup, tabOrder } from "../workspace/tabLayout.js";
+import { activate as activateGroupIn, activeGroup, groupById, groupOf, groupsOf, isSingle, joinAll, moveTab, moveTabs, normalizeLayout, reconcile as reconcileGroups, removeGroup, removeTab, reorderGroup, resizeSplit, singleLayout, splitGroup, tabOrder } from "../workspace/tabLayout.js";
+import { gatherPanes, landTab, moveInStrip, normalizeTabs, takeGroups } from "../workspace/stripGroups.js";
+import { useStripGroups } from "../workspace/useStripGroups.jsx";
 import PdfViewer, { openPdfDocument, preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { penSelecting } from "../pdf/penSelect.js";
@@ -18,6 +20,9 @@ import { docIdOf } from "../pdf/pdfSource";
 import * as ocrState from "../pdf/ocrState.js";
 import * as ocrRuns from "../pdf/ocrRuns.js";
 import { discardApplied, discardOutcome, discardStep, discardUndone, noteSummary, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
+import { canJoin, joinHighlights, takesParts, withPart } from "../shared/model/highlightParts.js";
+import { waitingFor } from "../pdf/highlightWait.js";
+import { useHighlightWait } from "../pdf/useHighlightWait.js";
 import { basePixels } from "../pdf/pageRaster";
 import { DEFAULT_HIGHLIGHT, LINK_COLOR, highlightColor, normalizeColor } from "../shared/model/palette.js";
 import { presetName, withStyle } from "../shared/model/markStyle.js";
@@ -33,7 +38,7 @@ import { useAppJobs } from "../tasks/useAppJobs";
 import { TaskBadge, TasksButton, TasksPanel } from "../tasks/TasksTray";
 import { byteProgress, bytesInfo, progressText, relocationSummary, taskTitle } from "../tasks/taskKinds.js";
 import { isActive } from "../tasks/taskModel.js";
-import { parseGammaLink } from "../shared/model/gammaLinks.js";
+import { isSourceLink, parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
 import { API, apiJson, assetUrl, getShareToken, setShareView, withShare, withWorkspace, blockLinkUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, metaSourceInfo, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "../shared/lib/utils";
 import { ITEM_TYPES, itemTypeFields, itemTypeOf } from "../shared/lib/itemTypes.js";
@@ -98,7 +103,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UnlinkIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon, LocateIcon, ScanTextIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
+  PanelTopIcon, LocateIcon, TextPlusIcon, ScanTextIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
   StopIcon, GlobeIcon, ChevronRightIcon, FlagIcon, FoldersIcon,
 } from "../shared/ui/Icons";
 import ReportContentHost from "../support/ReportContentHost";
@@ -171,6 +176,7 @@ import { ROLE_LABEL, actingRole, workspaceMeta } from "../settings/workspaceRole
 import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage, cloudOutcomeInUrl } from "../auth/LoginPage";
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
+import { STANDBY_ERROR, StandbyPage } from "../auth/StandbyPage";
 import { TRANSLATE_LANGS, preloadPrefs, readPref, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
 import { TOPBAR, TOPBAR_ITEMS } from "./topbarItems.js";
 import { TOPBAR_ICONS } from "./topbarIcons.js";
@@ -336,6 +342,7 @@ import { InboxBadge, InboxButton } from "../inbox/InboxButton";
 import { inboxJump, isUnread } from "../inbox/inboxText.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import { IconSwap, MorphText } from "../shared/ui/MotionWidgets";
+import { LinkCardContext, useLinkCardValue } from "../shared/ui/LinkCard.jsx";
 import ListMotion from "../shared/ui/ListMotion";
 
 // Surfaces fetched on first use, each mounted inside a LazyBoundary
@@ -624,7 +631,9 @@ export default function App() {
 // view as if its ?share= token were in the URL while the pretty address
 // stays in the address bar. Any other path there is the share view's "not
 // found". Everywhere else the app boots as before, with the server config it
-// read here (a ?share= link knows it is a share view without asking).
+// read here (a ?share= link knows it is a share view without asking). A
+// server that cannot open its library answers the config with its guidance,
+// and that page shows instead of the app (auth/StandbyPage.jsx).
 function PageHostGate() {
   const [boot, setBoot] = useState(() => (new URLSearchParams(window.location.search).get("share") ? {} : null));
   useEffect(() => {
@@ -632,7 +641,11 @@ function PageHostGate() {
     let active = true;
     (async () => {
       let config = null;
-      try { config = await (takeBootRead("config") || apiJson(`${API}/server-config`)); } catch {}
+      try {
+        config = await (takeBootRead("config") || apiJson(`${API}/server-config`));
+      } catch (e) {
+        if (active && e?.data?.error === STANDBY_ERROR) { setBoot({ standby: e.data }); return; }
+      }
       if (!active) return;
       if (!pageHostUser(config?.page_host, window.location.hostname)) { setBoot({ serverConfig: config }); return; }
       let found = null;
@@ -649,6 +662,7 @@ function PageHostGate() {
   }, [boot]);
   // The splash stays until the server's config is read.
   if (!boot) return <Splash />;
+  if (boot.standby) return <StandbyPage guide={boot.standby} />;
   return <LibraryApp publicPage={boot.publicPage || null} initialServerConfig={boot.serverConfig || null} />;
 }
 
@@ -668,7 +682,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const initialThreadId = params.get("thread") || "";
   const initialLabel = params.get("unlabelled") ? NO_LABEL : (params.get("label") || "");
   const initialFolder = params.get("folder") || "";
-  // The desktop app's hand-over once it made a work folder (desktop/main.js
+  // The desktop app's hand-over once it made a work folder (desktop/lib/vaults.js
   // addDirectoryVault): its vault's tracking dialog opens (vault/useVault.js);
   // `tick`, a file of its directory opened with Gamma that it does not track
   // yet, by its path there, which the dialog ticks (explorer/TrackDialog.jsx).
@@ -1162,8 +1176,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     snapsSyncedRef.current = false;
     // Local cache first for instant paint…
     let localTabs = [];
-    try { localTabs = JSON.parse(localStorage.getItem(`gamma-tabs:${u}`) || "[]"); } catch {}
-    if (!Array.isArray(localTabs)) localTabs = [];
+    try { localTabs = normalizeTabs(JSON.parse(localStorage.getItem(`gamma-tabs:${u}`) || "[]")); } catch {}
     tabsReadRef.current.add(localTabs);
     setOpenTabs(localTabs);
     let localLayout = null;
@@ -2525,13 +2538,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       tabsPushTimerRef.current = null;
     }
     setOpenTabs((prev) => {
-      let tabs = orderTabs(Array.isArray(value) ? value : []);
+      let tabs = normalizeTabs(value);
       // The page open in THIS window keeps its tab even when the stored state
       // lacks it (just opened here and not pushed yet, or closed elsewhere
       // while it's still on screen here) — merged and pushed back.
       const fid = focusedBlockIdRef.current;
       if (fid && !tabs.some((t) => t.id === fid)) {
-        tabs = [...tabs, prev.find((t) => t.id === fid) || { id: fid, title: T("Untitled") }];
+        tabs = normalizeTabs([...tabs, prev.find((t) => t.id === fid) || { id: fid, title: T("Untitled") }]);
         pushTabsToServer(tabs);
       }
       try { localStorage.setItem(`gamma-tabs:${user}`, JSON.stringify(tabs)); } catch {}
@@ -2539,13 +2552,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return tabs;
     });
   }
-  // Pinned tabs always sit left of unpinned ones; the partition is stable, so
-  // pinning a tab lands it right after the existing pinned group and unpinning
-  // drops it at the front of the unpinned group — no explicit move needed.
-  const orderTabs = (tabs) => [...tabs.filter((t) => t.pinned), ...tabs.filter((t) => !t.pinned)];
+  // Every change of the tabs is kept by the list's rules (normalizeTabs,
+  // docs/dev/strip_groups.md): pinned tabs always sit left of unpinned ones,
+  // a stable partition, so pinning a tab lands it right after the existing
+  // pinned ones and unpinning drops it at the front of the others, no
+  // explicit move needed; a pinned tab is in no strip group, and a group's
+  // tabs are one run.
   function updateTabs(updater) {
     setOpenTabs((prev) => {
-      const next = orderTabs(typeof updater === "function" ? updater(prev) : updater);
+      const next = normalizeTabs(typeof updater === "function" ? updater(prev) : updater);
       const u = prefsUserRef.current;
       if (u) {
         try { localStorage.setItem(`gamma-tabs:${u}`, JSON.stringify(next)); } catch {}
@@ -2563,12 +2578,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // tab (the library when it has none).
   // `target`: what a press on a group's view of its page was on, which the
   // page opening takes up (openBlock): {edit: {id, clickPos}} a note,
-  // {title: true} the title, {labels: true} its labels.
-  function applyLayout(next, target) {
+  // {title: true} the title, {labels: true} its labels. `retab(tabs)`: the
+  // strip groups the change gave the tabs (stripGroups.js), taken in the
+  // same update as the order, so the list is never held to the groups'
+  // rules between the two.
+  function applyLayout(next, { target, retab } = {}) {
     const prev = tabLayoutRef.current;
     // a second press on a view whose page is still opening, on a note, the
     // title or the labels: the open takes this press's target instead
-    if (next === prev) {
+    if (next === prev && !retab) {
       const want = activeGroup(next)?.active || "";
       const aimed = target?.edit || target?.title || target?.labels || target?.then;
       if (aimed && want && want === tabPick && want !== focusedBlockId) selectTab(want, target);
@@ -2576,22 +2594,34 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     keepTabLayout(next);
     const order = tabOrder(next);
-    if (order.join("\n") !== tabOrder(prev).join("\n")) {
-      updateTabs((tabs) => [...tabs].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)));
+    if (retab || order.join("\n") !== tabOrder(prev).join("\n")) {
+      updateTabs((tabs) => [...(retab ? retab(tabs) : tabs)].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)));
     }
     const want = activeGroup(next)?.active || "";
     if (want === (tabPick || focusedBlockId || "")) return;
     if (want) selectTab(want, target);
-    else if (focusedBlockId) goHome(true, true);
+    else {
+      dropTabPick();
+      if (focusedBlockId) goHome(true, true);
+    }
   }
-  // A group's tabs as its strip shows them, pinned first.
-  const groupTabs = (group) => orderTabs(group.tabs.map((id) => openTabs.find((tab) => tab.id === id)).filter(Boolean));
-  const activateTabGroup = (groupId, tabId, target) => applyLayout(activateGroupIn(tabLayoutRef.current, groupId, tabId), target);
-  const moveTabToGroup = (tabId, groupId, index) => applyLayout(moveTab(tabLayoutRef.current, tabId, groupId, index));
+  // A group's tabs as its strip shows them: the list's, in its order, which
+  // the arrangement follows (reconcile) and a strip must not wait for: a
+  // strip group's change reorders the list in one render.
+  const groupTabs = (group) => openTabs.filter((tab) => group.tabs.includes(tab.id));
+  const activateTabGroup = (groupId, tabId, target) => applyLayout(activateGroupIn(tabLayoutRef.current, groupId, tabId), { target });
+  // A tab moved into another pane lands in the strip group it is dropped
+  // inside, or keeps or leaves its own (landTab).
+  const landIn = (next, tabId) => (tabs) => landTab(tabs, tabId, groupOf(next, tabId)?.tabs || []);
+  const moveTabToGroup = (tabId, groupId, index) => {
+    const next = moveTab(tabLayoutRef.current, tabId, groupId, index);
+    applyLayout(next, { retab: landIn(next, tabId) });
+  };
+  const moveTabsToGroup = (ids, groupId) => applyLayout(moveTabs(tabLayoutRef.current, ids, groupId));
   const splitTabGroup = (groupId, side, tabId) => {
     const next = splitGroup(tabLayoutRef.current, groupId, side, tabId);
     if (next === tabLayoutRef.current) return;
-    applyLayout(next);
+    applyLayout(next, { retab: tabId ? landIn(next, tabId) : undefined });
     guideEvents.emit("tabs.split");
   };
   // A tab into a group of its own beside the one it is in: the tab menu's,
@@ -2614,18 +2644,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const next = resizeSplit(tabLayoutRef.current, splitId, sizes);
     if (next !== tabLayoutRef.current) keepTabLayout(next);
   };
-  // A strip's reorder: the dragged tab takes the target's place among the
-  // tabs as shown; dragging never crosses the pinned/unpinned boundary.
+  // A strip's drag (moveInStrip): a tab takes the target's place among the
+  // tabs as shown, and its strip group, never across the pinned/unpinned
+  // boundary; a group's chip carries the group.
   const reorderGroupTabs = (groupId, dragged, target) => {
     const group = groupById(tabLayoutRef.current, groupId);
-    if (!group) return;
-    const shown = groupTabs(group);
-    const from = shown.findIndex((tab) => tab.id === dragged), to = shown.findIndex((tab) => tab.id === target);
-    if (from < 0 || to < 0 || from === to || !!shown[from].pinned !== !!shown[to].pinned) return;
-    const next = [...shown];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
-    applyLayout(reorderGroup(tabLayoutRef.current, groupId, next.map((tab) => tab.id)));
+    const strip = group && moveInStrip(groupTabs(group), dragged, target);
+    if (strip) applyLayout(reorderGroup(tabLayoutRef.current, groupId, strip.map((tab) => tab.id)), { retab: (tabs) => takeGroups(tabs, strip) });
   };
   // Where a group's view of a page stands, kept where the page's opening
   // reads it (openBlock): its PDF's scroll (tabScrollRef), its notes' top
@@ -2998,10 +3023,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The arrangement follows the tabs and the page on screen: a tab opened
   // lands in the live group, one closed leaves its group, and the page on
   // screen (the one a press picked, while it opens) is its group's active
-  // tab, with that group live.
+  // tab, with that group live. A strip group's tabs stand in one pane
+  // (gatherPanes), which the second reconcile orders.
   useEffect(() => {
     if (shareMode || !prefsUserRef.current) return;
-    const next = reconcileGroups(tabLayoutRef.current, openTabs.map((tab) => tab.id), tabPick || focusedBlockId || null);
+    const ids = openTabs.map((tab) => tab.id), shown = tabPick || focusedBlockId || null;
+    const next = reconcileGroups(gatherPanes(reconcileGroups(tabLayoutRef.current, ids, shown), openTabs), ids, shown);
     if (next !== tabLayoutRef.current) keepTabLayout(next);
   }, [openTabs, focusedBlockId, tabPick, shareMode]); // eslint-disable-line react-hooks/exhaustive-deps
   // The group the page on screen stands in, where TabGroups lays the page
@@ -3407,7 +3434,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications, commentSendTo, setCommentSendTo,
     topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, highlightPresets, setHighlightPresets,
-    chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatFollowUp, setChatFollowUp, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
+    chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatFollowUpMode, setChatFollowUpMode, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
     metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
@@ -3513,8 +3540,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [exportJobId, setExportJobId] = useState(null);
   // Starting, reopening and retrying jobs, and what to say when one ends
   // (tasks/useAppJobs.js); `tasks` above calls its onJobFinished.
-  const { startWorkspaceExport, runBackupImport, copyPages, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask,
-    onJobFinished } = useAppJobs({
+  const { startWorkspaceExport, runBackupImport, copyPages, runExport, exportStarting, closeExport, leaveExportJob, openTask, stopTask,
+    retryTask, onJobFinished } = useAppJobs({
     tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
     pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations, ocrCapability: serverConfig?.ocr || null,
@@ -4672,6 +4699,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // null = the main view). Reset on navigation so a new page opens on its content.
   const isPhone = useIsPhone();
   const [phonePanel, setPhonePanel] = useState(null);
+  // Chrome's tab groups in the strips (workspace/useStripGroups.jsx): a phone's one
+  // strip holds every tab, and offers no pane.
+  const stripGroups = useStripGroups({ tabs: openTabs, updateTabs, shownId: tabPick || focusedBlockId, closeTabs, moveTabsToPane: moveTabsToGroup,
+    otherPane: (id) => (isPhone ? null : otherPane(id)),
+    stripOf: (id) => (isPhone ? openTabs : groupTabs(groupOf(tabLayoutRef.current, id) || activeGroup(tabLayoutRef.current))) });
   // The Comments window's first showing: the right-hand column, last, when
   // no slot holds it yet (a page's own saved layout may not).
   useEffect(() => {
@@ -4783,13 +4815,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   const scrollToRef = useRef(() => {});
   const flashTimerRef = useRef(null);
-  const [attachModeBlockId, setAttachModeBlockId] = useState(null);
-  const attachModeBlockIdRef = useRef(null);
-  // A highlight being moved (its menu's "Move to a selection…", a lost
-  // one's row button): the next selection on the PDF becomes its place
-  // instead of making a new highlight (docs/dev/highlight_relocation.md).
-  const [moveHighlightId, setMoveHighlightId] = useState(null);
-  const moveHighlightIdRef = useRef(null);
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
   const blockRefs = useRef({});
@@ -6045,14 +6070,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const doc_id = own?.ext === ".pdf" ? own.stem : await getDocIdForUrl(url);
       return { doc_id, source_url: url, original_filename: "", viewerUrl: uploadUrl(storedName(doc_id, ".pdf")), note: "" };
     }
-    const resolved = await resolvePdfUrl(url, oaFallback);
+    // The row's Stop while the link resolves (an AbortError to the caller);
+    // the viewer's download gives it one of its own once it starts.
+    const ctl = new AbortController();
+    const { signal } = ctl;
+    track.abortable(() => ctl.abort());
+    const resolved = await resolvePdfUrl(url, oaFallback, { signal });
     const source_url = resolved.source_url;
     const doc_id = await getDocIdForUrl(source_url);
-    const known = await apiJson(`${API}/blocks/by-doc/${doc_id}`).catch(() => null);
+    const known = await apiJson(`${API}/blocks/by-doc/${doc_id}`, { signal }).catch(() => null);
     if (!known) {
       updateTask(taskId, { info: t("checking link…") });
-      await probePdfUrl(source_url);
+      await probePdfUrl(source_url, { signal });
     }
+    signal.throwIfAborted();
+    track.abortable(null);
     const viewerUrl = pdfProxyUrl(source_url, { save: pdfSaveLocal });
     transferByUrlRef.current[viewerUrl] = taskId; // the viewer's byte-level reporting takes over this row
     return { doc_id, source_url, original_filename: "", viewerUrl, note: resolved.note || "" };
@@ -6092,18 +6124,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     abortable: (abort) => updateTask(id, { cancel: abort }),
   });
 
+  // One file's transfer `run(track)`, on a row of its own named `name` of
+  // `kind` (done with `doneInfo(result)`, its size by default, or failed),
+  // or on a batch's `track` when one is given, which keeps its own rows.
+  async function onUploadRow(file, name, kind, track, run, doneInfo = () => fmtBytes(file.size)) {
+    if (track) return run(track);
+    const id = addTask({ name, kind, info: fmtBytes(file.size) });
+    try {
+      const result = await run(rowTrack(id));
+      updateTask(id, { state: "done", info: doneInfo(result) });
+      return result;
+    } catch (err) {
+      updateTask(id, { state: "failed", info: "failed" });
+      throw err;
+    }
+  }
+
   // `folder`: the id of the folder the page is filed in ("" = none).
   // `track`: a batch's, in place of a row of its own.
   async function uploadOnePdf(file, folder = "", track = null) {
-    const transferId = track ? null : addTask({ name: uploadName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) });
-    let src;
-    try {
-      src = await resolvePdfSource({ file }, transferId, track || rowTrack(transferId));
-    } catch (err) {
-      if (transferId) updateTask(transferId, { state: "failed", info: "failed" });
-      throw err;
-    }
-    if (transferId) updateTask(transferId, { state: "done", info: fmtBytes(file.size) });
+    const src = await onUploadRow(file, uploadName(file, "upload.pdf"), "upload", track,
+      (own) => resolvePdfSource({ file }, null, own));
     const block = await getOrCreateBlockForDoc(src);
     if (folder) {
       // A PDF already in the library on a sub-page is filed where its top
@@ -6126,18 +6167,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   async function importOneMarkdown(file, folder = "", track = null) {
     const filename = uploadName(file, "note.md");
-    const transferId = track ? null : addTask({ name: filename, kind: "file", info: fmtBytes(file.size) });
     const form = new FormData();
     form.append("file", file, filename);
     form.append("folder", folder);
-    try {
-      const data = await apiJson(`${API}/import/markdown`, { method: "POST", body: form });
-      if (transferId) updateTask(transferId, { state: "done", info: `${data.imported || 0} notes` });
-      return { data, kind: "markdown" };
-    } catch (err) {
-      if (transferId) updateTask(transferId, { state: "failed", info: "failed" });
-      throw err;
-    }
+    const data = await onUploadRow(file, filename, "file", track, () => apiJson(`${API}/import/markdown`, { method: "POST", body: form }),
+      (answer) => `${answer.imported || 0} notes`);
+    return { data, kind: "markdown" };
   }
 
   // A file of any other format as a library page of its own
@@ -6145,16 +6180,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // which answers the page that already owns the file when one does).
   async function uploadOneDocument(file, folder = "", track = null) {
     const name = uploadName(file);
-    const transferId = track ? null : addTask({ name, kind: "upload", info: fmtBytes(file.size) });
-    const { progress, abortable } = track || rowTrack(transferId);
-    try {
-      const { page } = await uploadOneFile(file, { folderId: folder, name, onProgress: progress, onAbortable: abortable });
-      if (transferId) updateTask(transferId, { state: "done", info: fmtBytes(file.size) });
-      return page;
-    } catch (err) {
-      if (transferId) updateTask(transferId, { state: "failed", info: "failed" });
-      throw err;
-    }
+    const { page } = await onUploadRow(file, name, "upload", track, ({ progress, abortable }) =>
+      uploadOneFile(file, { folderId: folder, name, onProgress: progress, onAbortable: abortable }));
+    return page;
   }
 
   // One item of an upload (uploadFiles' {file, route}) the way its route
@@ -6465,7 +6493,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       guideEvents.emit("paper.fetched");
     } catch (err) {
       updateTask(taskId, { state: "failed", info: (err.message || "failed") });
-      setStatus(t("Open failed: {message}", { message: err.message }));
+      setStatus(err.name === "AbortError" ? t("Stopped") : t("Open failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -6728,7 +6756,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         return;
       }
       updateTask(taskId, { state: "failed", info: (err.message || "failed") });
-      setStatus(replace
+      setStatus(err.name === "AbortError" ? t("Stopped") : replace
         ? t("Replace failed: {message}", { message: err.message })
         : t("Attach failed: {message}", { message: err.message }));
     } finally {
@@ -7544,16 +7572,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Closing the open tab goes back to where you were: the latest page still
   // open or library view in the tab history (a promise while a page opens).
-  // `refresh: false` leaves the library's refetch to the caller.
-  function closeTab(id, { refresh = true } = {}) {
-    const next = openTabs.filter((t) => t.id !== id);
+  // `refresh: false` leaves the library's refetch to the caller. Several at
+  // once (a strip group's Close group): the others leave first, so the page
+  // that comes forward is never another one closed.
+  function closeTab(id, options) { return closeTabs([id], options); }
+  function closeTabs(ids, { refresh = true } = {}) {
+    const next = openTabs.filter((t) => !ids.includes(t.id));
     updateTabs(next);
     // Closed tabs must never become a later close's return destination.
-    tabHistoryRef.current = tabHistoryRef.current.filter((entry) => entry.blockId !== id);
+    tabHistoryRef.current = tabHistoryRef.current.filter((entry) => !ids.includes(entry.blockId));
     // The tab a press picked, closed before its page lands: the press is
-    // taken back, and what is on screen stays.
-    if (tabPick && id === tabPick && id !== focusedBlockId) { dropTabPick(); return; }
-    if (id !== focusedBlockId) return;
+    // taken back, and what is on screen stays unless it closes too.
+    if (tabPick && ids.includes(tabPick)) dropTabPick();
+    const id = focusedBlockId;
+    if (!ids.includes(id)) return;
     // What shows next is found within the tab's group (docs/dev/tab_groups.md):
     // the latest page still open there or library view in the tab history,
     // else the group's neighbouring tab. A group emptied by the close goes,
@@ -7561,7 +7593,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const group = groupOf(tabLayoutRef.current, id);
     const stillHere = (blockId) => !!group?.tabs.includes(blockId) && next.some((tab) => tab.id === blockId);
     const entry = [...tabHistoryRef.current].reverse().find((entry) => !entry.blockId || stillHere(entry.blockId));
-    const arranged = removeTab(tabLayoutRef.current, id, { prefer: entry?.blockId || null });
+    const others = ids.filter((other) => other !== id).reduce((layout, other) => removeTab(layout, other), tabLayoutRef.current);
+    const arranged = removeTab(others, id, { prefer: entry?.blockId || null });
     keepTabLayout(arranged);
     const live = activeGroup(arranged);
     if (group && live?.id !== group.id) {
@@ -8303,15 +8336,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // A selection let go of in a viewer that takes highlights (the PDF's, the
   // code view's onAnchor), its position stored under `place`: a highlight
-  // waiting to be moved takes its place; else the link dialog (the PDF's
+  // waiting for another passage takes it as one; a highlight waiting to be
+  // moved takes its place; else the link dialog (the PDF's
   // tip alone has Link), or a highlight in the armed highlighter's look or
   // the popup's pick: a swatch (a palette colour, stored at its alpha) in
   // the style picked with it, or a highlighter's. Nothing here changes a
   // highlighter. A comment's passage is the wash, which marks it
   // commented. Returns the new highlight's id.
   function finishSelection(position, quote, hideTip, extras, place = POSITION_KEY.pdf) {
-    if (moveHighlightIdRef.current) {
-      moveHighlightTo(moveHighlightIdRef.current, position, quote, place);
+    if (hlWait.current("extend") && place === POSITION_KEY.pdf) {
+      addPassageTo(hlWait.current("extend"), position, quote, extras?.first);
+      hideTip?.();
+      return undefined;
+    }
+    if (hlWait.current("move")) {
+      moveHighlightTo(hlWait.current("move"), position, quote, place);
       hideTip?.();
       return undefined;
     }
@@ -8620,49 +8659,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Leaving the page closes its paper menu.
   useEffect(() => { setPaperMenu(false); setNbCurrent(""); }, [focusedBlockId]);
 
-  useEffect(() => { attachModeBlockIdRef.current = attachModeBlockId; }, [attachModeBlockId]);
-  useEffect(() => { moveHighlightIdRef.current = moveHighlightId; }, [moveHighlightId]);
-
-  // Attach mode (a note's ⊕ waits for a click on a highlight) and move mode
-  // (a highlight waits for a selection) each end the other, so one banner
-  // shows and the PDF's next click or selection means one thing. Both are
-  // entered only through these; the setters are stable, so the callbacks
-  // are too and BlockRow's memo holds.
-  const startAttachMode = useCallback((blockId) => {
-    setMoveHighlightId(null);
-    setAttachModeBlockId(blockId);
-  }, []);
-  // A move started from a highlight's review card (its Move…) is
-  // remembered, {id, prior} (prior: the card's step in effect, when it had
-  // one): once the selection has moved the highlight, the card opens on it
-  // again, as it was, its Move… pressed ("Moved"), pressing it again
-  // undoing the move (pdf/HighlightReview.jsx). Any other start of a move
-  // forgets it.
-  const moveFromReviewRef = useRef(null);
-  const startHighlightMove = useCallback((blockId) => {
-    moveFromReviewRef.current = null;
-    setAttachModeBlockId(null);
-    setMoveHighlightId(blockId);
-  }, []);
-  const startReviewMove = useCallback((blockId, prior = null) => {
-    startHighlightMove(blockId);
-    moveFromReviewRef.current = { id: blockId, prior };
-  }, [startHighlightMove]);
-
-  // Escape ends whichever mode is on.
-  useEffect(() => {
-    if (!attachModeBlockId && !moveHighlightId) return;
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      setAttachModeBlockId(null);
-      setMoveHighlightId(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [attachModeBlockId, moveHighlightId]);
-  // Another page, or another file on this one, ends a move: the selection
-  // it waits for would be on a PDF the highlight was not picked from.
-  useEffect(() => { setMoveHighlightId(null); }, [focusedBlockId, docId, doc?.url]);
+  // What the PDF's next press or selection is for while a note or a
+  // highlight waits for one (pdf/useHighlightWait.js, one at a time, ended
+  // by Escape): a note's ⊕ waits for the highlight it links to (attach), a
+  // highlight for its new place (its menu's "Move to a selection…", a lost
+  // one's row button, its review card's Move…: move;
+  // docs/dev/highlight_relocation.md) or for another passage of its page
+  // (its menu's "Add a passage…": extend; shared/model/highlightParts.js).
+  // Another page, or another file on this one, ends a move or an extension.
+  // The commands are stable, so BlockRow's memo holds.
+  const hlWait = useHighlightWait(`${focusedBlockId || ""}\n${docId || ""}\n${doc?.url || ""}`);
+  const attachModeBlockId = waitingFor(hlWait.wait, "attach");
+  const moveHighlightId = waitingFor(hlWait.wait, "move");
+  const extendHighlightId = waitingFor(hlWait.wait, "extend");
+  const { startAttach: startAttachMode, startMove: startHighlightMove, startExtend: startHighlightExtend, startReviewMove } = hlWait;
 
   // The highlight takes the selection's place, and its text as its quote:
   // a tree edit like any other (ops, undo). Whatever marked it lost or
@@ -8675,10 +8685,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // position is stored under (a text file's lines: a lost or rough range
   // put back by hand).
   function moveHighlightTo(blockId, position, quote, place = POSITION_KEY.pdf) {
-    setMoveHighlightId(null);
-    const from = moveFromReviewRef.current;
+    hlWait.end();
+    const from = hlWait.takeReviewMove();
     const fromReview = from?.id === blockId;
-    moveFromReviewRef.current = null;
     const block = blockId ? findBlock(blocks, blockId) : null;
     if (readOnly || !position || !block) return;
     setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({
@@ -8694,6 +8703,46 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       position: block.properties?.[place], quote: block.properties?.quote || "", prior: from.prior,
     }, position) : null;
     if (step) pdfReviewRef.current?.(blockId, { done: step, scroll: false });
+  }
+
+  // A selection while highlight `blockId` waits for another passage (its
+  // menu's Add a passage…): the passage is added to it (withPart), `first`
+  // whether it reads before the highlight (the viewer's text order; when
+  // it cannot tell, after). A passage on another page leaves it waiting,
+  // with a word on why. A tree edit like any other (ops, undo).
+  function addPassageTo(blockId, position, quote, first) {
+    const block = findBlock(blocksRef.current, blockId);
+    const pos = block?.properties?.pdf_position;
+    if (block && position?.pageNumber !== pos?.pageNumber) {
+      setStatus(t("A highlight's passages are on one page: select text on page {n}.", { n: pos?.pageNumber }));
+      return;
+    }
+    hlWait.end();
+    const joined = !readOnly && block ? withPart(pos, blockQuote(block), position, quote, { before: !!first }) : null;
+    if (!joined) return;
+    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({
+      ...b, properties: applyPatch(b.properties, { pdf_position: joined.position, quote: joined.quote || null }),
+    })));
+    setStatus(t("Passage added to the highlight."));
+    triggerFlash(blockId);
+  }
+  // A press on another highlight while one waits for another passage: the
+  // pressed one joins it (joinHighlights), `first` whether it reads before
+  // it; what was written on it stays under the one it joined, a comment
+  // thread on it too (the block that holds it is kept as a note). One that
+  // cannot join (another page, an area, a link) leaves it waiting.
+  function joinWaitingHighlight(fromId, first) {
+    const intoId = hlWait.current("extend");
+    if (!intoId || readOnly) return;
+    if (!canJoin(blocksRef.current, intoId, fromId)) {
+      setStatus(t("Only a passage highlighted on the same page can join this highlight."));
+      return;
+    }
+    hlWait.end();
+    const keep = (comments.threadsByBlock.get(fromId)?.length || 0) > 0;
+    setBlocks((prev) => joinHighlights(prev, intoId, fromId, { before: !!first, keep }) || prev);
+    setStatus(t("Highlights joined."));
+    triggerFlash(intoId);
   }
 
   // Use closest match on a lost highlight's review card: it takes the place
@@ -8915,7 +8964,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       properties: applyPatch(b.properties, { linked_highlight_id: highlight.id,
         ...(page ? { pdf_position: { pageNumber: page } } : {}) }),
     })));
-    setAttachModeBlockId(null);
+    hlWait.end();
   }
 
   function unlinkHighlightFromBlock(blockId) {
@@ -8937,10 +8986,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // --- reference links: PDF text regions manually linked to papers ----------
 
-  // Match a URL against the library: DOI or arXiv id already known → that page.
-  // Any document link (PDF annotation or manual reference link): if the target
-  // paper is already in the library, open it; otherwise ask fetch-vs-browser.
-  function handleDocLink(url) {
+  // Any document link (PDF annotation or manual reference link): a link into
+  // this library (a copied highlight's or page's, whatever host it names)
+  // opens in place when its block or page is here; a paper already in the
+  // library (its DOI or arXiv id) opens its page; otherwise ask
+  // fetch-vs-browser.
+  async function handleDocLink(url) {
+    const gl = parseGammaLink(url, window.location.origin);
+    if (gl) {
+      const place = await gammaLinkPlace(gl);
+      if (place) {
+        if (isSourceLink(gl)) openPageLink(gl.pageId, gl);
+        else openLinkTarget(place);
+        return;
+      }
+    }
     const pid = findPageForUrl(url, homeBlocks);
     if (pid) {
       setStatus(t("Already in your library — opening."));
@@ -8948,6 +9008,39 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     setLinkPrompt(url);
+  }
+
+  // Where a Gamma link points in this library (link_url's opening, the link
+  // dialog's pasted link): {pageId, blockId?, title, quote?, highlight?} for
+  // a page or a live block of this workspace, else null — another
+  // server's or workspace's link, which stays a web address.
+  async function gammaLinkPlace(link) {
+    if (link.kind !== "block") {
+      const page = pagesById.get(link.pageId);
+      return page ? { pageId: page.id, title: page.content || t("Untitled") } : null;
+    }
+    try {
+      const b = await apiJson(withShare(`${API}/blocks/${encodeURIComponent(link.blockId)}`));
+      if (!b?.page_id) return null;
+      const title = pagesById.get(b.page_id)?.content || (b.page_id === b.id ? b.content : "") || t("Untitled");
+      if (b.page_id === b.id) return { pageId: b.id, title };
+      return { pageId: b.page_id, blockId: b.id, title, quote: b.properties?.quote || b.content || "",
+        highlight: b.kind === "highlight" || b.kind === "link" };
+    } catch {
+      return null;
+    }
+  }
+
+  // A link region's target opened (its press on the PDF, its note's link):
+  // a highlight or note through openBlockLink, as a block link opens, so
+  // one on this same paper scrolls there with Back to return; a page; or a
+  // web address (handleDocLink).
+  function openLinkTarget({ url, pageId, blockId }) {
+    if (blockId) {
+      if (findBlock(blocks, blockId)) pushNav();
+      openBlockLink(blockId, pageId);
+    } else if (pageId) openBlock(pageId, { pushNav: true });
+    else if (url) handleDocLink(url);
   }
 
   // A link region's target (docs/dev/pdf_citations.md): a URL, or a page
@@ -10482,9 +10575,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // fed as a click on the PDF feeds it (quote as the selection, an area or a
   // region as a picture).
   function highlightPressed(hlId, additive) {
-    if (attachModeBlockIdRef.current) {
+    if (hlWait.current("attach")) {
       const picked = highlights.find((h) => h.id === hlId);
-      if (picked) linkHighlightToBlock(attachModeBlockIdRef.current, picked);
+      if (picked) linkHighlightToBlock(hlWait.current("attach"), picked);
       return;
     }
     if (findBlock(blocks, hlId)) { scrollToBlock(hlId); reveal(hlId); }
@@ -10726,6 +10819,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       openThread: (threadId, blockId, pageId) => openThreadAt(threadId, blockId, pageId || focusedBlockId) }),
     [focusedBlockId, blocks, refCache, shareMode, knownBlocks, pageTitle],
   );
+
+  // What every link card reads (shared/ui/LinkCard.jsx): one object for the
+  // app's life, its fields read through getters when a card shows, so no
+  // link renders again when the pages or the [[ref]] labels change.
+  const linkCardCtx = useLinkCardValue({ pages: pageBlocks, refCache, onCacheRef, nav: gammaNav });
 
   // What the views of pages in the tab groups (PagePane) take from App:
   // the [[ref]] labels and their fetches, the library's labels, file chips,
@@ -12299,10 +12397,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onMoveHighlight: readOnly || !takesHighlights ? null : startHighlightMove,
                   onOpenLinkTarget: (b) => {
                     const p = b.properties || {};
-                    if (p.link_page_id) {
-                      if (p.link_block_id) pendingJumpRef.current = p.link_block_id;
-                      openBlock(p.link_page_id, { pushNav: true });
-                    } else if (p.link_url) handleDocLink(p.link_url);
+                    openLinkTarget(p.link_page_id ? { pageId: p.link_page_id, blockId: p.link_block_id } : { url: p.link_url });
                   },
                   registerRef,
                   readOnly,
@@ -12815,7 +12910,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onAttachView={!homeMode && isPdf(doc) && pdfUrl && !pdfHidden ? attachViewToChat : undefined}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
-          chatSpeed={chatSpeed} setChatSpeed={setChatSpeed} chatFollowUp={chatFollowUp}
+          chatSpeed={chatSpeed} setChatSpeed={setChatSpeed} chatFollowUpMode={chatFollowUpMode}
           dictationModel={dictationModel} dictationLang={dictationLang}
           chatSystem={chatSystem} aiInfo={aiInfo} aiInfoFailed={aiInfoFailed} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
@@ -13231,7 +13326,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <TasksButton tasks={tasks} open={openPopover === "downloads"}
             onToggle={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))} />
         ) : null}
-        {openPopover === "downloads" ? <TasksPanel tasks={tasks} onOpen={openTask} onRetry={retryTask} /> : null}
+        {openPopover === "downloads" ? <TasksPanel tasks={tasks} onOpen={openTask} onRetry={retryTask} onStop={stopTask} /> : null}
       </span>
     ),
     search: () => (
@@ -13571,108 +13666,85 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onColor={(c) => changeHighlightMark(id, { color: highlightColor(c) })}
           onPreset={(p) => changeHighlightMark(id, { color: highlightColor(p.color), style: p.style })}
           onSave={readOnly ? null : () => textHighlighter.saveLook({ style: h?.style || "highlight", color: h?.color })} />
-        {!range ? (
-          <button
-            role="menuitem"
-            className="ctxMenuItem"
-            onClick={() => {
-              setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: id, url: h?.linkTarget?.url || "" });
+        {menuGroups(
+          [
+            !range && (
+              <MenuItem key="link" icon={LinkIcon} onClick={() => {
+                setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: id, url: h?.linkTarget?.url || "" });
+                close();
+              }}>
+                {h?.linkTarget ? t("Change link…") : t("Link to page…")}
+              </MenuItem>
+            ),
+            h?.linkTarget?.url && (
+              <MenuItem key="open" icon={ExternalLinkIcon} onClick={() => { setLinkPrompt(h.linkTarget.url); close(); }}>
+                {t("Open link in browser…")}
+              </MenuItem>
+            ),
+            <MenuItem key="ref" icon={CopyIcon} onClick={() => {
+              setRefPoint({
+                pageId: focusedBlockId,
+                pageTitle: pageTitle || t("Untitled"),
+                blockId: id,
+                quote: (h?.quote || "").slice(0, 200),
+              });
+              // Also a paste-able deep link: opening it jumps straight to
+              // this highlight (in the browser, chat notes, a link dialog).
+              if (findBlock(blocks, id)) {
+                copyText(blockLinkUrl(id));
+              }
               close();
-            }}
-          >
-            {h?.linkTarget ? t("Change link…") : t("Link to page…")}
-          </button>
-        ) : null}
-        {h?.linkTarget?.url ? (
-          <button
-            role="menuitem"
-            className="ctxMenuItem"
-            onClick={() => {
-              setLinkPrompt(h.linkTarget.url);
-              close();
-            }}
-          >
-            {t("Open link in browser…")}
-          </button>
-        ) : null}
-        <button
-          role="menuitem"
-          className="ctxMenuItem"
-          onClick={() => {
-            setRefPoint({
-              pageId: focusedBlockId,
-              pageTitle: pageTitle || t("Untitled"),
-              blockId: id,
-              quote: (h?.quote || "").slice(0, 200),
-            });
-            // Also a paste-able deep link: opening it jumps straight to
-            // this highlight (in the browser, chat notes, anywhere).
-            if (findBlock(blocks, id)) {
-              copyText(blockLinkUrl(id));
-            }
-            close();
-            setStatus(t("Reference point copied — paste the link, or pick it in another paper's link dialog."));
-          }}
-        >
-          {t("Copy as reference point")}
-        </button>
-        {/* a highlight drawn dashed (matched roughly, or an area placed by
-            estimate), pending: accepted where it is, it is drawn solid */}
-        {!readOnly && placedToCheck(h?.position) ? (
-          <button
-            role="menuitem"
-            className="ctxMenuItem"
-            onClick={() => { acceptHighlightPlace(id); close(); }}
-          >
-            {t("Accept")}
-          </button>
-        ) : null}
-        {/* its place by hand: on a selection, or a lost range's closest match */}
-        {[
-          !readOnly && { key: "move", label: t("Move to a selection…"), title: range ? t("Select the lines where it belongs") : undefined,
-            run: () => startHighlightMove(id) },
-          closest && { key: "closest", label: t("Use the closest match ({n}%)", { n: roughMatchPercent(closest.position) }),
-            run: () => placeClosestMatch(id) },
-        ].filter(Boolean).map((row) => (
-          <button key={row.key} role="menuitem" className="ctxMenuItem" title={row.title} onClick={() => { row.run(); close(); }}>
-            {row.label}
-          </button>
-        ))}
-        {commentsOn ? (
-          <button
-            role="menuitem"
-            className="ctxMenuItem"
-            onClick={() => {
+              setStatus(t("Reference point copied — paste the link, or pick it in another paper's link dialog."));
+            }}>
+              {t("Copy as reference point")}
+            </MenuItem>,
+            // a highlight drawn dashed (matched roughly, or an area placed
+            // by estimate), pending: accepted where it is, it is drawn solid
+            !readOnly && placedToCheck(h?.position) && (
+              <MenuItem key="accept" icon={CheckIcon} onClick={() => { acceptHighlightPlace(id); close(); }}>
+                {t("Accept")}
+              </MenuItem>
+            ),
+            // its place by hand: on a selection, or a lost range's closest match
+            !readOnly && (
+              <MenuItem key="move" icon={LocateIcon} title={range ? t("Select the lines where it belongs") : undefined}
+                onClick={() => { startHighlightMove(id); close(); }}>
+                {t("Move to a selection…")}
+              </MenuItem>
+            ),
+            // another passage of its page under the same note: a selection, or another highlight
+            !readOnly && !range && takesParts(h?.position) && (
+              <MenuItem key="extend" icon={TextPlusIcon}
+                title={t("Select more text on its page, or press another highlight there, to make them one highlight")}
+                onClick={() => { startHighlightExtend(id); close(); }}>
+                {t("Add a passage…")}
+              </MenuItem>
+            ),
+            closest && (
+              <MenuItem key="closest" icon={TextSearchIcon} onClick={() => { placeClosestMatch(id); close(); }}>
+                {t("Use the closest match ({n}%)", { n: roughMatchPercent(closest.position) })}
+              </MenuItem>
+            ),
+            commentsOn && (
               // the popover hangs from the highlight on the page
-              close();
-              openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
-            }}
-          >
-            {t("Comment")}
-          </button>
-        ) : null}
-        <button
-          role="menuitem"
-          className="ctxMenuItem"
-          onPointerEnter={BlockProperties.preload}
-          onClick={() => {
-            // the popover hangs from the highlight on the page
-            close();
-            openProps(id, highlightEl(id));
-          }}
-        >
-          {t("Properties")}
-        </button>
-        <button
-          role="menuitem"
-          className="ctxMenuItem"
-          onClick={() => {
-            deleteHighlight(id);
-            close();
-          }}
-        >
-          {t("Delete")}
-        </button>
+              <MenuItem key="comment" icon={MessageSquareIcon} onClick={() => {
+                close();
+                openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
+              }}>
+                {t("Comment")}
+              </MenuItem>
+            ),
+            <MenuItem key="props" icon={BracesIcon} onPointerEnter={BlockProperties.preload}
+              onClick={() => { close(); openProps(id, highlightEl(id)); }}>
+              {t("Properties")}
+            </MenuItem>,
+          ],
+          [
+            <MenuItem key="delete" icon={TrashIcon} danger onClick={() => { deleteHighlight(id); close(); }}>
+              {t("Delete")}
+            </MenuItem>,
+          ],
+        )}
       </>
     );
   };
@@ -13944,6 +14016,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   return (
     <GammaNavContext.Provider value={gammaNav}>
+    <LinkCardContext.Provider value={linkCardCtx}>
     <PageToolsContext.Provider value={pageTools}>
     <ThreadPlaceContext.Provider value={placeOf}>
     <RecordingContext.Provider value={recordingCtx}>
@@ -14052,10 +14125,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 menuOpen={openPopover === "tabs"}
                 onMenuOpenChange={(open) => setOpenPopover(open ? "tabs" : null)}
                 onReorder={(dragged, target) => reorderGroupTabs(activeGroup(tabLayout)?.id, dragged, target)}
-                onOpen={selectTab}
+                onOpen={(id) => (id ? selectTab(id) : activateTabGroup(activeGroup(tabLayout)?.id, null))}
                 onClose={closeTab}
                 onTogglePin={toggleTabPinned}
                 onContext={(tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); }}
+                {...stripGroups.strip}
               />
             ) : <div className="tabStrip" aria-hidden="true" />}
             {isPhone ? null : topbarActions}
@@ -14201,13 +14275,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {attachModeBlockId && (
         <div className="attachModeBanner">
           {t("Click a PDF highlight to link it")}
-          <button onClick={() => setAttachModeBlockId(null)}>{t("Cancel")}</button>
+          <button onClick={hlWait.end}>{t("Cancel")}</button>
         </div>
       )}
       {moveHighlightId && (
         <div className="attachModeBanner" data-move-highlight={moveHighlightId}>
           {t("Select the text where this highlight belongs")}
-          <button onClick={() => setMoveHighlightId(null)}>{t("Cancel")}</button>
+          <button onClick={hlWait.end}>{t("Cancel")}</button>
+        </div>
+      )}
+      {extendHighlightId && (
+        <div className="attachModeBanner" data-extend-highlight={extendHighlightId}>
+          {t("Select text to add to this highlight, or press another highlight on its page to join them")}
+          <button onClick={hlWait.end}>{t("Cancel")}</button>
         </div>
       )}
       {transMenu && (
@@ -14251,10 +14331,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {barMenu.pane === "topbar" && !isPhone && !shareMode && (paneSplit || focusedBlockId) ? (
             <>
               {paneSplit ? (
-                <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
-                  onClick={() => { setBarMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
+                <MenuItem icon={OnePaneIcon} title={t("Every tab back in one pane")}
+                  onClick={() => { setBarMenu(null); joinTabGroups(); }}>{t("Join panes")}</MenuItem>
               ) : (
-                <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
+                <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a pane of its own, to the right")}
                   onClick={() => { setBarMenu(null); splitTab(focusedBlockId, "right"); }}>{t("Split right")}</MenuItem>
               )}
               <MenuDivider />
@@ -14289,7 +14369,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onMenuOpenChange: (groupId) => setOpenPopover(groupId ? `tabs:${groupId}` : null),
           onReorder: reorderGroupTabs, onClose: closeTab, onTogglePin: toggleTabPinned,
           onContext: (tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); },
-          actions: paneStandIns, headPress: () => customizePress("topbar", topbarSpace),
+          actions: paneStandIns, headPress: () => customizePress("topbar", topbarSpace), ...stripGroups.strip,
         }}
         renderPane={(group) => (group.active ? (
           <PagePane key={group.active} {...paneProps(group.active)}
@@ -14298,7 +14378,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <div className="pagePaneEmpty">
             <p>{t("Nothing is open here. Drag a tab in, or open a page from the library.")}</p>
             <button type="button" className="uiBtn sm" onClick={() => activateTabGroup(group.id)}>{t("Open a page here")}</button>
-            <button type="button" className="uiBtn sm" onClick={() => closeTabGroup(group.id)}>{t("Close this group")}</button>
+            <button type="button" className="uiBtn sm" onClick={() => closeTabGroup(group.id)}>{t("Close this pane")}</button>
           </div>
         ))}
         live={(
@@ -14429,12 +14509,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               retryRef={pdfRetryRef}
               onExternalLink={handleDocLink}
               onLinkContext={setLinkPrompt}
-              onLinkHighlight={(h) => {
-                if (h.linkTarget?.pageId) {
-                  if (h.linkTarget.blockId) pendingJumpRef.current = h.linkTarget.blockId;
-                  openBlock(h.linkTarget.pageId, { pushNav: true });
-                } else if (h.linkTarget?.url) handleDocLink(h.linkTarget.url);
-              }}
+              onLinkHighlight={(h) => { if (h.linkTarget) openLinkTarget(h.linkTarget); }}
               onJump={jumpToHighlightId}
               onHighlightJump={highlightPressed}
               onHighlightContext={setHighlightMenu}
@@ -14451,6 +14526,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               selComment={commentsOn && canComment}
               highlighter={textHighlighter.on ? textHighlighter.tint : ""}
               moveMode={!!moveHighlightId}
+              // a highlight waiting for another passage: a selection, or a press on another highlight
+              extendId={extendHighlightId || ""}
+              onJoinHighlight={readOnly ? undefined : joinWaitingHighlight}
               // a dashed or hollow highlight's review card (pdf/HighlightReview.jsx): its actions are an
               // editor's; a lost one's picture is of the file it was measured on, when not this one
               onAcceptHighlight={readOnly ? undefined : acceptHighlightPlace}
@@ -14852,7 +14930,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         tree={libTree}
         recentViews={recentViews}
         openTabs={openTabs}
-        refPoint={refPoint && refPoint.pageId !== focusedBlockId ? refPoint : null}
+        self={linkDialog.editBlockId}
+        refPoint={refPoint && refPoint.blockId !== linkDialog.editBlockId ? refPoint : null}
+        placeOf={gammaLinkPlace}
         onLink={createLinkHighlight}
         onClose={() => setLinkDialog(null)}
       /></LazyBoundary> : null}
@@ -15012,8 +15092,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setChatEffort,
           chatSpeed,
           setChatSpeed,
-          chatFollowUp,
-          setChatFollowUp,
+          chatFollowUpMode,
+          setChatFollowUpMode,
           aiProvider,
           setAiProvider,
           deleteAiProvider,
@@ -15160,6 +15240,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           }} />
         </LazyBoundary>
       ) : null}
+      {stripGroups.editor}
       {tabMenu ? (() => {
         // Two pins: the tab pin (this device's tab strip, synced with the
         // tabs) and the library pin (the page's Pinned strip on the home
@@ -15201,6 +15282,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <MenuItem icon={HardDriveIcon} title={t("Show the file in this computer's file manager")}
               onClick={() => { setTabMenu(null); askShell("reveal-on-disk", { page: tabMenu.id }); }}>{revealLabel()}</MenuItem>
           ) : null}
+          {stripGroups.tabMenuItems(tabMenu.id, () => setTabMenu(null))}
           {!isPhone ? (
             // Tab groups (docs/dev/tab_groups.md): one group splits once, this
             // tab into a pane of its own on the right (the only tab of the
@@ -15209,7 +15291,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <>
               <MenuDivider />
               {isSingle(tabLayout) ? (
-                <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
+                <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a pane of its own, to the right")}
                   onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "right"); }}>{t("Split right")}</MenuItem>
               ) : (
                 <>
@@ -15217,8 +15299,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <MenuItem icon={SplitColumnsIcon} title={t("Show this page in the other pane")}
                       onClick={() => { setTabMenu(null); moveTabToGroup(tabMenu.id, otherPane(tabMenu.id).id); }}>{t("Move to the other pane")}</MenuItem>
                   ) : null}
-                  <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
-                    onClick={() => { setTabMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
+                  <MenuItem icon={OnePaneIcon} title={t("Every tab back in one pane")}
+                    onClick={() => { setTabMenu(null); joinTabGroups(); }}>{t("Join panes")}</MenuItem>
                 </>
               )}
             </>
@@ -15715,6 +15797,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     </RecordingContext.Provider>
     </ThreadPlaceContext.Provider>
     </PageToolsContext.Provider>
+    </LinkCardContext.Provider>
     </GammaNavContext.Provider>
   );
 }

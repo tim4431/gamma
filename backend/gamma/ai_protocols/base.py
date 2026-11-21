@@ -14,7 +14,7 @@ thinking, ``{wire field: value}`` — the wire echoes it back, others ignore
 it), and a
 ``{"role": "tool", "call_id", "content"}`` entry is a tool result, which may
 carry ``images`` ([(media_type, base64)] — a rendered PDF page). Tools are
-declared once as ``{name, description, parameters}`` (gamma/ai_tools.py);
+declared once as ``{name, description, parameters}`` (gamma/ai_tools/);
 each adapter maps both to its wire.
 
 Two knobs ride along with a call: ``effort`` (how hard the model thinks) and
@@ -319,7 +319,7 @@ class Protocol:
 
     @property
     def base_url(self) -> str:
-        """The default endpoint (env-overridable, config.AI_BASE_URLS)."""
+        """The default endpoint (config.AI_BASE_URLS)."""
         return AI_BASE_URLS.get(self.id, "")
 
     # --- chat --------------------------------------------------------------

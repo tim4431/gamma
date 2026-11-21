@@ -1,5 +1,6 @@
 """The AI chat's fetch handoffs (``gamma/fetch_handoff.py``): the chat card
-polls a request, uploads the PDF the user downloaded, or dismisses it; Gamma
+polls a request, uploads the PDF the user downloaded, or dismisses it (as
+does the request's Stop in Background tasks); Gamma
 Connector opens the page itself when the card asks it to (or recognizes a tab
 opened on ``/go``), takes the request (``watch``) and sends the PDF from that
 tab. ``store`` puts a delivered PDF into the workspace, for the chat's "Save
@@ -63,6 +64,14 @@ class SkipNote(BaseModel):
 def dismiss(rid: str, request: Request, payload: SkipNote | None = None):
     payload = payload or SkipNote()
     return _found(handoff.dismiss(_user_id(request), rid, payload.note))
+
+
+@router.post("/{rid}/stop")
+def stop(rid: str, request: Request):
+    """Background tasks' Stop on the request's row (taskKinds ``stop``):
+    a dismiss with nothing to say, so a reply waiting on the card goes on
+    without the paper."""
+    return _found(handoff.dismiss(_user_id(request), rid))
 
 
 # Sync def: reading the spooled upload and extracting its text run in the

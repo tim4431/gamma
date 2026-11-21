@@ -3,7 +3,9 @@
 // read the same (what a memoized row's props compare).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { NO_LABELS, refLabelsByBlock } from "../src/editor/refLabels.js";
+import {
+  CHIP_RE, NO_LABELS, REF_RE, refLabelsByBlock, refTargetTitle, refWords, unlinkedText,
+} from "../src/editor/refLabels.js";
 import { updateBlockTree } from "../src/shared/model/blockModel.js";
 
 const block = (id, content, children = []) => ({ id, content, properties: {}, children });
@@ -34,6 +36,26 @@ test("an entry keeps its identity across a keystroke elsewhere, and changes with
   const third = refLabelsByBlock(renamed, byIdOf(renamed), {}, second);
   assert.notEqual(third.get("a"), second.get("a"));
   assert.equal(third.get("a").b.content, "renamed");
+});
+
+test("[[id|words]] is a ref with its words, \\| a table's pipe; an embed's words are none", () => {
+  const refs = (text) => [...text.matchAll(CHIP_RE)].map((m) => [m[0][0] === "!", m[1], refWords(m[2])]);
+  assert.deepEqual(refs("see [[b|the plan]], [[b\\|cell]], [[b| ]] and ![[b|x]]"),
+    [[false, "b", "the plan"], [false, "b", "cell"], [false, "b", ""], [true, "b", "x"]]);
+  assert.deepEqual([..."[[a|b]c]] [[a|b\nc]] [[Some title|x]]".matchAll(REF_RE)], [], "no bracket or line break in the words, an id first");
+  const tree = [block("a", "see [[b|the plan]]"), block("b", "plain")];
+  assert.deepEqual(refLabelsByBlock(tree, byIdOf(tree), {}, null).get("a"), { b: { content: "plain", page_title: "Page" } },
+    "its target's label loads all the same (the chip's title)");
+});
+
+test("a chip with words is titled by what it names; an unlinked [[title|words]] reads as its words", () => {
+  assert.equal(refTargetTitle({ content: "Plan\nmore", page_title: "Notes" }), "Plan · From: Notes");
+  assert.equal(refTargetTitle({ content: "Notes", page_title: "Notes" }), "Notes", "a page names itself once");
+  assert.equal(refTargetTitle({ content: "" }), undefined);
+  assert.equal(unlinkedText("Some title|my words"), "my words");
+  assert.equal(unlinkedText("Some title\\|cell"), "cell");
+  assert.equal(unlinkedText("Some title| "), "Some title");
+  assert.equal(unlinkedText("Some title"), "Some title");
 });
 
 test("a Gamma link that resolves gets a label, one whose block is missing does not", () => {

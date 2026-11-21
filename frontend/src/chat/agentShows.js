@@ -1,4 +1,4 @@
-// What the chat's show_page asks the app to show (gamma/ai_tools.py
+// What the chat's show_page asks the app to show (gamma/ai_tools/pages.py
 // _run_show_page: {page_id, pdf_page?, quote?, block_id?, line?}), and when.
 // The chat follows the open page (docs/dev/chat_history.md "Buckets"), so
 // opening another page while the reply streams would hide the reply. A show

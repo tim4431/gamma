@@ -17,7 +17,8 @@ from ai_fixtures import FakeResp, folder
 from conftest import account_of, login, make_folder, make_user
 from gamma import ai_web, fetch_handoff, net_guard, web_fetch
 from gamma import publisher_sessions as sessions
-from gamma.ai_tools import agent_system, run_agent_tool
+from gamma.ai_tools.prompt import agent_system
+from gamma.ai_tools.registry import run_agent_tool
 from gamma.db import connect_users_db
 from test_ai_tools_web import _text_pdf
 from test_net_guard import transport  # noqa: F401 -- fake urllib transport fixture
@@ -58,10 +59,10 @@ def fetch(accounts):
     gets); ``user``: the account named, None for a chat with no handoff."""
     ws = make_user(USER, "handoff-password")
 
-    def run(source, user=USER, **scope):
+    def run(source, user=USER, title="", **scope):
         handoff_user = account_of(user) if user else None
         return run_agent_tool(ws, {**folder(""), "read_chars": 20000, "handoff_user": handoff_user, **scope},
-                              "fetch_paper", {"source": source})
+                              "fetch_paper", {"source": source, **({"title": title} if title else {})})
     return run
 
 
@@ -84,9 +85,11 @@ def test_cloudflare_challenge_opens_a_handoff_card_and_retries_reuse_it(web, fet
     req = fetch_handoff.get(account_of(USER), handoff["id"])
     assert req["url"] == landing and req["status"] == "waiting"
 
-    # The model retrying (in another spelling) gets the same card, not a new one.
-    _, again = fetch("10.5555/cf-test")
-    assert again["handoff"]["id"] == handoff["id"]
+    # The model retrying (in another spelling) gets the same card, not a new one,
+    # named now by the title it passed (Background tasks shows it).
+    _, again = fetch("10.5555/cf-test", title="A paper behind a check")
+    assert again["handoff"]["id"] == handoff["id"] and again["handoff"]["title"] == "A paper behind a check"
+    assert fetch_handoff.get(account_of(USER), handoff["id"])["title"] == "A paper behind a check"
     # Guests and share links have no one to hand it to: the Connector guidance.
     text, action = fetch("doi:10.5555/cf-test", user=None)
     assert "handoff" not in action and "Connect this publisher" in text
@@ -202,7 +205,11 @@ def test_a_delivered_pdf_is_held_for_the_library_and_saved_through_clip(accounts
     # The chat's next read names the request, so the reply can offer the paper.
     _, action = fetch(source)
     assert (action["request"], action["pdf"]) == (rid, True)
-    assert "title" in action and action["url"] == "https://journals.example.org/keep.pdf"
+    assert action["title"] == "" and action["url"] == "https://journals.example.org/keep.pdf"
+    # A PDF has no title of its own: the expected one names it once its pages show it.
+    _, named = fetch(source, title="Delivered from the browser")
+    assert named["title"] == "Delivered from the browser" and "Delivered from the browser" in named["summary"]
+    assert fetch(source, title="Some other paper entirely")[1]["title"] == ""
 
     assert bob.post(f"/api/ai/handoffs/{rid}/store").status_code == 404, "another account's PDF stays theirs"
     stored = alice.post(f"/api/ai/handoffs/{rid}/store").json()
@@ -369,12 +376,16 @@ def test_a_waiting_request_is_listed_in_background_tasks(accounts, blocked_chat,
     blocked_chat()
     rows = [row for row in alice.get("/api/jobs").json()["jobs"] if row["kind"] == "paper-handoff"]
     (row,) = rows
-    assert row["title"] == "www.science.example" and row["readonly"] is True
-    assert row["progress"]["phase"] == "browser"   # nobody has taken the tab yet
-    assert row["params"]["request"] == fetch_handoff.waiting(account_of(USER))[0]["id"]
-    # Another account never sees it, and a settled request drops off.
+    # No title from the model: the host names it.
+    assert row["title"] == "www.science.example" and row["readonly"] is True and row["stoppable"] is True
+    # nobody has taken the tab yet, and the site it waits on
+    assert row["progress"] == {"phase": "browser", "item": "www.science.example"}
+    rid = row["params"]["request"]
+    assert rid == fetch_handoff.waiting(account_of(USER))[0]["id"]
+    # Another account never sees it nor stops it, and a stopped request drops off.
     assert not [r for r in bob.get("/api/jobs").json()["jobs"] if r["kind"] == "paper-handoff"]
-    alice.request("DELETE", f"/api/ai/handoffs/{row['params']['request']}")
+    assert bob.post(f"/api/ai/handoffs/{rid}/stop").status_code == 404
+    assert alice.post(f"/api/ai/handoffs/{rid}/stop").json()["status"] == "dismissed"
     assert not [r for r in alice.get("/api/jobs").json()["jobs"] if r["kind"] == "paper-handoff"]
 
 
@@ -400,6 +411,54 @@ def test_a_chat_that_does_not_wait_ends_with_the_card(accounts, blocked_chat):
                       files={"file": ("p.pdf", _text_pdf([PDF_TEXT]))}).status_code == 200
     action, = [line["action"] for line in blocked_chat(paper_wait=False) if "action" in line]
     assert PDF_TEXT in action["result"] and "handoff" not in action
+
+
+@pytest.mark.parametrize("paper_wait", [True, False])
+def test_a_reply_its_client_left_lets_its_paper_requests_go(accounts, blocked_chat, monkeypatch, paper_wait):
+    """Stop (or a dropped connection) ends the reply, and the requests it
+    asked for go with it, as a card's Dismiss lets one go: Background tasks
+    lists none. The client leaves while the reply waits on the card, or,
+    one that does not wait, as the model starts its next turn."""
+    import gamma.routers.ai as ai_mod
+
+    alice, _ = accounts
+    made, real = [], ai_mod.Alarm
+    monkeypatch.setattr(ai_mod, "Alarm", lambda: made.append(real()) or made[-1])
+
+    def relay(lines, what="ai", interval=None, abandoned=None, inbox=None):
+        """The stream as a client that left reads it: nothing once it is gone
+        (the real relay would ping a test client that never leaves)."""
+        try:
+            for line in lines:
+                yield line
+                if abandoned.is_set():
+                    return
+        finally:
+            lines.close()
+
+    monkeypatch.setattr(ai_mod, "keepalive_lines", relay)
+    thread = None
+    if paper_wait:
+        thread = _while_waiting(lambda rid: made[-1].set())
+    else:
+        inner = ai_mod._open_ai
+
+        def leaving(messages, *args, **kwargs):
+            if messages[-1]["role"] == "tool":
+                made[-1].set()
+            return inner(messages, *args, **kwargs)
+
+        monkeypatch.setattr(ai_mod, "_open_ai", leaving)
+    lines = blocked_chat(paper_wait=paper_wait)
+    if thread:
+        thread.join(5)
+    asked = [line["handoff"]["id"] for line in lines if "handoff" in line] + [
+        line["action"]["handoff"]["id"] for line in lines if line.get("action", {}).get("handoff")]
+    assert asked, lines
+    for rid in set(asked):
+        assert fetch_handoff.get(account_of(USER), rid)["status"] == "dismissed"
+    assert not fetch_handoff.waiting(account_of(USER))
+    assert not [row for row in alice.get("/api/jobs").json()["jobs"] if row["kind"] == "paper-handoff"]
 
 
 # ------------------------------------------------ cookies and agents
