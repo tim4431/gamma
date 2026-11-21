@@ -30,15 +30,23 @@ export const stampedList = (blocks) =>
 // to them: a highlight's count of open comment threads, from
 // `countByBlock` (block id → count; the note badge shows for them too), and
 // a link block's target (App's highlights). `treeBlocks` is the tree
-// flattened.
+// flattened. An item is kept while its highlight and its count are (a
+// highlight is kept while its block is), so a keystroke elsewhere on the
+// page leaves every item the object it was.
+const ITEM_OF = new WeakMap(); // highlight → {threads, item}
 export function pageHighlights(blocks, treeBlocks, countByBlock, key = "pdf_position", hash = "") {
-  const byId = blocksById(treeBlocks);
+  let byId = null;
   return blocksToHighlights(blocks, key, hash).map((h) => {
-    const b = byId.get(h.id), p = b?.properties || {};
     const threads = countByBlock.get(h.id) || 0;
+    const kept = ITEM_OF.get(h);
+    if (kept?.threads === threads) return kept.item;
+    byId ||= blocksById(treeBlocks);
+    const b = byId.get(h.id), p = b?.properties || {};
     const out = threads ? { ...h, threadCount: threads } : h;
-    return isLinkBlock(b)
+    const item = isLinkBlock(b)
       ? { ...out, linkTarget: { url: p.link_url || "", pageId: p.link_page_id || "", blockId: p.link_block_id || "" } } : out;
+    ITEM_OF.set(h, { threads, item });
+    return item;
   });
 }
 

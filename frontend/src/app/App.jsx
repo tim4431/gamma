@@ -193,7 +193,7 @@ import { useMarks } from "../markup/MarkupLayers";
 import { MarkupToolbar } from "../markup/MarkupToolbar";
 import { PageToolsContext } from "../markup/PageTools";
 import { makeStableActions, useStableActions } from "../shared/lib/stableActions.js";
-import { keepIfSame, keepIfSameJson, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
+import { keepIfSame, keepIfSameJson, sameItems, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { blocksById, commentAnchors, pageHighlights, recordingList, sheetNumbersOf, stampedList } from "./treeDerived.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
@@ -9671,9 +9671,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The list is the page's document's: a PDF's highlights under
   // pdf_position, a picture's regions under image_position (positionKeyOf),
   // so every reader of it (the jumps, the margin, the chat) takes a region
-  // with no branch.
-  const prevHighlightsRef = useRef({ json: "", value: [] });
-  const highlights = useMemo(() => keepIfSameJson(prevHighlightsRef, pageHighlights(blocks, treeBlocks, comments.countByBlock, positionKeyOf(doc), fileHash(doc))),
+  // with no branch. The items of blocks a keystroke did not touch keep their
+  // identity, so the compare serializes only the rebuilt ones (sameItems;
+  // the whole list as JSON took half of App's time per key).
+  const prevHighlightsRef = useRef(null);
+  const highlights = useMemo(() => keepIfSame(prevHighlightsRef, pageHighlights(blocks, treeBlocks, comments.countByBlock, positionKeyOf(doc), fileHash(doc)), sameItems),
     [blocks, treeBlocks, comments.countByBlock, doc]);
   // The page's highlights to review after its PDF was replaced, in document
   // order: the pending ones (drawn dashed until accepted or moved), the

@@ -655,11 +655,19 @@ export function blockAgent(b) {
 // shows now (its stored `hash`; false when it was drawn on another version,
 // which the viewer draws dashed). A text range's is its own: whether it is
 // pending is rangePending's, against the text the view shows.
+//
+// A block's highlight is built once per block object (and key, and for a
+// region the version): a tree keeps a node's identity until it or a block
+// under it changes, so a keystroke elsewhere on the page rebuilds none, and
+// a list of them compares item by item (keepIfSame.js sameItems). Readers
+// share the objects and never change them.
+const HIGHLIGHT_OF = new WeakMap(); // block → Map(key → highlight)
 export function blocksToHighlights(blocks, key = "pdf_position", hash = "") {
   const out = [];
   const region = key === POSITION_KEY.image, text = key === POSITION_KEY.text;
   const placed = region ? isRegionBlock : text ? isTextRangeBlock : isHighlightBlock;
   const shown = (pos) => (region ? { ...pos, area: true, onVersion: !!hash && pos.hash === hash } : pos);
+  const keptAs = region ? `${key}#${hash}` : key;
   // A highlight "has a note" when the user typed anything on it: the block's
   // own content (the comment) or any non-empty block nested under it.
   function hasChildNote(b) {
@@ -667,18 +675,24 @@ export function blocksToHighlights(blocks, key = "pdf_position", hash = "") {
   }
   function walk(list) {
     for (const b of list || []) {
-      const pos = placed(b) ? blockPosition(b, key) : null;
-      if (pos) {
-        out.push({
-          id: b.id,
-          quote: blockQuote(b),
-          note: b.content || "",
-          hasNote: (b.content || "").trim() !== "" || hasChildNote(b),
-          color: blockColor(b),
-          style: blockStyle(b),
-          position: shown(pos),
-          agent: blockAgent(b),
-        });
+      if (placed(b)) {
+        let kept = HIGHLIGHT_OF.get(b), h = kept?.get(keptAs);
+        if (h === undefined) {
+          const pos = blockPosition(b, key);
+          h = pos && {
+            id: b.id,
+            quote: blockQuote(b),
+            note: b.content || "",
+            hasNote: (b.content || "").trim() !== "" || hasChildNote(b),
+            color: blockColor(b),
+            style: blockStyle(b),
+            position: shown(pos),
+            agent: blockAgent(b),
+          };
+          if (!kept) HIGHLIGHT_OF.set(b, (kept = new Map()));
+          kept.set(keptAs, h);
+        }
+        if (h) out.push(h);
       }
       if (b.children?.length) walk(b.children);
     }

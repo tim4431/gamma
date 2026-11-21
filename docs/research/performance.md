@@ -177,11 +177,30 @@ Later (November 2026): the scale reaches the pages as a CSS variable on
 the zoom layer, so a zoom frame re-renders no page
 ([pdf-zoom-frames.md](pdf-zoom-frames.md)).
 
+Later still (21 November 2026): `blocksToHighlights` builds a block's
+highlight once per block object, `pageHighlights` keeps its item while the
+highlight and its thread count are, and App keeps the list with
+`keepIfSame(…, sameItems)`. That compares item by item, serializing only
+the rebuilt items, which is the same answer as the whole list's JSON. The
+highlights x200 went from 167 ms to 5.4 ms, and 200 keys at the last block
+from 295 ms to 106 ms (idle p50s). `diffTrees` is now the largest piece
+(~60 ms of the 106). Skipping the subtrees that kept their identity would
+not be a pure speedup: a diff also gives new keys to the siblings inside them
+whose position keys are missing or tied, and those moves would stop.
+CI's `perf` job went over a budget in 18 of the 20 merge runs that timed
+anything from 15 to 20 November. Most of those breaches were two
+measurement artefacts, now removed: V8's concurrent sweep (`mergeInk`), and
+SQLite's automatic checkpoint inside a timed commit (the `commit_ops`
+cases) ([dev/debugging.md](../dev/debugging.md#performance-budgets)).
+`refLabelsByBlock` (CI 15 to 25 ms against 20) is neither: CI runs it 1.4
+to 2.4x slower than one pinned core here, and it stays the case closest to
+its budget there.
+
 ## Left open
 
 - **App's own render per keystroke.** The rows no longer re-render, but
-  App does, with its derived walks over the tree (flatten, sheets,
-  highlights, the diff and the history's classification) and the chat
+  App does, with its derived walks over the tree (flatten, sheets, the
+  diff and the history's classification) and the chat
   dock. Moving that state out of App is the state-owner work of
   [dev/frontend-refactor.md](../dev/frontend-refactor.md).
 - **The annotated-PDF export as a job** answered with a `FileResponse`,

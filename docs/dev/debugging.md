@@ -1208,7 +1208,16 @@ nearest-rank p95 (the 19th of the 20 sorted runs, so the single slowest is
 left out) is held to the case's budget. A cold case builds fresh data in a
 setup that runs outside the timed span. A garbage collection runs between
 the runs on both sides (`node --expose-gc` in `test:perf`, `gc.collect()`
-in Python), so one run does not pay for the last one's garbage.
+in Python), so one run does not pay for the last one's garbage. On the
+frontend `--no-concurrent-sweeping` has V8 finish that collection's sweep
+before `gc()` returns. Otherwise its helper threads swept during the next
+run: on two cores with the ~240 MB heap `ink.perf.mjs` builds, `mergeInk`
+measured 4 to 22 ms instead of 3. On the server a commit case empties
+pages.db's WAL before each run (a `RESTART` checkpoint), so no run pays for
+the automatic checkpoint the earlier runs made due. Its fsync is the
+disk's time, not the code's: on a disk every fourth run of 20 keystrokes
+paid one, and on CI the p95 was one (14 to 120 ms against a median of 5).
+tmpfs, where pytest's temp dirs sit on this machine, has no fsync to pay.
 
 The frontend's cases are `frontend/tests/perf/*.perf.mjs`, run one file at
 a time (`--test-concurrency=1`):
