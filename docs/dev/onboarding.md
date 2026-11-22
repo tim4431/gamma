@@ -172,7 +172,7 @@ no voice step.
   card also lists the agents found on a computer, which need no
   connection ([ai.md](ai.md#a-computers-agent-in-the-chat)): one the
   account turned on is a tile that picks it, one found but off a tile that
-  opens Settings → AI → Agents. With such an agent on and ready, a bucket never
+  opens Settings → AI → Local agents. With such an agent on and ready, a bucket never
   picked is that agent's chat (`pickAgent`), so the card, and this step's
   anchor, show once Gamma AI is picked in the chip.
 

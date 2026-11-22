@@ -328,7 +328,7 @@ const REFUSALS = {
   not_newest: (agent) => t("Reply to ask {agent} again: only the newest comment is sent.", { agent }),
   viewer: (agent) => t("Only the workspace's owners and editors can send comments to {agent}.", { agent }),
   writes: (agent) => t("Gamma takes no changes here now: nothing was sent to {agent}.", { agent }),
-  off: (agent) => t("Turn on {agent} in Settings → AI → Agents first.", { agent }),
+  off: (agent) => t("Turn on {agent} in Settings → AI → Local agents first.", { agent }),
   offline: (agent, computer) => computer ? t("{computer} is offline: send this again once it connects.", { computer }) : "",
   paused: (agent, computer) => computer
     ? t("The synced folder is paused on {computer}: {agent} starts once it syncs again.", { agent, computer })

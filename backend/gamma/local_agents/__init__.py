@@ -1,5 +1,5 @@
 """The agents on this computer: Codex CLI and Claude Code, turned on in
-Settings → AI → Agents and used from the chat and from a comment ticked
+Settings → AI → Local agents and used from the chat and from a comment ticked
 *Send to* (docs/dev/local_agents.md). On the desktop app's own server a
 turn runs the agent in the directory its conversation works in (a synced
 folder's, one the computer offers, one of its own), with Gamma's tools, and

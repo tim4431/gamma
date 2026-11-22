@@ -1,7 +1,8 @@
 // Settings → AI › Models: the model each task uses (any connection's: the
 // account's roles, ai/useAiModels.js), then the connections that supply
-// the models, then the connection check at login. Who the chat talks to is
-// the pane before it, Agents (SettingsAgents.jsx). The account's own list,
+// the models, then the connection check at login. The agents on the
+// account's computers are the pane before it, Local agents
+// (SettingsAgents.jsx), where it has one to show. The account's own list,
 // its Test and Usage results live in App.jsx (the aiKeys* group), its
 // connect dialog in useProviderEditor (providerEditor.js) and
 // ProviderForm.jsx — these components only render them; the server's
@@ -19,9 +20,10 @@ import { SECTION_PREFS } from "./sectionPrefs.js";
 import { useSettingsRead } from "./settingsReads.js";
 import { accessSummary, modelList, useProviderEditor } from "./providerEditor.js";
 import { ProviderForm } from "./ProviderForm.jsx";
-import { ActivityIcon, BanIcon, CheckIcon, GlobeIcon, KeyIcon, LanguagesIcon, MessageSquareIcon, MicIcon, PaperIcon, PenIcon, PlusIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon } from "../shared/ui/Icons";
-import { billingLabel, connectionsInUse, modelTitle, taskRow } from "../ai/aiModels.js";
+import { ActivityIcon, BanIcon, CheckIcon, GlobeIcon, KeyIcon, LanguagesIcon, MessageSquareIcon, MicIcon, PaperIcon, PenIcon, PlusIcon, RefreshIcon, Trash2Icon, UserIcon } from "../shared/ui/Icons";
+import { billingLabel, connectionsInUse, taskRow } from "../ai/aiModels.js";
 import { TaskModelMenu } from "../ai/ModelMenu.jsx";
+import { ProviderLogo } from "../ai/ProviderLogo.jsx";
 import { T, fmtDate, getLocale, t } from "../shared/i18n/i18n.js";
 
 // Spoken languages for dictation, by native name. The pick "" follows the
@@ -115,7 +117,7 @@ function ProviderRow({ provider, protocol, oauth, test, health = null, usage, on
   return (
     <div className="aiProvRow">
       <span className="aiProvAvatar">
-        {oauth ? <SparklesIcon size={16} /> : <KeyIcon size={16} />}
+        <ProviderLogo service={provider.service} size={20} />
       </span>
       <span className="aiProvMeta">
         <span className="aiProvName">
@@ -315,15 +317,6 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
       </SubDialog>
     ) : null}
   </>;
-}
-
-
-// The connection Gamma AI uses, as Settings → AI → Agents names it: the
-// chat model and its connection ("" for none).
-export function gammaAiConnection(value) {
-  const ai = value.models;
-  const id = ai?.modelFor("chat");
-  return id && ai.models.some((m) => m.id === id) ? modelTitle(ai.aiInfo, id) : "";
 }
 
 // Dictation goes through a connection that transcribes (an OpenAI key,

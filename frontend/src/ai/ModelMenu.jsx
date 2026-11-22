@@ -1,6 +1,6 @@
 // The one model menu (docs/dev/ai.md "The model menu"): a search box over
 // every connection's models, the favorites first, then a group per
-// connection named with how it is paid for. A row shows the model, what it
+// connection under its logo, named with how it is paid for. A row shows the model, what it
 // can't do ("no tools", for the handwriting task "can't convert to text"),
 // whether it sees pictures, its context window and, on a connection paid
 // per token, its price; its star makes it a favorite. A task's menu starts
@@ -23,6 +23,7 @@ import { composing } from "../shared/lib/hotkeys.js";
 import { t } from "../shared/i18n/i18n.js";
 import { billingLabel, followed, modelName } from "./aiModels.js";
 import { menuGroups, modelFacts, pickableRows } from "./modelMenu.js";
+import { ProviderLogo } from "./ProviderLogo.jsx";
 import "./modelMenu.css";
 
 // A model's facts (modelMenu.js modelFacts): tags for what it can't do, an
@@ -33,10 +34,10 @@ export function ModelFacts({ model, task = "", children }) {
     <span className="modelMenuFacts">
       {modelFacts(model, { task }).map((fact) => {
         if (fact.kind === "vision") {
-          return <span key="vision" className="modelMenuFact" title={fact.title} role="img" aria-label={fact.title}><EyeIcon size={14} /></span>;
+          return <span key="vision" className="modelMenuFact" data-fact="vision" title={fact.title} role="img" aria-label={fact.title}><EyeIcon size={14} /></span>;
         }
         const tag = fact.kind === "tools" || fact.kind === "ink";
-        return <span key={fact.kind} className={tag ? "uiTag warn modelMenuTag" : "modelMenuFact"} title={fact.title}>{fact.text}</span>;
+        return <span key={fact.kind} className={tag ? "uiTag warn modelMenuTag" : "modelMenuFact"} data-fact={fact.kind} title={fact.title}>{fact.text}</span>;
       })}
       {children}
     </span>
@@ -93,7 +94,11 @@ export function ModelMenuList({ x, y, anchorRight = false, anchorBottom = false,
     if (group.key === "engines") return t("Translation services");
     if (!group.key.startsWith("connection:")) return null;
     const billing = billingLabel(group.billing);
-    return <>{group.label}{billing ? <span className="uiTag modelMenuBilling">{billing}</span> : null}</>;
+    return <>
+      <ProviderLogo service={group.service} size={14} />
+      <span className="modelMenuGroupName">{group.label}</span>
+      {billing ? <span className="uiTag modelMenuBilling">{billing}</span> : null}
+    </>;
   };
   const row = (group, r) => {
     const key = `${group.key}|${r.id}`;

@@ -274,7 +274,9 @@ It opens the account pane, whose name "Account & sync" is its accessible
 name, and carries that pane's notice dot. Four captioned groups follow:
 `PREFERENCE_NAV` (Preferences), `AI_NAV` (AI), `LIBRARY_NAV` (Library) and
 `ADMIN_NAV` (Administration). Administration carries an `admin` tag and
-renders only for admins, since it changes the server for everyone.
+renders only for admins, since it changes the server for everyone. Local
+agents, in the AI group, shows only where it has something to list ("AI"
+below).
 `HELP_NAV`, Help & diagnostics, is pinned to the rail's bottom. Every pane
 is one click from any other; the one page below a pane is a workspace's
 Manage page, whose breadcrumb leads back.
@@ -282,9 +284,9 @@ Manage page, whose breadcrumb leads back.
 A pane holds one subject, so a person looking for a setting guesses its
 pane from its name: how things look (Appearance) apart from what the bars
 offer (Toolbars); papers and notes (Reading & editing) apart from the pen
-(Handwriting); who the chat talks to (Agents) apart from the models and the
-AI services that supply them (Models), and both apart from what the calls
-used (Usage); the server's people and who may come in (Users)
+(Handwriting); the agents on the account's computers (Local agents) apart
+from the models and the AI services that supply them (Models), and both
+apart from what the calls used (Usage); the server's people and who may come in (Users)
 apart from the machine itself (Server); help apart from what it is about
 (tours sit in Help & diagnostics). A new setting goes into the pane whose
 subject it is, not the one with room. The rail is 224 px at 100 % (one line
@@ -606,19 +608,34 @@ Preferences:
 
 AI:
 
-- **Agents** (pane id `agents`, the AI group's first,
+- **Local agents** (pane id `agents`, the AI group's first,
   [SettingsAgents.jsx](../../frontend/src/settings/SettingsAgents.jsx)):
-  who the chat talks to, the same list the chat's picker and the comment
-  fields read ([local_agents.md](local_agents.md) "The client"); what
-  sends people to it (the chat's tiles for an agent found here, a
-  refusal's sentence) opens `openSettings("agents")` and says "Settings →
-  AI → Agents". It leads with **Gamma AI**, with the model and connection
-  it uses ("Uses gpt-6-astra (ChatGPT)": the account's chat model,
-  `gammaAiConnection` in SettingsAi.jsx over `ai/useAiModels.js`), or *Not
-  connected* and a *Set up* that opens Models. Under it, for an account with
-  Integrations, a `FormNotice` (`info`) says that Codex or Claude Code
-  reads the library from its terminal through Integrations, with *Open
-  Integrations*. On the desktop
+  the agents on the account's computers, the ones the chat's picker and the
+  comment fields list beside Gamma AI ([local_agents.md](local_agents.md)
+  "The client"); Gamma AI's model is Models', and how Codex or Claude Code
+  reads the library from its terminal is Integrations'. The rail offers the
+  pane only where a section of it would show (`chat/agents.js`
+  `showsLocalAgents`, over the two reads the sections draw): this
+  computer's agents, on the desktop app's own server (`GET
+  /api/local-agents` says `here`: the listing App reads once for the
+  window, `chat/useLocalAgents.js`), or a computer of the account's shown
+  to this server, another account's that serves it too (`GET
+  /api/computers`, which the dialog reads as it opens through its own
+  store, `useSettingsRead(path, {store})`, and the pane then takes). The
+  rule is true as soon as either read finds one, false once both answered
+  (a failed read finding nothing), unknown until then. While it is
+  unknown the rail keeps what it offered at the dialog's last opening,
+  nothing at the first, so a browser with no computer of the account's
+  never sees the row come and go, and one with a computer gains it once,
+  as the read lands; the pane says *Loading…* meanwhile. Settings opened on
+  the pane offers it while unknown. Hidden, its search entries are not
+  offered (a search for Codex finds Integrations), and a request for it
+  (`openSettings("agents")`, `/?settings=agents`) shows Models instead:
+  App counts `agents` among the AI panes (`AI_SETTINGS_PANES`), so the key
+  list Models needs is read. What sends people to it (the chat's tiles for
+  an agent found here, a refusal's sentence) opens
+  `openSettings("agents")` and says "Settings → AI → Local agents"; such
+  an agent is this computer's, so the pane is there. On the desktop
   app's own server (`GET /api/local-agents` says `here`, read afresh as
   the pane opens), a section **This computer: TIM-PC**: each agent found,
   its version and whether it is signed in (its problem, by its code, else
@@ -699,7 +716,8 @@ AI:
     nothing is offered.
   - **Connections**: "+ Add provider" on its rule once there is a list; the
     empty state is one sentence and the Add button. A card per connection
-    (`ProviderRow`): its name, a status dot from the last Test or login
+    (`ProviderRow`): its provider's logo (`ProviderLogo`, by the entry's
+    `service`; [ai.md](ai.md#other-services)), its name, a status dot from the last Test or login
     check (green while it works, red with the failure's headline), its
     billing tag (Pay per token, Subscription, Shared by this server, Free
     (local)), the key hint and address, its model tags, the last result
@@ -721,17 +739,19 @@ AI:
 
   The connect dialog, "Connect an AI service" (`ProviderForm.jsx`, its
   state `useProviderEditor` in `settings/providerEditor.js`): 1 the
-  service, a searchable grid of cards in three groups ("Sign in or
-  subscription", "API key", "On your computer or network",
-  `serviceSections` in `settings/aiServices.js`), each with its billing
-  tag, a vendor's plans as a `Segmented` under its card, a custom endpoint
+  service, a searchable grid of `GlyphChoices` tiles in three groups ("Sign
+  in or subscription", "API key", "On your computer or network", each
+  caption with its icon; `serviceSections` in `settings/aiServices.js`),
+  each tile the service's logo beside its name and billing tag, a vendor's
+  plans as a `Segmented` under its tile, a custom endpoint
   with its address and API format ([ai.md](ai.md#other-services)); 2 the
   key with the provider's placeholder, a "Get a key at …" link and the live
   check, optional for a local preset or a custom endpoint (`keyOptional`
   in `aiServices.js`, the server's rule), or the ChatGPT
   sign-in; 3 the models, a searchable checklist of the live listing with
   each model's context window, pictures and, on a pay-per-token
-  connection, price (the menu's `ModelFacts`), "Add by name" always
+  connection, price (the menu's `ModelFacts`, each fact in a column of its
+  own down the list, under the name on a phone), "Add by name" always
   there, and a saved name the listing lacks kept and tagged "not listed";
   under More options the name, the test model and, for a key, Billing
   (Auto (what it resolves to), Pay per token, Subscription, Free (local)).
@@ -1307,7 +1327,7 @@ list), unless the host has every one of its flags as `hostCaps` reads
 them (the dialog passes `hostCaps(nativeHost())` as
 `searchSettings(query, panes, {host, desktop})`). A setting only the
 desktop app reads or offers (Reading & editing › PDFs › *Add opened PDFs to the
-library*, Agents › Directories and Servers this computer answers, marked
+library*, Local agents › Directories and Servers this computer answers, marked
 `desktopOnly(entry)`) is listed only with `desktop`
 (`IS_DESKTOP`). A result is a
 row-like button: the pane's icon, the label with the query marked, the
@@ -1381,7 +1401,11 @@ fading in only after a moment (`.loadingHint`; `Empty`'s and `LogBox`'s
 `loading`). A pane whose reads are in shows at once, and its reads go out
 again to refresh it in place: a second visit is instant. Settings opened
 straight onto a pane (a notice, the chat's AI tiles) shows it at once, its
-reads starting together as it mounts. A test checks that every path a
+reads starting together as it mounts. The rail reads one path itself, the
+account's computers (`/computers`, one of Local agents' reads), to know
+whether to offer that pane: the dialog provides the store rather than
+sits under it, so it passes it (`useSettingsRead(path, {store})`), and
+the pane, opened, takes that answer. A test checks that every path a
 section reads through `useSettingsRead` is named in `PANE_READS`
 (`tests/settingsReads.test.mjs`). The Chat pane's skills sections are the
 exception: they read the chat's own skill store (`chat/useSkills.js`),
@@ -1818,7 +1842,9 @@ what goes ("Delete the snapshot from Sep 23, 3:00 AM PDT"); a removal that
 can be undone or done again (a person, a directory, a server) is red too.
 Use the existing shared controls: `PictureChoices` for illustrated choices,
 `IconChoices` for a small exclusive set pictured as icon tiles (the share
-popover's audience, handwriting's "Draws with"), `Segmented` for two or three
+popover's audience, handwriting's "Draws with"), `GlyphChoices` for a longer
+set of named choices as compact tiles, a glyph beside a one-line name and
+hint (the connect dialog's services), `Segmented` for two or three
 short words, `ToggleGroup` for independent chips, `TestResult` for a
 Test button's answer (testing, ✓ what was found or ✗ why it failed; the
 message may be an element, as Network proxy's lines with their route tag
@@ -1849,8 +1875,12 @@ the strip's order in the PDF and the notebook viewer; Customize top bar…
 from a right-click on the bar's empty space),
 shared chat settings, mobile layout (Appearance and Toolbars fitting a
 phone without horizontal scrolling), administrator account separation, an
-admin's rail (Agents first in the AI group, twenty panes fitting a
-900 px window, a 640 px one scrolling the groups alone), and
+the rail without Local agents where nothing is there to list (a
+`/?settings=agents` link opening Models, a search for Codex finding
+Integrations), an admin's rail with a computer of the account's shown to
+the server (`/api/computers` faked: Local agents first in the AI group,
+listing it, twenty panes fitting a 900 px window, a 640 px one scrolling
+the groups alone), and
 Backups › Bucket: an admin's alone, tagged so, reached from Server backups'
 Off-site copies, set up in its dialog (an endpoint
 pasted with the bucket's name on it taken off) and read back there with

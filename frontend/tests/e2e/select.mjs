@@ -230,8 +230,9 @@ export const RULES = [
   ["frontend/src/settings/ZoteroLinkDialog.jsx", ["zotero-link"]],
   // the translation speed and Keep translations, which the translated view's scenario sets
   ["frontend/src/settings/SettingsTranslation.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "zotero-link", "translation"]],
-  // Settings → AI → Agents: this computer's agents, and the servers it answers (remote-asks drives the desktop window's)
-  ["frontend/src/settings/SettingsAgents.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link", "remote-asks"]],
+  // Settings → AI → Local agents: this computer's agents (local-agents lists them in a browser), and the servers it
+  // answers (remote-asks drives the desktop window's)
+  ["frontend/src/settings/SettingsAgents.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link", "local-agents", "remote-asks"]],
   ["frontend/src/settings/answeredServers.js", ["settings", "remote-asks"]],
   // Settings → Chat's skills sections, whose writes reach the chat's "/" menu
   ["frontend/src/settings/SettingsSkills.jsx", ["settings", "chat-skills", "i18n"]],

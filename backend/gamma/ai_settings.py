@@ -233,6 +233,8 @@ def mask_entry(entry: dict, hint: bool = True) -> dict:
         # entry stores ("" = none).
         "billing": billing_of(entry),
         "billing_override": entry.get("billing") if entry.get("billing") in BILLING_OVERRIDES else "",
+        # Which service it is, for its logo (service_id).
+        "service": service_id(entry),
         # Whether a quota reader says what is left of its plan
         # (ai_protocols.quota_reader: POST /api/ai/providers/{id}/usage),
         # and whether it may go without a key (key_optional).
@@ -249,7 +251,7 @@ def billing_of(entry: dict) -> str:
     ``shared`` (the member pays nothing; the allowance meters it), a
     sign-in a ``subscription``, else the entry's own override, else its
     service preset's (the coding plans and OpenCode Go a subscription,
-    Ollama and LM Studio ``local``), else ``api``, per token."""
+    Ollama ``local``), else ``api``, per token."""
     if is_server_id(entry.get("id")):
         return "shared"
     if is_oauth_protocol(entry.get("protocol")):
@@ -259,6 +261,23 @@ def billing_of(entry: dict) -> str:
     service = ai_protocols.service_of({"protocol": entry.get("protocol"),
                                        "base_url": entry.get("base_url") or ""})
     return (service or {}).get("billing") or "api"
+
+
+def service_id(entry: dict) -> str:
+    """Which service a connection is, the ``service`` the browser picks its
+    logo by (on the masked entry and on each registry row): the preset its
+    protocol and base URL make (``service_of``: ``deepseek``,
+    ``kimi-code``), else its protocol while it points at the protocol's own
+    endpoint (``openai``, ``anthropic``, a ``chatgpt`` sign-in), else
+    ``custom``, an entry made from a preset since dropped included.
+    ``entry`` needs its protocol and base URL."""
+    protocol = entry.get("protocol") or ""
+    base = (entry.get("base_url") or "").strip().rstrip("/")
+    service = ai_protocols.service_of({"protocol": protocol, "base_url": base})
+    if service:
+        return service["id"]
+    proto = ai_protocols.PROTOCOLS.get(protocol)
+    return protocol if proto and base in ("", proto.base_url.rstrip("/")) else "custom"
 
 
 def protocol_choices() -> dict:
@@ -784,6 +803,7 @@ def _registry(user_id: str, refresh: bool = True) -> tuple[dict, list, int]:
             # How its calls are paid for: the recorder and the masked entry read it.
             "billing": billing_of(e),
         }
+        service = service_id(e)
         if proto.auth == "oauth":
             # Sign-in entry: the bearer token comes from the sign-in and is
             # refreshed lazily here (persisted so other requests reuse it).
@@ -821,6 +841,8 @@ def _registry(user_id: str, refresh: bool = True) -> tuple[dict, list, int]:
                            "native_pdf": proto.native_pdf,
                            "shared": is_server_id(pid),
                            "billing": conf["billing"],
+                           # Which service its connection is, for its logo.
+                           "service": service,
                            # Whether it calls tools here: True, False (its
                            # chats go without them, for ``tools_reason``),
                            # None = not checked yet.
@@ -902,7 +924,8 @@ def ai_runtime(user_id: str) -> dict:
     (``_registry``):
     {"providers": {id: {api_key, base_url, protocol, name, billing}},
     "models": [{"id": "<pid>:<model>", "provider": pid, "provider_name",
-    "model", "native_pdf", "shared", "billing", "tools", "tools_reason"?}],
+    "model", "native_pdf", "shared", "billing", "service", "tools",
+    "tools_reason"?}],
     "roles": {role: {pick, model, state}} (resolve_roles), "default": the
     chat role's model entry (the account's chat pick, else the first model
     — the account's own when it has one, else the server's) or None,

@@ -183,7 +183,7 @@ export function SelChip({ kind, icon, label, note, file = "", cut, auto = false,
 // each led by its icon as in the composer's chip: those the account turned
 // on (`agents`, the chat's computer agents) are picked with a click
 // (`onPick`), and one found here but off (`found`, GET /api/local-agents'
-// agents) opens Settings → AI → Agents, where it is turned on.
+// agents) opens Settings → AI → Local agents, where it is turned on.
 function ChatSetupCard({ info, isAdmin, onConnect, openSettings, intent, agents = [], found = [], onPick }) {
   const tiles = info.failed ? [] : aiServiceTiles(info);
   return (
@@ -229,7 +229,7 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings, intent, agents 
               return (
                 <button key={a.name} type="button" className="chatSetupTile" {...intent} onClick={() => openSettings("agents")}>
                   <span className="chatSetupTileName"><Icon size={16} />{agentLabel(a.name, a.label)}</span>
-                  <span className="chatSetupTileHint">{t("Found on this computer: turn it on in Settings → AI → Agents")}</span>
+                  <span className="chatSetupTileHint">{t("Found on this computer: turn it on in Settings → AI → Local agents")}</span>
                 </button>
               );
             }) : null}
@@ -2372,6 +2372,7 @@ export default function ChatDock({
   const chip = onComputer ? { ...side.chip, glyph: <SpeedGlyph speed={side.chip.speed} /> } : {
     label: knobsLabel(speed),
     text: knobs ? [headerModel.model, effort].filter(Boolean).join(" · ") : "",
+    logo: knobs ? headerModel.service || "" : "",
     glyph: knobs ? <SpeedGlyph speed={speed} /> : null, speed: knobs ? speed : "",
     models: aiOff ? [] : quickModels.map((m) => [m.id, modelLabel(m), null,
       <span key="where" className="ctxMenuHint">{m.provider_name}</span>]),

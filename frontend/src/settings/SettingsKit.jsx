@@ -2,7 +2,7 @@
 // else: PaneHead › Section › Row/Toggle for the panes themselves, SubDialog ›
 // Step/Field/DialogButtons for the editor dialogs they open, NavAccountCard
 // on the rail, plus the small shared controls (Segmented,
-// PictureChoices/IconChoices, ToggleGroup, Stepper, UnitInput, CharSlider,
+// PictureChoices/IconChoices/GlyphChoices, ToggleGroup, Stepper, UnitInput, CharSlider,
 // PasswordInput, TestResult, CopyField, AccountPicker, PersonRow, LogBox, Stat/StatText, Empty, FormNotice,
 // WorkspaceFolder, QuotaMeter/PercentMeter, RingMeter/StorageRing,
 // KeyCaps/KeyBinding).
@@ -263,6 +263,19 @@ export function IconChoices({ label, value, onChange, options, columns }) {
       options={options.map(({ value: id, label: name, hint, Icon }) => ({
         value: id, label: name, hint,
         preview: <span className="setTileIcon" aria-hidden="true"><Icon size={20} /></span>,
+      }))} />
+  </div>;
+}
+
+// Picture choices as compact named tiles: a 20 px glyph (a provider's logo)
+// beside a one-line name with its hint under it, every tile one height, as
+// many to a row as fit at any width — a longer set of named choices (the
+// AI connect dialog's services). `options` are [{value, label, hint, glyph}].
+export function GlyphChoices({ label, value, onChange, options }) {
+  return <div className="setGlyphTiles">
+    <PictureChoices label={label} value={value} onChange={onChange}
+      options={options.map(({ glyph, ...option }) => ({
+        ...option, preview: <span className="setTileGlyph" aria-hidden="true">{glyph}</span>,
       }))} />
   </div>;
 }

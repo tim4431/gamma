@@ -7,13 +7,14 @@ import React from "react";
 import { MenuSelect } from "../shared/ui/Menus";
 import { composing } from "../shared/lib/hotkeys.js";
 import { billingLabel } from "../chat/tokenUsage";
-import { AccountPicker, Step, Field, CopyField, IconChoices, PasswordInput, PictureChoices, Segmented } from "./SettingsKit";
+import { AccountPicker, Step, Field, CopyField, GlyphChoices, IconChoices, PasswordInput, Segmented } from "./SettingsKit";
 import { useAccounts } from "./SettingsWorkspace";
 import { modelList, onThisMachine, signInAddress } from "./providerEditor.js";
 import { autoBilling, formService, keyOptional, serviceSections } from "./aiServices.js";
 import { ModelFacts } from "../ai/ModelMenu.jsx";
+import { ProviderLogo } from "../ai/ProviderLogo.jsx";
 import { matchesWords } from "../ai/modelMenu.js";
-import { CheckIcon, ExternalLinkIcon, GlobeIcon, RefreshIcon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
+import { CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MonitorIcon, RefreshIcon, SparklesIcon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 
@@ -86,10 +87,15 @@ function ChatGPTSignIn({ form, setForm, busy, start, connect }) {
   </>;
 }
 
+// The connect dialog's groups of services, each caption with its icon: a
+// subscription's sparkles (as Settings → AI → Usage draws subscriptions),
+// a key, a computer.
+const SECTION_ICONS = { signin: SparklesIcon, key: KeyIcon, local: MonitorIcon };
+
 // The connect dialog, for the account's list and Settings → Server's shared
-// one alike: 1 the service, a card per way to connect in three groups
-// (serviceSections in aiServices.js), searchable, with a vendor's plans
-// side by side under its card and, for a custom endpoint, its API format;
+// one alike: 1 the service, a tile per way to connect with its logo in three
+// groups (serviceSections in aiServices.js), searchable, with a vendor's plans
+// side by side under its tile and, for a custom endpoint, its API format;
 // 2 the API key — the provider's own placeholder and "Get a key at …" link
 // (key_placeholder / key_url from the adapter or the service preset),
 // checked live by the debounced model fetch; optional for a local preset
@@ -196,13 +202,19 @@ export function ProviderForm({ value, onCancel }) {
       <Step n={1} title={t("Choose a service")}>
         <input className="aiKeyInput" type="search" spellCheck={false} placeholder={t("Search services")} aria-label={t("Search services")}
           value={serviceQuery} onChange={(event) => setServiceQuery(event.target.value)} />
-        {shown.map((section) => (
-          <div className="aiServiceGroup" key={section.id}>
-            <span className="setFieldLabel">{t(section.title)}</span>
-            <PictureChoices label={t(section.title)} value={card?.id} onChange={pickCard}
-              options={section.cards.map((item) => ({ value: item.id, label: item.label, hint: item.hint || billingLabel(item.billing) }))} />
-          </div>
-        ))}
+        {shown.map((section) => {
+          const Icon = SECTION_ICONS[section.id];
+          return (
+            <div className="aiServiceGroup" key={section.id}>
+              <span className="setFieldLabel aiServiceCaption"><Icon size={14} />{t(section.title)}</span>
+              <GlyphChoices label={t(section.title)} value={card?.id} onChange={pickCard}
+                options={section.cards.map((item) => ({
+                  value: item.id, label: item.label, hint: item.hint || billingLabel(item.billing),
+                  glyph: <ProviderLogo service={item.plans[0].id} size={20} />,
+                }))} />
+            </div>
+          );
+        })}
         {!shown.length ? <p className="setNotice">{t("No service matches “{query}”.", { query: serviceQuery.trim() })}</p> : null}
         {card?.plans.length > 1 ? (
           <Field group label={t("Plan")} hint={note}>

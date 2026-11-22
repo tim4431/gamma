@@ -5,14 +5,14 @@ import { test } from "node:test";
 import { menuGroups, modelFacts, pickableRows } from "../src/ai/modelMenu.js";
 
 const model = (provider, name, extra = {}) => ({ id: `${provider}:${name}`, provider, provider_name: `Conn ${provider.slice(-1)}`, model: name, ...extra });
-const A1 = model("aaaaaaaa", "gpt-6", { billing: "subscription" });
-const A2 = model("aaaaaaaa", "gpt-mini", { billing: "subscription" });
-const B1 = model("bbbbbbbb", "claude-sonnet", { billing: "api" });
+const A1 = model("aaaaaaaa", "gpt-6", { billing: "subscription", service: "chatgpt" });
+const A2 = model("aaaaaaaa", "gpt-mini", { billing: "subscription", service: "chatgpt" });
+const B1 = model("bbbbbbbb", "claude-sonnet", { billing: "api", service: "anthropic" });
 const S1 = model("server:cccccccc", "kimi", { billing: "shared" });
 const MODELS = [A1, A2, B1, S1];
 const shape = (groups) => groups.map((g) => [g.key, g.rows.map((r) => r.id)]);
 
-test("favorites first, then a group per connection in the registry's order, with its billing", () => {
+test("favorites first, then a group per connection in the registry's order, with its billing and service", () => {
   const groups = menuGroups(MODELS, { favorites: [B1.id, A1.id] });
   assert.deepEqual(shape(groups), [
     ["favorites", [B1.id, A1.id]],
@@ -20,7 +20,8 @@ test("favorites first, then a group per connection in the registry's order, with
     ["connection:bbbbbbbb", [B1.id]],
     ["connection:server:cccccccc", [S1.id]],
   ]);
-  assert.deepEqual(groups.slice(1).map((g) => [g.label, g.billing]), [["Conn a", "subscription"], ["Conn b", "api"], ["Conn c", "shared"]]);
+  assert.deepEqual(groups.slice(1).map((g) => [g.label, g.billing, g.service]),
+    [["Conn a", "subscription", "chatgpt"], ["Conn b", "api", "anthropic"], ["Conn c", "shared", ""]]);
   assert.ok(groups[1].rows[0].favorite && !groups[1].rows[1].favorite, "a favorite is starred in its connection's group too");
 });
 

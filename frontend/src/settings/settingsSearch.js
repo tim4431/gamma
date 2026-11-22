@@ -107,7 +107,7 @@ const entries = [
   e("translation", t("Parallel requests"), t("Speed"), t("How many chunks translate at once (1–{max})", { max: TRANSLATE_PARALLEL_MAX }), "translation concurrency speed parallel"),
   e("keyboard", t("Keyboard shortcuts"), null, t("Every command's keys, rebindable"), "keys hotkeys bindings rebind command palette VSCode"),
   e("keyboard", t("Enter makes"), t("Built in"), t("A new note or a new line; Shift+Enter makes the other"), "enter key new note line break notes shift return"),
-  e("agents", t("Agents"), null, t("Gamma AI, and Codex and Claude Code on your computers"), "agent codex claude computer local CLI sandbox run commands co-author people"),
+  e("agents", t("Local agents"), null, t("Codex and Claude Code on your computers"), "agent agents codex claude computer local CLI sandbox run commands co-author people"),
   desktopOnly(e("agents", t("Directories"), null, t("Where an agent can work from a chat whose page is in no synced folder."),
     "agent codex claude directory folder offer path working directory cwd")),
   desktopOnly(e("agents", t("Servers this computer answers"), null,

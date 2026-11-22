@@ -8,7 +8,7 @@ The credential is a token of that server of the ``computer`` scope, which
 opens the channel and nothing else, minted there with the window's session
 and handed over by the desktop app with the shell's word
 (routers/computer_links.py), when a vault of that server is made or from
-Settings → AI → Agents: one users.db ``computer_links`` row per server,
+Settings → AI → Local agents: one users.db ``computer_links`` row per server,
 workspace there and local account, the token sealed
 (``publisher_sessions.seal``, as a vault's is), the account there and the
 workspace's name as the server named them, whether that server may answer

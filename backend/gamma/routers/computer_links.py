@@ -6,7 +6,7 @@ answer what this computer's agents ask takes it even on a server started
 with no secret (``shell_strict``): the desktop app mints the ``computer``
 token on that server with the window's session and hands it over here, and
 a page of Gamma never does. Listing is the account's own channels, never a
-token; Settings → AI → Agents reads it in the desktop app."""
+token; Settings → AI → Local agents reads it in the desktop app."""
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field

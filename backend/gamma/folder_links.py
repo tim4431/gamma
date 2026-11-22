@@ -657,7 +657,7 @@ def _apart_from_agents(link: dict, earlier: bool) -> None:
             continue
         if within(link["path"], entry["path"]) or (link["kind"] == "folder" and within(entry["path"], link["path"])):
             raise LinkError(f"{link['path']} is inside or around a directory offered to agents ({entry['path']}); "
-                            "withdraw it in Settings → AI → Agents first.")
+                            "withdraw it in Settings → AI → Local agents first.")
 
 
 def check_vault(link: dict, *, earlier: bool = False) -> None:

@@ -1,5 +1,5 @@
 {
-  "about": "The models for each task, and what a reply's usage sums to (docs/dev/ai.md 'Models for each task', 'Token usage'). Read by backend/tests/test_ai_model_roles.py (roles, keyless) and test_ai_usage.py (sums), and by the frontend's node tests. A registry id is opaque here: no side parses it.",
+  "about": "The models for each task, what a reply's usage sums to, when a connection may go without a key and which service it is (docs/dev/ai.md 'Models for each task', 'Token usage', 'Other services'). Read by backend/tests/test_ai_model_roles.py (roles, keyless, services) and test_ai_usage.py (sums), and by the frontend's node tests. A registry id is opaque here: no side parses it.",
   "roles": {
     "about": "Each task's model from the account's picks (the ai-models pref): gamma/ai_settings.py resolve_roles and frontend/src/ai/aiModels.js. models is the registry in its order ({id, provider, provider_name, model}); engines the ids of the translation services set up; picks each task's pick ('' = none). roles is {role: {pick, model, state}}: state ok (the pick is offered: for translate, a service set up counts), follows (no pick) or missing (a pick no longer offered: it is kept). model is the pick while ok, else the chat model, for chat itself the first model offered, else ''. With no model offered at all, translation goes to the free service (engine:microsoft) while it is set up. without, when given, is the same input with every model of that provider gone: what removing that connection leaves (the client's tasksAffectedBy).",
     "cases": [
@@ -304,5 +304,15 @@
       {"note": "a sign-in never takes a key", "protocol": "chatgpt", "base_url": "", "key_optional": false},
       {"note": "a sign-in at another address neither", "protocol": "chatgpt", "base_url": "http://10.0.0.5:8000", "key_optional": false}
     ]
+  },
+  "services": {
+    "about": "Every service a connection may be named by: the service field of GET /api/ai/settings' providers and of /api/ai/models' rows (gamma/ai_settings.py service_id), in the server's order: each entry protocol's id, each preset's (gamma/ai_protocols/services.py), then custom. The pytest holds the list to the server's, the frontend's node test holds each id to a logo (frontend/src/ai/providerMarks.js serviceMark), but those in fallback, which wear the generic one on purpose.",
+    "ids": [
+      "anthropic", "openai", "chatgpt",
+      "deepseek", "kimi", "kimi-cn", "kimi-code", "qwen", "qwen-cn", "qwen-coding", "qwen-coding-cn",
+      "glm", "glm-cn", "glm-coding", "glm-coding-cn", "openrouter", "opencode", "opencode-go", "gemini", "groq", "ollama",
+      "custom"
+    ],
+    "fallback": ["custom"]
   }
 }
