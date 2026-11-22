@@ -557,8 +557,8 @@ const RECENTS_CAP = 24;
 // splitter grabbable and leaves the header its own.
 const SASH_MARGINS = { coarse: 6, fine: 6 };
 // The Settings panes of the AI group (old pane names resolve first): entering
-// one loads the masked key list (Agents names the connection Gamma AI uses)
-// and the prompt drafts.
+// one loads the masked key list and the prompt drafts. Local agents is one
+// for the pane shown in its place where it has nothing to show: Models.
 const AI_SETTINGS_PANES = ["agents", "ai", "usage", "assistant", "tools"];
 const isAiPane = (pane) => AI_SETTINGS_PANES.includes(resolveSettingsPane(pane));
 // A block's text for a chat chip (cursor block, attached block): its note,

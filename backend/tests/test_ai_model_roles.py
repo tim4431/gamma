@@ -5,8 +5,9 @@ unpicked, a shared entry that no longer admits the account) and is then
 kept and stood in for by the chat model; a request that names a model gets
 that model or model_unavailable, never another; and the writes (PUT
 /api/ai/models/roles, the one-time import) are single read-modify-writes.
-The resolution itself, and when a key may be left out, are
-tests/shared/ai_models.json's cases, which the client passes too."""
+The resolution itself, when a key may be left out and the services a
+connection is named by are tests/shared/ai_models.json's, which the client
+passes too."""
 
 import json
 import threading
@@ -43,6 +44,15 @@ def test_the_keyless_cases_use_the_server_s_own_choices():
         assert {k: protocols[p["id"]][k] for k in p} == p
     for s in SHARED["keyless"]["choices"]["services"]:
         assert {k: services[s["id"]][k] for k in s} == s
+
+
+def test_the_service_ids_are_the_server_s():
+    """The services the client's logos are held to are every one a
+    connection can be named by (service_id): the server's protocols and
+    presets, then custom."""
+    choices = ai_settings.protocol_choices()
+    ids = [p["id"] for p in choices["protocols"]] + [s["id"] for s in choices["services"]] + ["custom"]
+    assert SHARED["services"]["ids"] == ids
 
 
 @pytest.mark.parametrize("case", SHARED["keyless"]["cases"], ids=[c["note"] for c in SHARED["keyless"]["cases"]])

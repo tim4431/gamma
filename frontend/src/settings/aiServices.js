@@ -94,8 +94,8 @@ export function formService(form, info) {
 
 // A key connection that may be saved without a key, by the server's rule
 // (gamma/ai_settings.py key_optional, case for case: the `keyless` cases of
-// tests/shared/ai_models.json): its preset's `key_optional` (Ollama, LM
-// Studio), or a custom endpoint, which may be a server on this network
+// tests/shared/ai_models.json): its preset's `key_optional` (Ollama), or
+// a custom endpoint, which may be a server on this network
 // that asks for nothing. An empty base URL, or the protocol's own, is the
 // provider's endpoint, which takes a key.
 export function keyOptional(form, info) {

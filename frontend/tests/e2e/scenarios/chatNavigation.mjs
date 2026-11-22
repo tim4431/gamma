@@ -1271,7 +1271,7 @@ export async function chatNavigationScenarios(env) {
       const all = page.getByRole("listbox", { name: "All models", exact: true });
       await all.waitFor();
       const groups = await all.getByRole("group").evaluateAll((els) => els.map((g) =>
-        `${g.querySelector(".ctxMenuLabel")?.firstChild?.textContent}: ${[...g.querySelectorAll(".modelMenuName")].map((n) => n.textContent).join(" ")}`));
+        `${g.querySelector(".modelMenuGroupName")?.textContent}: ${[...g.querySelectorAll(".modelMenuName")].map((n) => n.textContent).join(" ")}`));
       assertEq(groups.join(" | "), "First: one two | Second: three", "both connections' models, each under its connection");
       await all.getByRole("group", { name: /^Second/ }).getByRole("option", { name: /^three/ }).click();
       await until(async () => (await chip.innerText()) === "three", { what: "the chip on the pick" });

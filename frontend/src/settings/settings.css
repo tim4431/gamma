@@ -592,12 +592,33 @@ button.aiModelTag:disabled { cursor: default; }
   .aiUsageRow { grid-template-columns: minmax(0, 1fr) 36px 48px 48px 64px; }
   .aiUsageRow > span:nth-child(5) { display: none; }
 }
-/* The connect dialog's service cards, a group per way to connect, and the
-   Models step's checklist with what the catalogs know of each model (the
-   model menu's ModelFacts). */
-.aiServiceGroup { display: flex; flex-direction: column; gap: var(--space-2); }
-.aiModelList { max-height: min(260px, 40vh); }
-.aiModelList .uiTag { margin-left: 0; }
+/* The connect dialog's service cards, a group per way to connect under a
+   caption with its icon, and the Models step's checklist with what the
+   catalogs know of each model (the model menu's ModelFacts). */
+.aiServiceGroup { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-4); }
+.aiServiceCaption { display: inline-flex; align-items: center; gap: var(--space-3); }
+.aiServiceCaption svg { flex-shrink: 0; color: var(--text-muted); }
+/* The checklist is a grid whose rows share its columns (subgrid): the
+   checkbox, the name, a "not listed" tag, then each fact in a column of
+   its own (pictures, context, price), so they line up down the list. */
+.aiModelList {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) repeat(4, auto); align-content: start;
+  column-gap: var(--space-4); max-height: min(260px, 40vh); margin: var(--space-2) 0 var(--space-5);
+}
+.aiModelList > * { grid-column: 1 / -1; }
+.aiModelList .docPickerItem { display: grid; grid-template-columns: subgrid; column-gap: inherit; }
+.aiModelList .uiTag { grid-column: 3; justify-self: start; margin-left: 0; }
+.aiModelList .modelMenuFacts { display: contents; }
+.aiModelList [data-fact="vision"] { grid-column: 4; }
+.aiModelList [data-fact="context"] { grid-column: 5; justify-self: end; }
+.aiModelList [data-fact="price"] { grid-column: 6; justify-self: end; }
+/* A phone: the name takes the row's width, its tag and facts a line under
+   it, still in their columns. */
+@media (max-width: 480px) {
+  .aiModelList .docPickerItem { row-gap: var(--space-1); }
+  .aiModelList .attachName { grid-column: 2 / -1; }
+  .aiModelList :is(.uiTag, [data-fact]) { grid-row: 2; }
+}
 /* The row is avatar · meta · actions — meta takes the slack so the text starts
    right after the glyph instead of floating in the middle of the row. */
 /* min-width is the wrap trigger: below it the actions move to their own
@@ -830,6 +851,17 @@ button.aiModelTag:disabled { cursor: default; }
   .setIconTiles .setPictureChoices { grid-template-columns: repeat(var(--picture-columns, 3), minmax(0, 1fr)); }
   .setIconTiles .setPictureHint { display: block; }
 }
+/* GlyphChoices: the glyph beside a one-line name over a one-line hint, at
+   every width (no stacking on a phone), so every tile is one height; a
+   tile is wide enough for a name like "Qwen Coding Plan", and as many fit
+   to a row as the width takes. */
+.setGlyphTiles .setPictureChoices { grid-template-columns: repeat(auto-fill, minmax(min(100%, 168px), 1fr)); }
+.setGlyphTiles .setPictureChoice.uiBtn { flex-direction: row; gap: var(--space-3); padding: var(--space-3) var(--space-4); }
+.setGlyphTiles .setPictureCaption { flex: 1; gap: 1px; padding-right: 0; }
+/* Only the name's line keeps room for the check in the corner. */
+.setGlyphTiles .setPictureName { padding-right: 18px; }
+.setGlyphTiles :is(.setPictureName, .setPictureHint) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setTileGlyph { flex: 0 0 auto; display: inline-flex; }
 .appearancePdf { display: flex; align-items: center; gap: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 8px 10px; }
 .appearancePdfPreview { flex: 0 0 40px; width: 40px; height: 49px; }
 .appearancePdfControls { flex: 1; min-width: 0; }

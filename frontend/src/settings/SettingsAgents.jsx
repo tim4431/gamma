@@ -1,9 +1,8 @@
-// Settings → AI → Agents (docs/dev/settings.md "AI",
-// docs/dev/local_agents.md "Who turns it on"): who the chat talks to.
-// Gamma AI, with the connection it uses and a jump to Models; a line
-// pointing at Integrations, where Codex or Claude Code reads the library
-// from its terminal; then this computer, on the desktop app's own server
-// (GET /api/local-agents, chat/useLocalAgents.js): each agent it found, its
+// Settings → AI → Local agents (docs/dev/settings.md "AI",
+// docs/dev/local_agents.md "Who turns it on"): the agents on the account's
+// computers, a pane the rail offers only where it has a section to show
+// (chat/agents.js showsLocalAgents). This computer, on the desktop app's
+// own server (GET /api/local-agents, chat/useLocalAgents.js): each agent it found, its
 // version, whether it is signed in, whether it is on and, nested under its
 // switch, what it may run and the people its owner lets use it (co-authors:
 // decision 13 of docs/research/agents-as-participants-plan.md); then the
@@ -24,14 +23,14 @@ import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { askShellWatching } from "../vault/useVault.js";
-import { sinceText } from "../vault/vaultState.js";
-import { agentPeople, computerAgents, localAgent } from "../chat/agents.js";
+import { readComputers, sinceText } from "../vault/vaultState.js";
+import { agentPeople, computerAgents, localAgent, showsLocalAgents } from "../chat/agents.js";
 import { readLocalAgents, useLocalAgents } from "../chat/useLocalAgents.js";
 import { useSettingsRead } from "./settingsReads.js";
 import { ADD_SERVER, linkRow } from "./answeredServers.js";
 import { Empty, FormNotice, NameInput, Row, Section, Segmented, Toggle } from "./SettingsKit";
 import { ActionMenu } from "../shared/ui/Menus";
-import { BotIcon, FolderIcon, FolderPlusIcon, PlusIcon, ServerIcon, ShieldIcon, SparklesIcon, Trash2Icon, UserIcon,
+import { BotIcon, FolderIcon, FolderPlusIcon, PlusIcon, ServerIcon, ShieldIcon, Trash2Icon, UserIcon,
   UserPlusIcon, UsersIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
@@ -50,11 +49,9 @@ function agentHint(agent) {
 // alone, or asking first for anything more (a command, a file outside).
 const RUNS = [["never", T("Sandbox only")], ["ask", T("Ask first")]];
 
-// `connection` the connection Gamma AI uses ("" for none), `signedIn`
-// whether a signed-in account reads the pane (a guest has no agents);
-// `onConnections` and `onIntegrations` open those panes (the latter null
-// where the account has none: a guest).
-export function SettingsAgents({ connection, signedIn, setStatus, onConnections, onIntegrations }) {
+// `signedIn` whether a signed-in account reads the pane (a guest has no
+// agents).
+export function SettingsAgents({ signedIn, setStatus }) {
   const { listing, error } = useLocalAgents(signedIn, { withError: true });
   const computers = useSettingsRead(signedIn ? "/computers" : null);
   React.useEffect(() => { if (signedIn) readLocalAgents({ fresh: true }); }, [signedIn]);
@@ -82,28 +79,13 @@ export function SettingsAgents({ connection, signedIn, setStatus, onConnections,
     readLocalAgents();
   }
 
-  const far = (computers.data?.computers || []).filter((c) => c && typeof c.name === "string" && c.name);
-  // Gamma AI leads the pane, then where else Codex and Claude Code reach
-  // Gamma (Integrations), then each computer.
+  const far = readComputers(computers.data);
+  // The sections the rail goes by (SettingsDialog.jsx): "Loading…" until
+  // one is known to show or both reads are in.
+  const shown = showsLocalAgents(listing ?? (error ? null : undefined), computers.data ?? (computers.error ? null : undefined));
   return (
     <>
-      <Row icon={SparklesIcon} label={t("Gamma AI")}
-        hint={connection ? t("Uses {connection}", { connection }) : t("Connect an AI service to use it.")}>
-        {connection ? <span className="uiTag">{t("Ready")}</span> : (
-          <span className="setRowControls">
-            <span className="uiTag warn">{t("Not connected")}</span>
-            <button type="button" className="uiBtn sm primary" title={t("Open Settings → AI → Models")}
-              onClick={onConnections}>{t("Set up")}</button>
-          </span>
-        )}
-      </Row>
-      {onIntegrations ? (
-        <FormNotice tone="info">
-          {t("To let Codex or Claude Code read your library from its terminal, connect it under Integrations.")}{" "}
-          <button type="button" className="uiBtn sm" onClick={onIntegrations}>{t("Open Integrations")}</button>
-        </FormNotice>
-      ) : null}
-      {signedIn && !listing && !error ? <Empty icon={BotIcon} loading>{t("Loading…")}</Empty> : null}
+      {signedIn && shown === null ? <Empty icon={BotIcon} loading>{t("Loading…")}</Empty> : null}
       {error && !listing ? (
         <FormNotice>
           {t("Could not read the agents on this computer: {message}", { message: error })}{" "}

@@ -15,7 +15,7 @@ export function matchesWords(query, ...fields) {
 }
 
 // The menu's groups, in order, from the registry's models (/api/ai/models
-// `models`). Each group is {key, label?, billing?, rows}; a row is {id,
+// `models`). Each group is {key, label?, billing?, service?, rows}; a row is {id,
 // model (the registry row, null for one no longer offered), label (a
 // service's, or the name `missing` gives one no longer offered: a service
 // no longer set up by its id's own), unavailable, favorite, engine}. In
@@ -26,7 +26,8 @@ export function matchesWords(query, ...fields) {
 // - `favorites`, in the order they were starred; one no longer offered
 //   stays, unavailable, so its star can be taken off;
 // - one group per connection, in the registry's order (the account's own
-//   first, then the shared ones), named by the connection with its billing;
+//   first, then the shared ones), named by the connection with its billing
+//   and its service (for its logo);
 // - `engines`: the translation services (`engines`, [{id, label}]), for the
 //   translation task.
 // `query` keeps the rows matching every word typed, across every group;
@@ -51,7 +52,9 @@ export function menuGroups(models, { favorites = [], query = "", value = "", fol
   push({ key: "favorites", rows: (favorites || []).map((id) => (byId.has(id) ? row(byId.get(id)) : gone(id))) });
   const connections = new Map();
   for (const m of list) {
-    if (!connections.has(m.provider)) connections.set(m.provider, { key: `connection:${m.provider}`, label: m.provider_name || m.provider, billing: m.billing || "", rows: [] });
+    if (!connections.has(m.provider)) {
+      connections.set(m.provider, { key: `connection:${m.provider}`, label: m.provider_name || m.provider, billing: m.billing || "", service: m.service || "", rows: [] });
+    }
     connections.get(m.provider).rows.push(row(m));
   }
   for (const group of connections.values()) push(group);

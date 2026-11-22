@@ -364,7 +364,7 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // action on it. `mine`: the account made it (the list's own word).
 //
 // A work folder's agent at work (docs/dev/local_agents.md; the agents are
-// the computer's, set in Gamma's Settings → AI → Agents): what the agent of this
+// the computer's, set in Gamma's Settings → AI → Local agents): what the agent of this
 // computer that works there does now (`agentRunning`: the detail of its
 // turn, a chat's or a comment's, while one works, else ""; `agentLabel` its
 // name), as the link's `agent` says.
@@ -507,7 +507,7 @@ function computerOtherAccount(remote, name, who) {
 }
 
 // The question before this computer (`name`) answers one of `servers` (the
-// launcher's remote servers, `{ name }`), Settings → AI → Agents' Add a server…
+// launcher's remote servers, `{ name }`), Settings → AI → Local agents' Add a server…
 // (lib/thisComputer.js addLinkedServer): what that server then sees and can do, one button a
 // server (its index), then Cancel.
 function serverAsk(servers, name) {
@@ -521,7 +521,7 @@ function serverAsk(servers, name) {
 // shows its sign-in.
 function serverSignIn(remote) {
   return { message: `Sign in to ${remote} first`,
-    detail: `You are not signed in to ${remote} in this window. Open it, sign in, then add it again from Settings → AI → Agents on this computer.`,
+    detail: `You are not signed in to ${remote} in this window. Open it, sign in, then add it again from Settings → AI → Local agents on this computer.`,
     buttons: [`Open ${remote}`, 'Cancel'] };
 }
 

@@ -179,9 +179,11 @@ test("hostCaps: the platform's words and the gestures a host forwards", () => {
   assert.deepEqual([android.apple, android.stylus, android.pencilTap, android.pencilSqueeze], [false, true, false, true]);
 });
 
-test("Agents is a pane of its own: its entries open it, and Connections keeps the AI services alone", () => {
+test("Local agents is a pane of its own: its entries open it, and Models keeps the AI services alone", () => {
   const all = Object.keys(PANE_FILES);
-  assert.deepEqual(searchSettings("codex", all).slice(0, 1).map((r) => `${r.pane}/${r.label}`), ["agents/Agents"]);
+  assert.deepEqual(searchSettings("codex", all).slice(0, 1).map((r) => `${r.pane}/${r.label}`), ["agents/Local agents"]);
+  // where the rail does not offer it, Codex leads to Integrations, its terminal's way into the library
+  assert.deepEqual(searchSettings("codex", all.filter((pane) => pane !== "agents")).map((r) => r.pane), ["integrations"]);
   assert.ok(!SETTINGS_SEARCH.some((entry) => entry.pane === "ai" && /\bagents?\b|codex|claude/i.test(`${entry.label} ${entry.keywords}`)),
     "no agent's entry is left under Connections");
   const desktop = (query) => searchSettings(query, all, { desktop: true }).map((r) => `${r.pane}/${r.label}`);

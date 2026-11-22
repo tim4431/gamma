@@ -1,6 +1,6 @@
 // The agents a person talks to (docs/dev/ai.md "The picker",
 // docs/dev/local_agents.md "The client"): one list for the chat's picker,
-// the comment field's @ menu and Settings → AI → Agents. Gamma AI first,
+// the comment field's @ menu and Settings → AI → Local agents. Gamma AI first,
 // then the computers' agents: those of the account's computers shown to
 // the page's server (the page's computers, GET /api/pages/{id}/computer,
 // step 4.2 of docs/research/agents-as-participants-plan.md), each
@@ -131,6 +131,19 @@ export function farAgents(computers) {
       ...a, owner: true, ...(kept ? { folder: String(kept.name || ""), paused: !!kept.paused, keeps: true } : {}),
     }));
   });
+}
+
+// Whether Settings → AI → Local agents has a section to show
+// (settings/SettingsAgents.jsx), and so whether the Settings rail offers
+// it: this computer's agents, where the desktop app's own server lists them
+// (`listing`, GET /api/local-agents' answer, `here`), or a computer of the
+// account's shown to this server, or of another account's that serves it
+// (`computers`, GET /api/computers' answer). Each is undefined while it is
+// not read and null when its read failed. True as soon as either has one,
+// false once both are read without one, null until then.
+export function showsLocalAgents(listing, computers) {
+  if (listing?.here === true || readComputers(computers).length) return true;
+  return listing === undefined || computers === undefined ? null : false;
 }
 
 // The chat's agents: Gamma AI, then the page's computers' agents that keep

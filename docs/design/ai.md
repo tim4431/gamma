@@ -176,7 +176,7 @@ sends "continue" for you: a message in your name is yours to send.
 ## Agents on your computer
 
 Codex CLI or Claude Code, installed and signed in on a computer, can be
-turned on for it in the desktop app (Settings → AI → Agents). You talk to
+turned on for it in the desktop app (Settings → AI → Local agents). You talk to
 it in the chat, where it is listed as "Codex on TIM-PC", or by sending it
 a comment ([Comments](comments.md#comments-as-work-for-an-agent)). It
 works in a synced folder's directory, a directory the computer offers, or

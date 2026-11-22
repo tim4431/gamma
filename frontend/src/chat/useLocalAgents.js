@@ -2,7 +2,7 @@
 // /api/local-agents: {here, computer, agents, dirs}; `here` false on any
 // server but the desktop app's own, which lists none), read once for the
 // window and shared by every reader: the chat's picker and the comment
-// fields (through chat/agents.js) and Settings → AI → Agents. Read again
+// fields (through chat/agents.js) and Settings → AI → Local agents. Read again
 // when the window comes back (Settings in another window, or the desktop
 // app's own question about turning one on, may have changed them), and by
 // readLocalAgents() after a change made here.

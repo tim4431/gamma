@@ -616,7 +616,7 @@ def test_the_strip_and_the_refusals(lab, disk, monkeypatch):
     store.set_agent("codex", False, by=lab.user)  # the vault's maker still reads its conversations
     strip = _chat(lab.owner, f.page)["computer"]
     assert (strip["agent"], strip["label"], strip["ready"]) == (None, "", False)
-    assert _say(lab.owner, f.page, status=409)["detail"] == "Turn on Codex or Claude Code in Settings → AI → Agents first."
+    assert _say(lab.owner, f.page, status=409)["detail"] == "Turn on Codex or Claude Code in Settings → AI → Local agents first."
     assert _chat(lab.owner, f.page)["conversation"] is None
 
 
@@ -854,7 +854,7 @@ def test_a_folder_of_the_work_folder_works_in_its_vault(lab, disk):
 def test_the_agent_picked_keeps_its_own_conversation(lab, disk):
     _folder(lab, disk)
     plain = make_page(lab.owner, "A page for two agents")["id"]
-    assert _say(lab.owner, plain, agent="claude", status=409)["detail"] == "Turn on Claude Code in Settings → AI → Agents first."
+    assert _say(lab.owner, plain, agent="claude", status=409)["detail"] == "Turn on Claude Code in Settings → AI → Local agents first."
     store.set_agent("claude", True, by=lab.user)
     try:
         codex = _say(lab.owner, plain, "With Codex.", agent="codex")["conversation"]

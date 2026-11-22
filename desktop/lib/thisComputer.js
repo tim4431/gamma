@@ -298,7 +298,7 @@ const agentRunsFromPage = async (wsId, name, asks) => setAgentRuns(pageAgents(),
 const agentDirsFromPage = async (wsId, dirId) => agentDirs(pageAgents(), dirId);
 const agentPersonFromPage = async (wsId, name, _flag, placeId, account) => agentPerson(pageAgents(), name, placeId, account);
 
-// Settings → AI → Agents' Servers this computer answers, on local server
+// Settings → AI → Local agents' Servers this computer answers, on local server
 // `serverId` (step 4.1 of docs/research/agents-as-participants-plan.md): a
 // link to a server needs no vault of it. The shell's own session reads and
 // changes the host's links, as agentsOf does; the window's session, signed

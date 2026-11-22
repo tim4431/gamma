@@ -603,7 +603,7 @@ reached, the notice names the connection left to remove in its Settings).
 workspace goes, the removal's notice saying when the token was left. `refreshKeeping` reads each running local server's `GET
 /api/computer-links` for the line.
 
-**The servers this computer answers** (Settings → AI → Agents on a server
+**The servers this computer answers** (Settings → AI → Local agents on a server
 on this computer, step 4.1 of
 [the plan](../../docs/research/agents-as-participants-plan.md)) need no
 vault. `addLinkedServer(serverId, 'new')` asks which of the launcher's
@@ -725,7 +725,7 @@ library* (`setLibrary`, `PATCH {library}`): whether the files it finds from
 now on are library documents too; the files it holds keep theirs. On a
 server that runs agents, the vault's maker (`item.mine`) reads under the
 switches where the agents are set: *Codex and Claude Code work in this
-folder once they are turned on in Gamma's Settings → AI.* (`AGENTS_SET`):
+folder once they are turned on in Gamma's Settings → AI → Local agents.* (`AGENTS_SET`):
 the agents are the computer's, set from Gamma's page ("A page's asks"
 above). Its everyday actions follow as a bar of round buttons
 (`.vaultBar`: *Sync now*, *Pull now*, *Push now*, *Pause* or *Resume*, and
@@ -1011,7 +1011,7 @@ agent may ask (`runs` `ask`, set from Settings → AI:
 computer"), may ask to run a command or to change files outside its
 sandbox. The question is the host's and is drawn here, in the bar, in the
 shell's words; nothing the other server sends draws or words it. With the
-link's *may answer what the agents ask* off (Settings → AI → Agents), the
+link's *may answer what the agents ask* off (Settings → AI → Local agents), the
 bar alone answers it and that server's page shows no answerable card
 ("Waiting for your answer on TIM-PC" is all it says); with it on, the page
 there draws the chat's card too, *Allow once* and *Don't allow*, and the first

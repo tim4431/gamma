@@ -130,7 +130,14 @@ Named services (`SERVICES` in `gamma/ai_protocols/services.py`, sent as
 protocol plus a fixed endpoint and its key hints. An entry made from one
 stores only protocol + base URL; `service_of(conf)` recognizes the pair
 again, and `provider_label` names the entry after the service when it has
-no name of its own. See "Other services" below for the list and what a
+no name of its own. `service_id(entry)` names which service a connection
+is: the preset's id, else the protocol's while the entry points at the
+protocol's own endpoint (`openai`, `anthropic`, a `chatgpt` sign-in), else
+`custom`. It rides each masked entry and each registry row as `service`,
+and picks the connection's logo ("Logos" below). An entry made from a
+preset that has since been dropped reads as a custom endpoint: named by
+its protocol, billed per token unless it says otherwise, and still allowed
+to go without a key. See "Other services" below for the list and what a
 preset's optional fields change. The `openai` wire follows the endpoint
 (`is_openai_platform` in `ai_protocols/openai.py`): only OpenAI itself gets
 `max_completion_tokens`, the Responses API for tool calls, and the
@@ -348,8 +355,8 @@ groups, in order (`menuGroups` in `ai/modelMenu.js`,
   translation with no model offered);
 - the favorites, in the order they were starred (one no longer offered
   stays, so its star can come off);
-- one group per connection, in the registry's order, named with its
-  billing tag;
+- one group per connection, in the registry's order, under its logo and
+  named with its billing tag;
 - for translation, the services.
 
 A search box filters every group by each word typed (the model, its
@@ -363,7 +370,9 @@ paid per token, the price per million tokens in and out ("$3 / $15"). These
 facts are one component, `ModelFacts` (`modelFacts` in `modelMenu.js`),
 which the connect dialog's model checklist shows too, with one formatter
 (`fmtTokens`, `fmtPrice` in `chat/tokenUsage.js`); the dialog shows prices
-only for a pay-per-token connection. Its star, a `ctlBtn` sized to
+only for a pay-per-token connection, and its checklist lines each fact up
+in a column of its own (`data-fact`, a subgrid), under the model's name on
+a phone. Its star, a `ctlBtn` sized to
 `--ctl-icon-btn-xs`, toggles a favorite. A task row whose pick is missing
 turns its trigger amber (`.aiTaskMissing .uiSelectBtn`), and so does
 Dictation's when nothing transcribes.
@@ -376,14 +385,15 @@ out.
 
 The chat's model chip (`AgentChip`) lists the favorites and the model in
 use, each with its connection, and "All models…" opens the menu above the
-chip. A pick there sets the account's chat model, so every device follows.
+chip. Naming the model alone (no other agent leading it), the chip starts
+with the logo of the model's connection, where one is drawn. A pick there sets the account's chat model, so every device follows.
 Agent selection, effort and speed are as before.
 
 ### Other services
 
-The connect dialog's first step shows every way to connect as a card, in
-three groups (`serviceSections` in `settings/aiServices.js`, pure,
-`tests/aiServices.test.mjs`), with a search box over them:
+The connect dialog's first step shows every way to connect as a tile with
+its logo, in three groups (`serviceSections` in `settings/aiServices.js`,
+pure, `tests/aiServices.test.mjs`), with a search box over them:
 
 - "Sign in or subscription": the sign-in protocols (ChatGPT), then the
   presets billed as a subscription;
@@ -392,9 +402,12 @@ three groups (`serviceSections` in `settings/aiServices.js`, pure,
 - "On your computer or network": the local presets, then "Custom
   endpoint" and its API format.
 
-A vendor's presets in one group are one card, and its plans (`plan`) are a
+A vendor's presets in one group are one tile, and its plans (`plan`) are a
 segmented control under it (Qwen's international and China endpoints).
-Each card carries its billing tag. The chat's setup card keeps its own
+Each tile (`GlyphChoices`, settings/SettingsKit.jsx) is the logo beside the
+name and, under it, the billing tag, every tile one height and as many to
+a row as fit (two in the dialog, one on a phone); each group's caption has
+its icon (a subscription's sparkles, a key, a computer). The chat's setup card keeps its own
 tiles (`aiServiceTiles` in `settings/providerEditor.js`: the protocols,
 then Other). All presets ride the `openai` wire. The branches for OpenAI's
 and Anthropic's own endpoints (`is_openai_platform`,
@@ -409,11 +422,8 @@ and Anthropic's own endpoints (`is_openai_platform`,
 | OpenRouter | API key (`https://openrouter.ai/api/v1`) |
 | OpenCode | Zen, pay as you go (`https://opencode.ai/inference/openai/v1`), Go subscription (`https://opencode.ai/inference/go/openai/v1`) |
 | Gemini | API key (`https://generativelanguage.googleapis.com/v1beta/openai`) |
-| xAI | API key (`https://api.x.ai/v1`) |
-| Mistral | API key (`https://api.mistral.ai/v1`) |
 | Groq | API key (`https://api.groq.com/openai/v1`) |
 | Ollama | on this computer or network (`http://localhost:11434/v1`), no key |
-| LM Studio | on this computer or network (`http://localhost:1234/v1`), no key |
 
 A coding-plan subscription is an API key the vendor's console makes for
 its plan, pointed at the plan's own endpoint, so it is an ordinary key
@@ -427,8 +437,9 @@ limits. Both OpenCode presets send `User-Agent: Gamma` and, on a call with
 a prompt-cache key (the chat's, already a hash of the conversation), that
 key as `x-opencode-session`, as OpenCode asks third-party clients to.
 Gemini answers a rejected key with a 400, which reads as `other`, not
-`auth`. Ollama and LM Studio are address presets: the network guards still
-apply.
+`auth`. Ollama is an address preset: the network guards still apply. A
+preset dropped later (xAI, Mistral and LM Studio were) leaves its saved
+entries working as custom endpoints.
 
 A preset's optional fields are read by host-independent code, and
 `GET /api/ai/settings` spells out `billing`, `usage`, `quota` (whether a
@@ -448,10 +459,10 @@ quota reader reads it), `key_optional` and `versioned` for each one. An absent f
   fixed vocabulary the browser translates (`SERVICE_WORDING` in
   `settings/providerEditor.js` names them for the catalog).
 - `billing`: how a call through it is paid for, `"subscription"` (the
-  coding plans, OpenCode Go) or `"local"` (Ollama, LM Studio); absent, per
+  coding plans, OpenCode Go) or `"local"` (Ollama); absent, per
   token (`ai_settings.billing_of`, "Token usage").
 - `usage`: the quota reader of a subscription (`ai_protocols/quota.py`).
-- `key_optional`: an entry may be saved without a key (Ollama, LM Studio).
+- `key_optional`: an entry may be saved without a key (Ollama).
 - `versioned`: the base URL already holds its version prefix (Gemini's
   `/v1beta/openai`).
 - `session_header`: the header a stable per-conversation id goes in, with
@@ -466,6 +477,28 @@ provider of `GET /api/ai/settings` carries the answer as `key_optional`.
 `new_key_entry` takes it, the model catalog lists through it, and
 `ai_runtime` offers its models. It sends no Authorization header (`base.bearer`). The provider's
 own endpoint still needs its key.
+
+**Logos.** `ai/ProviderLogo.jsx` draws a connection's logo by its
+`service`: on the connect dialog's tiles, a connection's card, the model
+menu's connection headings and the chat's chip. The marks are
+`@lobehub/icons-static-svg` 1.105.0's (MIT, LobeHub), only their geometry
+and fills, kept as data in `ai/providerMarks.js`: the colour variant where
+the brand has one (Claude's for Anthropic, Gemini, DeepSeek, Kimi, Qwen),
+the mono one elsewhere (OpenAI's for the API and the ChatGPT sign-in,
+Z.ai's for GLM, OpenRouter, OpenCode, Groq, Ollama). `serviceMark` picks
+a mark by the service's vendor, its id up to the first `-` (`kimi-code`
+is Kimi's, `qwen-coding-cn` Qwen's), and `chatgpt` wears OpenAI's. A
+custom endpoint, and an id with no mark, draws the globe (the chip draws
+nothing). A mono mark takes the colour of the text around it; a colour
+fill is lifted a quarter of the way toward the ink on a dark scheme
+(`.providerLogoTone`), so Qwen's deep blue stays legible.
+`tests/shared/ai_models.json`'s `services` lists every id the server can
+send, which `test_ai_model_roles.py` holds to the protocols and presets,
+and `tests/providerMarks.test.mjs` fails on an id without a mark unless it
+is listed under `fallback`. So a new preset gets a mark (its SVG's paths
+copied from the package into `providerMarks.js`) or a line under
+`fallback`. These are the app's only brand marks; every other icon is the
+one stroke set ([ui-design.md](ui-design.md#icons)).
 
 **Quota per connection.** `ai_protocols.quota_reader(conf)` is the
 protocol's own reader (the ChatGPT sign-in), else the one the preset's
@@ -1330,7 +1363,7 @@ model's window when the window fit shrank the budget (`budget` below
 The chat talks to one agent at a time, picked in the composer's model chip
 (`chat/AgentChip.jsx`): Gamma AI, and the agents of the account's
 computers (`chat/agents.js` `chatAgents`: Codex and Claude Code this
-computer runs that the account turned on in Settings → AI → Agents, and
+computer runs that the account turned on in Settings → AI → Local agents, and
 each agent on of each of the account's other computers shown to the
 server, "Codex on TIM-PC", one entry per computer, those that keep the
 page's work folder first, an offline one's listed offline). With more than one, the chip's menu lists them first,
@@ -2673,7 +2706,7 @@ cost and Settings → AI → Usage what a month cost. Code: `gamma/ai_usage.py`,
     Subscription, Free (local); Auto shows what it resolves to).
     `apply_provider_fields` refuses one on a sign-in.
   - Its preset's `billing`: the coding plans and OpenCode Go
-    `subscription`, Ollama and LM Studio `local`.
+    `subscription`, Ollama `local`.
   - Else `api`, per token.
 
   `ai_runtime` puts it on each provider conf and each registry row. The

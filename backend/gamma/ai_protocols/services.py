@@ -2,7 +2,11 @@
 never code: a protocol, that service's endpoint and its key hints. An entry
 made from one stores only protocol + base URL (``service_of`` recognises
 the pair again), so a preset can be added, renamed or dropped without
-touching saved entries.
+touching saved entries: one whose preset went reads as a custom endpoint.
+A preset's ``id`` is also the ``service`` a connection made from it is
+named by (``ai_settings.service_id``), which picks its logo in the browser;
+the ``services`` list of tests/shared/ai_models.json holds every id, so a
+new preset gets a logo or falls back to the generic one on purpose.
 
 Fields — ``id``, ``label`` (an entry's name when it has none of its own),
 ``protocol``, ``base_url``, ``key_placeholder`` and ``key_url`` (the key
@@ -100,17 +104,12 @@ SERVICES = [
              billing="subscription", usage="opencode-go", session_header=_OPENCODE_SESSION),
     _service("gemini", "Gemini", "Gemini", _KEY, "https://generativelanguage.googleapis.com/v1beta/openai",
              "https://aistudio.google.com/apikey", "AIza…", catalog="google", versioned=True),
-    _service("xai", "xAI", "xAI", _KEY, "https://api.x.ai/v1", "https://console.x.ai/", "xai-…", catalog="xai"),
-    _service("mistral", "Mistral", "Mistral", _KEY, "https://api.mistral.ai/v1",
-             "https://console.mistral.ai/api-keys", "", catalog="mistral"),
     _service("groq", "Groq", "Groq", _KEY, "https://api.groq.com/openai/v1",
              "https://console.groq.com/keys", "gsk_…", catalog="groq"),
-    # Servers on this computer or network: an address preset, keyless. The
+    # A server on this computer or network: an address preset, keyless. The
     # network guards still apply.
     _service("ollama", "Ollama", "Ollama", _LOCAL, "http://localhost:11434/v1", "", "",
              billing="local", key_optional=True),
-    _service("lmstudio", "LM Studio", "LM Studio", _LOCAL, "http://localhost:1234/v1", "", "",
-             catalog="lmstudio", billing="local", key_optional=True),
 ]
 
 

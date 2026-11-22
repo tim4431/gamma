@@ -3,7 +3,7 @@
 On the desktop app's own server, the one that keeps synced vaults, Gamma
 itself can be the connector that [annotations.md](annotations.md) "The seam"
 leaves to the owner. An account turns on Codex CLI or Claude Code for this
-computer (Settings → AI → Agents, through the desktop shell: "Who turns it on"), and
+computer (Settings → AI → Local agents, through the desktop shell: "Who turns it on"), and
 owns it from then on. The owner talks to the agent in two places: the chat
 window's second side ("The chat's computer side"), and a comment sent to the
 agent (its *Send to Codex* tick, or `@codex fix this only`: "A comment sent
@@ -80,7 +80,7 @@ queues a turn.
 
 An agent is the computer's, not a vault's: vaults.db `computer_agents`
 ("What this computer keeps"), turned on, off and let ask through `PATCH
-/api/local-agents/{agent}` ("The routes"), which Settings → AI → Agents
+/api/local-agents/{agent}` ("The routes"), which Settings → AI → Local agents
 asks the desktop shell to send ("The desktop app"; the section is
 [settings.md](settings.md) "AI"): in the desktop app on its own server
 each agent found has its switch, what it may run and the directories
@@ -1895,7 +1895,7 @@ and nothing of the turn's row.
 | GET | `/api/folder-links/page/{page_id}` | the page's `vault` gains the same `agent` (`folder_links.page_vault`), on a server that runs agents only, and `mine` (whether this account made the vault) on every server. Turning an agent on or off tells each open page of every work folder here `{t: "vault"}` (`folder_links.agents_changed`, `_tell_open_pages`, from `collab.open_pages()`), so its chip and the comments' @ menu read it again |
 | POST, PATCH | `/api/pages/{id}/comments`, `/api/comments/{id}` | a comment sent to an agent (`to`, or its `@name`) is a turn of its thread too, answered as `turn` ("A comment sent to an agent") |
 | GET | `/api/local-agents/chat?bucket=&version=&agent=&thread=&conversation=` | the chat's computer side ("The chat's computer side") of a bucket (a page's id, a folder's or `home`), an account with an agent on here, a co-author an agent here serves (a synced folder's file or folder alone), or the vault's maker on its work folder: `{computer, conversation}`, `computer` the strip (`{agent, label, ready, problem, models, folder, paused, turn, session, folder_id, dir, grants, lent}`, `agent` the one picked (`agent`, while the account turned it on or its owner lends it) or else the account's first (`store.agent_for`, else the first lent), null for none, `session` whether a terminal can continue the conversation (never a co-author's), `ready` and `problem` from `catalog.cached`, `turn` `runner.chat_state` or null, `folder`, `folder_id` and `paused` the work folder's ("", null and false outside one), `dir` where the agent works (`{kind: "vault", name, path}`, the path for the vault's maker alone; `{kind: "offered", id, name}`; null for a directory of its own), `grants` the commands allowed in the conversation in that directory, `[{command, cwd, host}]` (none for a co-author's), `lent` `{by}` for an agent another account lends, else null) and `conversation` the bucket's active one (`{id, title, agent, thread_id, messages, version}`, null for none, and for one of another agent than `agent`), or with `thread` the account's conversation of that comment thread on the bucket, else a co-author's there with the account's agent ("A comment sent to an agent", "A co-author's turn"), or with `conversation` a co-author's chat conversation of the bucket with the account's agent (`chats.lent_one`; null for any other), a co-author's carrying `person`, their username; with `version` the stored one, `{computer, same: true}` |
-| POST | `/api/local-agents/chat/turns` | `{bucket, text, selections?, id?, agent?, model?, effort?, dir?, skill?}` → 202 `{conversation, turn: {id, state}}`, `agent` the one picked (left out, the account's first, `store.agent_for`; another computer's turn runs that computer's), `dir` where the conversation works outside a work folder kept here (an offered directory's id, or `""` for one of its own; left out, the active conversation's): another `agent` or a `dir` other than the active conversation's starts a new one (`chats.begin`); `skill` the skill the message runs (`{id, name, args}`, [skills.md](skills.md#a-computers-agent)), 400 `{detail: "The skill /x was deleted or turned off.", kind: "skill"}` (`skills.SkillGone`) for one the account's catalog does not hold; 400 for no text and no skill, past 20,000 characters, a malformed `id`, a `dir` no offered directory has, or a model or effort the agent did not list; 409 while a turn of the conversation is queued or running ("Codex is still working on the last message…", named by that turn's agent), while the account has no agent on here ("Turn on Codex or Claude Code in Settings → AI → Agents first.") or not the one picked ("Turn on Claude Code in Settings → AI first."), for a folder paused or choosing its files, for an agent known not to be ready (its problem), and for a skill turn on another computer that did not announce `skills` ("Update Gamma on TIM-PC to run skills there."); 403 when the account is no editor or writes are refused. A repeated `id` (the person's message's) answers the turn it made |
+| POST | `/api/local-agents/chat/turns` | `{bucket, text, selections?, id?, agent?, model?, effort?, dir?, skill?}` → 202 `{conversation, turn: {id, state}}`, `agent` the one picked (left out, the account's first, `store.agent_for`; another computer's turn runs that computer's), `dir` where the conversation works outside a work folder kept here (an offered directory's id, or `""` for one of its own; left out, the active conversation's): another `agent` or a `dir` other than the active conversation's starts a new one (`chats.begin`); `skill` the skill the message runs (`{id, name, args}`, [skills.md](skills.md#a-computers-agent)), 400 `{detail: "The skill /x was deleted or turned off.", kind: "skill"}` (`skills.SkillGone`) for one the account's catalog does not hold; 400 for no text and no skill, past 20,000 characters, a malformed `id`, a `dir` no offered directory has, or a model or effort the agent did not list; 409 while a turn of the conversation is queued or running ("Codex is still working on the last message…", named by that turn's agent), while the account has no agent on here ("Turn on Codex or Claude Code in Settings → AI → Local agents first.") or not the one picked ("Turn on Claude Code in Settings → AI first."), for a folder paused or choosing its files, for an agent known not to be ready (its problem), and for a skill turn on another computer that did not announce `skills` ("Update Gamma on TIM-PC to run skills there."); 403 when the account is no editor or writes are refused. A repeated `id` (the person's message's) answers the turn it made |
 | POST | `/api/local-agents/chat/turns/{id}/stop` | `{stopped}` (`runner.stop_chat`); the conversation's account's, or its agent's owner's (`chats.readable`) |
 | POST | `/api/local-agents/chat/turns/{id}/steer` | `{id, text, selections?}` → `{steered: true}`: a message steered into the running turn (`runner.steer_chat`; a turn on another computer kept for it, `far_turns.steer_run`, and the computer woken). The conversation's own account alone. 400 for no text, past 20,000 characters or a malformed `id`; 404 for a turn of no conversation of the account's; 409 for one that takes none now ("The agent is not taking messages now: …"): queued, ended, or its agent refused it, and for a body with `skill` ("A message that runs a skill goes as a turn of its own.", which the client then queues) |
 | POST | `/api/local-agents/chat/new` | `{bucket}` → `{conversation: null}`, the active conversation archived whichever its agent; 409 while a turn runs |
@@ -2178,7 +2178,7 @@ nobody else learns it exists), 403 for a token or the guest
 
 ## The desktop app
 
-The agents of this computer are set in Settings → AI → Agents, a page of Gamma,
+The agents of this computer are set in Settings → AI → Local agents, a page of Gamma,
 which asks the desktop shell for every change that widens what an agent
 reaches (the page asks of `desktop/preload.js`, [desktop architecture](../../desktop/docs/architecture.md)
 "Pages asking the shell"): `set-agent` (`agent`, `enabled`), `set-agent-runs`
@@ -2311,7 +2311,7 @@ are drawn in the bar over the whole window and answered with `POST
 - **Which servers reach this computer.** A server reaches the agents only
   through a link this computer made to it ([computers.md](computers.md)
   "The servers this computer answers"): with a vault of it, or from
-  Settings → AI → Agents' *Add a server…*, the shell minting the token with
+  Settings → AI → Local agents' *Add a server…*, the shell minting the token with
   the window's session and handing it over with its word. Such a server
   gives the agents turns on any of its pages, naming where each works by
   an id alone (a work folder of it a vault here keeps, a directory this
@@ -2663,7 +2663,8 @@ are drawn in the bar over the whole window and answered with `POST
   chip, the refusal's words), `tests/commentSendTo.test.mjs` (the tick's
   default, its agent, `@name` ticking it, the field's lines),
   `tests/chatAgents.test.mjs` (the agents' list, the picker's rules, the
-  agents a comment can be sent to, `farAgents`), `tests/vaultState.test.mjs` (`computerChip`),
+  agents a comment can be sent to, `farAgents`, whether Settings offers
+  Local agents: `showsLocalAgents`), `tests/vaultState.test.mjs` (`computerChip`),
   `tests/mentions.test.mjs` (the agent's row, a member of its name, its
   text and chip), `tests/computerChat.test.mjs` (the side's requests, the
   words of its steps, pill, changes, endings and strip, when a message may
@@ -2677,7 +2678,9 @@ are drawn in the bar over the whole window and answered with `POST
 - The browser group `local-agents` (`frontend/tests/e2e/scenarios/localAgents.mjs`,
   `npm run e2e -- --group local-agents`): the stand-ins through
   `GAMMA_AGENT_CODEX` / `GAMMA_AGENT_CLAUDE` and `FAKE_AGENT`; turning
-  Codex on; `@codex` picked
+  Codex on, and Settings → AI → Local agents, offered first in the AI
+  group on this server, listing it on in a plain browser under "Change
+  these in Gamma on …"; `@codex` picked
   from the @ menu in a reply on the PDF ticking *Send to Codex* (the row,
   the tick, the turn's chip *Codex is working* with Stop, the reply under
   Codex's name, the agent's chip, *Open in chat* showing the thread's

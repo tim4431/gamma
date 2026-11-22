@@ -1630,20 +1630,50 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  // Settings → AI → Agents leads the AI group (SettingsDialog.jsx AI_NAV):
-  // an admin's twenty panes fit a full-height dialog (a 900 px window: the
-  // dialog's 800 px cap), and a shorter window scrolls the groups alone
+  // Settings → AI → Local agents is offered only with a section to show
+  // (chat/agents.js showsLocalAgents): this server runs no agents and no
+  // computer of the account's is shown to it, so the rail has none. A link
+  // to the pane opens Models instead, and a search for Codex finds
+  // Integrations, where Codex reads the library from its terminal.
+  await step("settings: with no computer's agents to list, the rail has no Local agents: a link to it opens Models, and a search for Codex finds Integrations", async () => {
+    const ctx = await user.context(browser);
+    try {
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const page = await openPage(ctx, `${server.base}/?settings=agents`);
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      await until(async () => (await nav(page, "Models").getAttribute("aria-current")) === "page", { what: "the link lands on Models" });
+      await row(page, "Models for each task").waitFor();
+      assertEq(await nav(page, "Local agents").count(), 0, "no Local agents in the rail");
+      await page.getByRole("searchbox", { name: "Search settings" }).fill("codex");
+      const found = page.locator(".settingsSearchResult");
+      await found.first().waitFor();
+      assertEq(await found.first().locator(".settingLabel").innerText(), "Integrations", "Codex leads to Integrations");
+      assertEq(await found.filter({ hasText: "Local agents" }).count(), 0, "and to no hidden pane");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // With a computer of the account's shown to the server (GET
+  // /api/computers faked: no computer announces itself here), Local agents
+  // leads the AI group (SettingsDialog.jsx AI_NAV) and lists it: an admin's
+  // twenty panes fit a full-height dialog (a 900 px window: the dialog's
+  // 800 px cap), and a shorter window scrolls the groups alone
   // (.settingsNavList), the account card and Help in view.
-  await step("settings: an admin's rail leads the AI group with Agents, fits a full-height dialog, and on a short window scrolls its groups alone", async () => {
+  const labPc = { id: "lab-pc", name: "Lab PC", online: true,
+    assistants: [{ name: "codex", label: "Codex", found: true, ready: true, enabled: true, version: "1.0.0" }] };
+  await step("settings: with a computer shown to the server, an admin's rail leads the AI group with Local agents, fits a full-height dialog, and on a short window scrolls its groups alone", async () => {
     await server.manage("set-admin", "settings-user", "on");
     try {
       for (const height of [900, 640]) {
-        const { ctx, page } = await setup({ width: 1280, height });
+        const { ctx, page } = await setup({ width: 1280, height }, (context) => context.route((url) => url.pathname === "/api/computers",
+          (route) => route.fulfill({ json: { computers: [labPc] } })));
         try {
           await openSettings(page);
           const rail = page.getByRole("navigation", { name: "Settings categories" });
+          await nav(page, "Local agents").waitFor();
           const panes = await rail.locator(".settingsNavBtn").allInnerTexts();
-          assertEq(panes.slice(panes.indexOf("Agents"), panes.indexOf("Agents") + 3).join(" › "), "Agents › Models › Usage", "Agents first in the AI group");
+          assertEq(panes.slice(panes.indexOf("Local agents"), panes.indexOf("Local agents") + 3).join(" › "), "Local agents › Models › Usage",
+            "Local agents first in the AI group");
           const fit = await rail.evaluate((nav) => {
             const list = nav.querySelector(".settingsNavList");
             const help = nav.querySelector(".settingsNavBottom").getBoundingClientRect();
@@ -1653,9 +1683,10 @@ export async function settingsScenarios(env) {
           assert(fit.railOver <= 1 && fit.helpIn, `the rail itself never scrolls and Help stays in view (${JSON.stringify(fit)})`);
           if (height === 900) assert(fit.over <= 1, `twenty panes fit the full-height rail (${fit.over}px over)`);
           else assert(fit.over > 1, "a short window scrolls the groups");
-          await nav(page, "Agents").click();
-          await row(page, "Gamma AI").waitFor();
-          assertEq(await page.locator(".settingsPane .settingsPaneTitle").innerText(), "Agents", "its own pane");
+          await nav(page, "Local agents").click();
+          await row(page, "Lab PC").waitFor();
+          assertEq((await row(page, "Codex").locator(".uiTag").innerText()).trim(), "On", "the computer's agent as it announced itself");
+          assertEq(await page.locator(".settingsPane .settingsPaneTitle").innerText(), "Local agents", "its own pane");
           assertNoProblems(page);
         } finally { await ctx.close(); }
       }

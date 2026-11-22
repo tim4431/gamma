@@ -238,7 +238,7 @@ test("a comment the server sent to no agent says why, worded here by its code, e
   assert.equal(turnRefusal(refused("closed")), "Reopen this comment to ask Codex again.");
   assert.equal(turnRefusal(refused("not_newest")), "Reply to ask Codex again: only the newest comment is sent.");
   assert.equal(turnRefusal(refused("viewer")), "Only the workspace's owners and editors can send comments to Codex.");
-  assert.equal(turnRefusal(refused("off")), "Turn on Codex in Settings → AI → Agents first.");
+  assert.equal(turnRefusal(refused("off")), "Turn on Codex in Settings → AI → Local agents first.");
   assert.equal(turnRefusal(refused("busy")), "Codex is still working on this comment: wait for it, or stop it.");
   assert.equal(turnRefusal(refused("folder")), "Codex works for you only on the files of a synced folder.");
   assert.equal(turnRefusal({ ...refused("offline"), computer: "TIM-PC" }), "TIM-PC is offline: send this again once it connects.");

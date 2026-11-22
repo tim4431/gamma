@@ -375,6 +375,43 @@ def test_gemini_names_its_version_in_its_base_url(alice, monkeypatch):
     assert api_url("https://gateway.example.org/openai", "/models") == "https://gateway.example.org/openai/v1/models"
 
 
+def test_each_connection_names_its_service(alice):
+    # `service` (ai_settings.service_id), which picks the connection's logo:
+    # the preset its endpoint is, the protocol at its own endpoint, else
+    # custom. An entry made from a preset since dropped (Mistral's, LM
+    # Studio's) is such a custom endpoint: named by its protocol, paid per
+    # token, its key optional.
+    from gamma import ai_settings
+    from gamma.ai_protocols import PROTOCOLS
+
+    assert ai_settings.service_id({"protocol": "chatgpt", "base_url": ""}) == "chatgpt"
+    key = "sk-service-test-1234"
+    fields = {
+        "deepseek": {"protocol": "openai", "api_key": key, "base_url": "https://api.deepseek.com/"},
+        "anthropic": {"protocol": "anthropic", "api_key": key, "base_url": "https://api.anthropic.com"},
+        "openai": {"protocol": "openai", "api_key": key, "base_url": ""},
+        "mistral": {"protocol": "openai", "api_key": key, "base_url": "https://api.mistral.ai/v1"},
+        "lmstudio": {"protocol": "openai", "base_url": "http://localhost:1234/v1"},
+    }
+    made = {}
+    for name, body in fields.items():
+        r = alice.post("/api/ai/providers", json={**body, "models": f"{name}-model"})
+        assert r.status_code == 200, r.text
+        made[name] = next(p for p in r.json()["providers"] if p["models"] == f"{name}-model")
+    try:
+        services = {name: p["service"] for name, p in made.items()}
+        assert services == {"deepseek": "deepseek", "anthropic": "anthropic", "openai": "openai",
+                            "mistral": "custom", "lmstudio": "custom"}
+        for gone in ("mistral", "lmstudio"):
+            assert made[gone]["label"] == PROTOCOLS["openai"].label
+            assert made[gone]["billing"] == "api" and made[gone]["key_optional"] is True
+        rows = {m["provider"]: m for m in alice.get("/api/ai/models").json()["models"]}
+        assert {name: rows[p["id"]]["service"] for name, p in made.items()} == services
+    finally:
+        for p in made.values():
+            alice.delete(f"/api/ai/providers/{p['id']}")
+
+
 def test_provider_validation(alice):
     assert alice.post("/api/ai/providers", json={"protocol": "nope", "api_key": "k" * 20}).status_code == 400
     assert alice.post("/api/ai/providers", json={"protocol": "openai"}).status_code == 400  # no key

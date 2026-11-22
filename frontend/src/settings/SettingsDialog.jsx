@@ -17,13 +17,15 @@ import { nativeHost } from "../shared/lib/host.js";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
 import { EFFORT_ORDER, SPEED_LABELS, SPEED_ORDER } from "../chat/modelPrefs.js";
+import { showsLocalAgents } from "../chat/agents.js";
+import { useLocalAgents } from "../chat/useLocalAgents.js";
 import { AppearanceSettings } from "./SettingsAppearance";
 import { ToolbarSettings } from "./SettingsToolbars";
 import { AgentToolMatrix } from "./AssistantTools";
 import { OnlineSearchSettings } from "./OnlineSearch";
 import { SearchServicesForEveryone } from "./SettingsServerOptions";
 import { KeyboardSettings } from "./SettingsKeyboard";
-import { AiSettings, gammaAiConnection } from "./SettingsAi";
+import { AiSettings } from "./SettingsAi";
 import { AiUsagePane } from "./SettingsAiUsage.jsx";
 import { SettingsAgents } from "./SettingsAgents";
 import { SkillsSettings } from "./SettingsSkills";
@@ -102,8 +104,9 @@ import { DialogOverlay } from "../shared/ui/Surfaces";
 // from any other; nothing opens a second dialog. A pane holds one subject:
 // how things look (Appearance) apart from what the bars offer (Toolbars),
 // papers and notes (Reading & editing) apart from the pen (Handwriting),
-// who the chat talks to (Agents) apart from the models and the AI services
-// that supply them (Models).
+// the agents on the account's computers (Local agents, offered only with
+// one to show) apart from the models and the AI services that supply them
+// (Models).
 const ACCOUNT_NAV = ["account", T("Account & sync"), UserIcon];
 const PREFERENCE_NAV = [
   ["appearance", T("Appearance"), ContrastIcon],
@@ -114,7 +117,7 @@ const PREFERENCE_NAV = [
   ["keyboard", T("Keyboard"), KeyboardIcon],
 ];
 const AI_NAV = [
-  ["agents", T("Agents"), BotIcon],
+  ["agents", T("Local agents"), BotIcon],
   ["ai", T("Models"), SparklesIcon],
   ["usage", T("Usage"), ActivityIcon],
   ["assistant", T("Chat"), MessageSquareIcon],
@@ -1237,17 +1240,32 @@ export default function SettingsDialog({
   const modalRef = React.useRef(null);
   const searchRef = React.useRef(null);
   const drafts = React.useRef(new Map());
+  const requested = resolveSettingsPane(activePane);
+  // Local agents is offered only with a section to show (chat/agents.js
+  // showsLocalAgents), by the listing App reads for the window and the
+  // account's computers, read through the dialog's store, whose answer the
+  // pane takes. While neither has shown one and a read is out, the rail
+  // keeps what it offered at the last opening (nothing at the first), and
+  // offers the pane when Settings opens on it; hidden, a request for it
+  // opens Models.
+  const readsAgents = !!activePane && who.signedIn;
+  const { listing, error: listingError } = useLocalAgents(readsAgents, { withError: true });
+  const computers = useSettingsRead(readsAgents ? "/computers" : null, { store: reads });
+  const agentsShown = who.signedIn ? showsLocalAgents(listing ?? (listingError ? null : undefined),
+    computers.data ?? (computers.error ? null : undefined)) : false;
+  const agentsBefore = React.useRef(false);
+  if (agentsShown !== null) agentsBefore.current = agentsShown;
   const available = (id) => {
     if (id === "integrations") return !!users && !users.isGuest;
     if (["account", "users"].includes(id)) return !!users && (id !== "users" || users.isAdmin);
     if (["workspaces", "backups"].includes(id)) return !!workspace;
     if (id === "server" || id === "proxy") return !!server;
+    if (id === "agents") return agentsShown ?? (agentsBefore.current || requested === "agents");
     return true;
   };
   const allNav = [ACCOUNT_NAV, ...PREFERENCE_NAV, ...AI_NAV, ...LIBRARY_NAV, ...ADMIN_NAV, HELP_NAV];
   const allowed = allNav.filter(([id]) => available(id));
-  const requested = resolveSettingsPane(activePane);
-  const pane = allowed.some(([id]) => id === requested) ? requested : "appearance";
+  const pane = allowed.some(([id]) => id === requested) ? requested : requested === "agents" ? "ai" : "appearance";
   const guard = (action) => {
     if (drafts.current.size) setPending(() => action);
     else action();
@@ -1435,10 +1453,8 @@ export default function SettingsDialog({
                 {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}
                 {pane === "agents" ? <>
-                  <PaneHead icon={BotIcon} title={t("Agents")} />
-                  <SettingsAgents connection={gammaAiConnection(aiValue)} signedIn={who.signedIn} setStatus={workspace?.setStatus}
-                    onConnections={() => navigate("ai")}
-                    onIntegrations={available("integrations") ? () => navigate("integrations") : null} />
+                  <PaneHead icon={BotIcon} title={t("Local agents")} />
+                  <SettingsAgents signedIn={who.signedIn} setStatus={workspace?.setStatus} />
                 </> : null}
                 {pane === "ai" ? <>
                   <PaneHead icon={SparklesIcon} title={t("Models")} />
