@@ -38,17 +38,32 @@ edits.
 ## Bring your own model
 
 Gamma ships no key and no default model. Each account adds its own
-connections in Settings → AI: an API key for a provider, a custom
-endpoint, or a ChatGPT sign-in. A connection offers only the models you
-pick for it from the provider's live list. An administrator can also add
-connections that the server's accounts share, with an optional daily
-allowance per account.
+connections in Settings → AI → Models: an API key for a provider, a
+subscription, a server on your own computer or network, a custom endpoint,
+or a ChatGPT sign-in. A connection offers only the models you pick for it
+from the provider's live list. An administrator can also add connections
+that the server's accounts share, with an optional daily allowance per
+account.
 
+- **Each task picks its model from any connection.** The chat, metadata
+  and citations, translation and handwriting each name a model, or use the
+  chat's. Your picks are kept with your account, so every device and
+  Gamma's own background work, such as the metadata of a clipped paper,
+  use them.
+- **A model that went away is flagged, not silently swapped.** The task
+  runs on the chat model meanwhile and says so: in Settings, in a notice,
+  and in the job that used the stand-in. Your pick comes back when its
+  connection does. A request that names a model which is gone fails
+  rather than going to another one.
 - **Claude is reached with an API key.** Signing in with a Claude
   subscription is left out on purpose: Anthropic's terms do not let other
   apps route requests through a Free, Pro or Max plan.
-- **Usage is shown in tokens**, never in money, since prices differ per
-  provider and change.
+- **API spend is estimated from public prices; subscriptions show
+  quota.** A call paid per token gets an estimated cost at the model's
+  public price that day, and one without a known price is counted as
+  unpriced, never as free. A subscription shows its tokens and what is
+  left of the plan, and a shared connection its tokens against the
+  allowance: nobody pays per token for them.
 - **Effort and speed are yours to choose.** A model without the effort you
   prefer gets its nearest level, and a faster tier is sent only when the
   model offers it. Each reply names the model, effort and speed that served
@@ -232,4 +247,5 @@ written for them imports as it is.
 - [Local agents](../dev/local_agents.md), [MCP](../dev/mcp.md).
 - [AI permissions](../research/ai-permissions.md),
   [Agents as participants](../research/agents-as-participants.md),
-  [Skills in the chat](../research/chat-skills.md).
+  [Skills in the chat](../research/chat-skills.md),
+  [Models per task, providers and cost](../research/ai-model-settings.md).

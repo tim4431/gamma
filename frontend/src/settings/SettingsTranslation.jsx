@@ -14,7 +14,9 @@ import { Section, Row, Toggle, SubDialog, Field, PasswordInput, UnitInput, Empty
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { termsOf, useSettingsRead } from "./settingsReads.js";
 import { SPEED_LABELS, SPEED_ORDER } from "../chat/modelPrefs.js";
-import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX, translateModelFor } from "../app/prefs";
+import { TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX } from "../app/prefs";
+import { TaskModelMenu } from "../ai/ModelMenu.jsx";
+import { taskRow } from "../ai/aiModels.js";
 import { addTerm, clearTranslations, editTerm, removeTerm } from "../app/translateClient.js";
 import { VIEWER_TOOLS } from "../app/viewerToolItems.js";
 import { commandChord } from "../app/commands.js";
@@ -40,9 +42,9 @@ const ENGINE_FORMS = {
 
 // In the order a reader meets it: what shows in the viewer, then what
 // translates (a model or a service, the services' keys, and whether the
-// translations are kept), then how fast. "Translate with" names this
-// server's provider entries, so it stays with the browser (its row's own
-// tag); the service keys are the account's, kept on the server.
+// translations are kept), then how fast. "Translate with" is the account's
+// translation task (ai/useAiModels.js, the same pick as Settings → AI →
+// Models); the service keys are the account's, kept on the server.
 export function TranslationSettings({ value, keybindings }) {
   const peekKey = commandChord("pdf.peekOriginal", keybindings);
   return (<>
@@ -100,11 +102,10 @@ export function TranslationSettings({ value, keybindings }) {
       <Row
         icon={SparklesIcon}
         label={t("Translate with")}
-        scope="browser"
-        hint={t("A chat model reads the paper first and keeps its terms; a service is quick and needs no AI")}
+        {...taskRow(value.models?.aiInfo, "translate", t("A chat model reads the paper first and keeps its terms; a service is quick and needs no AI"))}
         title={t("What translates page text. A chat model reads a brief of the whole paper first, so its terms stay the same from page to page, and follows the paper's register; a translation service (Microsoft for free, or Google and Youdao with a key) translates sentence by sentence, is faster and cheaper per page, and needs no AI connection. Formulas, citations and links stay as printed either way. Translation is a bulk job — a fast, cheap model usually reads fine.")}
       >
-        <TranslateModelSelect value={value} />
+        {value.models ? <TaskModelMenu role="translate" ai={value.models} label={t("Translate with")} /> : null}
       </Row>
       <TranslationServices value={value} />
       <KeptTranslations value={value} />
@@ -288,9 +289,8 @@ function KeptTranslations({ value }) {
 // rows hide while one is picked (or the free default with no AI), and
 // until the list of services has loaded (it always holds the free one).
 function TranslationPerformance({ value }) {
-  const engines = value.translateEngines || [];
-  const engine = !engines.length
-    || translateModelFor(value.translateModel, engines, value.aiModels || []).startsWith("engine:");
+  const engines = value.models?.aiInfo?.translate_engines || [];
+  const engine = !engines.length || (value.models?.modelFor("translate") || "").startsWith("engine:");
   return <Section title={t("Speed")} scope="account" prefs={SECTION_PREFS.translation["Speed"]}>
     {!engine ? <Row
       icon={ActivityIcon}
@@ -327,28 +327,6 @@ function TranslationPerformance({ value }) {
         }} />
     </Row>
   </Section>;
-}
-
-// "" = the default; a set-up service ("engine:<id>") or a model id. A stale
-// pick (service removed, model gone) shows as the default, which is what
-// App sends then: the chat model, or the free service with no AI at all.
-function TranslateModelSelect({ value }) {
-  const models = value.aiModels || [];
-  const engines = value.translateEngines || [];
-  const known = translateModelFor(value.translateModel, engines, models) === value.translateModel;
-  const free = translateModelFor("", engines, models) === FREE_TRANSLATE_ENGINE
-    && engines.find((e) => e.id === FREE_TRANSLATE_ENGINE);
-  return (
-    <MenuSelect
-      label={t("Translate with")} value={known ? value.translateModel : ""} onChange={value.setTranslateModel}
-      options={[
-        ["", free ? t("Default: {name}", { name: free.label })
-          : t("Same as chat: {default}", { default: value.chatModelName || t("provider default") })],
-        ...engines.map((e) => [e.id, e.label]),
-        ...models.map((m) => [m.id, m.model]),
-      ]}
-    />
-  );
 }
 
 // The engines are the pane's read (settingsReads.js), kept while the

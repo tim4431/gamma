@@ -11,10 +11,11 @@ import { requestFields } from "../pdf/translatePlan.js";
 import * as translateState from "../pdf/translateState.js";
 import { createJobFollower } from "./translateFollow.js";
 
-// POST a translation request; throws on failure with the server's reason (a
-// 429 of the shared AI allowance says what to do), its HTTP `status` and
-// `retryAfter` (seconds: the account's AI calls are all in use), which
-// translateJob.requestChunk reads to ask again.
+// POST a translation request; throws on failure with the server's reason
+// (its `detail`: a 429 of the shared AI allowance says what to do), its
+// HTTP `status`, its `kind` (model_unavailable: the model asked for is no
+// longer offered) and `retryAfter` (seconds: the account's AI calls are all
+// in use), which translateJob.requestChunk reads to ask again.
 async function post(path, body, signal) {
   const res = await fetch(`${API}${path}`, {
     method: "POST",
@@ -24,9 +25,13 @@ async function post(path, body, signal) {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
-    try { detail = (await res.json()).detail || detail; } catch {}
-    throw Object.assign(new Error(detail), { status: res.status, retryAfter: Number(res.headers.get("Retry-After")) || 0 });
+    let detail = `${res.status} ${res.statusText}`, kind = "";
+    try {
+      const said = await res.json();
+      if (typeof said.detail === "string") detail = said.detail;
+      kind = said.kind || "";
+    } catch {}
+    throw Object.assign(new Error(detail), { status: res.status, kind, retryAfter: Number(res.headers.get("Retry-After")) || 0 });
   }
   return res;
 }
@@ -62,7 +67,7 @@ export function chunkRequest(settings) {
     let final = null;
     await readNdjson(res, (events) => {
       for (const ev of events) {
-        if (ev.error) throw new Error(ev.error);
+        if (ev.error) throw Object.assign(new Error(ev.error), { kind: ev.kind || "" });
         else if (ev.translations) final = ev;
         else if (ev.stage) onStage?.(ev.stage);
         else if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
@@ -188,8 +193,9 @@ export function endTranslations() {
 // App's side at each render, which the follower reads when a job changes —
 // `screenUrl` (the PDF on screen), `title`, `langLabel`, `postPill`,
 // `addTask`, `updateTask`, `setStatus`, `retry`, `rerun`,
-// `translateReferences`, `followsChat`, `openSettings`, `exportsTranslation`,
-// `openExport` and `statusFree`, as createJobFollower takes them.
+// `translateReferences`, `followsChat`, `fallbackNote`, `openSettings`,
+// `exportsTranslation`, `openExport` and `statusFree`, as createJobFollower
+// takes them.
 export function useTranslateJobs(props) {
   const host = useRef(null);
   host.current = props;

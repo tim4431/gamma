@@ -34,6 +34,10 @@ export const NOTICE_MESSAGES = [
   T("{n} people ask to join this server"),
   T("{n} report waits for review"),
   T("{n} reports wait for review"),
+  T("The chat model {model} is no longer available."),
+  T("The metadata model {model} is no longer available; the chat model is used instead."),
+  T("The translation model {model} is no longer available; the chat model is used instead."),
+  T("The handwriting model {model} is no longer available; the chat model is used instead."),
   T("Microsoft's free translation keeps failing — set up Google or Youdao"),
   T("Your storage is full ({used} of {quota} MB used)"),
   T("Your storage is nearly full ({used} of {quota} MB used)"),
@@ -67,6 +71,10 @@ const ACTIONS = {
   reports: T("Review the reports"),
   "free-translate": T("Set up translation"),
   storage: T("Review storage"),
+  "ai-model-chat": T("Choose model"),
+  "ai-model-metadata": T("Choose model"),
+  "ai-model-translate": T("Choose model"),
+  "ai-model-ink": T("Choose model"),
 };
 export const noticeAction = (notice) => t(ACTIONS[notice?.id] || T("Open settings"));
 

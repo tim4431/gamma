@@ -930,8 +930,8 @@ date?}]`:
   (the ChatGPT backend, asked for no sources and citing none) has its lines
   taken as written. A reply cut short keeps the sources it reported. `ai_client.CallRefused` (the account's call slots all in use, an
   allowance used up) is a `SearchError` with its reason. The call counts as
-  chat usage (`ai_usage.recorder`), and its integer token counts also go into the
-  `meter` the tool passes, which `_run_search_web` puts on the action as
+  chat usage (`ai_usage.recorder`), and its token counts and cost, summed by
+  `ai_client.add_usage`, also go into the `meter` the tool passes, which `_run_search_web` puts on the action as
   `spent`, failed or not, so the reply's footer counts the search (the loop
   yields it as a `usage` event, as it does `read_paper`'s helper). The meter
   never carries the served `speed`, which the reply would take for its own

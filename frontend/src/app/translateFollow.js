@@ -24,7 +24,10 @@ export const SLOW_MS = 20000;
 // document on screen; `rerun()` runs the last job asked for there again
 // (one that stopped, a paragraph's); `translateReferences()` asks it for the
 // reference lists left original there; `followsChat`: "Translate with"
-// follows the chat model; `openSettings()` opens Settings → Language & translation;
+// follows the chat model; `fallbackNote`: what a job's row adds when it
+// ends, while the translation model is gone and the chat model stands in
+// ("used X: the translation model is unavailable"), as the job started;
+// `openSettings()` opens Settings → Language & translation;
 // `exportsTranslation()`: the open page's annotated PDF would carry the
 // translation shown (the count the Export dialog reads); `openExport()` opens
 // that dialog on Annotated PDF; `statusFree()`: no error or button holds the
@@ -32,7 +35,7 @@ export const SLOW_MS = 20000;
 // `snapshot` and `halt`). Returns `sync()`, to call at every change of the
 // jobs and of the PDF on screen.
 export function createJobFollower(host, source = translateState) {
-  const rows = new Map(); // url → {status: last seen, task: its row while the job runs}
+  const rows = new Map(); // url → {status: last seen, task: its row while the job runs, note: its fallbackNote}
   let reading = false; // the "Reading the paper" pill is up
   // The model hint, the references hint and the export hint, each once a
   // session.
@@ -43,7 +46,7 @@ export function createJobFollower(host, source = translateState) {
     for (const [url, st] of source.statuses()) {
       kept.add(url);
       let row = rows.get(url);
-      if (!row) rows.set(url, (row = { status: null, task: null }));
+      if (!row) rows.set(url, (row = { status: null, task: null, note: "" }));
       if (row.status === st) continue;
       row.status = st;
       follow(host, source, url, st, row, hint);
@@ -94,6 +97,7 @@ function follow(host, source, url, st, row, hint) {
       name: jobName(st, url, h), kind: "ai", info: "0%", fraction: 0,
       cancel: () => source.halt(url),
     });
+    row.note = h.fallbackNote || "";
   }
   if (!row.task) return;
   if (st.running) {
@@ -129,10 +133,11 @@ function follow(host, source, url, st, row, hint) {
   // with a success's check: one that stopped, and one on a paragraph whose new
   // text did not come.
   const failed = st.error != null || unchanged > 0 || (left > 0 && !!st.focus);
-  h.updateTask(row.task, { state: failed ? "failed" : "done", info: st.error != null ? stoppedAt(st)
+  const ended = st.error != null ? stoppedAt(st)
     : left ? tn("{n} paragraph untranslated", "{n} paragraphs untranslated", left)
       : unchanged ? t("earlier translation kept")
-        : finished ? t("Done") : stoppedAt(st) });
+        : finished ? t("Done") : stoppedAt(st);
+  h.updateTask(row.task, { state: failed ? "failed" : "done", info: row.note ? `${ended} · ${row.note}` : ended });
   row.task = null;
   if (st.error != null) {
     h.setStatus(st.error ? t("Translation failed: {message}", { message: st.error }) : t("Translation failed."),

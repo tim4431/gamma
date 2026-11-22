@@ -17,10 +17,12 @@ conversations have their own documents: [translation.md](translation.md),
 ## Provider and models
 
 There are NO env API keys; providers are GUI entries: each account's own
-(Settings → AI › Connections), plus the server's shared ones an admin adds
-(below). An account's entries are stored under the reserved account-wide
-`ai-settings` pref in `users.db` — a LIST of `{id, name, protocol, api_key, base_url, models}` managed
-via `POST/PUT/DELETE /api/ai/providers[/{id}]`. Every change to the list is
+(Settings → AI → Models, its Connections section), plus the server's shared
+ones an admin adds (below). An account's entries are stored under the
+reserved account-wide `ai-settings` pref in `users.db` — a LIST of
+`{id, name, protocol, api_key, base_url, models, test_model, billing?}`
+managed via `POST/PUT/DELETE /api/ai/providers[/{id}]` (`billing`: how its
+calls are paid for, an override "Token usage" describes). Every change to the list is
 one read-modify-write transaction (`ai_settings.update_provider_entries`,
 over `db.update_pref`), never a list read earlier and saved back. So a
 ChatGPT sign-in, which stores its entry before asking for its first models,
@@ -29,26 +31,37 @@ tab added meanwhile. An entry offers exactly the
 models picked for it (from the provider's live listing in the form): there is
 no built-in default model, so an entry with none picked offers nothing and its
 Test button says so (migration step 15 wrote the old defaults into entries
-that had relied on them). The connect dialog (`ProviderForm` in
-`settings/SettingsAi.jsx`) picks the live list's first model when nothing is
-picked yet. That is still a pick from the provider's own listing, never a
-model name in code, and a new connection is never saved offering nothing.
-The same live listing is the dialog's key check ("Key works · 14 models
-available", or the provider's refusal). The key field's placeholder and its
+that had relied on them). The connect dialog (`settings/ProviderForm.jsx`,
+its state `useProviderEditor` in `settings/providerEditor.js`) picks the
+live list's first model when nothing is picked yet. That is still a pick
+from the provider's own listing, never a model name in code, and a new
+connection is never saved offering nothing. Its Models step is a
+searchable checklist of that listing, each model with what the catalogs
+know of it (context window, pictures, price per million tokens:
+`POST /api/ai/model-catalog`'s `facts`), and an "Add by name" field that is
+always there, for a model the list doesn't show or an endpoint that lists
+none. A saved name the listing lacks stays in the list, tagged "not
+listed". The same live listing is the dialog's key check ("Key works · 14
+models available", "Reached · 14 models available" for an endpoint without
+a key, or the provider's refusal). The key field's placeholder and its
 "Get a key at …" link come from the adapter or the `SERVICES` preset
 (`key_placeholder`, `key_url`, sent with the protocols in
 `GET /api/ai/settings`). Both are empty for a sign-in protocol and hidden for
-a custom endpoint. A connection made in the dialog is tested right after it
-is saved. A saved entry never switches between sign-in and
+a custom endpoint. A local server's preset and a custom endpoint may be
+saved without a key ("Other services"). A connection made in the dialog is
+tested right after it is saved. A saved entry never switches between sign-in and
 API key (`PUT` with such a protocol is a 400). The generic prefs endpoints
 refuse the key; the only read path is the masked `GET /api/ai/settings` (last-4
 hint, never the key), guests can't write. `POST /api/ai/providers/{id}/test`
 probes an entry with a tiny live completion for the settings list's Test button
 — result in-body, never an HTTP error, and it clears the OAuth refresh backoff
 so an expired ChatGPT grant is re-tried immediately. The probe's model:
-the entry's optional `test_model` (editable in the form's Models step), else
-the `model` sent with the request (the client passes its effective metadata
-model — the cheap utility model), else the entry's first model. With
+the entry's optional `test_model` (editable under the Models step's More
+options), else the `model` sent with the request, else the entry's first
+model. The client sends the model the first task on that connection uses,
+metadata first (the cheap utility model), then chat, translation and
+handwriting (`probeModel` in `ai/aiModels.js`), or none when no task uses
+the connection. With
 `tools_model`, one of the entry's picked models (a 400 otherwise), the probe
 is instead the check of whether that model calls tools, and the result
 carries the stored verdict as `tools` ("Models that can't call tools"
@@ -65,42 +78,52 @@ details are summarized before display everywhere (`upstream_detail` in
 `ai_client.py`): JSON bodies reduce to their message field, HTML error pages
 (a proxy's 502 page) to their `<title>`.
 
-`POST /api/ai/health` ({provider_id, mode}; "" = first entry) is the login
-connection check (Settings → AI › Connections → "Check at login",
-account pref `gamma-ai-login-check`, default `ping`): mode `"ping"` verifies the
-credential for free — OAuth entries hit the usage endpoint, API keys list
-`/v1/models`, both 401 on a dead credential (404/405 = gateway without a
-listing → ok-but-unverified, no false alarm) — and `"test"` runs the same tiny
-completion as the Test button. In both modes a sign-in's 401 is answered as
-the Test probe's is: renewed once, `auth` when OpenAI refuses the grant or
-the renewed token is refused too, `unreachable` while OpenAI can't be
-reached. The answer is always in-body
-(`{configured, ok, auth?, kind?, error?}`); a failure renders as a warning
-strip in the chat window with the chat error card's headline for its `kind`
-("OpenAI rejected the API key"; see "Chat endpoint") and a Fix… button that
-opens that entry's form (Settings → Network proxy for `blocked`, for an
-admin), dismissed or cleared by a passing Test / provider edit. The usage
+`POST /api/ai/health` ({provider_id, mode, model}; "" = first entry) is the
+login connection check (Settings → AI → Models → Connection check → "Check
+at login", account pref `gamma-ai-login-check`, default `ping`). The client
+checks every connection a task's model goes through (`connectionsInUse` in
+`ai/aiModels.js`), one request each, and keeps each answer by connection
+(App's `aiHealth`). Mode `"ping"` verifies the credential for free: a
+connection with a quota asks its quota endpoint (a ChatGPT sign-in's usage
+endpoint, OpenCode Go's `/usage`, `ai_protocols.quota_reader`), any other
+API key lists `/v1/models`, and both 401 on a dead credential (404/405 =
+gateway without a listing → ok-but-unverified, no false alarm). OpenCode's
+listing answers without a key, so only its quota endpoint checks one, and
+its 403 ("This key doesn't cover OpenCode Go.", the reader's `refusal`)
+reads as `auth`. Mode `"test"` runs the same tiny completion as the Test
+button, with the same `model` (`probeModel`). In both modes a sign-in's 401
+is answered as the Test probe's is: renewed once, `auth` when OpenAI refuses
+the grant or the renewed token is refused too, `unreachable` while OpenAI
+can't be reached. The answer is always in-body
+(`{configured, ok, auth?, kind?, error?}`). A failure turns its
+connection's status dot red in Settings with the fix, and the first one
+renders as a warning strip in the chat window with the chat error card's
+headline for its `kind` ("OpenAI rejected the API key"; see "Chat
+endpoint") and a Fix… button that opens that entry's form (Settings →
+Network proxy for `blocked`, for an admin), dismissed or cleared by a
+passing Test / provider edit. The usage
 query answers a `blocked` 403 in-body too, `auth: false`, its reason naming
 the proxy setting; the model list's error says the same.
 
 `ai_runtime(user)` in `gamma/ai_settings.py` builds the per-request config and
 model registry from the account's own entries followed by the server's shared
-ones (ids are `<entryId>:<model>`; the wire format comes from the entry's
-`protocol`, never from the provider id; the default model is the account's
-own first model, else the server's first) — AI endpoints must use it, not
-module-level config constants for credentials or model routing. Each
+ones (`_registry`; ids are `<entryId>:<model>`, a shared entry's
+`server:<id>:<model>`; the wire format comes from the entry's `protocol`,
+never from the provider id). Each provider conf and each registry row
+carries its connection's `billing`. It adds the model each task uses
+(`roles`, "Models for each task" below), and `default` is the chat task's
+model: the account's chat pick while it is offered, else the account's own
+first model, else the server's first. AI endpoints must use it, not module-level config
+constants for credentials or model routing, and resolve a request's model
+with `resolve_model(rt, requested, role)`. Each
 protocol's default base URL is the provider's own (`config.AI_BASE_URLS`);
 another endpoint is a connection's own base URL, and no environment
 variable moves the default (an `ANTHROPIC_BASE_URL` a shell exports is not
 read either).
 
-The client offers one connection's models at a time. `providerModels` in
-`chat/modelPrefs.js` cuts the registry down to the active connection (the
-account's `ai-provider` pref, picked in Settings → AI → Connections), or to
-the first connection that offers models when nothing is picked or the pick
-is gone. The chat's model menu, the Settings model pickers, the models the
-client sends and the login check all use that one list, so the menu never
-mixes connections.
+There is no active connection. Every model picked on any connection the
+account may use is offered everywhere, and each task picks its own from
+any connection ("Models for each task").
 
 Named services (`SERVICES` in `gamma/ai_protocols/services.py`, sent as
 `services` with the settings) are form presets, data rather than code: a
@@ -118,18 +141,25 @@ deliberately absent: Anthropic's terms forbid third-party apps from routing
 requests through Free/Pro/Max plan credentials, so Claude is reached with a
 Console API key.
 
-The Connections pane also exposes `POST /api/ai/providers/{id}/usage`. For a
-ChatGPT OAuth entry it reads normalized subscription rate-limit windows
-(`used_percent`, `remaining_percent`, and reset time) without exposing the
-bearer token. Opening the pane queries OAuth usage automatically (the Usage
-button remains available for a manual refresh). Each window is one compact
-summary line above the same progress meter used for storage quota, filled by
-the percentage used. Each provider row also opens its model configuration,
-where models can be fetched, added, or removed.
-API-key protocols return an explicit unavailable result because OpenAI-
-compatible and Anthropic-style providers do not share a portable quota API.
-An expired ChatGPT sign-in answers in-body (`{available: false, auth: true}`
-with a "sign in again" reason) rather than dumping the upstream 401 or 403. A
+The Connections section also exposes `POST /api/ai/providers/{id}/usage`,
+for any connection with a quota reader (`ai_protocols.quota_reader`: a
+ChatGPT sign-in's own, OpenCode Go's from its preset, "Other services"). It
+reads normalized subscription windows (`used_percent`, `remaining_percent`,
+and reset time) without exposing the bearer token or key. Opening an AI
+pane queries them automatically for those connections (`quota` on each
+of `GET /api/ai/settings`' providers, which the client reads as
+`provider.quota`; the Usage button remains available for a manual
+refresh), and Settings → AI → Usage draws them in its Subscriptions tile.
+Each window is one compact summary line above the same progress meter used
+for storage quota, filled by the percentage used. Each provider row also
+opens its model configuration, where models can be fetched, added, or
+removed. A connection without a reader gets an explicit unavailable result,
+because pay-per-token providers do not share a portable quota API. A
+rejected credential answers in-body (`{available: false, auth: true}`, "sign
+in again" for a sign-in, "update it" for a key), and a status the reader
+words as the plan refusing the key (OpenCode Go's 403) answers `auth:
+false` with that reason. An expired ChatGPT sign-in answers so rather than
+dumping the upstream 401 or 403. A
 401 first renews the token once: it reads as expired when OpenAI refuses the
 grant or the renewed token is refused too, and a renewal that can't reach
 OpenAI answers `auth: false` with a "couldn't reach OpenAI" reason.
@@ -139,48 +169,326 @@ or base URL; this prevents a settings request from redirecting a bearer token.
 The ChatGPT account endpoint is provider-specific and may require maintenance
 if its upstream contract changes.
 
+### Models for each task
+
+Each task names the model it runs on, from any connection, in the
+account's reserved `ai-models` pref (`users.db`, account-wide,
+`db.USER_PREF_KEYS`). The generic `/api/prefs` endpoints refuse it, profile
+sync never copies it, and only the two writes below change it:
+
+```json
+{"chat": "<entry>:<model>", "metadata": "", "translate": "engine:microsoft",
+ "ink": "", "favorites": ["<entry>:<model>"], "chat_migrated": false}
+```
+
+- **The tasks** (`ai_settings.ROLES`): `chat` (the chat, its generated
+  titles and structured notes), `metadata` (the AI's pick among the records
+  a paper names, its own reading of the metadata, the slide citation),
+  `translate` (PDF translation: a model, or a set-up service as
+  `engine:<id>`) and `ink` (Redraw as shapes and Convert to text).
+  Dictation is no task: it keeps its own transcription pref, and
+  `/api/ai/models`' `transcriber` names the connection it goes through
+  (`transcriber_of`, the chat model's connection first).
+- **A pick** is a registry id, or `""` to follow the chat model. The chat's
+  own `""` is the first model offered, the account's own before the
+  server's.
+- **`favorites`**: the chat chip's quick list, at most 50.
+- **`chat_migrated`**: the chat pick is still the one migration step 71
+  wrote from the old one-connection pref, `ai-provider` (that entry's first
+  model).
+
+`resolve_roles` turns the pref into `ai_runtime()["roles"]`, one `{pick,
+model, state}` per task. `state` is one of:
+
+- `ok`: the pick is offered (for translate, or a configured service);
+- `follows`: no pick;
+- `missing`: the pick is no longer offered. Its connection was removed, its
+  model unpicked, a shared entry no longer admits the account, or a service
+  is no longer set up.
+
+`model` is the pick while `ok`, else the chat model (for chat itself the
+first model offered), else `""`. Translation with no model offered at all
+resolves to the free service instead, so an account with services alone
+keeps translating. A missing pick keeps its stored value, so it comes back
+when its access does: the same entry picks the model again, or a shared
+entry admits the account again. A connection removed and made again is a
+new entry, and the old pick stays missing.
+
+**The routing rule** (`resolve_model(rt, requested, role)`):
+
+- A request that names a model gets that model: its registry id, or a bare
+  model name exactly one offered model has. Any other name raises
+  `ModelUnavailable`. Such a request never goes to another model. Every
+  route answers it the same way: one exception handler in `app.py` turns
+  it into a 400 `{"detail": "<model> is no longer offered", "kind":
+  "model_unavailable"}`. A stream's error line carries `{"error", "kind"}`
+  (`ai_client.failure_kind` reads `error.kind`). The client reads the
+  top-level `kind` (`app/translateClient.js`, the chat's error card).
+- A request that names no model gets its task's model, the chat model
+  while the task's own pick is unset or missing.
+- With no model offered at all, a route answers the standard 503 "AI not
+  configured" first, a named model included.
+
+The callers pass their task: the chat and `/ai/chat/context` `chat`;
+metadata's extraction, record pick and slide citation `metadata`;
+translation's chunk, brief and lookup `translate`; the ink routes `ink`.
+Only the chat and translation take a model in the request. The chat, its
+titles and structured notes send the model the chip shows, and a
+translation job sends the translate task's model as the job started and
+keeps it ([translation.md](translation.md#the-request)). `/metadata/fetch`,
+the metadata batch job (and so the upload's lookups and the extension
+clip's background lookup), `/metadata/cite` and `/ai/ink/*` take no
+`model` or `cite_model`: the account's task model always decides.
+
+`routed(rt, role, requested, entry)` says what a task ran on: `{role, model,
+fallback}`, `fallback` true when the request named no model and the task's
+pick is missing, so the chat model stood in. It comes back on
+`/metadata/fetch` (once an AI call ran), on the metadata batch job's
+result (the last lookup's, `fallback` when any lookup fell back), on
+`/metadata/cite` and on `/ai/translate`'s final object.
+
+**Writing.** `PUT /api/ai/models/roles` takes any of `chat`, `metadata`,
+`translate` and `ink` (a registry id offered, `""`, or for translate a
+configured `engine:<id>`; a role left out is unchanged) and
+`favorites_add` / `favorites_remove`, never a whole favorites list. A pick
+not offered, or a 51st favorite, is a 400 and writes nothing. A chat pick
+clears `chat_migrated`. It is one read-modify-write (`set_roles` over
+`db.update_pref`) and answers `{roles, favorites, chat_migrated}`.
+`POST /api/ai/models/import` is the client's one-time move of a browser's
+old picks (`{chat, metadata, translate}`, from the localStorage keys
+`gamma-chat-model`, `gamma-meta-model` and `gamma-translate-model`). In one
+read-modify-write (`import_roles`) it takes each only while the account's
+own is unset, chat also while `chat_migrated` is set (taking it clears
+that), and skips a pick not offered. It answers `{taken: [role], roles,
+favorites, chat_migrated}`. Both are for any account, a guest's too, among
+the models it may use; never a link visitor (401) or an integration
+token (403).
+
+**Notices.** A missing pick raises a notice per task (`notices.py`:
+`ai-model-chat`, `ai-model-metadata`, `ai-model-translate`, `ai-model-ink`;
+tone `warn`, pane `ai`, action "Choose model"). Its fingerprint is the pick,
+so it shows once per pick that went missing: "The metadata model gpt-x is
+no longer available; the chat model is used instead." One source,
+`ai_model_missing`, returns the list of them (`for_user` flattens a
+source's list): it reads the pref first, and only when a task has a pick
+the registry, built without renewing a sign-in (`model_roles`).
+
+**The client** (`frontend/src/ai/`). `useAiModels.js` owns the state:
+`/api/ai/models` (`aiInfo`), the roles, the favorites, `setRole` and
+`toggleFavorite`. The order of its requests is the pure `modelsSync.js`
+(`createModelsSync`, tested in `tests/aiModels.test.mjs`): reads dropped
+after a write, late write answers dropped, an account switch aborting what
+is in flight, and the old picks' import run once.
+
+- It reads the list again when the window comes back (focus or
+  visibility, at most every 15 s) and after a connection is saved.
+- A pick shows at once and the server's answer replaces it. A read that
+  started before the tab's last write is dropped and read again once the
+  writes settle, and a write answered after a later one is dropped too.
+- Another account, or signing out, aborts what is in flight.
+- A share link's view reads but never writes or imports.
+- After the account's first read it moves this browser's old picks once
+  (the old chat pick only as a registry id), then deletes those keys
+  (and `gamma-chat-model-by-key`), once the request succeeded.
+
+`aiModels.js` holds the pure rules (`tests/aiModels.test.mjs`):
+`resolveRoles` (the server's rule), `modelFor(info, role)`, `roleStatus`
+(a task row's line) and `taskRow` (the row's hint and class, shared by
+Settings → AI and Translate with), `tasksAffectedBy` and `removalNotice`
+(what removing a connection does to the tasks), `connectionsInUse`,
+`probeModel` and `importLegacyPicks`.
+
+The client never parses a registry id. `/api/ai/models` carries `missing:
+{"<registry id>": {model, connection}}` for every id a task or a favorite
+names that is not offered (`ai_settings.missing_picks`): `connection` is
+the entry's name while the entry exists (its model unpicked, its sign-in
+gone, a shared entry that no longer admits the account), else `""`. A
+translation service picked is left out. `modelName`, `connectionName` and
+`modelTitle` read names from `models[]` or `missing`.
+
+`tests/shared/ai_models.json` holds the cases both sides pass: `roles`
+(`ai_settings.resolve_roles` ↔ `resolveRoles`, and with `without`, what
+removing a connection leaves, `tasksAffectedBy`), `sums`
+(`ai_client.add_usage` ↔ `addUsage` in `chat/tokenUsage.js`, "Token
+usage") and `keyless` (`ai_settings.key_optional` ↔ `keyOptional` in
+`settings/aiServices.js`, "Keyless entries").
+
+What the user meets when a pick goes missing:
+
+- Settings → AI → Models: the task's row is red and says "claude-sonnet-4-6
+  (Work key) is no longer available. Using gpt-6-astra (ChatGPT) instead."
+  ("a removed connection" when `missing` names no connection), and its
+  button says Choose…, amber.
+- The notice above, with Choose model.
+- A translation job that ran on the stand-in ends its task row with "used
+  gpt-6-astra: the translation model is unavailable", and the open page's
+  metadata lookup its own with "used gpt-6-astra: the metadata model is
+  unavailable" (from `routed`).
+- A chat request that names a model no longer offered gets the error card
+  "That model is no longer offered", with Choose model (Settings → AI →
+  Models) and Switch model.
+
+Removing a connection asks first, and the confirm says what each affected
+task will use instead ("Metadata & citations will use gpt-6-astra
+(ChatGPT) instead."), or, with no model left, "AI features stop until you
+add a connection."
+
+### The model menu
+
+`ai/ModelMenu.jsx` is the one model menu: `ModelMenuList` (the open menu,
+for the chat's chip) and `TaskModelMenu` (a task's row in Settings → AI →
+Models, and "Translate with" in Settings → Language & translation, the same
+`translate` task). `TaskModelMenu` is a `MenuSelect` that opens
+`ModelMenuList` through its `listbox` slot (`shared/ui/Menus.jsx`). Its
+groups, in order (`menuGroups` in `ai/modelMenu.js`,
+`tests/modelMenu.test.mjs`):
+
+- the current pick when it is no longer offered, marked unavailable;
+- a task's "Use chat model (X)" ("Default: Microsoft (free)" for
+  translation with no model offered);
+- the favorites, in the order they were starred (one no longer offered
+  stays, so its star can come off);
+- one group per connection, in the registry's order, named with its
+  billing tag;
+- for translation, the services.
+
+A search box filters every group by each word typed (the model, its
+connection, its id; `matchesWords` in `modelMenu.js`, the one filter the
+connect dialog's searches use too). The focus stays in it: the arrow keys move through the
+rows, Enter picks, Escape closes. A row shows a "no tools" tag (the model's
+own check, its reason on hover), for the handwriting task "can't convert to
+text" on a model that sees no pictures (Redraw as shapes still works with
+it), an eye for pictures, the context window ("200k") and, on a connection
+paid per token, the price per million tokens in and out ("$3 / $15"). These
+facts are one component, `ModelFacts` (`modelFacts` in `modelMenu.js`),
+which the connect dialog's model checklist shows too, with one formatter
+(`fmtTokens`, `fmtPrice` in `chat/tokenUsage.js`); the dialog shows prices
+only for a pay-per-token connection. Its star, a `ctlBtn` sized to
+`--ctl-icon-btn-xs`, toggles a favorite. A task row whose pick is missing
+turns its trigger amber (`.aiTaskMissing .uiSelectBtn`), and so does
+Dictation's when nothing transcribes.
+
+The facts are `/api/ai/models`' `context`, `images` and `price` per model,
+from the caches alone (`ai_catalog.facts`: a cold cache gives nulls and
+starts its fetch for the next read; `price` only for billing `api`). No
+model name or price is written in the code, and an unknown fact is left
+out.
+
+The chat's model chip (`AgentChip`) lists the favorites and the model in
+use, each with its connection, and "All models…" opens the menu above the
+chip. A pick there sets the account's chat model, so every device follows.
+Agent selection, effort and speed are as before.
+
 ### Other services
 
-The connect dialog's Other tile lists the presets by vendor (`group`), then
-the vendor's plans (`plan`) when it has several, then "Custom endpoint".
-All of them ride the `openai` wire. The branches for OpenAI's and
-Anthropic's own endpoints (`is_openai_platform`, `is_anthropic_platform`)
-never apply to them.
+The connect dialog's first step shows every way to connect as a card, in
+three groups (`serviceSections` in `settings/aiServices.js`, pure,
+`tests/aiServices.test.mjs`), with a search box over them:
+
+- "Sign in or subscription": the sign-in protocols (ChatGPT), then the
+  presets billed as a subscription;
+- "API key": the key protocols (Anthropic, OpenAI API), then the
+  pay-per-token presets;
+- "On your computer or network": the local presets, then "Custom
+  endpoint" and its API format.
+
+A vendor's presets in one group are one card, and its plans (`plan`) are a
+segmented control under it (Qwen's international and China endpoints).
+Each card carries its billing tag. The chat's setup card keeps its own
+tiles (`aiServiceTiles` in `settings/providerEditor.js`: the protocols,
+then Other). All presets ride the `openai` wire. The branches for OpenAI's
+and Anthropic's own endpoints (`is_openai_platform`,
+`is_anthropic_platform`) never apply to them.
 
 | Vendor | Plans (base URL) |
 |---|---|
 | DeepSeek | API key (`https://api.deepseek.com`) |
 | Kimi | API key (`https://api.moonshot.ai`), China (`https://api.moonshot.cn`), Kimi Code subscription (`https://api.kimi.com/coding/v1`) |
-| Qwen | Model Studio international (`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`), China (`https://dashscope.aliyuncs.com/compatible-mode/v1`), Coding Plan (`https://coding-intl.dashscope.aliyuncs.com/v1`, China `https://coding.dashscope.aliyuncs.com/v1`) |
-| GLM | Z.ai (`https://api.z.ai/api/paas/v4`), Zhipu China (`https://open.bigmodel.cn/api/paas/v4`), GLM Coding Plan (`…/api/coding/paas/v4` on either host) |
+| Qwen | Model Studio international (`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`), China (`https://dashscope.aliyuncs.com/compatible-mode/v1`), Coding Plan subscription (`https://coding-intl.dashscope.aliyuncs.com/v1`, China `https://coding.dashscope.aliyuncs.com/v1`) |
+| GLM | Z.ai (`https://api.z.ai/api/paas/v4`), Zhipu China (`https://open.bigmodel.cn/api/paas/v4`), GLM Coding Plan subscription (`…/api/coding/paas/v4` on either host) |
 | OpenRouter | API key (`https://openrouter.ai/api/v1`) |
+| OpenCode | Zen, pay as you go (`https://opencode.ai/inference/openai/v1`), Go subscription (`https://opencode.ai/inference/go/openai/v1`) |
+| Gemini | API key (`https://generativelanguage.googleapis.com/v1beta/openai`) |
+| xAI | API key (`https://api.x.ai/v1`) |
+| Mistral | API key (`https://api.mistral.ai/v1`) |
+| Groq | API key (`https://api.groq.com/openai/v1`) |
+| Ollama | on this computer or network (`http://localhost:11434/v1`), no key |
+| LM Studio | on this computer or network (`http://localhost:1234/v1`), no key |
 
-A subscription is an API key the vendor's console makes for its coding
-plan, pointed at the plan's own endpoint, so it is an ordinary key entry.
+A coding-plan subscription is an API key the vendor's console makes for
+its plan, pointed at the plan's own endpoint, so it is an ordinary key
+entry, billed as a subscription (Kimi Code, the Qwen and GLM Coding Plans).
 Alibaba's terms allow the Qwen Coding Plan only inside coding tools; the
-preset's `note` says so under the Plan menu.
+preset's `note` says so under the plan. OpenCode's Console translates
+between wire formats, so Chat Completions reaches every text model it
+serves: Zen bills credits per token and lists its models publicly with
+their prices; Go is a monthly subscription with 5-hour, weekly and monthly
+limits. Both OpenCode presets send `User-Agent: Gamma` and, on a call with
+a prompt-cache key (the chat's, already a hash of the conversation), that
+key as `x-opencode-session`, as OpenCode asks third-party clients to.
+Gemini answers a rejected key with a 400, which reads as `other`, not
+`auth`. Ollama and LM Studio are address presets: the network guards still
+apply.
 
-A preset's optional fields are read by host-independent code. An absent
-field changes nothing:
+A preset's optional fields are read by host-independent code, and
+`GET /api/ai/settings` spells out `billing`, `usage`, `quota` (whether a
+quota reader reads it), `key_optional` and `versioned` for each one. An absent field changes nothing:
 
 - `catalog`: the models.dev provider key, added to `Protocol.catalog_hints`
-  for hosts that name none (`dashscope.aliyuncs.com` → `alibaba-cn`).
+  for hosts that name none (`dashscope.aliyuncs.com` → `alibaba-cn`): model
+  facts and prices ("Token usage").
 - `cache_key`: the endpoint takes OpenAI's `prompt_cache_key` (Kimi).
 - `max_tokens`: the chat's reply cap (`ai_catalog.reply_cap`). These
-  vendors' models count their thinking toward it, so the presets set
-  32,768, bounded by the model's own output limit from models.dev and left
-  at the default 8,192 when that limit is unknown. OpenAI, Anthropic,
-  OpenRouter and custom endpoints keep 8,192.
-- `note`: a sentence shown under the Plan menu. Plan labels and notes are a
+  vendors' models count their thinking toward it, so the DeepSeek, Kimi,
+  Qwen, GLM and OpenCode presets set 32,768, bounded by the model's own
+  output limit from models.dev and left at the default 8,192 when that
+  limit is unknown. OpenAI, Anthropic, OpenRouter, the other presets and
+  custom endpoints keep 8,192.
+- `note`: a sentence shown under the plan. Plan labels and notes are a
   fixed vocabulary the browser translates (`SERVICE_WORDING` in
   `settings/providerEditor.js` names them for the catalog).
+- `billing`: how a call through it is paid for, `"subscription"` (the
+  coding plans, OpenCode Go) or `"local"` (Ollama, LM Studio); absent, per
+  token (`ai_settings.billing_of`, "Token usage").
+- `usage`: the quota reader of a subscription (`ai_protocols/quota.py`).
+- `key_optional`: an entry may be saved without a key (Ollama, LM Studio).
+- `versioned`: the base URL already holds its version prefix (Gemini's
+  `/v1beta/openai`).
+- `session_header`: the header a stable per-conversation id goes in, with
+  the user agent above (OpenCode).
+
+**Keyless entries.** `ai_settings.key_optional(entry)`: a preset with
+`key_optional`, or a custom endpoint (a base URL that is neither the
+protocol's own nor a named service's), may go without a key. The connect
+dialog follows the same rule (`keyOptional` in `aiServices.js`, held to
+it by the `keyless` cases of `tests/shared/ai_models.json`), and each
+provider of `GET /api/ai/settings` carries the answer as `key_optional`.
+`new_key_entry` takes it, the model catalog lists through it, and
+`ai_runtime` offers its models. It sends no Authorization header (`base.bearer`). The provider's
+own endpoint still needs its key.
+
+**Quota per connection.** `ai_protocols.quota_reader(conf)` is the
+protocol's own reader (the ChatGPT sign-in), else the one the preset's
+`usage` names (`quota.READERS`), else None; `GET /api/ai/settings` says
+whether one exists as `quota` on each provider and each service. The usage
+route, the client's automatic quota load and the login check all use that
+one answer. Every reader answers the ChatGPT reader's shape
+(`{plan_type, windows: [{name, used_percent, remaining_percent,
+window_seconds, reset_at}], credits}`) and words a status that means the
+key does not cover the plan (`refusal`). OpenCode Go's
+(`quota.OpenCodeGo`) asks `GET https://opencode.ai/inference/go/v1/usage`
+with the Go key, always OpenCode's own endpoint, and reads its three meters
+(`rolling`, `weekly`, `monthly`: `percent`, `resetsAt`) as the windows
+"5-hour", "Weekly" (from Monday 00:00 UTC) and "Monthly". A key Go does
+not cover answers 403: "This key doesn't cover OpenCode Go."
 
 Three host-independent rules make these endpoints work.
 
 **Paths.** `api_url` (`ai_protocols/base.py`) appends `/v1/…` to a base URL
-unless it already ends in a version segment. So GLM's `/api/paas/v4` is
-reachable, and a pasted `…/v1` stays one. The Anthropic wire keeps its
-fixed `/v1/messages`.
+unless it already ends in a version segment or is a `versioned` preset's.
+So GLM's `/api/paas/v4` is reachable, a pasted `…/v1` stays one, and
+Gemini's `/v1beta/openai` gets `/chat/completions` and `/models` right
+after it. The Anthropic wire keeps its fixed `/v1/messages`.
 
 **Thinking.** A compatible server streams the model's thinking as
 `reasoning_content` (DeepSeek, Kimi, Qwen, GLM) or `reasoning` (OpenRouter,
@@ -218,9 +526,9 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 | speed tiers | `speeds` (canonical name → the value this wire sends), `speed_value(speed)`, `speed_tiers(conf)` (what an entry may be asked for when its own listing names none) |
 | the stream | `events` (one loop in the base) over `stream_event` / `stream_end`, with `("reasoning", …)` before the tool calls where the wire reports thinking; a stream without a single event raises `NotAnAIStream` |
 | token counts | `usage(raw)` → `{input, output, cache_read, cache_write}` |
-| models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts, speeds, images}]` (`listed_window` / `listed_efforts` / `listed_speeds` / `listed_images` read whatever the listing carries), `catalog_hints` |
+| models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts, speeds, images, price}]` (`listed_window` / `listed_efforts` / `listed_speeds` / `listed_images` / `listed_price` read whatever the listing carries; `price` None when it names none, False for one that varies with something no call reports), `catalog_hints` |
 | credential check | `ping_request` (default: the model listing) |
-| quota | `has_account_usage`, `account_usage_request`, `account_usage` |
+| quota | `has_account_usage`, `account_usage_request`, `account_usage`, `refusal(status)`: the protocol's own quota (the ChatGPT sign-in). A preset's reader in `ai_protocols/quota.py` answers the same three; `ai_protocols.quota_reader(conf)` picks one ("Other services") |
 | attachments, dictation | `native_pdf`, `transcription` (a rank), `transcription_request`, `transcript` |
 | hosted web search | `hosted_web_search(conf, site)`: the provider's own search tool as the tools entry to send, limited to one domain when `site` is given (Anthropic's `allowed_domains`, the Responses wires' `filters.allowed_domains`), or None; asked of `tool_wire(conf)`, the wire a call with tools goes over. A tool spec with a `hosted` entry goes out as that entry. A stream that used it yields `("web_searched", {"error"})` as each search runs (the provider's error code when one failed, else "") and `("web_sources", [{url, title, date?}])` for the pages it found, `date` the provider's own date of a page (Anthropic's `page_age`). `search_web`'s AI engine runs it ([ai_tools.md](ai_tools.md) "search_web") |
 
@@ -229,8 +537,9 @@ OpenAI and every compatible server), `responses.py` (the Responses API that
 OpenAI's platform and the ChatGPT backend both speak; `openai-responses` is
 the variant an OpenAI entry switches to for tool calls, never an entry's own
 protocol), `chatgpt.py` (the Codex backend: its listing, quota and client
-version). `ai_client.py` is the transport (open, read, stream, errors);
-`ai_catalog.py` fetches and caches listings and context windows
+version). `quota.py` holds the quota readers a preset names (OpenCode
+Go's). `ai_client.py` is the transport (open, read, stream, errors);
+`ai_catalog.py` fetches and caches listings, context windows and prices
 (`fetch_json` is the one fetch every listing, quota and ping goes through).
 The sign-in flow itself (`chatgpt_oauth.py`, `/api/ai/oauth/chatgpt/*`) is
 provider-specific by nature.
@@ -294,8 +603,8 @@ catalog and a sign-in's subscription usage (`/api/ai/providers/{id}/usage`);
 that is how the Server section's form lists models and tests a saved
 entry. The login check (`/api/ai/health`) accepts any entry the account can
 use. Token usage stays per account: a member's calls through a shared entry
-are recorded on that member (provider id `server:<id>`), and there is no
-server-wide meter.
+are recorded on that member (provider id `server:<id>`, billing `shared`,
+never a cost), and there is no server-wide meter.
 
 **Access.** Each entry's `access` is `{who: "everyone" | "selected", users:
 [account ids], guests: bool}`: under `everyone` every account, the guest
@@ -569,6 +878,9 @@ wording:
 - `bad_endpoint`: a 404 page, a reply that isn't JSON, or a stream without
   a single server-sent event (`ai_protocols.base.NotAnAIStream`).
 - `too_long`: the prompt exceeds the context. Anything else is `other`.
+- `model_unavailable`: the request named a model no connection offers any
+  more (`ai_settings.ModelUnavailable`, "Models for each task"). It is
+  Gamma's own refusal, a 400 before any call.
 
 `_failure_info` in `routers/ai.py` puts that `kind` beside the plain-string
 `detail` of the HTTP error (a `JSONResponse`) and on the stream's closing
@@ -585,13 +897,15 @@ holds the copy per kind: a headline ("OpenAI rejected the API key", "Lost
 the connection to Gamma" for the browser's own `TypeError`), one sentence,
 and the fix. The login check's warning strip and the Test result on a
 Settings connection row show the same headlines.
-Update key / Sign in again / Edit connection open Settings → Connections on
-that entry's form (`openAiKeysEditor({entry})` in App). Connect AI and Add
-your own key open the pane; Network proxy (`blocked`, an admin's) opens
+Update key / Sign in again / Edit connection open Settings → AI → Models
+on that entry's form (`openAiKeysEditor({entry})` in App). Connect AI and
+Add your own key open the pane, and so does Choose model
+(`model_unavailable`); Network proxy (`blocked`, an admin's) opens
 Settings → Network proxy; New chat starts over. On the latest reply,
 Retry re-sends the question through the edit-and-resend path, and Switch
-model retries with the model picked. The provider's own text is folded
-under "Details from the provider".
+model retries with the model picked, from the favorites, else from every
+other model. The provider's own text is folded under "Details from the
+provider".
 
 A failure with no reply text is an AI message carrying `error: true`. It is
 saved with the chat so it survives a reload, but left out of the `history`
@@ -1021,7 +1335,9 @@ each agent on of each of the account's other computers shown to the
 server, "Codex on TIM-PC", one entry per computer, those that keep the
 page's work folder first, an offline one's listed offline). With more than one, the chip's menu lists them first,
 each by its icon, then the picked one's models and reasoning effort
-(Gamma AI's speed too): who, then how. Where a computer's agent works is
+(Gamma AI's speed too): who, then how. Gamma AI's models there are the
+favorites and the one in use, with "All models…" for the rest ("The model
+menu"). Where a computer's agent works is
 the folder chip at the bar's other end (local_agents.md "The chat's
 computer side"). A row of an agent that cannot answer now ends in a
 hint (`computerChat.agentHint`, a `MenuSelect` option's `trailing`): a
@@ -1838,11 +2154,12 @@ In the chat, a model with a "no tools" verdict shows a **No tools** chip
 before the model chip while the chat would use tools, with the reason on
 hover. A click checks it again: Test with `tools_model`, on an own
 connection or by an administrator; anyone else is told an administrator can
-check it in Settings → Server. The model menus read "model · no tools"
-(`modelLabel` in `chat/modelPrefs.js`), and the agent's intro and
+check it in Settings → Server. The chip's quick list reads "model · no
+tools" (`modelLabel` in `chat/modelPrefs.js`), the model menu tags the row
+"no tools" ("The model menu"), and the agent's intro and
 placeholder give way to the plain chat's. A reply that brings a verdict the
 registry didn't have reads `/api/ai/models` again, so the chip shows at once.
-In Settings → AI › Connections (and Settings → Server's shared rows), each
+In Settings → AI → Models' connection cards (and Settings → Server's shared rows), each
 model tag carries a check (calls tools), a ban (no tools, with the reason and
 date) or nothing (not checked yet), and a click on the tag checks that model
 again; the list is read again after it.
@@ -2317,8 +2634,9 @@ and their limits) has its own document: [translation.md](translation.md).
 ## Handwriting: redraw and convert
 
 The lasso selection's Redraw as shapes and Convert to text
-(`POST /api/ai/ink/shapes` and `/text`) are one call each to the chat's
-model, with the selected pen strokes drawn as a picture. A model that reads
+(`POST /api/ai/ink/shapes` and `/text`) are one call each to the
+handwriting task's model (the chat model while it has none of its own,
+"Models for each task"), with the selected pen strokes drawn as a picture. A model that reads
 text only gets no picture: a redraw goes on from a digest of the strokes'
 points, and Convert to text is refused. They have their own document:
 [handwriting_ai.md](handwriting_ai.md).
@@ -2326,9 +2644,11 @@ points, and Convert to text is refused. They have their own document:
 ## Token usage
 
 Every AI call's token counts come back from the provider itself and are
-kept per account, so the chat can show what a reply cost and Settings can
-show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
-`frontend/src/chat/tokenUsage.js`.
+kept per account, with how the call was paid for and, for a call paid per
+token, what it cost at public prices. So the chat can show what a reply
+cost and Settings → AI → Usage what a month cost. Code: `gamma/ai_usage.py`,
+`gamma/ai_catalog.py` (prices), `ai_client.normalize_usage`,
+`frontend/src/chat/tokenUsage.js`, `frontend/src/settings/SettingsAiUsage.jsx`.
 
 - **On the wire.** `sse_events` ends every stream with a `("usage", {input,
   output, cache_read, cache_write})` event when the provider reported one:
@@ -2343,19 +2663,110 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   `cached_tokens`); `cache_read` / `cache_write` are the cached parts of it.
   A provider that reports nothing (some gateways) yields no event, and
   nothing else changes.
-- **In the chat stream.** `/api/ai/chat` emits `{"usage": …}` lines — one per
-  provider turn, so an agent reply with three tool rounds sends three; the
-  client sums them onto the reply (`usage` on the saved message, like
-  `context` and `actions`). Non-stream callers get one summed `usage` field.
-  The panel shows a dim line under each reply (↑ input, ↓ output, "N%
-  cached" when the provider served part of the prompt from its cache) and
-  the conversation total in the chat-settings popover and the button's
-  tooltip. While a reply streams the same line ticks up inside the reply's
-  pill, Claude Code style: exact counts for the
-  rounds already reported plus a `~` estimate for the one still arriving
-  (`estimateTokens`: characters received / 4, text deltas and previewed
-  tool arguments alike; reset when that round's report lands). Replies
-  saved before this carry no counts and show nothing.
+- **Billing.** `ai_settings.billing_of(entry)` says how a call through a
+  connection is paid for, one of `ai_usage.BILLINGS`, in this order:
+  - `shared`: a server's shared entry (a `server:` id). The member pays
+    nothing; the allowance meters it.
+  - `subscription`: a sign-in (ChatGPT).
+  - The entry's own override, `billing`: `api`, `subscription` or `local`
+    (the connect dialog's More options → Billing: Auto, Pay per token,
+    Subscription, Free (local); Auto shows what it resolves to).
+    `apply_provider_fields` refuses one on a sign-in.
+  - Its preset's `billing`: the coding plans and OpenCode Go
+    `subscription`, Ollama and LM Studio `local`.
+  - Else `api`, per token.
+
+  `ai_runtime` puts it on each provider conf and each registry row. The
+  masked entry carries `billing` (resolved) and `billing_override` (what
+  the entry stores, `""` for none).
+- **Prices.** `ai_catalog.price(conf, model, provider_id, wait)` is USD per
+  million tokens, `{input, output, cache_read?, cache_write?, tiers?,
+  speeds?}`, or None. `tiers` are the tariffs past a prompt size (`[{size,
+  input, output, …}]`, each for a whole prompt over `size` tokens), and
+  `speeds` a factor per served speed tier. Only an exact match counts, from
+  two sources in order:
+  1. The entry's own listing (`Protocol.models` → `base.listed_price`).
+     OpenRouter's per-token `pricing` strings, times 10⁶, with its
+     `overrides` by prompt size as tiers; a `"-1"` (a router whose price
+     varies with the model it routes to) is unknown. OpenCode's `cost.text`, with its
+     context overrides as tiers and its `service_tier` multipliers as
+     `speeds`. A listed price that depends on something no call reports (a
+     time of day, a promotion's dates, a condition the reader doesn't know)
+     is unknown, and models.dev is not asked either.
+  2. models.dev's `cost`, under a provider key the entry names
+     (`catalog_hints`: a preset's `catalog`, `openai` for the ChatGPT
+     backend, the endpoint host's labels) and the exact model id. Its
+     context tiers are `tiers` of type `context`, else `context_over_200k`.
+     A free tariff under a subscription preset's key is the plan's, not a
+     price.
+
+  There is no consensus across providers, unlike the context window: a
+  custom gateway that names no key has no price. The caches are
+  stale-while-revalidate (6 h; a failure retried after 10 min). A fact past
+  its time is served while one background fetch asks again, outside the
+  caches' locks and shared by the callers that ask at the same time
+  (`_background`). Only a cache never filled since the server started is
+  waited for, as long as the caller says: the recorder at most 5 s
+  (`RECORD_WAIT`, so a headless call such as a clip's lookup still finds
+  its price), `/api/ai/models`' facts not at all (`facts`, a snapshot that
+  starts the fetch for the next read), the connect dialog's facts
+  (`listing_facts`) up to 5 s.
+- **Cost.** `ai_usage.cost_of(usage, price, speed)` is USD:
+  - the uncached input (`input − cache_read − cache_write`, at least 0) at
+    the input price;
+  - the cache reads and writes at their own prices, or the input price
+    where none is named (an upper bound);
+  - the output at the output price;
+  - all at the tariff of the largest context tier the whole prompt is over;
+  - for a call served at another speed (flex, fast), times that tier's
+    factor in `speeds`. With no factor named for it, the cost is unknown.
+
+  It is computed when the call is recorded, at that day's price, and only
+  for billing `api`; every other call's cost is NULL. The recorder
+  (`ai_usage.recorder(kind, entry, rt, speed)`) takes the speed the call
+  asked for, unless the report names the one that served it, and writes
+  `billing` and `cost` onto each report it hears, so whatever passes the
+  report on carries them.
+- **Stored.** `ai_usage.record` writes one row per call to `ai_usage` in
+  `users.db`: account, time, kind, provider id + name, model, the four
+  counts, `billing` and `cost` (USD, NULL when unknown or not paid per
+  token). `billing` is `''` for a row from before migration step 71 that
+  the step could not prove, shown as unknown. `ai_usage.recorder` is the
+  `on_usage` callback the call sites bind (`rt["user"]` names the
+  account). Kinds: `chat` (every chat turn, agent rounds included),
+  `translate` (each batch, and a paper's brief), `metadata` (AI
+  extraction), `cite` (the slide citation), `ink` (the handwriting
+  selection's Redraw as shapes and Convert to text,
+  [handwriting_ai.md](handwriting_ai.md)), `test` (the Test button and the
+  login test). Dictation has no token report. Rows older than `KEEP_DAYS`
+  (400) go on the next write. Recording never raises.
+- **In the chat stream.** `/api/ai/chat` emits `{"usage": …}` lines, one per
+  provider turn, so an agent reply with three tool rounds sends three; each
+  carries the round's `billing` and `cost`. `ai_client.add_usage` sums
+  reports for a non-stream reply's `usage`: counts add, costs add and are
+  never priced again from summed tokens, `cost` is left out when no call
+  had one, a pay-per-token call without a price sets `unpriced` and leaves
+  `cost` the known part, and `billing` is the calls' own when they agree,
+  else `"mixed"`. `ai_client.meter_usage` adds one report into a running
+  meter the same way, the one meter sum (`ai_agent`'s `read_paper` helper,
+  `search_services`' web search). The client sums the lines onto the reply
+  the same way (`addUsage` in `tokenUsage.js`; both sides pass the `sums`
+  cases of `tests/shared/ai_models.json`) and saves them as
+  the message's `usage`, like `context` and `actions`, cost included, so a
+  shared conversation shows it. The panel shows a dim line under each
+  reply: ↑ input, ↓ output, "N% cached" when the provider served part of
+  the prompt from its cache, then the cost (`costLabel`): "· $0.021", "·
+  ~$0.02+" when some round had no price, "<$0.01" under a cent. A
+  subscription, a shared connection, a local model, a model without a
+  public price and a reply saved before costs were kept show tokens alone.
+  The conversation total, with its summed cost, is in the chat-settings
+  popover's Tokens section, which then says the cost is estimated from
+  public prices, and in the button's tooltip ("est. $0.12"). While a reply
+  streams the same line ticks up inside the reply's pill, Claude Code
+  style: exact counts for the rounds already reported plus a `~` estimate
+  for the one still arriving (`estimateTokens`: characters received / 4,
+  text deltas and previewed tool arguments alike; reset when that round's
+  report lands). Replies saved before counts were kept show nothing.
 - **Context ring.** Left of the chat header's ⚙, Claude Code style: how full
   the model's window is. The figure is the latest reply's LAST round alone
   (its input + output, which the next message carries as history), saved on
@@ -2378,38 +2789,71 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   per model per page load (`useModelInfo` in `ChatDock.jsx`). The ring
   turns red past 80%; clicking it opens the chat-settings popover, whose
   Tokens section spells the figure out (`contextUsed`).
-- **Stored.** `ai_usage.record` writes one row per call to `ai_usage` in
-  `users.db` (account, time, kind, provider id + name, model, the four
-  counts); `ai_usage.recorder(kind, entry, rt)` is the `on_usage` callback the
-  call sites bind (`rt["user"]` names the account). Kinds: `chat` (every
-  chat turn, agent rounds included), `translate` (each batch, and a paper's
-  brief), `metadata`
-  (AI extraction), `cite` (the slide citation), `ink` (the handwriting
-  selection's Redraw as shapes and Convert to text,
-  [handwriting_ai.md](handwriting_ai.md)), `test` (the Test button and
-  the login test). Dictation has no token report. Rows older than
-  `KEEP_DAYS` (400) go on the next write. Recording never raises.
-- **Shown.** `GET /api/ai/usage` → `{windows: {today, week, month, all} →
-  {calls, input, output, cache_read, cache_write}, kinds: {kind → the same}
-  and models: [{provider_id, provider_name, model, …}] over the last 30
-  days, daily: [{date, calls, input, output, cache_read, cache_write}],
-  first_at, keep_days, allowance}`. `daily` contains 365 consecutive UTC
-  dates ending today, including zero-usage days. `allowance` is the shared
-  entries' 24-hour allowance (above), null when no shared entry applies.
-  `DELETE /api/ai/usage` forgets the account's rows except those the
-  allowance still counts. Settings → AI › Connections → **Token usage**
-  renders one usage card (`UsageChart.jsx`): the overall retained totals
-  from `windows.all` (tokens, input/output, calls, cache percentage, start
-  date), an accent-colored bar chart, and Reset. There are no separate
-  today/week/month total tiles. The chart switches between the latest 30
-  UTC days and the latest 12 calendar months, and between tokens and calls;
-  monthly bars sum the daily data (the current month is partial). Left/right
-  arrows select bars; Home/End select the first/last. The chart fits narrow
-  screens without scrolling. The allowance row and a by-model table follow
-  (plus a by-kind block when
-  more than one kind ran). A guest sees it without Reset while a shared
-  entry applies. No prices anywhere: they differ per provider and change;
-  the tokens are what every provider agrees on.
+- **Shown.** `GET /api/ai/usage?period=&kind=` (`ai_usage.summary`):
+  - `windows`: today, 7 days, 30 days and every row kept, unfiltered;
+  - for `period` (`week`, `month`, `year` or `all`: 7, 30 or 365 days, or
+    every row kept; default `month`) and `kind` (`""` = every kind):
+    `totals` (the period's counts over every kind, which `kind` does not
+    filter), `models` (one row per provider, model and billing of `kind`,
+    the most tokens first; there `billing` is that billing's name) and
+    `kinds` (the period's split by kind, unfiltered too, so `kinds[kind]`
+    is the filtered rows' total);
+  - `daily`: 365 consecutive UTC dates ending today, zero-usage days
+    included, each a counts object with its `date`: `{date, calls, input,
+    output, cache_read, cache_write, cost, priced_calls, unpriced_calls,
+    billing: {<billing>: {calls, input, output, cache_read, cache_write,
+    cost}}}`;
+  - `period`, `kind`, `first_at`, `keep_days`, and `allowance`, the shared
+    entries' 24-hour allowance (above), null when no shared entry applies.
+
+  Every counts object carries `calls`, the four counts, `cost` (the known
+  sum), `priced_calls` and `unpriced_calls` (among the `api` calls) and
+  `billing`, the same counts per billing. An unknown `kind` is a 400, a bad
+  `period` a 422. `DELETE /api/ai/usage` forgets the account's rows except
+  those the allowance still counts.
+- **The Usage pane.** Settings → AI → Usage (pane id `usage`,
+  `SettingsAiUsage.jsx`) reads `/api/ai/usage` through the dialog's store
+  (`useSettingsRead(usageOf(period, kind))`; `PANE_READS.usage` reads the
+  month as the pane opens, [settings.md](settings.md#what-a-pane-reads)).
+  Refresh sits on the pane's head, then the period: 7 days, 30 days, 12
+  months, All. The tiles (`StatText` in a `.setStats.fit` row) sum the
+  period over every task (`totals`):
+  - **Est. API spend**: the known cost of the pay-per-token calls; "—" when
+    none had a price, never $0; "N calls without a price" when some had
+    none; "N earlier calls have no price" for rows of unknown billing.
+  - **Subscriptions**: their tokens and calls, and the quota bars of each
+    subscription connection with a quota reader, read once as the pane
+    shows them.
+  - **Shared**: the tokens through the server's connections. The **Shared
+    allowance** row follows the tiles while a shared entry applies ("12k
+    of 50k tokens in the last 24 h", a red "used up" tag once spent).
+  - **Tokens**: in, out, calls, cached %.
+
+  The chart (`UsageChart.jsx`, its arithmetic `usageChartData.js`) has a
+  bar per UTC day (the latest 30) or per calendar month (the latest 12,
+  the current one partial, each the sum of its days), stacked by billing (api, subscription, shared,
+  local, unknown), in Cost, Tokens or Calls. Cost stacks the api calls
+  alone. A legend shows when more than one kind does, and the selected
+  bar's line spells out each kind's share. Choosing a period sets the
+  interval (daily for 7 and 30 days, monthly for 12 months and All), which
+  its own menu still changes. The arrow keys select bars, Home and End the
+  first and last; the chart fits narrow screens without scrolling. **By
+  model** is a sortable table: model and connection, calls, in, out,
+  cached, est. cost, or the billing tag for a row nobody pays per token
+  for. Its task chips read the API again with `kind`: they narrow By model
+  alone, which gains a Total row (`kinds[kind]`), while the tiles stay the
+  period's. **By
+  task** has the same columns per kind. Reset sits under the chart; a guest
+  sees the pane without it.
+
+  Only pay-per-token calls are shown in dollars. Nobody pays per token for
+  a subscription: its cost is the plan, and the quota bars show how much of
+  it is used. A shared connection costs the member nothing and the
+  allowance meters it. Claude Code, OpenClaw and OpenCode Go show them the
+  same way ([research/ai-model-settings.md](../research/ai-model-settings.md)).
+  An unpriced call is counted as such, never as $0, and the spend is an
+  estimate at public prices: the provider's bill is what counts. The
+  figures cover the calls the providers reported.
 
 ## Chat history
 

@@ -60,7 +60,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from . import ai_permissions, ai_steer
-from .ai_client import UpstreamError, failure_kind, partial_json_object
+from .ai_client import UpstreamError, failure_kind, meter_usage, partial_json_object
 from .ai_context import canonical_tool, elide_live_results
 from .ai_protocols.base import reasoning_text, truncated_stop
 from .ai_tools.base import CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, ensure_tally
@@ -674,12 +674,13 @@ class Helper:
             self.on_status({k: v for k, v in status.items() if v is not None})
 
     def _meter(self, into: dict):
+        """The helper's ``on_usage``: the chat's own (it records each call
+        and puts its cost on the report), then the report summed into
+        ``into`` — costs added, never priced again (ai_client.meter_usage)."""
         def count(one):
             if self.on_usage:
                 self.on_usage(one)
-            for key, value in (one or {}).items():
-                if isinstance(value, int):
-                    into[key] = into.get(key, 0) + value
+            meter_usage(into, one)
         return count
 
 

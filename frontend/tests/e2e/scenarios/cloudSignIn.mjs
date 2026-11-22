@@ -612,9 +612,9 @@ export async function cloudSignInScenarios(env) {
         else await page.goto(`${lab.base}/api/auth/cloud/start?link=1&next=${encodeURIComponent(`/?ws=${owner.ws}`)}`);
         await page.locator(".folderNewBtn").first().waitFor({ timeout: 15000 });
         const answer = await (await combined).json();
-        assertEq(Object.keys(answer.prefs).join(" "), "open-tabs recent-views read-pos ai-provider", `${load}: the combined read answers all but the profile`);
+        assertEq(Object.keys(answer.prefs).join(" "), "open-tabs recent-views read-pos", `${load}: the combined read answers all but the profile`);
         assert((await (await alone).json()).key === "profile", `${load}: the profile is read on its own`);
-        assertEq(asked.join(" "), "/api/prefs?keys=profile,open-tabs,recent-views,read-pos,ai-provider /api/prefs/profile",
+        assertEq(asked.join(" "), "/api/prefs?keys=profile,open-tabs,recent-views,read-pos /api/prefs/profile",
           `${load}: one combined read, then the profile once`);
       }
       assertEq((await owner.api("/api/auth/cloud/status")).identity?.subject, "sub-sync-owner", "the account is linked");

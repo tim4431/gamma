@@ -8,7 +8,7 @@ import { API, apiJson, usePersistedState } from "../shared/lib/utils";
 import { PROFILE_SEEN_KEY } from "./boot.js";
 import { ACCOUNT_PREFS, PREFS, profileOf, readProfile, setterName } from "./prefDefs.js";
 
-export { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX, UI_SCALE, themeScheme, translateModelFor } from "./prefDefs.js";
+export { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX, UI_SCALE, themeScheme } from "./prefDefs.js";
 
 const PREF_NAMES = Object.keys(PREFS);
 
@@ -39,7 +39,7 @@ const PROFILE_URL = `${API}/prefs/profile`;
 // key's answer once, for the account it was read for; any later read asks
 // for its key alone. A guest's preferences stay in its browser, so it reads
 // no profile.
-const FIRST_LOAD_PREFS = ["profile", "open-tabs", "recent-views", "read-pos", "ai-provider"];
+const FIRST_LOAD_PREFS = ["profile", "open-tabs", "recent-views", "read-pos"];
 const preloads = new Map(); // key -> {user, read}
 export function preloadPrefs(user, { guest = false } = {}) {
   const keys = FIRST_LOAD_PREFS.filter((key) => !guest || key !== "profile");

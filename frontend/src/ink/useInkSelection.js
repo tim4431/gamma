@@ -71,9 +71,9 @@ function writeInkClipboard(clip) {
 // groups by surface, and the surface in view (useInkSurfaces.js).
 // onBoxDeselect(): the text boxes let go of theirs. showInNotes(id):
 // App's. transcribe({blocks} | {chips}): the chat half of Transcribe
-// (App's askToTranscribe), null in a shared page's view. ai {model,
-// addTask, updateTask, pageTitle}: what Redraw as shapes and Convert to
-// text ask with — the model the chat sends (App's chatSendModel), the
+// (App's askToTranscribe), null in a shared page's view. ai {addTask,
+// updateTask, pageTitle}: what Redraw as shapes and Convert to text ask
+// with (the server picks the handwriting task's model) — the
 // background tasks' rows (tasks/useTasks.js addLocal, updateLocal) and the
 // page's title, which names a row — null in a shared page's view, which
 // has no AI. stepBlocks(link, fn): App's tree edit
@@ -418,7 +418,7 @@ export function useInkSelection({ focusedBlockId, readOnly, inkUi, lassoPictures
     setStatus(redraw ? t("Redrawing the selection as shapes…") : t("Reading the handwriting…"));
     let answer;
     try {
-      answer = await askInkAi(kind, { model: ai.model || "", space: request.space, strokes: request.strokes }, ctl.signal);
+      answer = await askInkAi(kind, { space: request.space, strokes: request.strokes }, ctl.signal);
     } catch (err) {
       if (ctl.signal.aborted) { stoppedAsking(settle); return; }
       failedAsking(redraw, err, settle);

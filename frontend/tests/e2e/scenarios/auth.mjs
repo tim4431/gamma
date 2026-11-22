@@ -241,7 +241,7 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       const first = asked.slice(0, 4);
       assertEq([...first.slice(0, 2)].sort().join(" "), "/api/server-config /api/session", `the session and the config go first, together: ${first}`);
       assertEq(first[2], "/api/blocks/root/children", `then the listing: ${first}`);
-      assert(/^\/api\/prefs\?keys=profile,open-tabs,recent-views,read-pos,ai-provider$/.test(first[3]), `then the preferences, as one request: ${first}`);
+      assert(/^\/api\/prefs\?keys=profile,open-tabs,recent-views,read-pos$/.test(first[3]), `then the preferences, as one request: ${first}`);
       const alone = asked.filter((u) => /^\/api\/prefs\//.test(u));
       assertEq(alone.join(" "), "", "no preference is read on its own");
       assertEq(asked.filter((u) => u === "/api/session").length, 1, "the session is read once");

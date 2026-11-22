@@ -314,7 +314,7 @@ function useMenuTrigger({ side = "below" } = {}) {
 // `start` lines it up with the trigger's left edge rather than its right
 // (a trigger at a bar's start).
 function useDropdown(up = false, start = false) {
-  const [menu, setMenu] = useState(null); // {x (the edge it lines up with), y}
+  const [menu, setMenu] = useState(null); // {x (the edge it lines up with), y, flipY (menuAnchor's)}
   const triggerRef = useRef(null);
   const close = () => setMenu(null);
   const triggerProps = {
@@ -322,7 +322,7 @@ function useDropdown(up = false, start = false) {
     onClick: () => {
       if (menu) { close(); return; }
       const r = triggerRef.current.getBoundingClientRect();
-      setMenu({ x: start ? r.left : r.right, y: up ? r.top - 4 : r.bottom + 4 });
+      setMenu({ ...menuAnchor(r, { side: up ? "above" : "below" }), x: start ? r.left : r.right });
     },
   };
   return [menu, close, triggerProps, triggerRef];
@@ -360,10 +360,14 @@ const actionRow = (close) => ({ icon, label: lab, title, onClick, danger, disabl
 // plain rows (the composer's folder chip's Add folder…). `up` opens above the trigger, `start` from its left edge.
 // `disabled` greys the trigger out and keeps the menu shut.
 // `ghost` draws the trigger as a `uiBtn ghost` (no frame until hover), for a
-// choice inside a line of text.
+// choice inside a line of text. `listbox(at)` opens a listbox of the
+// caller's own in place of the options, `at` its ContextMenu's placement
+// and dismissal ({x, y, anchorRight, anchorBottom, flipY, onClose,
+// ignoreRef}): a list the options can't be (the task model menu's search
+// over every connection's models), under the same trigger.
 function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon, iconOnly = false,
   display, heading, sections = [], actions = [], locked = "", names = false, up = false, start = false, disabled = false,
-  ghost = false }) {
+  ghost = false, listbox = null }) {
   const [menu, close, triggerProps, triggerRef] = useDropdown(up, start);
   const id = useId(); // the trigger's: it names the menu
   const say = names ? String : t;
@@ -385,7 +389,7 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
   const choices = (headingId, rows) => (headingId ? <div role="group" aria-labelledby={headingId}>{rows}</div> : rows);
   return (
     <>
-      <button type="button" id={id} aria-haspopup="menu" aria-expanded={!!menu}
+      <button type="button" id={id} aria-haspopup={listbox ? "listbox" : "menu"} aria-expanded={!!menu}
         className={`uiBtn sm uiSelectBtn ${block ? "block" : ""} ${ghost ? "ghost" : ""} ${TriggerIcon && iconOnly ? "iconSq" : ""}`}
         aria-label={title} title={title} disabled={disabled} {...triggerProps}>
         {TriggerIcon ? (
@@ -398,7 +402,8 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
         )}
         {!iconOnly ? <ChevronDownIcon size={14} className="uiSelectChev" /> : null}
       </button>
-      {menu ? (
+      {menu && listbox ? listbox({ x: menu.x, y: menu.y, anchorRight: !start, anchorBottom: up, flipY: menu.flipY, onClose: close, ignoreRef: triggerRef })
+        : menu ? (
         <ContextMenu x={menu.x} y={menu.y} anchorRight={!start} anchorBottom={up} onClose={close} ignoreRef={triggerRef}
           className="uiSelectMenu" aria-labelledby={id}>
           {heading ? <MenuLabel id={`${id}-0`}>{heading}</MenuLabel> : null}

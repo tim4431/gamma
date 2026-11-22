@@ -9,10 +9,13 @@ import re
 from urllib.request import Request as URLRequest
 
 from .base import (EMPTY_REPLY_HINT, OPENAI_PICTURE_TOKENS, TOOL_IMAGES_NOTE, Protocol, api_url, as_int,
-                   attach_target, multipart_body, note_speed, parse_tool_args, served_speed_name, tool_image_turns,
-                   turn_attachments)
+                   attach_target, bearer, multipart_body, note_speed, parse_tool_args, served_speed_name,
+                   tool_image_turns, turn_attachments)
 from .responses import OPENAI_RESPONSES
 from .services import service_of
+
+# The user agent a service that asks clients to name themselves gets.
+CLIENT_AGENT = "Gamma"
 
 # Listings include models the chat endpoint can't use.
 _NOT_CHAT = re.compile(r"embed|whisper|tts|audio|image|dall-e|moderation|transcribe|realtime|search")
@@ -164,10 +167,17 @@ class OpenAIChat(Protocol):
             # The final chunk then carries the token counts (OpenAI and the
             # common compatible servers: vLLM, Ollama, llama.cpp, LiteLLM).
             body["stream_options"] = {"include_usage": True}
-        return URLRequest(api_url(conf["base_url"], "/chat/completions"), data=json.dumps(body).encode(), headers={
-            "Authorization": f"Bearer {conf['api_key']}",
-            "Content-Type": "application/json",
-        })
+        headers = {**bearer(conf["api_key"]), "Content-Type": "application/json"}
+        session = (service_of(conf) or {}).get("session_header")
+        if session:
+            # The service asks a client to name itself and to send one stable
+            # id per conversation (OpenCode, for its routing and prompt
+            # cache): the chat's cache key, already a hash of the conversation.
+            headers["User-Agent"] = CLIENT_AGENT
+            if cache_key:
+                headers[session] = cache_key
+        return URLRequest(api_url(conf["base_url"], "/chat/completions"), data=json.dumps(body).encode(),
+                          headers=headers)
 
     def reply_text(self, data):
         choices = data.get("choices") or [{}]
@@ -255,7 +265,7 @@ class OpenAIChat(Protocol):
             fields.update({"response_format": "verbose_json", "timestamp_granularities[]": "segment"})
         body, multipart_type = multipart_body(fields, filename, content_type, audio)
         return URLRequest(api_url(conf["base_url"], "/audio/transcriptions"), data=body, headers={
-            "Authorization": f"Bearer {conf['api_key']}",
+            **bearer(conf["api_key"]),
             "Content-Type": multipart_type,
         })
 

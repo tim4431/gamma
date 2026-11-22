@@ -165,15 +165,15 @@ def test_verify_takes_no_hit_whose_title_is_a_phrase_of_the_one_read(monkeypatch
 
 
 def test_ai_extract_reports_document_kind(monkeypatch):
-    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m: "m")
+    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m, role="chat": "m")
     monkeypatch.setattr(metadata, "_call_ai",
                         lambda *a, **kw: '{"title": "QM Lecture 5", "kind": "document"}')
-    assert metadata._ai_extract_meta("text", "", "", {"enabled": True})["kind"] == "document"
+    assert metadata._ai_extract_meta("text", "", {"enabled": True})["kind"] == "document"
     # Unknown kinds are read from the record's shape: a journal article, the
     # safe (warned) default
     monkeypatch.setattr(metadata, "_call_ai",
                         lambda *a, **kw: '{"title": "T", "kind": "mixtape"}')
-    assert metadata._ai_extract_meta("text", "", "", {"enabled": True})["kind"] == "journalArticle"
+    assert metadata._ai_extract_meta("text", "", {"enabled": True})["kind"] == "journalArticle"
 
 
 def test_course_notes_keep_their_kind(guest, monkeypatch):
@@ -182,7 +182,7 @@ def test_course_notes_keep_their_kind(guest, monkeypatch):
     for it) and the status endpoint reports the kind."""
     page = _paper_page(guest, "Lecture 5: perturbation theory. Problem set due Friday.",
                        monkeypatch, ai_enabled=True)
-    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m: "m")
+    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m, role="chat": "m")
     monkeypatch.setattr(metadata, "_call_ai",
                         lambda *a, **kw: '{"title": "Lecture 5: perturbation theory", '
                                          '"authors": ["Prof X"], "kind": "document"}')
@@ -541,7 +541,7 @@ def _qpm_page(guest, monkeypatch, ai_enabled, pick=None, refuse=False):
     monkeypatch.setattr(metadata, "_pdf_excerpt", lambda u, d, limit: (QPM_TEXT, None, len(QPM_TEXT)))
     monkeypatch.setattr(metadata, "_ensure_indexed", lambda u, d: True)
     monkeypatch.setattr(metadata, "ai_runtime", lambda u: {"enabled": ai_enabled})
-    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m: "m")
+    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m, role="chat": "m")
     monkeypatch.setattr(metadata, "_crossref_search", lambda q, rows=5: [dict(CHAPTER, source="crossref")])
     monkeypatch.setattr(metadata, "_fetch_doi",
                         lambda d: (dict(CHAPTER), "@incollection{x}") if d == CHAPTER["doi"] else (None, ""))
@@ -722,7 +722,7 @@ def test_a_doi_found_twice_is_asked_and_shown_once(guest, monkeypatch):
         return {"10.1000/cited123": (CITED_META, "@x"), "10.1000/real456": (own, "@article{real}")}.get(d.lower(), (None, ""))
     monkeypatch.setattr(metadata, "_fetch_doi", fetch)
     monkeypatch.setattr(metadata, "_crossref_search", lambda q, rows=5: [dict(own, source="crossref")])
-    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m: "m")
+    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m, role="chat": "m")
     shown = []
 
     def fake_ai(messages, system, model, rt, **kw):

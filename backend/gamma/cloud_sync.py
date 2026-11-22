@@ -25,8 +25,8 @@ server without cloud sign-in makes no call from here.
   a minute (``sync_if_stale``); on every check; and a few seconds after a
   change made here (``profile_changed``). A push the account server
   refuses as older (409) reads both sides again. A failed push is retried
-  by the next check. The AI provider entries and the active entry
-  (``ai-settings``, ``ai-provider``) never sync. The last outcome per
+  by the next check. The AI provider entries and the model each task
+  uses (``ai-settings``, ``ai-models``) never sync. The last outcome per
   account is kept in memory for Settings (``profile_status``).
 - **The server list** (``register_server``): this server's address under
   the person's account, posted on sign-in and on every check (an upsert

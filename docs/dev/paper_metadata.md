@@ -265,7 +265,8 @@ a plausible hallucination):
   belongs to) and not a work the document cites or shares a topic or a
   title phrase with. The answer is the last JSON object in the reply that
   names a record (`_answer`), whatever reasoning surrounds it. It runs on
-  the request's metadata model at the model's lowest reasoning effort and
+  the account's metadata model (its metadata task; a lookup names no
+  model, [ai.md](ai.md#models-for-each-task)) at the model's lowest reasoning effort and
   is counted as metadata usage. Its pick is stored confirmed (`match:
   "ai"`); "none" drops them all and the AI reads the document itself; a
   refused call (a used-up allowance, too many calls) or any failure keeps
@@ -384,8 +385,9 @@ and who reads it: [import_export.md](import_export.md#bibtex-bibliography).
 
 **Slide citation.** The PPT-style markdown citation is generated *in the
 same fetch* as the metadata (`_make_ppt_cite`, one AI call over the BibTeX;
-the client passes its `cite_prompt`/`cite_model` prefs, `/api/clip` uses the
-defaults) and returned as `ppt_cite`, so it is ready the moment the record
+the client passes its `cite_prompt` pref; neither the fetch nor
+`/api/metadata/cite` takes a model, so it runs on the account's metadata
+model, as `/api/clip`'s lookup does) and returned as `ppt_cite`, so it is ready the moment the record
 is. A citation failure
 never fails the fetch. `/api/metadata/cite` is the regenerate path (↻ in the
 Share dialog's Citation section; it sends the entry every surface prints,
@@ -449,8 +451,12 @@ the page's title as it stands after the write (`title_updated` says whether
 background lookup after a clip and the one the app starts when the page is
 opened — and the loser still has to show the winner's rename, so the client
 (`mergeMetaResult` in App.jsx) takes the server's title over its own copy and
-drops the marker once the title has moved off it. The AI fallback model is selected in Settings →
-Providers; an arXiv id or a DOI that ties to the PDF does not call that
+drops the marker once the title has moved off it. The AI fallback model is the account's
+metadata task, picked in Settings → AI → Models (Metadata & citations);
+the fetch, the batch job and `/metadata/cite` take no model of their own.
+A lookup whose AI part ran says which model ran (`routed`); when the chat
+model stood in for one no longer offered, the open page's task row says
+so. An arXiv id or a DOI that ties to the PDF does not call that
 model, one the text only names goes to its check (`_ai_pick`).
 
 ## PDF resolution

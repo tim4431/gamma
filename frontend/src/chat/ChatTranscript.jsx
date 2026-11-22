@@ -23,7 +23,7 @@ import ChatErrorCard from "./ChatErrorCard";
 import AgentChanges, { ACTION_ICONS, FileChanges, ThreadsOpened } from "./AgentChanges";
 import { changeSteps, noteReview } from "./noteReview.js";
 import { declinedSummary } from "./approvals.js";
-import { cachedPercent, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
+import { cachedPercent, costLabel, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { areaPicturesNote, canContinueAfterLimit, continueAfterLimitPrompt, coverageNote, limitNote, shortenedNote, trimmedNote,
   toolsOffNote, truncatedNote } from "./coverage.js";
 import { failureCopy } from "./chatErrors";
@@ -173,16 +173,23 @@ function AgentSteps({ actions, live, still, running, waiting, helpers = [], usag
 // stream, summed over an agent reply's rounds); a reply without one shows
 // nothing. While the reply streams the same line ticks up next to the
 // "Responding" pill: exact counts for the rounds already reported, a "~"
-// estimate from the characters received for the one still arriving.
+// estimate from the characters received for the one still arriving. A
+// finished pay-per-token reply ends with its estimated cost ("· $0.021",
+// "~$0.02+" when a round had no price); a subscription, a shared connection,
+// a local model and a reply saved before costs were recorded show tokens alone.
 export function UsageLine({ usage, className = "chatMsgUsage" }) {
   if (!usage || !(usage.input || usage.output)) return null;
   const cached = cachedPercent(usage);
   const live = !!usage.estimate;
+  const cost = live ? "" : costLabel(usage);
+  const detail = usageDetail(usage);
   return (
-    <span className={className} title={live ? t("Counting while the reply streams — the provider's own count replaces the estimate when it finishes") : usageDetail(usage)}>
+    <span className={className} title={live ? t("Counting while the reply streams — the provider's own count replaces the estimate when it finishes")
+      : cost ? `${detail} · ${usage.unpriced ? t("estimated {cost}; some rounds have no public price", { cost }) : t("estimated {cost} at public prices", { cost })}` : detail}>
       {usage.input ? <span className="chatMsgUsagePart"><ArrowUpIcon size={9} />{fmtTokens(usage.input)}</span> : null}
       <span className="chatMsgUsagePart"><ArrowDownIcon size={9} />{live ? "~" : ""}{fmtTokens(usage.output)}</span>
       {cached && !live ? <span className="chatMsgUsagePart">{cached}{t("% cached")}</span> : null}
+      {cost ? <span className="chatMsgUsagePart">· {cost}</span> : null}
     </span>
   );
 }

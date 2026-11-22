@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 70
+SCHEMA_VERSION = 71
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -112,7 +112,9 @@ def safe_doc_id(doc_id: str) -> str:
 
 USERS_SCHEMA = [
     # One row per AI call an account made, from the provider's own token
-    # report (gamma/ai_usage.py); Settings -> AI sums them.
+    # report (gamma/ai_usage.py); Settings -> AI sums them. ``billing``: how
+    # it was paid for ('' = before step 71 kept it), ``cost``: USD for a call
+    # paid per token, NULL when unknown or nothing is spent per token.
     """CREATE TABLE IF NOT EXISTS ai_usage (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
@@ -124,7 +126,9 @@ USERS_SCHEMA = [
         input INTEGER NOT NULL DEFAULT 0,
         output INTEGER NOT NULL DEFAULT 0,
         cache_read INTEGER NOT NULL DEFAULT 0,
-        cache_write INTEGER NOT NULL DEFAULT 0
+        cache_write INTEGER NOT NULL DEFAULT 0,
+        billing TEXT NOT NULL DEFAULT '',
+        cost REAL
     )""",
     "CREATE INDEX IF NOT EXISTS ai_usage_user_at ON ai_usage (user_id, at)",
     """CREATE TABLE IF NOT EXISTS mcp_oauth (
@@ -2041,9 +2045,9 @@ def _open_users_db(path: str, ws: str) -> Connection:
 
 
 # Prefs that follow the account regardless of workspace (users.db
-# ``user_prefs``, workspace_id ''): the AI provider entries, the active
-# entry, the translation engine keys (gamma/translate_engines.py), and the
-# preference profile. Everything else is per account + workspace, because
+# ``user_prefs``, workspace_id ''): the AI provider entries, the model each
+# task uses, the translation engine keys (gamma/translate_engines.py), and
+# the preference profile. Everything else is per account + workspace, because
 # the value names that workspace's pages (open tabs, recents, reading
 # positions), and lives with the workspace: ``workspace_prefs`` in its
 # pages.db.
@@ -2052,7 +2056,7 @@ PROFILE_PREF_KEY = "profile"
 # on it, the base of the next three-way merge. Never served by /api/prefs.
 PROFILE_BASE_PREF_KEY = "profile-base"
 NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerprint seen}
-USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "search-services",
+USER_PREF_KEYS = frozenset({"ai-settings", "translate-engines", "search-services",
                             PROFILE_PREF_KEY, PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY,
                             # gamma/zotero_account.py PREF_KEY: the connected
                             # Zotero account, its API key sealed; never served
@@ -2061,7 +2065,12 @@ USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "
                             # gamma/skills.py PREF_KEY: the account's own
                             # skills; only routers/skills.py reads or writes
                             # it, never synced to Gamma Cloud.
-                            "skills"})
+                            "skills",
+                            # gamma/ai_settings.py AI_MODELS_PREF_KEY: the
+                            # model each task uses and the favorites; only
+                            # /api/ai/models/roles and /import write it,
+                            # never synced to Gamma Cloud.
+                            "ai-models"})
 
 
 def pref_scope(key: str, ws: str) -> str:

@@ -30,7 +30,7 @@ export const penOnly = (strokes) => (strokes || []).filter(isPen);
 //   selectedStrokes (selectionEdits.js) gives them — each group's in its
 //   own order, the groups in the selection's — of every tool (the server
 //   leaves the highlighters out); with `space`, the first such group's, the
-//   body the routes take ({model, space, strokes}). A stroke id a group
+//   body the routes take ({space, strokes}). A stroke id a group
 //   before it already used goes out under a fresh one, since the server
 //   reads the strokes as one file, where an id is unique; the answer names
 //   strokes by index, never by id.

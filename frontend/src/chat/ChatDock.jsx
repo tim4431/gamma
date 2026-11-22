@@ -35,7 +35,7 @@ import { letGoOf, stoppedRequests } from "./fetchHandoff.js";
 import { connectorTab } from "../shared/lib/connector.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
-import { addUsage, contextUsed, conversationUsage, fmtTokens, usageDetail } from "./tokenUsage";
+import { addUsage, contextUsed, conversationUsage, costLabel, fmtTokens, usageDetail } from "./tokenUsage";
 import { charCount, keptNote, keptTitle, passageShares } from "./passageBudget.js";
 import { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
@@ -60,7 +60,8 @@ import { PathLinkContext } from "../editor/pathLinkContext.js";
 import FileKindIcon from "../shared/ui/FileIcon.jsx";
 import { formatOf } from "../documents/formats.js";
 import ChipPreview from "./ChipPreview.jsx";
-import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
+import { effortFor, modelLabel, speedFor } from "./modelPrefs";
+import { modelChoiceLabel } from "../ai/modelMenu.js";
 import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, EyeIcon, FileIcon,
   HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteMarkIcon, SearchIcon,
   SettingsIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
@@ -174,7 +175,7 @@ export function SelChip({ kind, icon, label, note, file = "", cut, auto = false,
 
 // No AI connected: what the chat is for, then one tile per way to connect
 // (settings/providerEditor.js aiServiceTiles over GET /api/ai/settings). A tile
-// opens Settings → Connections with the connect dialog set to that service.
+// opens Settings → AI → Models with the connect dialog set to that service.
 // An account that can't store keys (a guest) can only ask for a shared one;
 // an admin may also share one with the whole server. `intent`: the handlers
 // that fetch Settings as the pointer or the focus reaches what opens it.
@@ -184,7 +185,7 @@ export function SelChip({ kind, icon, label, note, file = "", cut, auto = false,
 // (`onPick`), and one found here but off (`found`, GET /api/local-agents'
 // agents) opens Settings → AI → Agents, where it is turned on.
 function ChatSetupCard({ info, isAdmin, onConnect, openSettings, intent, agents = [], found = [], onPick }) {
-  const tiles = info.failed ? [] : aiServiceTiles(info, { long: true });
+  const tiles = info.failed ? [] : aiServiceTiles(info);
   return (
     <div className="chatSetup" data-guide="chat.setup">
       <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={20} /></span>
@@ -282,13 +283,15 @@ export default function ChatDock({
   // "Pictures per message"); onAttachView attaches the visible part of the
   // open paper, with the handwriting on it (App), when a paper is open.
   chatImages, setChatImages, chatPictureBudget = DEFAULT_PICTURE_BUDGET, onAttachView,
-  chatModel, setChatModel, chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatSystem,
+  // chatModel: the chat's model as the account's roles resolve it;
+  // aiModels: ai/useAiModels.js's (the favorites, setRole, toggleFavorite).
+  chatModel, aiModels = null, chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatSystem,
   // What a message sent while a reply runs does: "steer" or "queue"
   // (Settings → AI → Chat; chat/enterKey.js followUpSteers).
   chatFollowUpMode = "steer",
   dictationModel, dictationLang,
   chatContextChars, setChatContextChars, multiContextChars,
-  // openAiKeysEditor({service, entry}?) opens Settings → Connections: with
+  // openAiKeysEditor({service, entry}?) opens Settings → AI → Models: with
   // `service` the connect dialog set to it (the setup card), with `entry`
   // that connection's form (an error card's "Update key", the login check's
   // Fix…). focusSignal: bumped by App when a connection made from the setup
@@ -299,7 +302,7 @@ export default function ChatDock({
   // /api/ai/settings, the one Connections shows), so a tile's connect dialog
   // can open with Settings instead of a round trip later. aiInfoFailed: App's
   // read of /api/ai/models failed, so aiInfo may never come.
-  aiInfo, aiInfoFailed = false, aiProvider, openAiKeysEditor, openSettings, preloadSettings, onSetupInfo, isAdmin = false, focusSignal = 0,
+  aiInfo, aiInfoFailed = false, openAiKeysEditor, openSettings, preloadSettings, onSetupInfo, isAdmin = false, focusSignal = 0,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
@@ -595,10 +598,14 @@ export default function ChatDock({
   // doesn't, the server falls back to extracted text, so the PDF button
   // must not default on, and turning it on by hand gets a warning, not silence.
   const activeModel = (aiInfo?.models || []).find((m) => m.id === chatModel) || null;
-  // The header's model list is scoped to the active key (Settings → AI ›
-  // Connections); the first key's when none is selected or the selected one is gone.
-  const headerModels = providerModels(aiInfo?.models, aiProvider);
+  // Every connection's models; a pick is the account's chat model, on
+  // every device (useAiModels setRole). The chip lists the favorites and
+  // the model in use, and opens the menu of all of them (AgentChip).
+  const headerModels = aiInfo?.models || [];
   const headerModel = headerModels.find((m) => m.id === chatModel) || headerModels[0] || null;
+  const setChatModel = (id) => aiModels?.setRole("chat", id);
+  const favoriteModels = (aiModels?.favorites || []).map((id) => headerModels.find((m) => m.id === id)).filter(Boolean);
+  const quickModels = headerModel && !favoriteModels.includes(headerModel) ? [headerModel, ...favoriteModels] : favoriteModels;
   // The model can't call tools on its connection: its chats go without them,
   // which the composer's No tools chip says (a click checks it again, on an
   // own connection or by an administrator), and the agent's intro and
@@ -1542,7 +1549,7 @@ export default function ChatDock({
     let ended = false; // the reply ended on its own (not stopped, not failed): the queue goes on
     let coverage = null; // {"context": [...]} — what the model was given, per document
     let answered = null; // {"model": {id, name, effort, speed}} — which model answers, how
-    let usage = null; // the provider's token report, summed over the reply's rounds
+    let usage = null; // the provider's token report, summed over the reply's rounds, with their billing and cost (addUsage)
     let lastRound = null; // the latest round's report alone — the context ring's figure
     let liveChars = 0; // characters received since the last report — the running estimate
     let running = null; // the tool call running now ({"step"} line), until its action lands
@@ -2094,6 +2101,7 @@ export default function ChatDock({
       connect: openAiKeysEditor, own_key: openAiKeysEditor, key: openEntry, signin: openEntry,
       connection: openEntry, proxy: isAdmin && openSettings ? () => openSettings("proxy") : null,
       new_chat: latest ? newChat : null, skills: openSettings ? () => openSettings("skills") : null,
+      models: openSettings ? () => openSettings("ai") : null,
     }[copy.fix];
     if (fix && !readOnly) {
       out.push(<button key="fix" type="button" className="uiBtn sm primary" {...(fix === newChat ? {} : settingsIntent)}
@@ -2102,10 +2110,12 @@ export default function ChatDock({
     // A skill that is gone leaves no message to retry: it went back in the composer.
     if (latest && m.errorKind !== "skill") {
       out.push(<button key="retry" type="button" className="uiBtn sm" onClick={() => retryReply(idx)}>{t("Retry")}</button>);
-      const others = copy.switchModel ? headerModels.filter((x) => x.id !== chatModel) : [];
+      // The favorites, else every other model.
+      const quick = favoriteModels.filter((x) => x.id !== chatModel);
+      const others = !copy.switchModel ? [] : quick.length ? quick : headerModels.filter((x) => x.id !== chatModel);
       if (others.length) {
         out.push(<ActionMenu key="switch" label={t("Switch model")} items={others.map((x) => ({
-          label: x.model,
+          label: modelChoiceLabel(x, headerModels),
           title: t("Switch to this model and retry"),
           onClick: () => { setChatModel(x.id); retryReply(idx, x.id); },
         }))} />);
@@ -2172,7 +2182,10 @@ export default function ChatDock({
     });
   }
   const totalUsage = conversationUsage(chatMessages);
-  const usageTitle = totalUsage ? t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) }) : "";
+  const totalCost = costLabel(totalUsage);
+  const usageTitle = !totalUsage ? ""
+    : totalCost ? t("; this conversation: {input} tokens in, {output} out, est. {cost}", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output), cost: totalCost })
+    : t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) });
   const ctxText = !ctxUsed ? ""
     : ctxWindow ? t("Context: {used} of {size} tokens ({percent}%)", { used: fmtTokens(ctxUsed), size: fmtTokens(ctxWindow), percent: Math.round((ctxUsed / ctxWindow) * 100) })
     : t("Context: {used} tokens", { used: fmtTokens(ctxUsed) });
@@ -2330,7 +2343,10 @@ export default function ChatDock({
             <div className="chatUsageTotal" title={usageDetail(totalUsage)}>
               <UsageLine usage={totalUsage} className="chatMsgUsage inline" />
               {ctxUsed ? <span className="chatMsgUsage inline">{ctxWindow ? <UsageRing fraction={ctxUsed / ctxWindow} /> : null}{ctxText}</span> : null}
-              <span className="popoverHint">{t("{n} replies counted, as the provider reported them. Totals per day and model: Settings / AI / Token usage.", { n: chatMessages.filter((m) => m.role === "ai" && m.usage).length })}</span>
+              <span className="popoverHint">
+                {t("{n} replies counted, as the provider reported them. Totals per day and model: Settings / AI / Usage.", { n: chatMessages.filter((m) => m.role === "ai" && m.usage).length })}
+                {costLabel(totalUsage) ? ` ${t("The cost is estimated from public prices; subscriptions and shared connections are not billed per token.")}` : ""}
+              </span>
             </div>
           ) : (
             <div className="popoverHint">{t("No token counts yet — they appear under each reply once the provider reports them.")}</div>
@@ -2357,7 +2373,12 @@ export default function ChatDock({
     label: knobsLabel(speed),
     text: knobs ? [headerModel.model, effort].filter(Boolean).join(" · ") : "",
     glyph: knobs ? <SpeedGlyph speed={speed} /> : null, speed: knobs ? speed : "",
-    models: aiOff ? [] : headerModels.map((m) => [m.id, modelLabel(m)]), model: headerModel?.id || "", onModel: setChatModel,
+    models: aiOff ? [] : quickModels.map((m) => [m.id, modelLabel(m), null,
+      <span key="where" className="ctxMenuHint">{m.provider_name}</span>]),
+    model: headerModel?.id || "", onModel: setChatModel,
+    allModels: aiOff || !headerModels.length ? null : { models: headerModels, favorites: aiModels?.favorites || [],
+      missing: aiModels?.aiInfo?.missing, value: headerModel?.id || "", onPick: setChatModel,
+      onToggleFavorite: aiModels?.canWrite ? aiModels.toggleFavorite : null },
     sections: aiOff ? [] : [
       ...(effortLevels.length ? [{
         label: t("Reasoning effort"),
@@ -2415,9 +2436,9 @@ export default function ChatDock({
     <div className="chatPanel chatWindow">
       {onComputer ? <ComputerStrip side={side} bucket={chatKey} page={!!focusedBlockId} /> : <>
         {!readOnly && aiHealth && !aiHealth.ok ? (
-          // The login connection check found the active provider broken — say so
-          // here, where the failure would otherwise surface mid-conversation,
-          // in the error card's words.
+          // The login connection check found a connection a task's model
+          // goes through broken — say so here, where the failure would
+          // otherwise surface mid-conversation, in the error card's words.
           <div className="chatHealthStrip" title={aiHealth.error || ""}>
             <span className="chatHealthText">
               {failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline}
@@ -2533,7 +2554,7 @@ export default function ChatDock({
             return copied;
           }}
           note={onChatNote ? { where: noteWhere, make: makeChatNote,
-            structured: aiOff || !aiInfo?.enabled ? t("Needs an AI service: connect one in Settings → Connections") : "" } : null} />
+            structured: aiOff || !aiInfo?.enabled ? t("Needs an AI service: connect one in Settings → AI → Models") : "" } : null} />
       ) : null}
       {/* A comment thread's conversation goes on in its thread: its replies
           sent to the agent are its messages. A co-author's is theirs to go

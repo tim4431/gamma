@@ -86,8 +86,8 @@ All state is SQLite + files on disk under a data directory (env
     created_at)`, gone 180 days after it was made (migration step 49);
   - `user_prefs` — small JSON values per `(user_id, workspace_id, key)`,
     under workspace `''`: the account-wide keys (`db.USER_PREF_KEYS`: the
-    preference `profile` and its sync base `profile-base`, the active AI
-    provider, the AI provider entries, the machine-translation and online
+    preference `profile` and its sync base `profile-base`, the model each
+    AI task uses (`ai-models`), the AI provider entries, the machine-translation and online
     search services with their secrets, the seen notices, and the connected
     Zotero account, `zotero-account`: the Zotero user, a hint of the key,
     what it could do, how it came and the key itself, sealed with the data

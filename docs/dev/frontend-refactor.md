@@ -8,11 +8,13 @@ out of App ([New state](#new-state)). The state decomposition below is
 still mostly a proposal: modules have moved, most of their state
 ownership has not been redesigned, and `app/App.jsx` is still the largest
 file by far (its counts are in `frontend/tests/app-state-baseline.json`).
-Three steps are taken: the block tree holds the document only, and
+Four steps are taken: the block tree holds the document only, and
 the viewer's own state (the open editor, their folding) is App's `view`
 beside it (`shared/model/blockModel.js`, [collab.md](collab.md)); the AI
 connect dialog's form state is `useProviderEditor`
-(`settings/providerEditor.js`); and App's handwriting state lives in
+(`settings/providerEditor.js`); the account's models, each task's and the
+favorites are `useAiModels` (`ai/useAiModels.js`, [ai.md](ai.md#models-for-each-task));
+and App's handwriting state lives in
 owners in `ink/` that App composes (the `ink/` row below,
 [handwriting.md](handwriting.md) "Client"). The tabs' arrangement into
 groups side by side is `workspace/`'s, a pure model and the frames that
@@ -179,8 +181,8 @@ that components read through `useSyncExternalStore` (`pdf/translateState.js`,
   `explorer/trackSelection.js` under `TrackDialog.jsx`,
   `explorer/directoryRows.js` under `useDirectoryRows.js`, `layoutKeeping`
   in `useFilesWindow.js`, `explorer/fileSearch.js` under
-  `useFileSearch.js` and `pdf/highlightWait.js` under
-  `useHighlightWait.js`.
+  `useFileSearch.js`, `pdf/highlightWait.js` under
+  `useHighlightWait.js` and `ai/modelsSync.js` under `useAiModels.js`.
 - **An owner is narrow.** It takes the few inputs it reads and returns
   state and stable commands. A hook that takes App's variables wholesale
   moves code without giving it an owner.
@@ -303,6 +305,7 @@ and the tab groups of the `workspace/` row.
 | `transfers/` | Upload/import/export operations | `uploadFiles`, format imports, backup transfer functions (the Background tasks store, tray and the job handlers in `useAppJobs.js` already live in `tasks/`) |
 | `sharing/` | Share-link resolution/gates and owner share controls | `resolveShare`, `loadShareSettings`, invitation mutations (the popover itself, `SharePopover.jsx`, already lives here) |
 | `settings/` | Settings panels and AI provider form/request state | Existing settings files plus the provider list, Test, usage and login-check handlers App still holds (the connect dialog's form, catalog and sign-in are already `useProviderEditor`) |
+| `ai/` (built: `useAiModels.js`, `modelsSync.js`, `aiModels.js`, `modelMenu.js`, `ModelMenu.jsx`, [ai.md](ai.md#models-for-each-task)) | The account's models, each task's model and the favorites, and the one model menu | Done: App reads `aiInfo`, `modelFor` and the writes from `useAiModels` |
 | `chat/` | Chat attachments and page-change notifications | `addBlockToChat`, `addHighlightToChat`, image selection, existing `ChatDock` |
 | `shared/ui/`, `shared/lib/` | Reusable controls, API transport, and small shared functions | Menus, icons, selected parts of `shared/ui/Widgets.jsx` and `shared/lib/utils.js` |
 
@@ -402,9 +405,9 @@ ordering of folder-chat moves before folder navigation changes.
 
 The AI connect dialog's drafts, busy/error state, catalog requests and OAuth
 sign-in live in the settings feature (`useProviderEditor`,
-`settings/providerEditor.js`). App still holds the provider list, the Test
-and Usage results and the login check; it should receive the selected
-provider/model and refresh commands instead.
+`settings/providerEditor.js`), and the models each task uses in
+`ai/useAiModels.js`. App still holds the provider list, the Test and Usage
+results and the login check.
 
 Split `shared/ui/Widgets.jsx` by ownership: generic controls stay shared;
 workspace docks (`DockWindow`, `OpenTabs`) and chat/editor rendering

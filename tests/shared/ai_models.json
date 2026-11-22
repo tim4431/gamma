@@ -1,0 +1,308 @@
+{
+  "about": "The models for each task, and what a reply's usage sums to (docs/dev/ai.md 'Models for each task', 'Token usage'). Read by backend/tests/test_ai_model_roles.py (roles, keyless) and test_ai_usage.py (sums), and by the frontend's node tests. A registry id is opaque here: no side parses it.",
+  "roles": {
+    "about": "Each task's model from the account's picks (the ai-models pref): gamma/ai_settings.py resolve_roles and frontend/src/ai/aiModels.js. models is the registry in its order ({id, provider, provider_name, model}); engines the ids of the translation services set up; picks each task's pick ('' = none). roles is {role: {pick, model, state}}: state ok (the pick is offered: for translate, a service set up counts), follows (no pick) or missing (a pick no longer offered: it is kept). model is the pick while ok, else the chat model, for chat itself the first model offered, else ''. With no model offered at all, translation goes to the free service (engine:microsoft) while it is set up. without, when given, is the same input with every model of that provider gone: what removing that connection leaves (the client's tasksAffectedBy).",
+    "cases": [
+      {
+        "note": "nothing picked: chat is the first model offered and every task follows it",
+        "models": [
+          {"id": "work:claude-x", "provider": "work", "provider_name": "Work key", "model": "claude-x"},
+          {"id": "work:claude-y", "provider": "work", "provider_name": "Work key", "model": "claude-y"},
+          {"id": "home:qwen2.5:7b", "provider": "home", "provider_name": "Ollama", "model": "qwen2.5:7b"}
+        ],
+        "engines": ["engine:microsoft"],
+        "picks": {"chat": "", "metadata": "", "translate": "", "ink": ""},
+        "roles": {
+          "chat": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "metadata": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "translate": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "ink": {"pick": "", "model": "work:claude-x", "state": "follows"}
+        },
+        "without": {
+          "provider": "work",
+          "roles": {
+            "chat": {"pick": "", "model": "home:qwen2.5:7b", "state": "follows"},
+            "metadata": {"pick": "", "model": "home:qwen2.5:7b", "state": "follows"},
+            "translate": {"pick": "", "model": "home:qwen2.5:7b", "state": "follows"},
+            "ink": {"pick": "", "model": "home:qwen2.5:7b", "state": "follows"}
+          }
+        }
+      },
+      {
+        "note": "an offered pick is ok; a pick no longer offered stays, missing, and the chat model stands in",
+        "models": [
+          {"id": "work:claude-x", "provider": "work", "provider_name": "Work key", "model": "claude-x"},
+          {"id": "work:claude-y", "provider": "work", "provider_name": "Work key", "model": "claude-y"},
+          {"id": "home:qwen2.5:7b", "provider": "home", "provider_name": "Ollama", "model": "qwen2.5:7b"}
+        ],
+        "engines": ["engine:microsoft"],
+        "picks": {"chat": "home:qwen2.5:7b", "metadata": "work:claude-y", "translate": "work:gone", "ink": ""},
+        "roles": {
+          "chat": {"pick": "home:qwen2.5:7b", "model": "home:qwen2.5:7b", "state": "ok"},
+          "metadata": {"pick": "work:claude-y", "model": "work:claude-y", "state": "ok"},
+          "translate": {"pick": "work:gone", "model": "home:qwen2.5:7b", "state": "missing"},
+          "ink": {"pick": "", "model": "home:qwen2.5:7b", "state": "follows"}
+        },
+        "without": {
+          "provider": "home",
+          "roles": {
+            "chat": {"pick": "home:qwen2.5:7b", "model": "work:claude-x", "state": "missing"},
+            "metadata": {"pick": "work:claude-y", "model": "work:claude-y", "state": "ok"},
+            "translate": {"pick": "work:gone", "model": "work:claude-x", "state": "missing"},
+            "ink": {"pick": "", "model": "work:claude-x", "state": "follows"}
+          }
+        }
+      },
+      {
+        "note": "a shared entry's model is picked like any other, and goes missing with its access",
+        "models": [
+          {"id": "work:claude-x", "provider": "work", "provider_name": "Work key", "model": "claude-x"},
+          {"id": "server:lab:lab-m", "provider": "server:lab", "provider_name": "Lab", "model": "lab-m"}
+        ],
+        "engines": [],
+        "picks": {"chat": "", "metadata": "server:lab:lab-m", "translate": "", "ink": "server:lab:lab-m"},
+        "roles": {
+          "chat": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "metadata": {"pick": "server:lab:lab-m", "model": "server:lab:lab-m", "state": "ok"},
+          "translate": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "ink": {"pick": "server:lab:lab-m", "model": "server:lab:lab-m", "state": "ok"}
+        },
+        "without": {
+          "provider": "server:lab",
+          "roles": {
+            "chat": {"pick": "", "model": "work:claude-x", "state": "follows"},
+            "metadata": {"pick": "server:lab:lab-m", "model": "work:claude-x", "state": "missing"},
+            "translate": {"pick": "", "model": "work:claude-x", "state": "follows"},
+            "ink": {"pick": "server:lab:lab-m", "model": "work:claude-x", "state": "missing"}
+          }
+        }
+      },
+      {
+        "note": "translation takes a service that is set up; no other task does",
+        "models": [
+          {"id": "work:claude-x", "provider": "work", "provider_name": "Work key", "model": "claude-x"},
+          {"id": "home:qwen2.5:7b", "provider": "home", "provider_name": "Ollama", "model": "qwen2.5:7b"}
+        ],
+        "engines": ["engine:microsoft", "engine:google"],
+        "picks": {"chat": "", "metadata": "engine:google", "translate": "engine:google", "ink": ""},
+        "roles": {
+          "chat": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "metadata": {"pick": "engine:google", "model": "work:claude-x", "state": "missing"},
+          "translate": {"pick": "engine:google", "model": "engine:google", "state": "ok"},
+          "ink": {"pick": "", "model": "work:claude-x", "state": "follows"}
+        },
+        "without": {
+          "provider": "work",
+          "roles": {
+            "chat": {"pick": "", "model": "home:qwen2.5:7b", "state": "follows"},
+            "metadata": {"pick": "engine:google", "model": "home:qwen2.5:7b", "state": "missing"},
+            "translate": {"pick": "engine:google", "model": "engine:google", "state": "ok"},
+            "ink": {"pick": "", "model": "home:qwen2.5:7b", "state": "follows"}
+          }
+        }
+      },
+      {
+        "note": "a service no longer set up is missing, and the chat model stands in",
+        "models": [
+          {"id": "work:claude-x", "provider": "work", "provider_name": "Work key", "model": "claude-x"}
+        ],
+        "engines": ["engine:microsoft"],
+        "picks": {"chat": "work:claude-x", "metadata": "", "translate": "engine:deepl", "ink": ""},
+        "roles": {
+          "chat": {"pick": "work:claude-x", "model": "work:claude-x", "state": "ok"},
+          "metadata": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "translate": {"pick": "engine:deepl", "model": "work:claude-x", "state": "missing"},
+          "ink": {"pick": "", "model": "work:claude-x", "state": "follows"}
+        }
+      },
+      {
+        "note": "with no model offered, translation goes to the free service while it is set up; the other tasks have nothing",
+        "models": [],
+        "engines": ["engine:microsoft"],
+        "picks": {"chat": "work:claude-x", "metadata": "", "translate": "work:claude-x", "ink": "work:claude-y"},
+        "roles": {
+          "chat": {"pick": "work:claude-x", "model": "", "state": "missing"},
+          "metadata": {"pick": "", "model": "", "state": "follows"},
+          "translate": {"pick": "work:claude-x", "model": "engine:microsoft", "state": "missing"},
+          "ink": {"pick": "work:claude-y", "model": "", "state": "missing"}
+        }
+      },
+      {
+        "note": "with no model offered and the free service not set up, nothing translates",
+        "models": [],
+        "engines": [],
+        "picks": {"chat": "", "metadata": "", "translate": "", "ink": ""},
+        "roles": {
+          "chat": {"pick": "", "model": "", "state": "follows"},
+          "metadata": {"pick": "", "model": "", "state": "follows"},
+          "translate": {"pick": "", "model": "", "state": "follows"},
+          "ink": {"pick": "", "model": "", "state": "follows"}
+        }
+      },
+      {
+        "note": "with no model offered, a service picked still translates",
+        "models": [],
+        "engines": ["engine:microsoft", "engine:google"],
+        "picks": {"chat": "", "metadata": "", "translate": "engine:google", "ink": ""},
+        "roles": {
+          "chat": {"pick": "", "model": "", "state": "follows"},
+          "metadata": {"pick": "", "model": "", "state": "follows"},
+          "translate": {"pick": "engine:google", "model": "engine:google", "state": "ok"},
+          "ink": {"pick": "", "model": "", "state": "follows"}
+        }
+      },
+      {
+        "note": "removing the last connection leaves translation on the free service, picked or not",
+        "models": [
+          {"id": "work:claude-x", "provider": "work", "provider_name": "Work key", "model": "claude-x"}
+        ],
+        "engines": ["engine:microsoft"],
+        "picks": {"chat": "", "metadata": "", "translate": "work:claude-x", "ink": ""},
+        "roles": {
+          "chat": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "metadata": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "translate": {"pick": "work:claude-x", "model": "work:claude-x", "state": "ok"},
+          "ink": {"pick": "", "model": "work:claude-x", "state": "follows"}
+        },
+        "without": {
+          "provider": "work",
+          "roles": {
+            "chat": {"pick": "", "model": "", "state": "follows"},
+            "metadata": {"pick": "", "model": "", "state": "follows"},
+            "translate": {"pick": "work:claude-x", "model": "engine:microsoft", "state": "missing"},
+            "ink": {"pick": "", "model": "", "state": "follows"}
+          }
+        }
+      },
+      {
+        "note": "removing the last connection with nothing picked: translation follows onto the free service",
+        "models": [
+          {"id": "work:claude-x", "provider": "work", "provider_name": "Work key", "model": "claude-x"}
+        ],
+        "engines": ["engine:microsoft", "engine:google"],
+        "picks": {"chat": "", "metadata": "", "translate": "", "ink": ""},
+        "roles": {
+          "chat": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "metadata": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "translate": {"pick": "", "model": "work:claude-x", "state": "follows"},
+          "ink": {"pick": "", "model": "work:claude-x", "state": "follows"}
+        },
+        "without": {
+          "provider": "work",
+          "roles": {
+            "chat": {"pick": "", "model": "", "state": "follows"},
+            "metadata": {"pick": "", "model": "", "state": "follows"},
+            "translate": {"pick": "", "model": "engine:microsoft", "state": "follows"},
+            "ink": {"pick": "", "model": "", "state": "follows"}
+          }
+        }
+      }
+    ]
+  },
+  "sums": {
+    "about": "Usage reports summed in order, from none: gamma/ai_client.py add_usage and frontend/src/chat/tokenUsage.js addUsage. The four counts add up (a missing one is 0). cost is the sum of the known costs, left out when no call had one. unpriced is true when a call paid per token (billing api) had no cost, or a sum already said so; left out otherwise. billing is the calls' own when every call has the same one (a call without one counts as having none), else \"mixed\"; left out when none has one. Costs here are exact in binary, so both sides compare them exactly.",
+    "cases": [
+      {
+        "note": "counts add, and so do the costs of priced calls",
+        "calls": [
+          {"input": 10, "output": 1, "cache_read": 4, "cache_write": 0, "billing": "api", "cost": 0.5},
+          {"input": 5, "output": 2, "cache_read": 0, "cache_write": 3, "billing": "api", "cost": 0.25}
+        ],
+        "sum": {"input": 15, "output": 3, "cache_read": 4, "cache_write": 3, "cost": 0.75, "billing": "api"}
+      },
+      {
+        "note": "a call paid per token without a price leaves the known part and marks the sum unpriced",
+        "calls": [
+          {"input": 10, "output": 1, "cache_read": 0, "cache_write": 0, "billing": "api", "cost": 0.5},
+          {"input": 5, "output": 1, "cache_read": 0, "cache_write": 0, "billing": "api", "cost": null}
+        ],
+        "sum": {"input": 15, "output": 2, "cache_read": 0, "cache_write": 0, "cost": 0.5, "unpriced": true, "billing": "api"}
+      },
+      {
+        "note": "the only call paid per token has no price: no cost, unpriced",
+        "calls": [
+          {"input": 7, "output": 3, "cache_read": 0, "cache_write": 0, "billing": "api", "cost": null}
+        ],
+        "sum": {"input": 7, "output": 3, "cache_read": 0, "cache_write": 0, "unpriced": true, "billing": "api"}
+      },
+      {
+        "note": "a subscription's calls have no cost and are never unpriced",
+        "calls": [
+          {"input": 1, "output": 1, "cache_read": 0, "cache_write": 0, "billing": "subscription", "cost": null},
+          {"input": 2, "output": 2, "cache_read": 1, "cache_write": 0, "billing": "subscription", "cost": null}
+        ],
+        "sum": {"input": 3, "output": 3, "cache_read": 1, "cache_write": 0, "billing": "subscription"}
+      },
+      {
+        "note": "calls paid in different ways are mixed",
+        "calls": [
+          {"input": 4, "output": 4, "cache_read": 0, "cache_write": 0, "billing": "api", "cost": 0.125},
+          {"input": 4, "output": 4, "cache_read": 0, "cache_write": 0, "billing": "subscription", "cost": null}
+        ],
+        "sum": {"input": 8, "output": 8, "cache_read": 0, "cache_write": 0, "cost": 0.125, "billing": "mixed"}
+      },
+      {
+        "note": "a sum stays mixed once it is, and a later call differing makes it so",
+        "calls": [
+          {"input": 1, "output": 0, "cache_read": 0, "cache_write": 0, "billing": "subscription", "cost": null},
+          {"input": 1, "output": 0, "cache_read": 0, "cache_write": 0, "billing": "subscription", "cost": null},
+          {"input": 1, "output": 0, "cache_read": 0, "cache_write": 0, "billing": "local", "cost": null},
+          {"input": 1, "output": 0, "cache_read": 0, "cache_write": 0, "billing": "local", "cost": null}
+        ],
+        "sum": {"input": 4, "output": 0, "cache_read": 0, "cache_write": 0, "billing": "mixed"}
+      },
+      {
+        "note": "a sum that already says unpriced keeps saying it",
+        "calls": [
+          {"input": 20, "output": 2, "cache_read": 0, "cache_write": 0, "billing": "api", "cost": 0.5, "unpriced": true},
+          {"input": 10, "output": 1, "cache_read": 0, "cache_write": 0, "billing": "api", "cost": 0.25}
+        ],
+        "sum": {"input": 30, "output": 3, "cache_read": 0, "cache_write": 0, "cost": 0.75, "unpriced": true, "billing": "api"}
+      },
+      {
+        "note": "reports from before costs were kept: counts alone, a missing count is 0",
+        "calls": [
+          {"input": 3, "output": 1},
+          {"input": 2, "output": 2, "cache_read": 1}
+        ],
+        "sum": {"input": 5, "output": 3, "cache_read": 1, "cache_write": 0}
+      },
+      {
+        "note": "a report without billing beside one with: mixed",
+        "calls": [
+          {"input": 1, "output": 1, "cache_read": 0, "cache_write": 0},
+          {"input": 1, "output": 1, "cache_read": 0, "cache_write": 0, "billing": "api", "cost": 0.25}
+        ],
+        "sum": {"input": 2, "output": 2, "cache_read": 0, "cache_write": 0, "cost": 0.25, "billing": "mixed"}
+      }
+    ]
+  },
+  "keyless": {
+    "about": "Whether a connection with these fields may be saved without an API key: gamma/ai_settings.py key_optional and the connect form's rule (frontend/src/settings). choices are the parts of GET /api/ai/settings' protocols and services the rule reads, as the server has them (the pytest checks they agree). A sign-in never takes a key; a preset says so itself (key_optional: a local server); any other address is a custom endpoint, which may go without one. An empty base URL, or the protocol's own default, is the provider's own endpoint, which needs a key. Spaces around the address and one trailing slash do not count.",
+    "choices": {
+      "protocols": [
+        {"id": "anthropic", "auth": "key", "default_base_url": "https://api.anthropic.com"},
+        {"id": "openai", "auth": "key", "default_base_url": "https://api.openai.com"},
+        {"id": "chatgpt", "auth": "oauth", "default_base_url": "https://chatgpt.com/backend-api/codex"}
+      ],
+      "services": [
+        {"id": "deepseek", "protocol": "openai", "base_url": "https://api.deepseek.com", "key_optional": false},
+        {"id": "ollama", "protocol": "openai", "base_url": "http://localhost:11434/v1", "key_optional": true}
+      ]
+    },
+    "cases": [
+      {"note": "the provider's own endpoint, left blank, needs a key", "protocol": "openai", "base_url": "", "key_optional": false},
+      {"note": "the provider's own endpoint typed out needs a key", "protocol": "openai", "base_url": "https://api.openai.com/", "key_optional": false},
+      {"note": "Anthropic's own endpoint needs a key", "protocol": "anthropic", "base_url": "https://api.anthropic.com", "key_optional": false},
+      {"note": "a preset with a key needs it", "protocol": "openai", "base_url": "https://api.deepseek.com", "key_optional": false},
+      {"note": "a local server's preset needs none", "protocol": "openai", "base_url": "http://localhost:11434/v1", "key_optional": true},
+      {"note": "a preset's address with a trailing slash and spaces is still the preset", "protocol": "openai", "base_url": "  http://localhost:11434/v1/ ", "key_optional": true},
+      {"note": "a custom endpoint may go without one", "protocol": "openai", "base_url": "http://10.0.0.5:8000/v1", "key_optional": true},
+      {"note": "a custom endpoint on Anthropic's wire too", "protocol": "anthropic", "base_url": "https://gateway.example.org", "key_optional": true},
+      {"note": "another protocol's own endpoint is a custom one here", "protocol": "anthropic", "base_url": "https://api.openai.com", "key_optional": true},
+      {"note": "a preset's address on another wire is a custom endpoint", "protocol": "anthropic", "base_url": "https://api.deepseek.com", "key_optional": true},
+      {"note": "a sign-in never takes a key", "protocol": "chatgpt", "base_url": "", "key_optional": false},
+      {"note": "a sign-in at another address neither", "protocol": "chatgpt", "base_url": "http://10.0.0.5:8000", "key_optional": false}
+    ]
+  }
+}

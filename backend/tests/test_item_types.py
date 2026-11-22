@@ -32,7 +32,7 @@ def test_publisher_falls_back_to_the_venue_of_a_thesis_or_report():
 
 
 def _ai_reply(monkeypatch, reply):
-    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m: "m")
+    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m, role="chat": "m")
     monkeypatch.setattr(metadata, "_call_ai", lambda *a, **kw: reply)
     monkeypatch.setattr(metadata, "_crossref_search", lambda q, rows=5: [])
     monkeypatch.setattr(metadata, "_book_search", lambda t, a="": [])

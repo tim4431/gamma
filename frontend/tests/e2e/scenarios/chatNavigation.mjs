@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import http from "node:http";
-import { Account, FAKE_AI_MODELS, fakeAiModels, guideProgress, live, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, aiModelsAnswer, fakeAiModels, guideProgress, live, wanted } from "../harness.mjs";
 import { TOURS } from "../../../src/guide/tours/index.js";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
@@ -1112,7 +1112,9 @@ export async function chatNavigationScenarios(env) {
     // and effort, the glyph and the tooltip the tier.
     const chipSpeed = async (page) => [await chip(page).locator(".chatSpeedGlyph").count(),
       await chip(page).getAttribute("title")];
-    const menuItems = (page) => page.locator(".uiSelectMenu .ctxMenuItem").allInnerTexts();
+    // The choices' own words: a model row's connection after its name, and
+    // the menu's "All models…" row, are not choices of these sections.
+    const menuItems = (page) => page.locator(".uiSelectMenu [role=menuitemradio] .ctxMenuText").allInnerTexts();
     // Until model-info answers, the menu offers the generic levels: wait for the model's own.
     const menuShows = (page, want, what) => until(async () => (await menuItems(page)).join() === want, { what });
     // The pick is an account preference: wait for it to reach the profile
@@ -1213,42 +1215,76 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
-  // Several connections: the menu lists one connection's models — the picked
-  // one's, else the first's (providerModels in chat/modelPrefs.js) — never all.
-  await step("chat navigation: the model menu lists one connection's models, the first's when none is picked", async () => {
-    const models = { ...FAKE_AI_MODELS, default: "a:one", models: [
-      { id: "a:one", provider: "a", provider_name: "First", model: "one" },
-      { id: "a:two", provider: "a", provider_name: "First", model: "two" },
-      { id: "b:three", provider: "b", provider_name: "Second", model: "three" },
-    ] };
-    const pick = (value) => alice.api("/api/prefs/ai-provider", { method: "PUT", body: { value } });
-    // `shown` is the chip's model once the account's pick has loaded.
-    const menu = async (shown) => {
-      const ctx = await alice.context(browser);
-      await fakeAiModels(ctx, models);
+  // Two connections (docs/dev/ai.md "Models for each task"): every
+  // connection's models serve the chat. The chip lists the model in use and
+  // the favorites; "All models…" opens the menu of every connection's,
+  // grouped by connection (ai/ModelMenu.jsx), and a pick there is the
+  // account's chat model (PUT /api/ai/models/roles, whose rules are
+  // backend/tests/test_ai_model_roles.py's), which the next message names.
+  await step("chat navigation: All models… lists every connection's models by connection; a pick from another connection is the account's chat model and the next message's", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const list = [
+      { id: "firstAAA:one", provider: "firstAAA", provider_name: "First", model: "one", billing: "api" },
+      { id: "firstAAA:two", provider: "firstAAA", provider_name: "First", model: "two", billing: "api" },
+      { id: "secondBB:three", provider: "secondBB", provider_name: "Second", model: "three", billing: "subscription" },
+    ];
+    let chat = "";
+    const puts = [];
+    const ctx = await alice.context(browser);
+    try {
+      await fakeAiModels(ctx, aiModelsAnswer(list));
+      // The server's side: the pick is kept, and the roles answered as they
+      // now resolve; a read after it sees it.
+      await ctx.route("**/api/ai/models*", (route) => route.fulfill({ json: aiModelsAnswer(list, { chat }) }));
+      await ctx.route("**/api/ai/models/roles", async (route) => {
+        const body = route.request().postDataJSON();
+        puts.push(body);
+        if ("chat" in body) chat = body.chat;
+        const { roles, favorites, chat_migrated } = aiModelsAnswer(list, { chat });
+        await route.fulfill({ json: { roles, favorites, chat_migrated } });
+      });
       await ctx.route("**/api/ai/model-info?**", (route) => route.fulfill({
         json: { model: "", context_window: null, source: "", efforts: [], efforts_source: "provider",
                 speeds: [], speeds_source: "provider" } }));
-      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
-      try {
-        const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
-        await page.getByRole("combobox", { name: "Message AI" }).waitFor();
-        const chip = page.locator(".chatModelChip .uiSelectBtn");
-        await until(async () => (await chip.innerText()) === shown, { what: `the chip shows "${shown}"` });
-        await chip.click();
-        const items = await page.locator(".uiSelectMenu .ctxMenuItem").allInnerTexts();
-        assertNoProblems(page);
-        return items.join();
-      } finally { await ctx.close(); }
-    };
-    try {
-      await pick("");
-      assertEq(await menu("one"), "one,two", "nothing picked: the first connection");
-      await pick("b");
-      assertEq(await menu("three"), "three", "the picked connection");
-      await pick("removed");
-      assertEq(await menu("one"), "one,two", "a pick that is gone: the first connection");
-    } finally { await pick(""); }
+      await ctx.addInitScript(() => {
+        localStorage.setItem("gamma-ai-login-check", "off");
+        window.chatBodies = [];
+        const fetch = window.fetch.bind(window);
+        window.fetch = (input, init) => {
+          if (!String(input).endsWith("/api/ai/chat")) return fetch(input, init);
+          const body = JSON.parse(init.body);
+          window.chatBodies.push(body);
+          const lines = [{ model: { id: body.model, name: body.model.split(":")[1], effort: "", speed: "" } }, { delta: "ok" }];
+          return Promise.resolve(new Response(lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+            { headers: { "Content-Type": "application/x-ndjson" } }));
+        };
+      });
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      const chip = page.locator(".chatModelChip .uiSelectBtn");
+      await until(async () => (await chip.innerText()) === "one", { what: "the chip on the chat model, the first offered" });
+      await chip.click();
+      assertEq((await page.locator(".uiSelectMenu [role=menuitemradio] .ctxMenuText").allInnerTexts()).join(), "one",
+        "the quick list: the model in use, no favorites yet");
+      await page.locator(".uiSelectMenu").getByRole("menuitem", { name: "All models…", exact: true }).click();
+      const all = page.getByRole("listbox", { name: "All models", exact: true });
+      await all.waitFor();
+      const groups = await all.getByRole("group").evaluateAll((els) => els.map((g) =>
+        `${g.querySelector(".ctxMenuLabel")?.firstChild?.textContent}: ${[...g.querySelectorAll(".modelMenuName")].map((n) => n.textContent).join(" ")}`));
+      assertEq(groups.join(" | "), "First: one two | Second: three", "both connections' models, each under its connection");
+      await all.getByRole("group", { name: /^Second/ }).getByRole("option", { name: /^three/ }).click();
+      await until(async () => (await chip.innerText()) === "three", { what: "the chip on the pick" });
+      assertEq(JSON.stringify(puts), JSON.stringify([{ chat: "secondBB:three" }]), "the account's chat model is the other connection's entry");
+      await input.fill("Which model?");
+      await input.press("Enter");
+      await until(() => page.evaluate(() => window.chatBodies.length === 1), { what: "the message sent" });
+      assertEq(await page.evaluate(() => window.chatBodies[0].model), "secondBB:three", "the message names that entry's model");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
   });
 
   // A model that can't call tools on its connection (gamma/routers/ai.py
@@ -1316,7 +1352,7 @@ export async function chatNavigationScenarios(env) {
       assert((await chip.getAttribute("title")).includes(reason), "the chip names the reason");
       assert((await input.getAttribute("placeholder")).startsWith("Ask… "), "the plain chat's placeholder");
       await page.locator(".chatModelChip .uiSelectBtn").click();
-      assertEq((await page.locator(".uiSelectMenu .ctxMenuItem").allInnerTexts())[0], "model · no tools");
+      assertEq(await page.locator(".uiSelectMenu [role=menuitemradio] .ctxMenuText").first().innerText(), "model · no tools");
       await page.keyboard.press("Escape");
       await chip.click();
       await until(() => !!checked, { what: "the check posted" });

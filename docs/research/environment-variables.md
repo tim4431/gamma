@@ -72,7 +72,7 @@ can set in Settings.
 | `GAMMA_VAULT_KEEP_MB` | Server → Work folders → Largest file a work folder keeps | 64 MB |
 | `GAMMA_SEARXNG_URL` | AI → Tool usage → Online search for every account | none |
 | `GAMMA_OPENALEX_API_KEY` | the same, the key write-only and encrypted | none |
-| `GAMMA_AI_ANTHROPIC_BASE_URL`, `_OPENAI_`, `_CHATGPT_`, `GAMMA_AI_BASE_URL` | gone: a connection's own base URL (AI → Connections) | the providers' own |
+| `GAMMA_AI_ANTHROPIC_BASE_URL`, `_OPENAI_`, `_CHATGPT_`, `GAMMA_AI_BASE_URL` | gone: a connection's own base URL (AI → Models) | the providers' own |
 | `GAMMA_ZOTERO_CLIENT_KEY`, `_SECRET` | Server → Zotero sign-in | Gamma Cloud's broker |
 
 ## Kept in the environment, and why

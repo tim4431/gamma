@@ -1,7 +1,8 @@
 # Handwriting and AI
 
 What the lasso selection's **Convert** menu does with the selected
-strokes. Redraw as shapes asks the chat's model which strokes are parts of
+strokes. Redraw as shapes asks the handwriting model (Settings → AI →
+Models, the chat model while it has none of its own) which strokes are parts of
 figures and what clean figure each group of them is, and puts shape strokes
 in their place. Convert to text asks it to read the handwriting, and puts a
 text box in its place. Copy as SVG and Download SVG need no AI. The menu's
@@ -50,7 +51,7 @@ Tests are listed [below](#tests).
     localhost)". Download SVG works there.
   - The menu closes when the selection menu moves (a scroll, a zoom, the
     selection's box changing) and when the More row opens or folds.
-- **Redraw as shapes** sends the selected pen strokes to the chat's model,
+- **Redraw as shapes** sends the selected pen strokes to the handwriting model,
   which picks out the figures: lines, arrows, rectangles, circles and
   ellipses, triangles and other polygons, curves, axes and plotted graphs.
   Each figure's strokes become one clean shape, a shape stroke like the
@@ -86,7 +87,7 @@ Tests are listed [below](#tests).
     6 MB, its groups together), with that sentence or Convert to text's
     "Too much handwriting to convert at once; select less."
 - **Convert to text** sends a picture of the selected pen strokes to the
-  chat's model, which transcribes it: Markdown, line for line, math as
+  handwriting model, which transcribes it: Markdown, line for line, math as
   LaTeX (`$…$`, a displayed formula as `$$…$$`), `[illegible]` for a word
   it cannot read.
   - The strokes go, and one text box with the transcription takes their
@@ -107,7 +108,7 @@ Tests are listed [below](#tests).
     gone."
   - A model that reads text only cannot do it: "Reading the handwriting
     failed: This model cannot see pictures, which reading handwriting
-    needs; pick another model for the chat." A redraw with such a model
+    needs; pick another handwriting model in Settings → AI → Models." A redraw with such a model
     goes on from the strokes' numbers alone.
 - **Copy as SVG** puts the selected strokes on the clipboard as a picture:
   a PNG that every app pastes, the SVG's markup as text, and the SVG itself
@@ -119,7 +120,8 @@ Tests are listed [below](#tests).
   pictures out. The ground is transparent, but on a sheet of dark paper,
   whose light ink would vanish where it is pasted: there the SVG carries
   the paper's colour under the strokes.
-- The AI's two ask the model the chat uses (the model chip), one request
+- The AI's two ask the handwriting model ([ai.md](ai.md#models-for-each-task):
+  the account's Handwriting task, the chat model while it has none), one request
   at a time on a page: a second one while the first is out says "The AI is
   still working on the last selection…" Leaving the page stops the
   request. A note deleted while the AI works, alone or with its sheet,
@@ -190,9 +192,9 @@ applies its answer:
      its real id, and the very `pts` array that was sent.
    - `space` is the first group's, and `box` the pen strokes' union
      `strokeBounds` (widths included), where a text box goes.
-3. `askInkAi(kind, body, signal)` (`ink/inkAiClient.js`) posts `{model,
-   space, strokes}` to `/api/ai/ink/shapes` or `/api/ai/ink/text`. `model`
-   is `ai.model`, App's `chatSendModel`. The fetch carries the cookie,
+3. `askInkAi(kind, body, signal)` (`ink/inkAiClient.js`) posts `{space,
+   strokes}` to `/api/ai/ink/shapes` or `/api/ai/ink/text`. The routes
+   take no model: the server asks the handwriting task's. The fetch carries the cookie,
    and the share token on the URL in a share's view (`withShare`), and
    goes through the app's wrapper (`shared/lib/utils.js`), which adds the
    session's user, workspace and link-name headers.
@@ -229,7 +231,7 @@ applies its answer:
 
 `POST /api/ai/ink/shapes` and `POST /api/ai/ink/text`
 (`gamma/routers/ink_ai.py`, plain `def`s, so the call runs in the
-threadpool) take `InkAiRequest {model, space, strokes}` and check, in
+threadpool) take `InkAiRequest {space, strokes}` and check, in
 order:
 
 1. `require_user_id`.
@@ -252,14 +254,16 @@ order:
 4. The shapes route only: more than `MAX_REDRAW_STROKES` (300) pen strokes
    is a 413 "Too much handwriting to redraw at once; select less."
    (`TOO_MANY_STROKES`).
-5. `require_ai_runtime` (a 503 without a provider), then `resolve_model`,
-   which takes the account's default model for an id it does not know.
+5. `require_ai_runtime` (a 503 without a provider), then `resolve_model`
+   with the task `ink` and no model: the request names none, so the
+   handwriting task's model always decides (the chat model while it has
+   none).
    The model sees pictures unless `ai_catalog.image_input` says it does
    not (`is not False`): an unknown model is sent them, as in the chat
    ([ai.md](ai.md#other-services)).
 6. The text route only: a model that does not see them is a 400,
    `CANNOT_SEE`, "This model cannot see pictures, which reading
-   handwriting needs; pick another model for the chat." The shapes route
+   handwriting needs; pick another handwriting model in Settings → AI → Models." The shapes route
    goes on without the picture.
 7. `_check_door` (`routers/translate.py`): a used-up shared allowance, or
    every call slot of the account taken, is a 429 before the stream

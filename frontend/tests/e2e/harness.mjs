@@ -446,10 +446,22 @@ export async function settingsPane(page, name) {
 // context or page before loading, and fake /api/ai/chat themselves. The slide
 // citation a page with metadata asks for by itself once AI looks connected
 // gets an empty answer, since no provider is there to write it.
-export const FAKE_AI_MODELS = {
-  enabled: true, default: "demo:model", efforts: ["low", "medium", "high"],
-  models: [{ id: "demo:model", provider: "demo", provider_name: "Demo", model: "model" }],
-};
+// aiModelsAnswer(models, picks) is GET /api/ai/models' answer for `models`:
+// each task's model as gamma/ai_settings.resolve_roles resolves it, a pick
+// in `picks` ({role: id}) when offered, else the chat model, the chat's
+// own the first model; no favorites.
+export function aiModelsAnswer(models, picks = {}) {
+  const offered = (id) => models.some((m) => m.id === id);
+  const role = (pick, fallback) => (!pick ? { pick: "", model: fallback, state: "follows" }
+    : offered(pick) ? { pick, model: pick, state: "ok" } : { pick, model: fallback, state: "missing" });
+  const chat = role(picks.chat, models[0]?.id || "");
+  const roles = { chat, ...Object.fromEntries(["metadata", "translate", "ink"].map((r) => [r, role(picks[r], chat.model)])) };
+  return { enabled: models.length > 0, default: chat.model, efforts: ["low", "medium", "high"], models, roles,
+    favorites: [], chat_migrated: false };
+}
+export const FAKE_AI_MODELS = aiModelsAnswer([
+  { id: "demo:model", provider: "demo", provider_name: "Demo", model: "model", billing: "api" },
+]);
 export async function fakeAiModels(target, models = FAKE_AI_MODELS) {
   await target.route("**/api/ai/models*", (route) => route.fulfill({ json: models }));
   await target.route("**/api/metadata/cite", (route) => route.fulfill({ json: { citation: "" } }));

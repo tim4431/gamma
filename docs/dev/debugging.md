@@ -902,7 +902,13 @@ file's quote and context (`textposition.json`: `highlights.span_text` and
 `clamp_span` ↔ `documents/viewers/textAnchors.js` `contextOf`, with the
 code-point and UTF-16 columns; [api.md](api.md) "The highlight shape"),
 sibling keys
-(`fractionalkeys.json`: the npm and PyPI fractional-indexing libraries) and
+(`fractionalkeys.json`: the npm and PyPI fractional-indexing libraries),
+the AI models (`ai_models.json`: each task's model, `roles`, with
+`without` for the remove confirm, `ai_settings.resolve_roles` ↔
+`ai/aiModels.js` `resolveRoles` and `tasksAffectedBy`; a reply's usage
+sum, `sums`, `ai_client.add_usage` ↔ `chat/tokenUsage.js` `addUsage`; a
+keyless connection, `keyless`, `ai_settings.key_optional` ↔
+`settings/aiServices.js` `keyOptional`; [ai.md](ai.md#models-for-each-task)) and
 pasted math (`pastemath.json`: `gamma/paste_math.py` ↔
 `editor/pasteMath.js`). The kinds are run against the column by
 `test_block_columns.py`, the older documents through migration step 52 by
