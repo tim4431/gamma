@@ -123,6 +123,11 @@ What differs from the Windows commands elsewhere in these docs and in
   CODE_SIGNING_ALLOWED=NO | xcbeautify`. A Debug build's web view opens in
   Safari's Develop menu (Settings → Advanced → *Show features for web
   developers*).
+- **The iPad's UI test**: the same command with `-scheme GammaIPadUITests`
+  drives the app with a finger in that simulator, on This iPad
+  ([ipad.md](ipad.md) "Tests"). Pick the simulator by the screen to match:
+  an iPad Air 11-inch has the 1180 × 820-point screen of every 11-inch
+  iPad Air since the M2. No simulator sends Apple Pencil touches.
 
 ### Serving the build
 

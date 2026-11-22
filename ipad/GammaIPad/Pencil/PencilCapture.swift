@@ -49,6 +49,15 @@ final class PencilCapture: UIGestureRecognizer {
     /// The page took the hold (*Paste here*): the line goes now, and the
     /// touch stays captured, swallowing palms, until its lift.
     var onDrop: (() -> Void)?
+    /// Every touch's begin, a Pencil touch's end or cancel, and each reset
+    /// (no touch), for the touch report (TouchReport).
+    var onTouch: ((_ phase: String, _ touch: UITouch?) -> Void)?
+
+    /// The recognizer as the touch report shows it.
+    var summary: String {
+        "\(TouchReport.name(state)), capture \(capture == nil ? "none" : "open"), "
+            + "\(recordings.count) recorded, \(claims.count) in the claim queue"
+    }
 
     private struct Capture {
         let touch: ObjectIdentifier
@@ -128,6 +137,7 @@ final class PencilCapture: UIGestureRecognizer {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         for touch in touches {
+            onTouch?("began", touch)
             guard touch.type == .pencil else {
                 // A finger is the page's, unless a stroke is being captured (a palm).
                 if capture == nil { ignore(touch, for: event) }
@@ -166,6 +176,7 @@ final class PencilCapture: UIGestureRecognizer {
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         for touch in touches where touch.type == .pencil {
+            onTouch?("ended", touch)
             let key = ObjectIdentifier(touch)
             guard var recorder = recordings.removeValue(forKey: key) else { continue }
             for sample in event.coalescedTouches(for: touch) ?? [touch] { record(sample, into: &recorder) }
@@ -190,6 +201,7 @@ final class PencilCapture: UIGestureRecognizer {
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
         for touch in touches where touch.type == .pencil {
+            onTouch?("cancelled", touch)
             let key = ObjectIdentifier(touch)
             recordings.removeValue(forKey: key)
             if let capture, capture.touch == key {
@@ -204,6 +216,7 @@ final class PencilCapture: UIGestureRecognizer {
     }
 
     override func reset() {
+        onTouch?("reset", nil)
         super.reset()
         stopHold()
         recordings.removeAll()

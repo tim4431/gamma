@@ -706,7 +706,10 @@ last touched: `InkLayer.jsx` `penGone` (the drag, the shell's pointer, the
 pen's place among the contacts), `pdf/penSelect.js`, `shared/ui/regionDrag.js`,
 `shared/ui/useDragOrder.js` and the finger chords' palm rule
 (`ink/fingerChords.js`). Which touches lose their lift, and why, is device
-check 38.
+check 38. A freeze this does not end is open: on an iPad Air with an Apple
+Pencil Pro the page answers no tap from the Pencil's first contact, and a
+reload does not help ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md),
+[The touch report](#the-touch-report)).
 
 **Gestures.** `PencilGestures` (`UIPencilInteraction`) forwards the double
 tap as `pencil`, and the squeeze in its phases: `squeeze` `began` when it
@@ -1243,6 +1246,35 @@ bundle grows by about 75 MB per platform. What the wheel holds, what
 `install_python` does and does not do, and what a Mac run must still
 confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
 
+### The touch report
+
+What the shell knew about touches when the page stopped answering them,
+for a freeze no device here shows
+([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)).
+`PencilCapture` sees every touch on the web views' container. Through
+`onTouch` it hands `TouchReport` each touch's begin, a Pencil touch's end
+or cancel, and its own resets. The report keeps the last 100 as lines: the
+time, the phase, finger or pencil, page or chrome and the view hit, where,
+for a Pencil its force, roll and the estimated properties still to come,
+and every recognizer UIKit gave the touch, in its state, with repeats
+counted.
+
+Each Reload (the bar's button, ⌘R) first appends a report to
+`touch-report.log` beside the local server's log (`Documents/Gamma/local/logs/`,
+which the launcher's *Show server log* opens in Files). A report holds:
+
+- the build, iPadOS, the model and the screen's size and rate;
+- the Apple Pencil's system settings (`UIPencilInteraction`: only draws,
+  double tap, squeeze, hover preview);
+- `PencilCapture`'s state, its capture, recordings and claim queue;
+- every recognizer and interaction from the window down: each view that
+  has one, by its depth, each recognizer's class and state, `disabled`,
+  its touches and `delaysBegan`;
+- the latest touch lines.
+
+A file past 1 MB keeps its newest half. Nothing leaves the iPad unless its
+owner shares the file.
+
 ### Tests
 
 - `ipad/GammaIPadTests` (XCTest, on macOS in `ipad.yml`), the pure parts:
@@ -1303,6 +1335,11 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     bar hidden on a real `WKWebView`, and `ShellWebView`'s edit menu:
     every action refused while it is off but a key command's, and
     WebKit's own answers once it is on again (`ShellTests`)
+  - the touch report's parts (`TouchReportTests`): the latest lines
+    kept, a touch's recognizers counted, the recognizer tree with its
+    depth and its interactions, bare views skipped and a long tree cut,
+    and the file grown by sections and cut to its newest half past the
+    cap
   - the local server's port rule, environment, password shape, module
     paths, health rule and state file, and the saved servers, with their
     names and as saved before names (`ServerTests`)
@@ -1338,6 +1375,25 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   seeded on an unsigned host is one until deleted), or that a newer build
   upgraded (the server is up but answers its API, the sign-in aside, with
   the `data_directory_not_upgradable` 503).
+- `ipad/GammaIPadUITests` (XCUITest), the app driven by a finger in a
+  simulator, has a scheme of its own, `GammaIPadUITests`. It is run by
+  hand and never in CI. In `ipad/`: `xcodebuild test -project
+  GammaIPad.xcodeproj -scheme GammaIPadUITests -destination "id=<udid>"
+  ONLY_ACTIVE_ARCH=YES ARCHS=arm64 CODE_SIGNING_ALLOWED=NO`. The app
+  starts on This iPad without the launcher: the test passes
+  `-gamma.servers` with `SavedServers` as a Data default, in the old
+  plist notation. An unsigned build has no Keychain (see
+  `LocalServerStartTests`), so it gets no silent sign-in: the test waits
+  up to four minutes for the library and otherwise continues as a guest.
+  A fresh simulator's first run takes about five minutes, a later one
+  about one. Screenshots go into the result bundle, and also as PNGs
+  into the folder `TEST_RUNNER_GAMMA_UITEST_SHOTS` names. `TapsTests`
+  opens the welcome PDF, selects a word of its text with a long press
+  (the edit menu goes off) and checks that a tap still opens the
+  account menu with the selection up, once it is gone, and after ⌘R. No
+  simulator sends Apple Pencil touches, so the Pencil itself is beyond
+  it ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)
+  "Mimicking the reporter's iPad here").
 - `backend/tests/test_mobile_requirements.py`: every server dependency is
   in the mobile requirements or excluded with a reason, and nothing
   excluded is still listed.
@@ -1681,7 +1737,15 @@ Only an iPad can show these, and none has been run yet:
     see which touches end without a lift, and whether the hover comes
     with its own `pointerId`. Try with Scribble on and off, and in Safari
     beside the app. Fingers must scroll and tap the PDF once the Pencil
-    hovers or touches again.
+    hovers or touches again. On 0.4.7 an iPad Air 11-inch (M3) with an
+    Apple Pencil Pro on iPadOS 27.2.1 freezes from the Pencil's first
+    contact, whatever is armed. Hover still reaches the page and the bar
+    answers both a finger and the Pencil, but a reload does not help, so
+    this rule is not what ends it
+    ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)).
+    On such an iPad, take a touch report ([The touch report](#the-touch-report))
+    from a frozen session and from a fresh one, and repeat the test in
+    Safari.
 39. SVG pictures ([pictures.md](pictures.md#svg-pictures)). Playwright's
     WebKit on Linux draws an SVG's `<img>` as Chromium does, under the
     file's own policy. On the iPad: an SVG from Files placed on a page and

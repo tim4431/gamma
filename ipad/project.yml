@@ -354,6 +354,20 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: net.blitzbuild.gamma.tests
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Gamma.app/Gamma
         BUNDLE_LOADER: $(TEST_HOST)
+  # The app driven by a finger in a simulator (docs/dev/ipad.md "Tests").
+  # Its own scheme, run by hand: CI runs only GammaIPad's.
+  GammaIPadUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: GammaIPadUITests
+    dependencies:
+      - target: GammaIPad
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: net.blitzbuild.gamma.uitests
+        TEST_TARGET_NAME: GammaIPad
 schemes:
   GammaIPad:
     build:
@@ -363,3 +377,11 @@ schemes:
     test:
       targets:
         - GammaIPadTests
+  GammaIPadUITests:
+    build:
+      targets:
+        GammaIPad: all
+        GammaIPadUITests: [test]
+    test:
+      targets:
+        - GammaIPadUITests
