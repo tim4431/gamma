@@ -89,7 +89,7 @@ import { guideEvents } from "../guide/events.js";
 import { useIsRecent } from "../guide/recent.js";
 import {
   applyImageEdit, applyTableEdit, formatTables, htmlTableToMarkdown,
-  MdImage, MdTableWrap, noteTableMade, tsvToMarkdown,
+  MdImage, MdTableWrap, noteTableMade, openTableCell, tsvToMarkdown,
 } from "./MdTools";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
@@ -1829,6 +1829,10 @@ const BlockRow = React.memo(function BlockRow({
               onObjectDrag={stableObjectDrag}
               onObjectDragOver={stableObjectDragOver}
               onObjectDrop={stableObjectDrop}
+              // A click on a cell of the editor's table: the editor blurs
+              // and the rendered table opens on that cell (BlockMarkdown's
+              // editKey).
+              onTableCell={(idx, cell) => openTableCell(`${block.id}:${idx}`, cell)}
               value={block.content || ""}
               onChange={(e) => {
                 onChangeText(block.id, e.target.value, e.selectionBefore);

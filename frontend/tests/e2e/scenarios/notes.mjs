@@ -2083,7 +2083,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
 
   await step("notes: images and tables are objects — a press selects, a drag lands between or inside blocks, right-click edits the source", async () => {
     const up = await alice2.upload("/api/upload-image", PNG_1PX, "dot4.png", "image/png");
-    const table = "| a | b |\n|---|---|\n| 1 | 2 |";
+    const table = "| a | b |\n|---|---|\n| 1 | two words |";
     const withTable = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: `intro\n\n${table}\n\nafter` } });
     const withImage = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: `![|200](${up.url})` } });
     const landing = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: "para one\n\npara two" } });
@@ -2109,12 +2109,58 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
     await p.locator(".blockEditorCm .cmTableWidget").waitFor();
     assertEq(await p.locator(".mdObjectSelected").count(), 0, "the margin press did not select the table");
-    await closeEditor(p);
-    // A press on the table's own body (a cell) edits the cell, not the source.
+    // A click on a cell of the editor's table closes the editor onto that
+    // cell's field, as a click on the rendered table's would.
+    await p.locator(".blockEditorCm .cmTableWidget td").nth(1).click();
+    await p.locator(".mdTableCellInput").waitFor();
+    assertEq(await p.locator(".blockEditorCm").count(), 0, "the cell click closed the raw editor");
+    assertEq(await p.inputValue(".mdTableCellInput"), "two words", "the clicked cell's field opened");
+    // A drag inside the field selects part of its text: the table's frame
+    // around it does not start dragging the table instead.
+    const field = await p.locator(".mdTableCellInput").boundingBox();
+    const midY = field.y + field.height / 2;
+    await p.mouse.click(field.x + field.width - 4, midY); // the caret, out of the selection the field opened with
+    await p.mouse.move(field.x + 3, midY);
+    await p.mouse.down();
+    await p.mouse.move(field.x + field.width * 0.4, midY, { steps: 8 });
+    await p.mouse.up();
+    const dragged = await p.$eval(".mdTableCellInput", (el) => [el.selectionStart, el.selectionEnd]);
+    assert(dragged[0] === 0 && dragged[1] > 0 && dragged[1] < "two words".length, `a drag selected part of the cell's text (${dragged})`);
+    // The arrows walk the cells; each opens with its text selected, so ←
+    // and → step on at once.
+    for (const [key, text] of [["ArrowUp", "b"], ["ArrowLeft", "a"], ["ArrowDown", "1"]]) {
+      await p.keyboard.press(key);
+      await until(async () => (await p.inputValue(".mdTableCellInput")) === text, { what: `${key} moved to the cell "${text}"` });
+    }
+    assertEq(await p.$eval(".mdTableCellInput", (el) => `${el.selectionStart}-${el.selectionEnd}`), "0-1", "the reached cell's text is selected");
+    await p.keyboard.press("Escape");
+    await p.locator(".mdTableCellInput").waitFor({ state: "detached" });
+    // A click on the table's own body (a cell) edits the cell, not the source.
     await frameOf(withTable.id, "table").locator("td").first().click();
     await p.locator(".mdTableCellInput").waitFor();
     assertEq(await p.locator(".blockEditorCm").count(), 0, "a cell press never opens the raw editor");
     await p.keyboard.press("Escape");
+    await p.locator(".mdTableCellInput").waitFor({ state: "detached" });
+    // A mouse drag over the table's text selects it, as any text's: no
+    // field opens, no editor, and the table does not move.
+    const textEnd = (n) => p.evaluate(([id, n]) => {
+      const cell = document.querySelectorAll(`.blockRowWrap[data-block-id="${id}"] .mdObject-table th, .blockRowWrap[data-block-id="${id}"] .mdObject-table td`)[n];
+      const r = document.createRange();
+      r.selectNodeContents(cell);
+      const b = r.getBoundingClientRect();
+      return { x: n ? b.right - 1 : b.left + 1, y: b.top + b.height / 2 };
+    }, [withTable.id, n]);
+    const [from, to] = [await textEnd(0), await textEnd(3)];
+    await p.mouse.move(from.x, from.y);
+    await p.mouse.down();
+    await p.mouse.move(to.x, to.y, { steps: 10 });
+    await p.mouse.up();
+    const picked = await p.evaluate(() => window.getSelection().toString());
+    assert(picked.includes("a") && picked.includes("two words"), `the drag selected the table's text (${JSON.stringify(picked)})`);
+    assertEq(await p.locator(".mdTableCellInput, .blockEditorCm").count(), 0, "a drag opens no field and no editor");
+    const kept = await content(withTable.id);
+    assert(kept.startsWith("intro\n\n|") && kept.includes("two words") && kept.endsWith("|\n\nafter"), `the drag left the table where it was (${JSON.stringify(kept)})`);
+    await p.evaluate(() => window.getSelection().removeAllRanges());
 
     // One HTML5 drag of an object frame: dragstart on it, dragover on the
     // target row ("top": its top edge → a new block above; "gap": between the

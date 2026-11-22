@@ -19,6 +19,7 @@
 import { useEffect, useRef, useState } from "react";
 import { chordFromEvent, composing, isTextField } from "../shared/lib/hotkeys.js";
 import { lastPointer } from "../shared/lib/pointer.js";
+import { DRAG_MIN } from "../shared/ui/press.js";
 import { visibleBlocks } from "../shared/model/blockModel.js";
 import {
   NO_SELECTION, pruneSelection, selectAll, selectIds, selectOne, selectRange, selectionRoots, stepSelection, toggleSelected,
@@ -36,7 +37,6 @@ const OWN_KEYS = "button, a[href], select, [role=\"menu\"], [role=\"dialog\"], [
 // The tree's own boxes around and between the rows: a press right on one is
 // a press on blank space, where a drag draws the box.
 const BLANK = ["blockList", "listMotion", "sortableBlockWrap", "rowHandles", "blockFold", "blockChildren"];
-const DRAG_MIN = 4; // px the pointer goes before a press is a drag
 const EDGE = 36; // px from the list's top or bottom edge where a drag scrolls it
 const SCROLL_MOST = 24; // px a frame
 

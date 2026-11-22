@@ -689,7 +689,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .blockEditorCm .cmTableWidget { display: inline-block; box-sizing: border-box; max-width: 100%; overflow-x: auto; padding: 3px; margin: 3px 0 14px; border-radius: var(--radius-sm); cursor: grab; vertical-align: top; }
 .blockEditorCm .cm-line:first-child .cmTableWidget { margin-top: 0; }
 .blockEditorCm .cmTableWidget table { border-collapse: collapse; font-size: 0.95em; }
-.blockEditorCm .cmTableWidget :is(th, td) { border: 1px solid var(--border); padding: 3px 8px; text-align: left; min-width: 36px; white-space: nowrap; }
+.blockEditorCm .cmTableWidget :is(th, td) { border: 1px solid var(--border); padding: 3px 8px; text-align: left; min-width: 36px; white-space: nowrap; cursor: auto; }
 .blockEditorCm .cmTableWidget :is(th, td):empty::after { content: "\00a0"; }
 .blockEditorCm .cmTableWidget th { background: var(--bg-block); font-weight: 600; }
 .blockEditorCm .cmTableWidget:hover { box-shadow: 0 0 0 2px var(--accent-bg-light); }
@@ -1081,6 +1081,13 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .mdObject-image { width: fit-content; margin-left: auto; margin-right: auto; }
 .mdObject-table { width: fit-content; }
 .mdObject[draggable="true"] { cursor: grab; }
+/* Chromium's own stylesheet makes a draggable element unselectable: a
+   table's cells stay text a mouse drag selects (the frame lets go of the
+   drag while they are pressed: MdObject's textPress). A finger's long
+   press stays the menu's ([data-press] below). */
+@media (hover: hover) {
+  .mdObject-table :is(th, td) { -webkit-user-select: text; user-select: text; }
+}
 .mdObjectSelected { box-shadow: 0 0 0 2px var(--accent); }
 .mdObject.mdObject-diagram.mdObjectSelected .diagramCard { border-color: transparent; }
 /* Dropping an object inside a block: the line in the gap it lands in. */
