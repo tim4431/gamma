@@ -104,7 +104,7 @@ int main() {
   Print("name", IsEqualGUID(name, CLSID_OpenWithGamma) ? L"clsid" : L"other");
   EXPCMDSTATE state = ECS_HIDDEN;
   command->GetState(nullptr, TRUE, &state);
-  Print("state", state == ECS_ENABLED ? L"enabled" : L"not enabled");
+  Print("state", state == ECS_ENABLED ? L"enabled" : state == ECS_HIDDEN ? L"hidden" : L"other");
 
   std::vector<PIDLIST_ABSOLUTE> pidls;
   for (int i = 2; i < argc; i++) {

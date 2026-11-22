@@ -8,12 +8,20 @@
 // computer's agent works is the bar's folder chip, computer/PlaceChip.jsx),
 // and the chip reads the agent, its model and
 // effort ("Codex on TIM-PC · GPT-5.5 · high"), the model giving way first.
-// With Gamma AI alone it is the model chip it always was. Picking another
+// With Gamma AI alone it is the model chip it always was, led by the logo
+// of the model's provider where one is drawn (ai/ProviderLogo.jsx); with
+// the agent's name before the model there is no room for it. Picking another
 // agent is the chat's to answer (`onAgent`, which may ask first: a
-// conversation keeps its agent).
+// conversation keeps its agent). Gamma AI's models are the favorites and
+// the one in use; "All models…" opens the menu of every connection's
+// (ai/ModelMenu.jsx) above the chip.
+import { useRef, useState } from "react";
 import { MenuSelect } from "../shared/ui/Menus";
-import { BotIcon, LinkIcon, SparklesIcon } from "../shared/ui/Icons";
-import { t } from "../shared/i18n/i18n.js";
+import { menuAnchor } from "../shared/ui/placement.js";
+import { BotIcon, LinkIcon, SearchIcon, SparklesIcon } from "../shared/ui/Icons";
+import { T, t } from "../shared/i18n/i18n.js";
+import { ModelMenuList } from "../ai/ModelMenu.jsx";
+import { ProviderLogo } from "../ai/ProviderLogo.jsx";
 import { GAMMA, agentChoice } from "./agents.js";
 import { agentHint } from "./computer/computerChat.js";
 
@@ -39,10 +47,16 @@ function agentOption(a) {
 // `agents` the chat's, `agent` the one shown; `models` [[id, label]] the
 // picked agent's, `model` the one chosen, `onModel(id)`; `label`
 // the trigger's name with Gamma AI alone, `text` the model's words
-// ("GPT-5 · high"), `glyph` what follows them (the speed chosen, Gamma
-// AI's or a computer agent's), `speed` the speed it stands for.
+// ("GPT-5 · high"), `logo` the service of the model's connection (Gamma
+// AI's), `glyph` what follows them (the speed chosen, Gamma
+// AI's or a computer agent's), `speed` the speed it stands for;
+// `allModels` the model menu's props ({models, favorites, missing, value,
+// onPick, onToggleFavorite}) for Gamma AI, null for a computer agent.
 export default function AgentChip({ agents, agent, onAgent, models, model, onModel, sections = [], label, text = "",
-  glyph = null, speed = "", guide }) {
+  logo = "", glyph = null, speed = "", guide, allModels = null }) {
+  const chipRef = useRef(null);
+  const [allAt, setAllAt] = useState(null);
+  const openAll = () => setAllAt(menuAnchor(chipRef.current.getBoundingClientRect(), { side: "above" }));
   const several = (agents || []).length > 1;
   // The agent leads the chip whenever it is not Gamma AI alone.
   const name = several || agent?.id !== GAMMA ? agentChoice(agent) : "";
@@ -50,7 +64,7 @@ export default function AgentChip({ agents, agent, onAgent, models, model, onMod
   const named = !name ? label
     : speed ? t("Agent, model, reasoning effort and speed ({speed})", { speed }) : t("Agent, model and reasoning effort");
   return (
-    <span className="chatModelChip" data-guide={guide}>
+    <span className="chatModelChip" data-guide={guide} ref={chipRef}>
       <MenuSelect
         up
         label={named}
@@ -58,6 +72,7 @@ export default function AgentChip({ agents, agent, onAgent, models, model, onMod
         value={several ? agent.id : model}
         onChange={several ? onAgent : onModel}
         display={<>
+          {logo && text && !name ? <ProviderLogo service={logo} size={14} fallback={false} /> : null}
           <span className="chatModelName">
             {name ? <span className="chatModelAgent">{name}</span> : null}
             {text || !name ? <span className="chatModelText">{name ? ` · ${text}` : text || agent?.label}</span> : null}
@@ -66,7 +81,9 @@ export default function AgentChip({ agents, agent, onAgent, models, model, onMod
         </>}
         options={several ? agents.map(agentOption) : models}
         sections={[several ? modelSection : null, ...sections].filter(Boolean)}
+        actions={allModels ? [{ icon: SearchIcon, label: T("All models…"), title: T("Search every connection's models"), onClick: openAll }] : []}
       />
+      {allAt && allModels ? <ModelMenuList {...allAt} {...allModels} label={t("All models")} onClose={() => setAllAt(null)} /> : null}
     </span>
   );
 }

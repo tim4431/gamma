@@ -564,8 +564,9 @@ def test_a_reader_with_no_ai_reads_what_the_workspace_keeps(frank, lab, monkeypa
     for model in ("Ab3_x-9z:" + MODEL, MODEL, "server:Zq8_k-2w:" + MODEL):
         out = _lookup(noai, texts, ws, page_id=page, model=model)
         assert out == {"translations": ["T:kept by the owner", None], "model": MODEL}
-    # No model named and none to default to: nothing to look under.
-    assert _lookup(noai, texts, ws, page_id=page) == {"translations": [None, None], "model": ""}
+    # No model named and none offered: the translate task's target is the
+    # free service, which kept nothing here.
+    assert _lookup(noai, texts, ws, page_id=page) == {"translations": [None, None], "model": "engine:microsoft"}
     # The AI routes need a provider; the lookup does not.
     r = noai.post("/api/ai/translate", json={"texts": texts, "lang": "zh-CN", "page_id": page, "model": MODEL},
                   headers=_in(ws))

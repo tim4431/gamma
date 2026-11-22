@@ -1,0 +1,20 @@
+{
+  "note": "Stage 2 ground-truth pages: one text page per scan (two of Lounis), two display-equation pages, and a page of Shannon 1948, which has no text layer. 1-based pages. lang is the Tesseract language string; kind text|math. file is an id of ../corpus.json.",
+  "pages": [
+    {"id": "lounis-p2", "file": "lounis", "page": 2, "lang": "eng+fra", "kind": "text"},
+    {"id": "lounis-p4", "file": "lounis", "page": 4, "lang": "eng+fra", "kind": "text"},
+    {"id": "lounis-p8", "file": "lounis", "page": 8, "lang": "eng+fra", "kind": "math"},
+    {"id": "hansch-p2", "file": "hansch", "page": 2, "lang": "eng", "kind": "text"},
+    {"id": "holstein-p2", "file": "holstein", "page": 2, "lang": "eng", "kind": "text"},
+    {"id": "holstein-p8", "file": "holstein", "page": 8, "lang": "eng", "kind": "math"},
+    {"id": "kitagawa-p4", "file": "kitagawa", "page": 4, "lang": "eng", "kind": "text"},
+    {"id": "feshbach-p3", "file": "feshbach", "page": 3, "lang": "eng", "kind": "text"},
+    {"id": "naca-p15", "file": "naca", "page": 15, "lang": "eng", "kind": "text"},
+    {"id": "kollin-p2", "file": "kollin", "page": 2, "lang": "eng", "kind": "text"},
+    {"id": "jdp-p12", "file": "jdp", "page": 12, "lang": "fra+eng", "kind": "text"},
+    {"id": "physrev-p8", "file": "physrev", "page": 8, "lang": "eng", "kind": "text"},
+    {"id": "annalen-p10", "file": "annalen", "page": 10, "lang": "deu", "kind": "text"},
+    {"id": "siegman-p99", "file": "siegman", "page": 99, "lang": "eng", "kind": "text"},
+    {"id": "shannon-p2", "file": "shannon", "page": 2, "lang": "eng", "kind": "text"}
+  ]
+}

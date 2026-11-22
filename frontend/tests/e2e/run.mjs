@@ -45,6 +45,7 @@ import { chatSkillScenarios } from "./scenarios/chatSkills.mjs";
 import { noteMentionScenarios } from "./scenarios/noteMentions.mjs";
 import { commentScenarios } from "./scenarios/comments.mjs";
 import { translationScenarios } from "./scenarios/translation.mjs";
+import { scanLayerScenarios } from "./scenarios/scanLayer.mjs";
 import { inboxScenarios } from "./scenarios/inbox.mjs";
 import { chatNavigationScenarios } from "./scenarios/chatNavigation.mjs";
 import { transferScenarios } from "./scenarios/transfers.mjs";
@@ -122,6 +123,7 @@ const RUNNERS = {
   "note-mentions": noteMentionScenarios,
   "comments": commentScenarios,
   "translation": translationScenarios,
+  "scan-layer": scanLayerScenarios,
   "inbox": inboxScenarios,
   "collab": collabScenarios,
   "collab-soak": collabSoakScenarios,

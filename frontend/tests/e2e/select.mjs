@@ -40,6 +40,8 @@ export const GROUPS = [
   { id: "contextual-guide", files: ["contextualGuide.mjs"], s: 70 },
   { id: "sub-pages", files: ["subPages.mjs"], s: 68 },
   { id: "zotero-link", files: ["zotero-link.mjs"], s: 67 },
+  // measured alone (one worker), not yet from CI: it grew to 25 steps and two more servers
+  { id: "scan-layer", files: ["scanLayer.mjs"], s: 66 },
   { id: "pdf-load", files: ["pdfload.mjs"], s: 65 },
   { id: "collab", files: ["collab.mjs"], s: 59 },
   { id: "files", files: ["files.mjs"], s: 54 },
@@ -98,7 +100,7 @@ const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "chat-skills", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "pen", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "translation", "scan-layer", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "pen", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
 // what a change to the handwriting (src/ink/) can break: a text box's menu and a
 // picture's are placed and labelled by the ink layer's helpers; ipad, android: the host
@@ -193,6 +195,9 @@ export const RULES = [
   ["frontend/src/editor/pathLinkContext.js", ["sub-pages", "notes-pdf-share", "explorer"]],
   // (text-search: a note's line link is a pill; text-anchors: a text range's row, its dot and its title)
   ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search", "text-anchors"]],
+  // the account's models for each task and the model menu: the chat's model chip, Settings → AI → Models,
+  // Translate with, and the model the translation and handwriting requests go to
+  ["frontend/src/ai/**", [...CHAT, "settings", "translation", "ink-ai", "local-agents", "remote-chat"]],
   // skills in the chat (docs/dev/skills.md): the "/" menu's pure pieces and the catalog every composer reads
   // (local-agents: a skill turn to Codex; settings: the Skills pane tells the catalog of its writes)
   ["frontend/src/chat/skills.js", [...CHAT, "local-agents"]],
@@ -225,12 +230,14 @@ export const RULES = [
   ["frontend/src/settings/ZoteroLinkDialog.jsx", ["zotero-link"]],
   // the translation speed and Keep translations, which the translated view's scenario sets
   ["frontend/src/settings/SettingsTranslation.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "zotero-link", "translation"]],
-  // Settings → AI → Agents: this computer's agents, and the servers it answers (remote-asks drives the desktop window's)
-  ["frontend/src/settings/SettingsAgents.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link", "remote-asks"]],
+  // Settings → AI → Local agents: this computer's agents (local-agents lists them in a browser), and the servers it
+  // answers (remote-asks drives the desktop window's)
+  ["frontend/src/settings/SettingsAgents.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link", "local-agents", "remote-asks"]],
   ["frontend/src/settings/answeredServers.js", ["settings", "remote-asks"]],
   // Settings → Chat's skills sections, whose writes reach the chat's "/" menu
   ["frontend/src/settings/SettingsSkills.jsx", ["settings", "chat-skills", "i18n"]],
   // ipad: Apple Pencil, under its host; android: the Stylus section and the server inside the app (SettingsServer.jsx)
+  ["frontend/src/settings/SettingsTextRecognition.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link", "scan-layer"]],
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link"]],
   // the sync pill and its popover, the conflict cards: a clone's, a publication's, a Zotero link's
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish", "zotero-link"]],
@@ -297,7 +304,7 @@ export const RULES = [
   ["frontend/src/transfers/importReview.js", [...EXPORTS, "sub-pages"]],
   ["frontend/src/transfers/ImportTree.jsx", [...EXPORTS, "sub-pages"]],
   ["frontend/src/transfers/**", EXPORTS],
-  ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad", "android", "remote-chat", "remote-asks"]], // the Background tasks tray and its store; android: a job's file saved through the app; remote-chat: a turn on another computer; remote-asks: one that waits there for an answer
+  ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad", "android", "remote-chat", "remote-asks", "scan-layer"]], // the Background tasks tray and its store; android: a job's file saved through the app; remote-chat: a turn on another computer; remote-asks: one that waits there for an answer; scan-layer: the recognition's rows
   ["frontend/src/support/**", ["settings"]],
   ["frontend/src/auth/StandbyPage.jsx", ["standby"]], // the page a server shows while it cannot open its library
   ["frontend/src/auth/**", ["auth", "cloud-sign-in", "publish", "ipad", "standby"]], // ipad: the sign-in page's Server link
@@ -314,6 +321,9 @@ export const RULES = [
   // the fake Google the settings group's Google Drive step talks to
   ["backend/tests/gdrive_fake.py", ["settings"]],
   ["backend/tests/zotero_fixtures.py", ["zotero-link"]],
+  // the printed scan the scan-layer scenario has recognized, and the models that read it
+  ["backend/tests/ocr_fixtures.py", ["scan-layer"]],
+  ["backend/tessdata/**", ["scan-layer"]],
   // the 20,000 files the explorer group's quick open searches
   ["backend/tests/seed_work_folder.py", ["explorer"]],
   // the stand-ins for Codex and Claude Code the local agents scenario's server starts
@@ -409,7 +419,7 @@ export const RULES = [
   ["backend/gamma/routers/sync.py", ["mirror", "publish", "remote-work", "remote-asks"]], // remote-asks: whoami's computer_asks
   ["backend/gamma/routers/mirrors.py", ["mirror", "publish"]],
   ["backend/gamma/cloud_*.py", ["cloud-sign-in", "publish"]],
-  ["backend/gamma/routers/cloud_auth.py", ["cloud-sign-in", "publish"]],
+  ["backend/gamma/routers/cloud_auth.py", ["cloud-sign-in", "publish", "scan-layer"]], // scan-layer: /api/server-config's ocr
   ["backend/gamma/hosted.py", ["cloud-sign-in"]], // a hosted container's plan (read-only gates every write only there)
   ["backend/gamma/publish.py", ["publish"]],
   ["backend/gamma/routers/publish.py", ["publish"]],
@@ -432,7 +442,7 @@ export const RULES = [
   ["backend/gamma/documents/text_anchors.py", ["text-anchors"]],
   ["backend/gamma/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]], // the document text index
   // the highlights found again in a replaced PDF, and the write a text file's run shares
-  ["backend/gamma/highlight_relocate.py", ["notes-pdf-share", "text-anchors"]],
+  ["backend/gamma/highlight_relocate.py", ["notes-pdf-share", "text-anchors", "scan-layer"]], // scan-layer: the quotes respelled after a recognition
   ["backend/gamma/routers/pdf.py", PDF_VIEW],
   ["backend/gamma/textnorm.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/block_index.py", ["notes-pdf-share", "quick-open"]],
@@ -477,7 +487,7 @@ export const RULES = [
   ["backend/gamma/fonts/**", EXPORTS],
   ["backend/gamma/routers/export.py", [...EXPORTS, "sub-pages"]], // a page's export with the pages inside it
   ["backend/gamma/routers/imports.py", EXPORTS],
-  ["backend/gamma/jobs.py", [...EXPORTS, "settings", "notes-pdf-share"]], // exports, backups, the search indexer
+  ["backend/gamma/jobs.py", [...EXPORTS, "settings", "notes-pdf-share", "scan-layer"]], // exports, backups, the search indexer, the recognition's lane
   ["backend/gamma/routers/jobs.py", [...EXPORTS, "settings", "remote-chat", "remote-asks"]], // remote-chat: a chat turn on another computer; remote-asks: one that waits there
   ["backend/gamma/backup_schedule.py", ["settings"]],
   ["backend/gamma/backups.py", ["settings"]],
@@ -488,7 +498,7 @@ export const RULES = [
   ["backend/gamma/routers/notices.py", ["settings"]],
   ["backend/gamma/version.py", ["settings"]],
   ["backend/gamma/server_settings.py", ["settings", "mcp", "cloud-sign-in"]],
-  ["backend/gamma/routers/admin.py", ["settings", "mcp", "cloud-sign-in"]],
+  ["backend/gamma/routers/admin.py", ["settings", "mcp", "cloud-sign-in", "scan-layer"]], // scan-layer: Server › Text recognition
   ["backend/gamma/routers/shares.py", ["notes-pdf-share", "publish", "collab", "inbox", "cloud-sign-in", "sub-pages"]],
   // a share's invitations by Gamma Cloud username (claimed on every cloud sign-in) and its Inbox item
   ["backend/gamma/shares.py", ["notes-pdf-share", "publish", "collab", "inbox", "cloud-sign-in", "sub-pages"]],

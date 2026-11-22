@@ -157,9 +157,11 @@ offers Try again. The job stops, with the last failure's reason, only when:
 - `FAILS_IN_A_ROW` (3) chunks fail with no success between them: the
   provider is down, not one connection lost;
 - or a chunk's failure is final (`finalRefusal`): a 429 without
-  `Retry-After`, or a 401, 403 or 503 from Gamma (not signed in, no access,
-  no AI provider). A 429 whose `Retry-After` runs past the patience is not
-  final: it drops that chunk only.
+  `Retry-After`, a 401, 403 or 503 from Gamma (not signed in, no access,
+  no AI provider), or a `model_unavailable` (the model the job started
+  with is no longer offered: a job asks one model throughout, so a paper
+  never mixes two). A 429 whose `Retry-After` runs past the patience is
+  not final: it drops that chunk only.
 
 The server asks the model again for what its reply got wrong ("The
 server"), or a service with its tokens in another form ("Machine-translation
@@ -186,6 +188,10 @@ or, when Gamma found no AI provider to ask (the stopping request's
 `refused` status, 503), "Open settings". So "Try again" after a stopped
 "Translate references too" asks for those reference lists again, and after
 a stopped retry of the untranslated paragraphs for their pages alone.
+
+A job that ran on the chat model because the translation task's pick is
+no longer offered ends its task row with "used gpt-6-astra: the
+translation model is unavailable" (`fallbackNote`, set as the job starts).
 
 Once a session, a hint follows a job's end. When "Translate with" follows
 the chat model and the session's first job that reached the model had a
@@ -240,6 +246,27 @@ through `useSyncExternalStore` and starts its jobs; it only draws.
   screen.
 - **At most `MAX_DOCS` (8) documents are kept**, the least recently used
   going first, never one whose job runs.
+- **A page's text can change under the same URL**: its words were
+  recognized from the picture, or the recognized words were forgotten,
+  here or by another member, and `pdf/ocrState.js` announces which pages
+  changed (`translateState.textChanged(url, pages)`,
+  [pdf_loading.md](pdf_loading.md#recognized-words)). Those pages' segmented
+  blocks, segmentations under way and page entries go, with the pages
+  either side of them, since a paragraph joins across a page break. The
+  epoch moves on, a seed under way stops and every page may be seeded
+  again; a segmentation that began before keeps nothing it read. While a
+  job runs, it is halted and the change applies once it has unwound, so no
+  entry made of the old text lands after it. Its row closes as "stopped:
+  this PDF's text changed" (`halted: "text"`, `app/translateFollow.js`).
+  The status line says "The translation stopped because this PDF's text
+  changed — translate again to go on with its new text.", with Try again
+  while the document is on screen. The next job or seed segments
+  those pages from the recognized words, and the viewer seeds again at
+  once when the document's revision moves on. A document's first state
+  announces only the pages read from their own layer because the 3 s wait
+  for it ran out, so a seed or a job that waited for it goes on. The font map of every document
+  starts with the recognized words' font id (`gamma_ocr`), which has no
+  face, so `pageFaces` never waits for one.
 - **App's side** is `app/translateClient.js` (the chunk and brief requests,
   forgetting a document, ending the jobs) and `app/translateFollow.js`
   (what the app says, free of React). It follows the jobs of every
@@ -294,7 +321,7 @@ opens in the original.
   matches `<lang>|<other entry>:<name>` and `<lang>|server:<entry>:<name>`,
   since the rows are kept under the model's name): a connection removed and
   made again, which gets a new entry id, or a switch between one's own key
-  and a shared one, finds the same rows. With no chat model on offer and no
+  and a shared one, finds the same rows. With no model on offer and no
   service picked in Translate with (the free service, or nothing, stands in
   for one), a paper left under a chat model's key in the same language opens
   under that key: its lookups name that model, its entries are kept under it
@@ -930,7 +957,12 @@ its last layout, stretched, until it comes back.
 ## What a request carries
 
 Geometry never leaves the client. `pdf/pdfTranslate.js` segments a page's
-pdf.js text runs into blocks:
+pdf.js text runs into blocks. The runs are those of `pdf/pageText.js`, the
+text layer's: a scan's invisible OCR layer comes repaired, one band and
+baseline a printed line ([pdf_loading.md](pdf_loading.md#a-scans-text-layer)),
+and a page the server recognized comes laid out from its recognized words
+in the same shape ([pdf_loading.md](pdf_loading.md#recognized-words)), so
+their lines and paragraphs read as a typeset page's do.
 
 - `textRuns` maps TextContent items through the scale-1 viewport, with each
   run's real font name (`pdf/pdfFonts.js`, below) and glyph ascent and
@@ -1203,9 +1235,36 @@ order: no joined paragraph touched one of these blocks.
   memory nor the kept translations, and its answer replaces them ("Kept
   translations").
 - `before`, `after` and `section`.
+- `ocr`: sent only true, when a unit of the chunk was read from a scan's
+  OCR layer or from the words the server recognized on a page.
+  `segmentNow` marks a page's blocks `ocr` when `pdf/pageText.js`
+  repaired its text or built it from recognized words (`repaired`,
+  [pdf_loading.md](pdf_loading.md#a-scans-text-layer)); a
+  unit with such a block carries it, and so does its chunk's context, so a
+  paper with a born-digital cover (HAL's) sends it from its scanned pages
+  only. A selection translated from such a page sends it too
+  (`pageText.knownScan`). The brief's request sends it with a `head` read
+  from such pages; a stored file's opening pages the server checks itself
+  ("The paper's brief").
 
 `chunkRequest` in `app/translateClient.js` sends them with `texts`, `lang`,
 `model`, `effort`, `speed` and `stream: true`.
+
+`model` is what "Translate with" names: the account's translation task
+(`ai-models.translate`, [ai.md](ai.md#models-for-each-task)), the same pick
+as Settings → AI → Models' Translation row, kept on the server. The client
+sends the model the server resolved for it (`roles.translate.model`): the
+pick, a service as `engine:<id>`, the chat model while the task follows it
+or its pick is gone, and the free service when no model is offered at all.
+A job keeps the requests it started with, so it asks one model
+throughout; a model it named that goes away meanwhile answers 400
+`{detail, kind: "model_unavailable"}` (a stream's error line `{error,
+kind}`), whose top-level `kind` `translateClient.js` reads, which stops the job rather than finishing on another
+model (`finalRefusal`, above). A request with no `model` gets the same
+resolution on the server (`routers/translate.py` `_target`), before any AI
+connection is required, so an account with services alone still
+translates. The final object's `routed` (`{role, model, fallback}`) says
+what ran.
 
 A reply comes back per unit. `translateReply.results` splits a joined unit's
 translation at its `{br}` markers. When the model lost or doubled one, it
@@ -1335,6 +1394,13 @@ translation request never makes it.
 - **The call**: one model call with `_BRIEF_PROMPT` returns a JSON object —
   the field, notation the paper defines (at most 10 symbols), 20–30
   recurring terms with their renderings, and names that stay as written.
+  When the opening text was read from a scan's OCR layer, a rule is added to
+  spell every term as the author did, not as misread: for a stored file when
+  a page `material` reads is a scan, or reads words the server recognized
+  (`Paper.scanned`, `pdf_text.opening_is_scan`: Tesseract still misreads
+  about one character in a hundred), for a `head` when the request says
+  `ocr` (the viewer read it from such pages). So the brief kept for a paper
+  does not depend on which page its first job started on.
   `render_brief` turns it into the system prompt's closing section (at most
   4,000 characters). It runs at the translation's effort and speed. Its
   output cap is 3,000 tokens (`_BRIEF_TOKENS`), plus 8,000 for thinking when
@@ -1504,7 +1570,13 @@ and the kept translations in `gamma/translate.py` over
   token once; keep other math, numbers, units and citation markers; one
   rendering per term, after the brief; the Terms line's renderings, over
   the brief; references such as "Fig. 2" and "Eq.
-  (3)" the target language's way; headings as headings. The target
+  (3)" the target language's way; headings as headings. A request with
+  `ocr` adds one rule (`_OCR_RULE`): the texts were read by OCR from a
+  scanned page and may hold misread characters ("ph4nom+ne" for
+  "phénomène"), which the model reads through and never carries into the
+  translation. It is set per chunk, from the pages its texts come from, and
+  is part of no key: a page's verdict does not change, and a repaired page's
+  segmentation sends texts of its own. The target
   language's conventions follow for Chinese (full-width punctuation, a space
   between Chinese and Latin text), Japanese (である調) and Korean. The brief
   closes it.
@@ -1619,7 +1691,8 @@ translation without asking a model, after a restart too.
   document, language and model: past it, new rows are skipped, with one
   warning per document per process.
 - **Generations**: a document's generation is how often it was forgotten
-  plus how often its workspace was cleared, both counted in memory and only
+  or recognized (below) plus how often its workspace was cleared, counted
+  in memory and only
   growing. The memory keys of its translations and its brief carry it, so a
   forgotten or cleared document misses memory too and its next job
   translates afresh; the old entries age out of their LRUs. A request reads
@@ -1627,6 +1700,15 @@ translation without asking a model, after a restart too.
   generation moved on meanwhile. A forget and a write of the same document
   take turns (32 lock stripes by document; a clear takes them all, in
   order), so no write whose check passed lands after the delete.
+- **A recognition** of the paper's scanned pages
+  ([documents.md](documents.md#recognized-text)) changes its text, so the
+  run's finishing steps drop its kept briefs, in every language and model,
+  and move its generation on (`translate.forget_brief`, under the
+  document's turn): a brief made from the old opening text no longer steers
+  a translation, and the memory brief goes too. Its kept paragraphs stay,
+  paid for and found by their source text: a paragraph whose text did not
+  change still finds its row, one whose text changed misses and is
+  translated afresh when the paper is next translated.
 - **Purge**: `search.index.purge_unused` calls `translate_store.purge` beside
   `pdf_meta.purge`, so a PDF that leaves the workspace takes its kept
   translations and brief along. The sweep is one transaction that takes
@@ -1653,11 +1735,11 @@ a writer clears it):
   account's own or has an entry id's shape, 8 URL-safe characters, as one
   since removed does) by its name alone, with no AI runtime built, so a seed
   decrypts no key and refreshes no sign-in, and a member with no provider
-  set up reads what the others kept; only a bare name (which may hold a
-  colon of its own, "qwen2.5:7b") or none goes through the account's
-  runtime (`ai_runtime`, which raises nothing): the model it lists, else the
-  name as sent, else its default. The answer's `model` is the name the rows
-  are under, `""` when nothing names one. A row is
+  set up reads what the others kept; a bare name (which may hold a colon
+  of its own, "qwen2.5:7b") as it is; only none goes through the account's
+  runtime (`ai_runtime`, which raises nothing): the translate task's
+  target, a service's `engine:<id>` or a model's name. The answer's `model`
+  is the name the rows are under, `""` when nothing is offered. A row is
   named by `Kept.src` from the text and the workspace's glossary on the
   server, as `/api/ai/translate` names it, so nothing about the key is the
   client's to send and a text using a term changed since misses. The caps of `/api/ai/translate` (200 texts, 60k
@@ -2050,7 +2132,10 @@ viewer's own code and no viewer:
   (`exportTranslation`, so Show original there exports its original).
 - **Each paper** (`paperLayout`): its PDF opened with pdf.js and no viewer
   (`PdfViewer.openPdfDocument`: the viewer's byte caches, else one GET, the
-  shared worker), every page seeded from the kept translations through the
+  shared worker) and registered with `pdf/ocrState.js` under the paper's
+  `doc_id`, with no URL, so a recognized scan's pages read the recognized
+  words and find the translations kept of them, as the viewer's do; every
+  page seeded from the kept translations through the
   lookup under that key, with no model call (`translateState.seedDetached`:
   `seedPages`' work on a state of its own, which the store does not keep and
   no one is told of, so the documents the reader has open stay in it), and
@@ -2083,9 +2168,11 @@ the original unless it is the one open.
 
 ## Machine-translation services
 
-"Translate with" also offers the services in `gamma/translate_engines.py`.
-The viewer then sends `model: "engine:<id>"`, and `/api/ai/translate` hands
-the misses to `translate_engines.translate` instead of a chat model.
+"Translate with" also offers the services in `gamma/translate_engines.py`,
+as a group of its model menu. With one picked, the translation task
+resolves to `engine:<id>`, the viewer sends `model: "engine:<id>"`, and
+`/api/ai/translate` hands the misses to `translate_engines.translate`
+instead of a chat model.
 
 - **Microsoft (free)** needs no setup. It is the endpoint Edge's own page
   translation calls: `POST

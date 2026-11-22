@@ -17,6 +17,8 @@ import { exportFile, exportLayout, exportPages } from "../pdf/translateExport.js
 import { folderPapers, paperLayout } from "../pdf/folderTranslation.js";
 import { useFolderTranslations } from "../pdf/useFolderTranslations.js";
 import { docIdOf } from "../pdf/pdfSource";
+import * as ocrState from "../pdf/ocrState.js";
+import * as ocrRuns from "../pdf/ocrRuns.js";
 import { discardApplied, discardOutcome, discardStep, discardUndone, noteSummary, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { canJoin, joinHighlights, takesParts, withPart } from "../shared/model/highlightParts.js";
 import { waitingFor } from "../pdf/highlightWait.js";
@@ -70,7 +72,8 @@ import { useUploadBatches } from "../transfers/useUploadBatches.js";
 import { uploadPdf } from "../shared/lib/uploadParts";
 import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, SelectCheck, ViewToggle } from "../library/FileBrowser";
 import { createChatSession } from "../chat/chatSession";
-import { providerModels } from "../chat/modelPrefs";
+import { useAiModels } from "../ai/useAiModels.js";
+import { connectionsInUse, modelName, probeModel, removalNotice } from "../ai/aiModels.js";
 import { addPictures, isPdfPicture, pictureUrl, regionBox, regionPicture, round4 } from "../chat/chatPictures.js";
 import { MAX_CHAT_PASSAGES, MAX_INK_SELECTIONS, MAX_INK_SELECTION_BYTES } from "../chat/passageBudget.js";
 // Agent tools whose applied action changes the open page's block tree
@@ -81,7 +84,7 @@ import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
 import { backdropPress, menuPress, triggerPress } from "../shared/ui/press.js";
-import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
+import { lastPointer, touchScreen, touchTyping } from "../shared/lib/pointer.js";
 import { appShell, nativeHost, postToHost } from "../shared/lib/host.js";
 import { dispositionName, saveBlob } from "../shared/lib/saveFile.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
@@ -101,7 +104,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UnlinkIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon, LocateIcon, TextPlusIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
+  PanelTopIcon, LocateIcon, TextPlusIcon, ScanTextIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
   StopIcon, GlobeIcon, ChevronRightIcon, FlagIcon, FoldersIcon,
 } from "../shared/ui/Icons";
 import ReportContentHost from "../support/ReportContentHost";
@@ -175,7 +178,7 @@ import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailableP
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { STANDBY_ERROR, StandbyPage } from "../auth/StandbyPage";
-import { TRANSLATE_LANGS, preloadPrefs, readPref, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
+import { TRANSLATE_LANGS, preloadPrefs, readPref, useAppPrefs, useProfileSync } from "./prefs";
 import { TOPBAR, TOPBAR_ITEMS } from "./topbarItems.js";
 import { TOPBAR_ICONS } from "./topbarIcons.js";
 import { BAR_PLACES } from "../shared/model/barLayout.js";
@@ -191,7 +194,7 @@ import { useMarks } from "../markup/MarkupLayers";
 import { MarkupToolbar } from "../markup/MarkupToolbar";
 import { PageToolsContext } from "../markup/PageTools";
 import { makeStableActions, useStableActions } from "../shared/lib/stableActions.js";
-import { keepIfSame, keepIfSameJson, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
+import { keepIfSame, keepIfSameJson, sameItems, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { blocksById, commentAnchors, pageHighlights, recordingList, sheetNumbersOf, stampedList } from "./treeDerived.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
@@ -554,9 +557,9 @@ const RECENTS_CAP = 24;
 // splitter grabbable and leaves the header its own.
 const SASH_MARGINS = { coarse: 6, fine: 6 };
 // The Settings panes of the AI group (old pane names resolve first): entering
-// one loads the masked key list (Agents names the connection Gamma AI uses)
-// and the prompt drafts.
-const AI_SETTINGS_PANES = ["agents", "ai", "assistant", "tools"];
+// one loads the masked key list and the prompt drafts. Local agents is one
+// for the pane shown in its place where it has nothing to show: Models.
+const AI_SETTINGS_PANES = ["agents", "ai", "usage", "assistant", "tools"];
 const isAiPane = (pane) => AI_SETTINGS_PANES.includes(resolveSettingsPane(pane));
 // A block's text for a chat chip (cursor block, attached block): its note,
 // else its highlight quote.
@@ -888,7 +891,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         applyWorkspace(data.user, chosen, list);
         fetchHomeBlocks({ still: true });
         if (data.user !== authUser?.user) preloadPrefs(data.user, { guest: data.is_guest });
-        refreshAiModels();
+        refreshAiModels(data.user);
         setAuthUser({ user: data.user, is_guest: data.is_guest, is_admin: data.is_admin, build: data.build,
           guest_expires_at: data.guest_expires_at || "" });
       } else {
@@ -1047,8 +1050,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // false after the cookie is removed performs a local-only workspace
     // teardown, without starting reads that race logout.
     leaveCurrentPage();
-    // Translation jobs outlive the viewer: stop them before the session goes.
-    endTranslations();
+    // Translation jobs outlive the viewer: stop them before the session goes,
+    // and the recognized text this session read with them, and the
+    // recognition this window reads (pdf/ocrRuns.js).
+    endTranslations(); ocrState.reset(); ocrRuns.reset();
     await fetch(`${API}/logout`, { method: "POST", credentials: "include" });
     // Logout kills the browser-wide session: tell other tabs of this account
     // so they drop to the login page instead of failing on their next save.
@@ -1139,8 +1144,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     tabHistoryRef.current = [];
     // Leaving the account or workspace (here too when the session expired
     // or another tab signed in): its translation jobs stop and its
-    // documents' translations go with it.
-    if (prefsUserRef.current && prefsUserRef.current !== u) endTranslations();
+    // documents' translations go with it, as does their recognized text and
+    // the recognition this window reads.
+    if (prefsUserRef.current && prefsUserRef.current !== u) { endTranslations(); ocrState.reset(); ocrRuns.reset(); }
     if (!u || shareMode) {
       // Losing the session (logout button, expiry in another tab) must fully
       // close the workspace: a stale focusedBlockId would get merged into the
@@ -3420,7 +3426,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     inkLassoMode, setInkLassoMode, inkLassoPictures, setInkLassoPictures, textBoxStyle, setTextBoxStyle,
     inkShapeKind, setInkShapeKind, inkShapeFill, setInkShapeFill, inkRulerUnits, setInkRulerUnits,
     selTranslate, setSelTranslate, selTranslateAuto, setSelTranslateAuto,
-    translateLang, setTranslateLang, translateModel, setTranslateModel,
+    translateLang, setTranslateLang,
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     translateSpeed, setTranslateSpeed, translateKeep, setTranslateKeep,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
@@ -3429,7 +3435,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications, commentSendTo, setCommentSendTo,
     topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, highlightPresets, setHighlightPresets,
-    chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatFollowUpMode, setChatFollowUpMode, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
+    chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatFollowUpMode, setChatFollowUpMode, aiLoginCheck, setAiLoginCheck,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
     metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
@@ -3446,10 +3452,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const appRef = useRef(null);
 
   // --- AI chat: model switcher, PDF attachment, selection focus, report ---
-  const [aiInfo, setAiInfo] = useState(null); // {enabled, provider, models, default}
-  const [chatModel, setChatModel] = useState(() => {
-    try { return localStorage.getItem("gamma-chat-model") || ""; } catch { return ""; }
-  });
+  // The account's models and each task's (ai/useAiModels.js): what every
+  // connection offers, the model each task resolves to, the favorites. A
+  // task's request names no model but the chat's and translation's, which
+  // the server resolves (docs/dev/ai.md "Models for each task").
+  const aiModels = useAiModels({ user: shareMode ? "" : authUser?.user || "", shareMode,
+    onError: (message) => setStatus(t("Couldn't change the model: {message}", { message })) });
+  const { aiInfo, aiInfoFailed, refresh: refreshAiModels, modelFor } = aiModels;
+  const chatModel = modelFor("chat");
   const [agentPromptDraft, setAgentPromptDraft] = useState("");
   const [promptDraft, setPromptDraft] = useState("");
   // AI providers (Settings → AI providers): a user-managed list of API keys,
@@ -3463,11 +3473,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // id -> {busy} | normalized subscription allowance. API-key providers
   // return an explicit unavailable reason because their billing APIs differ.
   const [aiKeyUsage, setAiKeyUsage] = useState({});
-  // Login connection check (POST /ai/health, Settings → Provider and models):
-  // null = nothing to report; a failed result renders the chat panel's
-  // warning strip (the chat error card's headline for the failure's kind)
-  // until fixed or dismissed.
-  const [aiHealth, setAiHealth] = useState(null);
+  // Login connection check (POST /ai/health, Settings → AI → Models): each
+  // checked connection's answer by its id. The first failure renders the
+  // chat panel's warning strip (the chat error card's headline for the
+  // failure's kind) until fixed or dismissed (`dismissed`), and each its
+  // connection's red dot in Settings.
+  const [aiHealth, setAiHealth] = useState({});
+  const aiHealthStrip = Object.values(aiHealth).find((r) => !r.ok && !r.dismissed) || null;
   // The connect dialog (settings/SettingsAi.jsx useProviderEditor, the path
   // Settings → Server's shared entries take too). A saved change refreshes
   // the model switchers and, while the chat shows the login check's warning
@@ -3476,7 +3488,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const aiEditor = useProviderEditor({
     info: aiKeysInfo, setInfo: setAiKeysInfo,
     base: `${API}/ai/providers`, signIn: `${API}/ai/oauth/chatgpt`,
-    onSaved: () => { refreshAiModels(); if (aiHealth) checkAiHealth(); },
+    onSaved: () => { refreshAiModels(); if (Object.values(aiHealth).some((r) => !r.ok)) checkAiHealth(); },
     onConnected: (entry, form) => finishNewConnection(entry, !!form.fromChat),
   });
 
@@ -3539,7 +3551,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     retryTask, onJobFinished } = useAppJobs({
     tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
-    pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations,
+    pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations, ocrCapability: serverConfig?.ocr || null,
     workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks, refreshSession: checkSession,
     confirm: (box) => setConfirmBox(box), switchWorkspace, // the box's state is declared further down
     // a page's chat, or a folder's or the library's (`home`) in the library's view
@@ -3568,83 +3580,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       serialize: JSON.stringify,
     },
   );
-  // Which provider entry (API key) AI requests use. Only the key is chosen
-  // here — the model itself is picked in the chat panel, scoped to this key.
-  const [aiProvider, setAiProvider] = usePersistedState("gamma-ai-provider", "");
-  // The pick follows the account (/api/prefs/ai-provider): the server copy
-  // wins on login, so it survives restarts and other browsers/origins;
-  // localStorage is just the instant-paint cache. Without this, each origin
-  // (localhost / LAN / Tailscale) silently reverted to the first key.
-  const aiProviderSyncRef = useRef(null); // last server-synced value; null = not loaded yet
-  useEffect(() => {
-    aiProviderSyncRef.current = null;
-    const u = authUser?.user;
-    if (!u || shareMode) return;
-    const local = aiProvider;
-    // The pick is the account's, in every workspace: an answer is stale only
-    // once the account changed (not prefsUserRef, which is "user@ws").
-    let active = true;
-    readPref("ai-provider", u).then((d) => {
-      if (!active) return;
-      if (d.updated_at) {
-        const server = typeof d.value === "string" ? d.value : "";
-        aiProviderSyncRef.current = server;
-        setAiProvider(server);
-      } else if (local) {
-        // Account has never synced: seed the server with this browser's pick.
-        aiProviderSyncRef.current = local;
-        apiJson(`${API}/prefs/ai-provider`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value: local }),
-        }).catch(() => {});
-      } else {
-        aiProviderSyncRef.current = "";
-      }
-    }).catch(() => {});
-    return () => { active = false; };
-  }, [authUser?.user, shareMode]);
-  useEffect(() => {
-    if (aiProviderSyncRef.current === null || aiProviderSyncRef.current === aiProvider || shareMode) return;
-    aiProviderSyncRef.current = aiProvider;
-    apiJson(`${API}/prefs/ai-provider`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: aiProvider }),
-    }).catch(() => {});
-  }, [aiProvider, shareMode]);
-  // Last model picked per key, so switching keys and back restores the pick
-  // (a workspace-wide memory — the chat model is never per-PDF).
-  const chatModelMemRef = useRef(null);
-  if (chatModelMemRef.current === null) {
-    try { chatModelMemRef.current = JSON.parse(localStorage.getItem("gamma-chat-model-by-key") || "{}") || {}; }
-    catch { chatModelMemRef.current = {}; }
-  }
-  // Keep the selected model inside the active key's model list: switching to
-  // a key restores its remembered model, or falls back to its first one.
-  useEffect(() => {
-    const scoped = providerModels(aiInfo?.models, aiProvider);
-    if (!scoped.length) return;
-    if (!scoped.some((m) => m.id === chatModel)) {
-      const remembered = chatModelMemRef.current[scoped[0].provider];
-      setChatModel(scoped.some((m) => m.id === remembered) ? remembered : scoped[0].id);
-    }
-  }, [aiProvider, aiInfo, chatModel]);
-  // Models the active key (Settings → AI & API keys) offers — the first
-  // key's when none is selected or the selected one is gone. Model registry ids
-  // are "<entryId>:<model>", so the id ROUTES the request to a key server-side;
-  // every model this client sends must come from this list or an unselected
-  // key would serve the call.
-  const scopedAiModels = providerModels(aiInfo?.models, aiProvider);
-  // The model AI calls (chat, citations, titles) actually send: chatModel
-  // snapped into scope at render time — the effect above fixes the state, but
-  // a request fired in the same render (or before /ai/models loads after a
-  // key switch elsewhere) must not trust it. Empty list = registry not loaded
-  // yet; nothing to validate against, so the stored pick passes through.
-  const chatSendModel = scopedAiModels.length && !scopedAiModels.some((m) => m.id === chatModel)
-    ? scopedAiModels[0].id
-    : chatModel;
-
   // The masked key list the chat's setup card read (ChatDock onSetupInfo):
   // the one Connections shows, so a tile's connect dialog opens on it with
   // Settings while the pane reads its own.
@@ -3670,14 +3605,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // The server's shared entries may have changed (Settings → Server).
       refreshAiModels();
       // Usage is account status, not an edit action: fetch it as soon as the
-      // pane opens. Only OAuth protocols have a portable percentage endpoint;
-      // generic API-key providers would merely return "unavailable".
-      const oauthProtocols = new Set((info.protocols || [])
-        .filter((protocol) => protocol.auth === "oauth")
-        .map((protocol) => protocol.id));
-      (info.providers || [])
-        .filter((provider) => oauthProtocols.has(provider.protocol))
-        .forEach((provider) => queryAiProviderUsage(provider));
+      // pane opens, for the connections that can say what is left of their
+      // subscription (a sign-in, OpenCode Go: the masked entry's `quota`).
+      (info.providers || []).filter((provider) => provider.quota).forEach((provider) => queryAiProviderUsage(provider));
     } catch (err) {
       aiEditor.setAiKeysError(err.message);
     }
@@ -3696,14 +3626,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       result = await apiJson(`${API}/ai/providers/${p.id}/test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: probeModelFor(p.id), ...(toolsModel ? { tools_model: toolsModel } : {}) }),
+        body: JSON.stringify({ model: probeModel(aiInfo, p.id), ...(toolsModel ? { tools_model: toolsModel } : {}) }),
       });
     } catch (err) {
       result = { ok: false, error: err.message };
     }
     setAiKeyTests((t) => ({ ...t, [p.id]: result }));
-    // A passing test clears this provider's login-check warning strip.
-    if (result.ok) setAiHealth((h) => (h?.provider_id === p.id ? null : h));
+    // A passing test clears this connection's login-check result.
+    if (result.ok) setAiHealth(({ [p.id]: _passed, ...rest }) => rest);
     if (result.tools) {
       refreshAiModels();
       // Not loadAiKeys, which would clear the other rows' results.
@@ -3721,31 +3651,33 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     setAiKeyUsage((u) => ({ ...u, [p.id]: result }));
   }
-  // Connection check of the active provider (Settings → Provider and models →
-  // "Check connection at login"): a broken credential surfaces as the chat
-  // panel's warning strip at login instead of as a failed chat later. The
-  // default "ping" mode spends no tokens; network failures reaching our own
-  // server stay silent — every other request would be failing too.
+  // Connection check of the connections the tasks use (Settings → AI →
+  // Models › "Check at login", aiModels.js connectionsInUse), one
+  // /ai/health each: a broken credential surfaces as the chat panel's
+  // warning strip and the connection's red dot at login instead of as a
+  // failed chat later. The default "ping" mode spends no tokens; network
+  // failures reaching our own server stay silent — every other request
+  // would be failing too.
   const aiHealthArgsRef = useRef({});
-  aiHealthArgsRef.current = { mode: aiLoginCheck, provider: scopedAiModels[0]?.provider || aiProvider };
+  aiHealthArgsRef.current = { mode: aiLoginCheck, info: aiInfo };
   async function checkAiHealth() {
-    const { mode, provider } = aiHealthArgsRef.current;
-    if (mode === "off") { setAiHealth(null); return; }
-    try {
-      const r = await apiJson(`${API}/ai/health`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider_id: provider || "", mode, model: probeModelFor(provider) }),
-      });
-      setAiHealth(r.configured && !r.ok ? r : null);
-    } catch {}
+    const { mode, info } = aiHealthArgsRef.current;
+    if (mode === "off") { setAiHealth({}); return; }
+    const ids = connectionsInUse(info);
+    const answers = await Promise.all(ids.map((id) => apiJson(`${API}/ai/health`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider_id: id, mode, model: probeModel(info, id) }),
+    }).catch(() => null)));
+    setAiHealth(Object.fromEntries(answers.flatMap((r, i) => (r?.configured ? [[ids[i], r]] : []))));
   }
+  // Once the account's models are known, which say what the tasks use.
+  const aiModelsKnown = !!aiInfo;
   useEffect(() => {
-    if (!authUser?.user || authUser.is_guest || shareMode) return;
-    // Delayed so the server-synced active-provider pick can land first.
+    if (!authUser?.user || authUser.is_guest || shareMode || !aiModelsKnown) return;
     const timer = setTimeout(checkAiHealth, 1500);
     return () => clearTimeout(timer);
-  }, [authUser?.user, shareMode]);
+  }, [authUser?.user, shareMode, aiModelsKnown]);
   // Entering the AI panes from elsewhere refetches the masked key list;
   // moving between them keeps it (their edits refresh it themselves). It
   // runs before the frame is painted, so a form left open on an earlier
@@ -3757,7 +3689,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (isAiPane(settingsOpen) && !isAiPane(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
   }, [settingsOpen]);
 
-  // Settings → Connections. `service` (a protocol id or "other", from the
+  // Settings → AI → Models. `service` (a protocol id or "other", from the
   // chat's setup card) also opens the connect dialog set to that service;
   // `entry` (a chat error card's "Update key" / "Edit connection", the login
   // check's Fix…) opens that entry's form. A shared entry is the admin's to
@@ -3776,14 +3708,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (own) aiEditor.startEdit(own);
   }
 
-  // The model switchers everywhere feed off /ai/models — refresh after edits.
-  // A read that fails leaves the last list and says so (`aiInfoFailed`): the
-  // chat, waiting to learn its AI before it shows its tools, stops waiting.
-  const [aiInfoFailed, setAiInfoFailed] = useState(false);
-  const refreshAiModels = () => apiJson(`${API}/ai/models`)
-    .then((info) => { setAiInfo(info); setAiInfoFailed(false); })
-    .catch(() => setAiInfoFailed(true));
-
   // A connection the dialog just made: test it right away, and when the
   // dialog came from the chat's setup card go back to the chat, ready to ask.
   const [chatFocusSignal, setChatFocusSignal] = useState(0);
@@ -3798,19 +3722,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setChatFocusSignal((n) => n + 1);
   }
 
+  // The confirm names the tasks that lose their model and what each uses
+  // instead (aiModels.js removalNotice).
   function deleteAiProvider(p) {
     const label = p.label || p.protocol;
     setConfirmBox({
-      title: T("Remove AI key"),
-      message: t("Remove the \"{label}\" key? AI requests through it will stop working. This cannot be undone.", { label: label }),
+      title: T("Remove connection"),
+      message: [t("Remove the \"{label}\" connection? This cannot be undone.", { label }), ...removalNotice(p.id, aiInfo)].join(" "),
       confirmLabel: t("Remove"),
       danger: true,
-      onConfirm: async () => {
-        // Close a form that edits this entry — saving it would 404 ("provider
-        // not found") — and forget it as the active key.
-        await aiEditor.run(() => apiJson(`${API}/ai/providers/${p.id}`, { method: "DELETE" }), aiEditor.aiKeysForm?.id === p.id);
-        if (aiProvider === p.id) setAiProvider("");
-      },
+      // Close a form that edits this entry: saving it would 404 ("provider
+      // not found"). The tasks that named it now resolve without it.
+      onConfirm: () => aiEditor.run(() => apiJson(`${API}/ai/providers/${p.id}`, { method: "DELETE" }), aiEditor.aiKeysForm?.id === p.id),
     });
   }
 
@@ -4093,10 +4016,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (retryMeta) setStatus(t("Text check failed: {message}", { message: err.message }));
     }
   }
+  // Read again when the PDF's recognized text changes while it is open
+  // (pdf/ocrState.js: a recognition or a forget ended, here or elsewhere).
   useEffect(() => {
     if (openPopover !== "meta" || !docId || shareMode) { setPdfTextInfo(null); return; }
     checkPdfText();
-  }, [openPopover, docId]);
+  }, [openPopover, docId, ocrState.revision(fileHash(doc) || docIdOf(pdfUrl))]);
 
   // Modal preview of what the AI actually gets to read.
   const [pdfTextPreview, setPdfTextPreview] = useState(null); // null | {loading} | {text}
@@ -4182,22 +4107,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => { focusedBlockIdRef.current = focusedBlockId || ""; }, [focusedBlockId]);
   const attemptedMetaRef = useRef(new Set()); // pages we already tried this session
 
-  // Model actually sent with metadata lookups (per-paper fetch AND the
-  // Settings batch retry): the dedicated pick while it's inside the active
-  // key's scope, else the (already-scoped) chat model.
-  const metaFetchModel = metaModel && scopedAiModels.some((m) => m.id === metaModel)
-    ? metaModel
-    : chatSendModel;
-
-  // Model name the credential probes (Test button / login check "test" mode)
-  // prefer: the effective metadata model when it belongs to the probed entry —
-  // metadata fetches already trust it as the cheap utility model. The entry's
-  // own "Test model" setting still wins server-side; registry ids are
-  // "<entryId>:<model>", so a model from another entry is not sent.
-  const probeModelFor = (providerId) => {
-    const rid = metaModel || chatSendModel || "";
-    return providerId && rid.startsWith(`${providerId}:`) ? rid.slice(providerId.length + 1) : "";
-  };
+  // A metadata answer the chat model gave because the metadata model is
+  // gone (the server's `routed`), said in its task row.
+  const metaFallback = (data) => (data?.routed?.fallback
+    ? t("used {model}: the metadata model is unavailable", { model: modelName(aiInfo, data.routed.model) }) : "");
 
   // --- PDF translation (the 文A button in the viewer's zoom column) ---
   // The viewer starts the jobs (translateCtl), which send translateChunk
@@ -4205,11 +4118,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // selection popup uses the same chunk request. app/translateClient.js
   // follows the jobs of every document: their background-tasks rows, the
   // reading pill, how they ended. The settings live in Settings → Language
-  // and Translation. What is sent: a machine-translation service
-  // ("engine:<id>") or a model, per translateModelFor, else the chat model.
-  const translateEngines = aiInfo?.translate_engines || [];
-  const translatePick = translateModelFor(translateModel, translateEngines, scopedAiModels);
-  const translateSendModel = translatePick || chatSendModel;
+  // and Translation. What is sent: the translation task's model as the
+  // server resolves it (useAiModels): a model or a machine-translation
+  // service ("engine:<id>"); the chat model when the task follows it or its
+  // pick is gone; the free service with no model at all. A job keeps the
+  // requests it started with, so it asks one model throughout; one that
+  // the server no longer offers stops it (translateJob.js finalRefusal).
+  const translateRole = aiModels.roles.translate || {};
+  const translateSendModel = modelFor("translate");
   const translateLangLabel = (TRANSLATE_LANGS.find(([code]) => code === translateLang) || ["", ""])[1];
   // The key the settings hold: the language and what translates into it.
   // What the viewer keeps the page's PDF under is paperKey, below.
@@ -4244,12 +4160,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // No chat model on offer and no service picked in Translate with (the free
   // service, or nothing, stands in for a chat model): a paper left translated
   // by a chat model then opens under that model's key (paperKey).
-  const translateNoChatModel = !scopedAiModels.length && !translateEngines.some((e) => e.id === translateModel);
+  const translateNoChatModel = !aiModels.models.length && !(translateRole.state === "ok" && String(translateRole.pick).startsWith("engine:"));
   useTranslateJobs({ screenUrl: pdfUrl, title: () => pageTitle, langLabel: translateLangLabel, postPill, addTask, updateTask, setStatus,
     retry: () => pdfTranslateCtl.current?.retryUntranslated(),
     rerun: () => pdfTranslateCtl.current?.rerun(),
     translateReferences: () => pdfTranslateCtl.current?.translateReferences(),
-    followsChat: !translatePick, openSettings: () => openSettingsPane("translation"),
+    followsChat: translateRole.state !== "ok", openSettings: () => openSettingsPane("translation"),
+    fallbackNote: translateRole.state === "missing"
+      ? t("used {model}: the translation model is unavailable", { model: modelName(aiInfo, translateSendModel) }) : "",
     // A page read through the link proxy has a copy for the export to read
     // only with Save external PDFs on; an upload always has its file.
     exportsTranslation: () => !!exportTranslated() && (!!docIdOf(pdfUrl) || pdfSaveLocal),
@@ -4270,15 +4188,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         body: JSON.stringify({
           block_id: block.id,
           prompt: metaPrompt || "",
-          model: metaFetchModel || "",
           force: !!force,
           context_char_limit: metaContextChars,
           // the slide citation is generated in the same call
           cite_prompt: citePrompt || "",
-          cite_model: chatSendModel || "",
         }),
       });
-      updateTask(taskId, { state: "done", info: data.cached ? "cached" : data.source === "ai" ? t("AI-extracted") : data.source || "" });
+      updateTask(taskId, { state: "done", info: [data.cached ? "cached" : data.source === "ai" ? t("AI-extracted") : data.source || "",
+        metaFallback(data)].filter(Boolean).join(" · ") });
       return data;
     } catch (err) {
       updateTask(taskId, { state: "failed", info: (err.message || "failed") });
@@ -4358,8 +4275,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ids.forEach((id) => { attemptedMetaRef.current.add(id); metaQueuedRef.current.add(id); });
     tasks.start("metadata", {
       block_ids: ids, force: false,
-      prompt: metaPrompt || "", model: metaFetchModel || "", context_char_limit: metaContextChars,
-      cite_prompt: citePrompt || "", cite_model: chatSendModel || "",
+      prompt: metaPrompt || "", context_char_limit: metaContextChars, cite_prompt: citePrompt || "",
     }).catch(() => ids.forEach((id) => { attemptedMetaRef.current.delete(id); metaQueuedRef.current.delete(id); }));
   }
 
@@ -4435,7 +4351,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const data = await apiJson(`${API}/metadata/cite`, {
         method: "POST", signal: ctl.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ block_id: targetId, prompt: citePrompt || "", model: chatSendModel || "", force }),
+        body: JSON.stringify({ block_id: targetId, prompt: citePrompt || "", force }),
       });
       updateTask(taskId, { state: "done", info: "" });
       if (focusedBlockIdRef.current === targetId) setPptCite(data.citation || "");
@@ -4477,19 +4393,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (ok) flashCopied(kind);
     else setStatus(t("Copy failed — copy manually."));
   }
-
-  useEffect(() => {
-    if (!chatModel) return;
-    try {
-      localStorage.setItem("gamma-chat-model", chatModel);
-      // Also file it under its key (registry ids are "<entryId>:<model>").
-      const key = (aiInfo?.models || []).find((m) => m.id === chatModel)?.provider || chatModel.split(":")[0];
-      if (key) {
-        chatModelMemRef.current = { ...chatModelMemRef.current, [key]: chatModel };
-        localStorage.setItem("gamma-chat-model-by-key", JSON.stringify(chatModelMemRef.current));
-      }
-    } catch {}
-  }, [chatModel]);
 
   // Capture text selected inside the PDF viewer so chat can focus on it.
   // Committed on mouseup (not selectionchange) so the modifier key is known:
@@ -4990,8 +4893,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // read once the workspace is chosen: an agent another account lends is of a workspace (`lent`)
   const localAgents = useLocalAgents(!shareMode && !!authUser?.user && !authUser?.is_guest && wsReady);
   const chatAgentList = useMemo(() => chatAgents({
-    aiInfo, models: providerModels(aiInfo?.models, aiProvider), local: localAgents, computers: pageComputers,
-  }), [aiInfo, aiProvider, localAgents, pageComputers]);
+    aiInfo, models: aiModels.models, local: localAgents, computers: pageComputers,
+  }), [aiInfo, aiModels.models, localAgents, pageComputers]);
   const commentAgentList = useMemo(() => commentAgents(canWriteWorkspace ? chatAgentList : []), [chatAgentList, canWriteWorkspace]);
   const commentSend = useMemo(() => ({ ticked: commentSendTo, remember: setCommentSendTo }), [commentSendTo, setCommentSendTo]);
 
@@ -5270,6 +5173,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onVault: vault.refresh,
     // a computer of the account's came or went: the page's computers, again
     onComputer: pageComputer.refresh,
+    // a stored PDF's recognized text changed, or the socket may have missed it: that
+    // file's recognition (or the one on screen's), again — its text layer, Ctrl+F, the
+    // translation, the menu rows and the metadata popover follow; and the jobs, whose
+    // end (the server's own run of an upload, done between two listings) is said
+    onOcr: (msg) => {
+      ocrState.refresh(msg?.doc_id || fileHash(doc) || docIdOf(pdfUrl));
+      if (msg?.doc_id) tasks.expectEnd(ocrState.fileJobs(msg.doc_id));
+    },
   });
   const collabRef = useRef(collab);
   collabRef.current = collab;
@@ -6709,14 +6620,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (focusedBlockIdRef.current !== pageId) return; // navigated away meanwhile
       await openBlock(pageId, src ? { viewerUrl } : undefined);
       setPdfHidden(false);
-      setStatus(note || (!replace ? (src ? t("PDF attached.") : t("File attached."))
+      // A recognized PDF replaced by one whose text is not: where the Document menu offers it, say so.
+      setStatus([note || (!replace ? (src ? t("PDF attached.") : t("File attached."))
         : bound?.relocation_error
           ? (src ? t("PDF replaced. Its highlights were not placed ({reason}): choose Find highlights in this PDF in the Document menu to place them.",
             { reason: t(bound.relocation_error) })
             : t("File replaced. Its highlights were not placed ({reason}): choose Find highlights in this file in the Document menu to place them.",
               { reason: t(bound.relocation_error) }))
           : src ? t("PDF replaced.")
-          : bound?.relocation ? `${t("File replaced.")} ${relocationSummary(bound.relocation)}` : t("File replaced.")));
+          : bound?.relocation ? `${t("File replaced.")} ${relocationSummary(bound.relocation)}` : t("File replaced.")),
+      ocrState.replacedNote(bound, !!src && !!serverConfig?.ocr && !authUser?.is_guest)].filter(Boolean).join(" "));
     } catch (err) {
       if (err.status === 409 && err.data?.page_id) {
         // The library already holds this file on another page — the page is
@@ -7879,9 +7792,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Stop sharing failed: {message}", { message: err.message }));
     }
   }
-  // The home page menu's Copy link / Share… / Export… / Ask AI. The last
-  // three act on the open page, so the page is opened first and the action
-  // runs once it is the one on screen (the effect below).
+  // The home page menu's Copy link / Share… / Export…. The last two act on
+  // the open page, so the page is opened first and the action runs once it
+  // is the one on screen (the effect below; a chat thread's "ask" too).
   function copyPageLink(id) {
     copyText(withWorkspace(`${window.location.origin}/?page=${encodeURIComponent(id)}`))
       .then((ok) => setStatus(ok ? t("Link copied.") : t("Couldn't copy the link.")));
@@ -8267,7 +8180,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           prompt: "Extract the exact title of this document. Reply with ONLY the title text — no quotes, no authors, no extra words.",
           page_id: focusedBlockId,
           history: [],
-          model: chatSendModel || "",
+          model: chatModel || "",
         }),
       });
       const title = (data.response || "").trim().replace(/^["'\s]+|["'\s]+$/g, "").split("\n")[0].slice(0, 200);
@@ -8296,8 +8209,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const withId = { ...highlight, id: highlight.id || makeId() };
     const nextBlocks = addHighlightAsBlock(blocks, { ...withId, place });
     // Open the new block immediately so the user can type the note without
-    // an extra click. addHighlightAsBlock appends at the top level.
-    if (edit) {
+    // an extra click. addHighlightAsBlock appends at the top level. Not on an
+    // on-screen keyboard (touchTyping), which the focus would raise over the
+    // page at every highlight: there a tap on the row opens its note.
+    if (edit && !touchTyping()) {
       startEditing(withId.id);
       pendingFocusRef.current = withId.id;
     }
@@ -8310,8 +8225,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return withId.id;
   }
   // A region drawn on the picture (the image viewer's tip): a highlight
-  // block placed under image_position, its row's editor open for a note,
-  // or its thread's field for a comment (commentOnNewHighlight, whose
+  // block placed under image_position, its row's editor open for a note
+  // (addHighlight's), or its thread's field for a comment (commentOnNewHighlight, whose
   // abandoned-comment cleanup is the passage's).
   function addRegion(position, { color, comment = false } = {}) {
     const id = addHighlight({ quote: "", position, color: highlightColor(color) || DEFAULT_HIGHLIGHT }, { edit: !comment, place: POSITION_KEY.image });
@@ -8480,7 +8395,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     applyInk, flushInk, handleInkStrokes, pickInkTool, revealInkStrip, inkBySurface, pasteTarget,
     onBoxDeselect: () => { textBoxes.actions.onBoxDeselect(); pictures.deselect(); }, showInNotes,
     transcribe: shareMode ? null : askToTranscribe,
-    ai: shareMode ? null : { model: chatSendModel, addTask, updateTask, pageTitle },
+    ai: shareMode ? null : { addTask, updateTask, pageTitle },
     stepBlocks, touchTextBox: textBoxes.touch, setStatus, undoableInkStatus,
     onComment: (id) => inkThreads.onComment(id), threaded: (id) => inkThreads.closedGroup(id) });
   // Comment threads on ink groups (comments/useInkThreads.js): the lasso
@@ -8819,6 +8734,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const relocating = tasks.jobs.some((job) => job.kind === "relocate-highlights" && isActive(job)
     && job.params?.page_id === focusedBlockId);
   const pdfStored = !!fileHash(doc);
+  // The Document menu's "Recognize text in this PDF" (where the server recognizes text, on
+  // it or in this window) and "Forget the recognized text…", decided by pdf/ocrState.js (a
+  // guest cannot start either); a change of the recognized words of the PDF on screen
+  // re-runs a pinned search (the search panel's docNonce).
+  const { recognize: ocrRow, forget: ocrDrop } = ocrState.useOcrMenu({ docId: fileHash(doc),
+    offered: isPdf(doc) && !readOnly && !shareMode && !authUser?.is_guest, capability: serverConfig?.ocr || null,
+    jobs: tasks.jobs, translated: pdfTransState.translated && pdfTransState.url === pdfUrl });
+  const ocrNonce = ocrState.useOcrNonce(fileHash(doc) || docIdOf(pdfUrl) || "");
   // A PDF read where it lies on this computer (gamma/linked_files.py), or a
   // work folder's file, whose PDF is its file's wherever the server keeps
   // the bytes: no other file replaces it from the Document menu.
@@ -8903,7 +8826,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     layoutOf: async (paper, signal) => {
       if (openHere(paper)) return exportTranslation();
       const key = folderKeyOf(paper.doc_id);
-      return key && paperLayout({ url: uploadUrl(storedName(paper.doc_id, ".pdf")), pageId: paper.page_id, key, open: openPdfDocument,
+      return key && paperLayout({ url: uploadUrl(storedName(paper.doc_id, ".pdf")), docId: paper.doc_id, pageId: paper.page_id, key, open: openPdfDocument,
         signal, lookup: lookupRequest({ lang: langOfKey(key), model: modelOfKey(key) }) });
     },
   });
@@ -9646,9 +9569,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The list is the page's document's: a PDF's highlights under
   // pdf_position, a picture's regions under image_position (positionKeyOf),
   // so every reader of it (the jumps, the margin, the chat) takes a region
-  // with no branch.
-  const prevHighlightsRef = useRef({ json: "", value: [] });
-  const highlights = useMemo(() => keepIfSameJson(prevHighlightsRef, pageHighlights(blocks, treeBlocks, comments.countByBlock, positionKeyOf(doc), fileHash(doc))),
+  // with no branch. The items of blocks a keystroke did not touch keep their
+  // identity, so the compare serializes only the rebuilt ones (sameItems;
+  // the whole list as JSON took half of App's time per key).
+  const prevHighlightsRef = useRef(null);
+  const highlights = useMemo(() => keepIfSame(prevHighlightsRef, pageHighlights(blocks, treeBlocks, comments.countByBlock, positionKeyOf(doc), fileHash(doc)), sameItems),
     [blocks, treeBlocks, comments.countByBlock, doc]);
   // The page's highlights to review after its PDF was replaced, in document
   // order: the pending ones (drawn dashed until accepted or moved), the
@@ -11402,6 +11327,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                 {isPdf(doc) ? t("Find highlights in this PDF") : t("Find highlights in this file")}
                               </MenuItem>
                             ) : null}
+                            {ocrRow ? (
+                              <MenuItem icon={ScanTextIcon} disabled={loading || ocrRow.busy} title={ocrRow.title} data-ocr="recognize"
+                                onClick={() => { setOpenPopover(null); ocrState.startRecognizing(tasks, focusedBlockId, ocrRow, { title: pageTitle || defaultPageTitle(doc), say: setStatus }).catch((err) => setStatus(t("Could not start: {message}", { message: err.message }))); }}>
+                                {ocrRow.label}
+                              </MenuItem>
+                            ) : null}
+                            {/* Asked first, for everyone in the workspace (pdf/ocrState.js forgetBox). */}
+                            {ocrDrop ? (
+                              <MenuItem icon={Trash2Icon} danger disabled={loading || ocrDrop.busy} title={ocrDrop.title} data-ocr="forget"
+                                onClick={() => { setOpenPopover(null); setConfirmBox(ocrState.forgetBox(tasks, focusedBlockId, pageTitle || defaultPageTitle(doc), setStatus)); }}>
+                                {t("Forget the recognized text…")}
+                              </MenuItem>
+                            ) : null}
                             {!pdfLinked ? <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the file…")}</MenuItem> : null}
                           </>
                         ) : null}
@@ -11639,11 +11577,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             <span className="metaKey">{t("Status")}</span>
                             <span className="metaVal metaStatus">
                               <span className={`metaCell ${!pdfTextInfo || pdfTextInfo.checking || pdfTextInfo.error ? "muted" : pdfTextInfo.ok ? "ok" : "bad"}`}
-                                title={!pdfTextInfo || pdfTextInfo.checking ? t("Checking whether the PDF has a text layer")
+                                title={ocrState.textStatusTitle(pdfTextInfo, ocrRow)
+                                  || (!pdfTextInfo || pdfTextInfo.checking ? t("Checking whether the PDF has a text layer")
                                   : pdfTextInfo.error ? t("Text check failed — {error}", { error: pdfTextInfo.error })
                                   : !pdfTextInfo.found ? t("The PDF file is not on the server")
                                   : pdfTextInfo.ok ? t("The PDF has a text layer — the AI and search can read it")
-                                  : t("No text layer — scanned or image-only? The AI can't read it")}>
+                                  : t("No text layer — scanned or image-only? The AI can't read it"))}>
                                 <i className="setDot" />{!pdfTextInfo || pdfTextInfo.checking ? "checking" : pdfTextInfo.error ? t("text ?") : !pdfTextInfo.found ? t("no file") : pdfTextInfo.ok ? "text" : t("no text")}
                               </span>
                               <span className={`metaCell ${!pdfTextInfo || pdfTextInfo.checking || pdfTextInfo.error || pdfTextInfo.indexed === undefined ? "muted" : pdfTextInfo.indexed ? "ok" : "muted"}`}
@@ -12869,11 +12808,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote} onSelectionSent={() => setNoteSel(null)}
           chatImages={chatImages} setChatImages={setChatImages} chatPictureBudget={chatPictures}
           onAttachView={!homeMode && isPdf(doc) && pdfUrl && !pdfHidden ? attachViewToChat : undefined}
-          chatModel={chatSendModel} setChatModel={setChatModel}
+          chatModel={chatModel} aiModels={aiModels}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
           chatSpeed={chatSpeed} setChatSpeed={setChatSpeed} chatFollowUpMode={chatFollowUpMode}
           dictationModel={dictationModel} dictationLang={dictationLang}
-          chatSystem={chatSystem} aiInfo={aiInfo} aiInfoFailed={aiInfoFailed} aiProvider={aiProvider}
+          chatSystem={chatSystem} aiInfo={aiInfo} aiInfoFailed={aiInfoFailed}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
           openAiKeysEditor={openAiKeysEditor} preloadSettings={SettingsDialog.preload}
           onSetupInfo={(info) => { chatKeysInfoRef.current = info; }}
@@ -12881,7 +12820,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           openSettings={openSettingsPane}
           isAdmin={!!authUser?.is_admin}
           checkModelTools={(m) => testAiProvider({ id: m.provider }, m.model)} refreshAiModels={refreshAiModels}
-          aiHealth={aiHealth} dismissAiHealth={() => setAiHealth(null)}
+          aiHealth={aiHealthStrip}
+          dismissAiHealth={() => setAiHealth((h) => Object.fromEntries(Object.entries(h).map(([id, r]) => [id, { ...r, dismissed: true }])))}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus} askConfirm={setConfirmBox}
           organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
@@ -13307,7 +13247,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         scrollToRef={scrollToRef}
         cancelCoarseRestoreRef={cancelCoarseRestoreRef}
         setPdfHidden={setPdfHidden}
-        docNonce={pdfDocNonce}
+        docNonce={pdfDocNonce + ocrNonce}
         onFindMarks={setFindMarks}
         initialQuery={searchSeed}
       />
@@ -14988,8 +14928,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setSelTranslateAuto,
           translateLang,
           setTranslateLang,
-          translateModel,
-          setTranslateModel,
           translateEffort,
           setTranslateEffort,
           translateSpeed,
@@ -14999,8 +14937,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           translateKeep,
           setTranslateKeep,
           readOnly, // a viewer of the workspace cannot clear its kept translations
-          aiModels: scopedAiModels, // the translation picker's registry
-          translateEngines, // …and the translation services set up for it
+          models: aiModels, // Translate with: the translation task's model
           refreshAiModels, // saving a service's key updates that list
           pdfDarkPage,
           setPdfDarkPage,
@@ -15030,13 +14967,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         keyboard={{ keybindings, setKeybindings, enterNewBlock, setEnterNewBlock }}
         library={{
           // the batch metadata lookup (a background job) uses the same
-          // prompt/model/context prefs as the per-paper fetch in the
-          // metadata popover
+          // prompt and context prefs as the per-paper fetch in the
+          // metadata popover (the metadata task's model is the server's)
           metaPrompt,
-          metaFetchModel,
           metaContextChars,
           citePrompt,
-          citeModel: chatSendModel,
           indexing,
           metadataJob,
           tasks,
@@ -15047,16 +14982,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }}
         ai={{
           ...aiEditor,
-          chatModel: chatSendModel,
-          setChatModel,
+          models: aiModels, // the models for each task
+          aiHealth, // the login check's answer per connection
           chatEffort,
           setChatEffort,
           chatSpeed,
           setChatSpeed,
           chatFollowUpMode,
           setChatFollowUpMode,
-          aiProvider,
-          setAiProvider,
           deleteAiProvider,
           aiKeyTests,
           testAiProvider,
@@ -15064,9 +14997,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           queryAiProviderUsage,
           aiLoginCheck,
           setAiLoginCheck,
-          metaModel,
-          setMetaModel,
-          aiModels: scopedAiModels,
           dictationModel,
           setDictationModel,
           dictationLang,
@@ -15487,9 +15417,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   !many && (
                     <MenuItem key="export" icon={ExportIcon} title={t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
                       onClick={() => openPageThen(homeMenu.id, "export", homeMenu.panel)}>{t("Export…")}</MenuItem>
-                  ),
-                  !many && !shareMode && (
-                    <MenuItem key="ask" icon={SparklesIcon} onClick={() => openPageThen(homeMenu.id, "ask", homeMenu.panel)}>{t("Ask AI about this page")}</MenuItem>
                   ),
                   !many && (
                     <MenuItem key="props" icon={BracesIcon} onPointerEnter={BlockProperties.preload}

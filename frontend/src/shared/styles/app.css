@@ -2712,14 +2712,22 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .tab.groupEnd .stripGroupLine { right: var(--space-4); border-radius: 0 1px 1px 0; }
 /* The open group's active tab: one outline of 2 px borders, over the tab
    and its band (the tab's own border and the band's go clear): the tab's
-   top and sides down to --tab-foot above the strip's foot, then a foot each
-   side, a box --tab-foot square whose border carries the side on down and
-   turns out into the line as Chrome's tab flares. The three are borders on
-   the same columns, and the sides reach 2 px into the feet, through a
-   transparent bottom border the feet hang from: at a screen scale that puts
-   an edge inside a device pixel, sides that stopped where the feet start
-   would pale there, and a box with no bottom border leaks a sliver of its
-   colour along its bottom edge. */
+   top and sides, 2 px borders, down to --tab-foot above the strip's foot,
+   then a foot each side, a box --tab-foot square holding a quarter ring
+   centred on its outer top corner, which carries the side on down and turns
+   it out into the line as Chrome's tab flares. Beyond the ring, between the
+   curve and the tab, the foot is the tab's own fill, as in Chrome, where a
+   tab's shape takes in its flare: it covers whatever stretch of the line
+   reaches in under the flare (the one before the tab reaches over the gap
+   into it), so both sides flare alike. The ring and the fill are one
+   radial gradient, its steps half a pixel wide for the edges' smoothing,
+   so no edge of the foot's box shows (a border's rounded corner clips what
+   lies outside it, and a clipped shadow leaves a seam along the box). The
+   sides reach 2 px into the feet, through a transparent bottom border the
+   feet hang from: at a screen scale that puts an edge inside a device
+   pixel, sides that stopped where the feet start would pale there, and a
+   box with no bottom border leaks a sliver of its colour along its bottom
+   edge. */
 .tab:has(> .stripGroupOutline),
 .tab:has(> .stripGroupOutline)::after { border-color: transparent; }
 .stripGroupOutline {
@@ -2737,13 +2745,13 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   content: "";
   position: absolute;
   top: 100%;
-  box-sizing: border-box;
   width: var(--tab-foot);
   height: var(--tab-foot);
-  border: 0 solid var(--strip-group);
+  --foot: transparent calc(var(--tab-foot) - 2.25px), var(--strip-group) calc(var(--tab-foot) - 1.75px),
+    var(--strip-group) calc(var(--tab-foot) - 0.25px), var(--bg-surface) calc(var(--tab-foot) + 0.25px);
 }
-.stripGroupOutline::before { left: calc(-1 * var(--tab-foot)); border-width: 0 2px 2px 0; border-radius: 0 0 var(--tab-foot) 1px; }
-.stripGroupOutline::after { right: calc(-1 * var(--tab-foot)); border-width: 0 0 2px 2px; border-radius: 0 0 1px var(--tab-foot); }
+.stripGroupOutline::before { left: calc(-1 * var(--tab-foot)); background: radial-gradient(circle at 0 0, var(--foot)); }
+.stripGroupOutline::after { right: calc(-1 * var(--tab-foot)); background: radial-gradient(circle at 100% 0, var(--foot)); }
 /* The editor under a chip: the name, then the nine colours as the
    palette's swatches (.colorRow, .colorBtn). */
 .stripGroupMenu { width: 284px; padding: var(--space-4) 0 var(--space-2); }
@@ -4662,10 +4670,6 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .ringMeter { display: block; color: var(--accent-fill); cursor: help; }
 .aiProvPwForm { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
 .aiProvPwForm .aiKeyInput { margin-bottom: 0; width: auto; flex: 1; }
-.aiModelMenu { width: min(440px, calc(100vw - 16px)); }
-.aiModelOptions { max-height: min(280px, calc(100dvh - 24px)); overflow-y: auto; overscroll-behavior: contain; }
-.aiModelOptions .ctxMenuItem { overflow-wrap: anywhere; }
-.aiModelOptions .ctxMenuItem[aria-selected="true"] { background: var(--bg-hover); }
 .ctxMenu.uiSelectMenu { max-height: min(360px, calc(100dvh - 16px)); max-width: calc(100vw - 16px); overflow-y: auto; overscroll-behavior: contain; }
 /* small badge chips (admin / guest / you) */
 .uiTag {

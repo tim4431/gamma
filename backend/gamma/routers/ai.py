@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import (agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_steer, ai_usage,
-                chatgpt_oauth, fetch_handoff, net_proxy, search_services, skills, translate_engines)
+                chatgpt_oauth, fetch_handoff, net_proxy, pdf_ocr, search_services, skills, translate_engines)
 from ..ai_client import (
     Alarm,
     CallRefused,
@@ -68,15 +68,20 @@ from ..ai_settings import (
     MAX_NAME_LEN,
     MAX_PROVIDERS,
     MAX_TOOL_REASON,
+    ModelUnavailable,
     ai_runtime,
+    billing_of,
     clear_refresh_backoff,
     entry_models,
     forget_tool_check,
+    import_roles,
     is_oauth_protocol as _is_oauth_protocol,
     is_server_id,
+    key_optional,
     load_provider_entries,
     load_server_ai,
     mask_entry,
+    missing_picks,
     new_key_entry,
     new_provider_id,
     own_entries,
@@ -87,9 +92,11 @@ from ..ai_settings import (
     resolve_model as _resolve_model,
     save_tool_check,
     server_entries_for,
+    set_roles,
     shared_allowance,
     stored_tool_check,
     transcriber_for,
+    transcriber_of,
     update_entry,
     update_provider_entries,
 )
@@ -291,8 +298,10 @@ def _served_speed(answered: dict, usage) -> bool:
 def failure_detail(error: Exception, what: str = "AI call failed") -> str:
     """The error line a stream ends with: a call Gamma refused (a used-up
     shared allowance, too many calls at once) says so in its own words (the
-    429's detail), anything else is "<what>: <error>"."""
-    return error.detail if isinstance(error, CallRefused) else f"{what}: {error}"
+    429's detail) and so does a model no longer offered (its kind,
+    ``model_unavailable``, goes beside it: _failure_info); anything else is
+    "<what>: <error>"."""
+    return error.detail if isinstance(error, (CallRefused, ModelUnavailable)) else f"{what}: {error}"
 
 
 def _failure_info(error: Exception, rt: dict | None = None, entry: dict | None = None) -> dict:
@@ -327,17 +336,36 @@ def _search_index_status(ws: str, doc_id: str) -> dict:
             "index_stale": bool(info and info["ver"] != INDEX_VERSION)}
 
 
+def _ocr_status(ws: str, doc_id: str) -> dict:
+    """``{"ocr": {recognized, scanned, at}}`` when some page of the doc
+    reads words recognized from its picture (gamma/pdf_ocr.py): how many
+    pages do (a page the recognition found no real text on, read as no
+    text, not among them: ``pdf_ocr.live_counts``), how many are scans or
+    pictures, when it was last applied; ``{}`` when none does."""
+    found = pdf_ocr.state(ws, doc_id)
+    if not found or not found["recognized"]:
+        return {}
+    words, _empty = pdf_ocr.live_counts(ws, doc_id, found["recognized"])
+    if not words:
+        return {}
+    return {"ocr": {"recognized": words, "scanned": found["scanned"], "at": found["at"]}}
+
+
 # Sync def: extraction runs in the threadpool (PyMuPDF stops at the sample cap).
 @router.get("/pdf-text-status")
 def pdf_text_status(doc_id: str, request: Request, preview: int = 0):
     """Whether a doc's PDF yields extractable text and whether the search
     index covers it. Feeds the metadata popover's health rows — a
     scanned/image-only PDF is why AI answers blind and metadata lookups come
-    up empty. `preview` > 0 additionally returns that many characters of the
-    text itself (capped)."""
+    up empty. The text is what every reader reads, the words recognized
+    from a scanned page's picture included, and ``ocr``, present when some
+    page reads such words (a page recognized without any does not count),
+    says so (``_ocr_status``: the PDF file itself does not hold them).
+    `preview` > 0 additionally returns that many
+    characters of the text itself (capped)."""
     ws = require_ws(request)
     preview = min(max(preview, 0), 20000)
-    index = _search_index_status(ws, doc_id)
+    index = {**_search_index_status(ws, doc_id), **_ocr_status(ws, doc_id)}
     pdf_path = _pdf_path(ws, doc_id)
     if not pdf_path:
         return {"found": False, "ok": False, "chars": 0, **index}
@@ -529,6 +557,22 @@ CITE_PROMPT = (
 )
 
 
+def _with_facts(rt: dict) -> list:
+    """The registry with each model's facts, from the caches alone
+    (ai_catalog.facts: never a network wait here; a cold cache gives nulls
+    and starts its fetch for the next ask)."""
+    out = []
+    for m in rt["models"]:
+        conf = rt["providers"].get(m["provider"]) or {}
+        out.append({**m, **ai_catalog.facts(m["provider"], conf, m["model"], m.get("billing") or "")})
+    return out
+
+
+def _transcriber(rt: dict) -> dict | None:
+    pid = transcriber_of(rt, rt["default"]["id"] if rt["default"] else "")
+    return {"provider": pid, "provider_name": rt["providers"][pid].get("name") or ""} if pid else None
+
+
 # Sync def: ai_runtime may refresh a ChatGPT token (a network round trip).
 @router.get("/ai/models")
 def ai_models(request: Request):
@@ -536,8 +580,18 @@ def ai_models(request: Request):
     rt = ai_runtime(user_id)
     return {
         "enabled": rt["enabled"],
-        "models": rt["models"],             # [{id: "<pid>:<model>", provider, provider_name, model}, ...]
+        # [{id: "<pid>:<model>", provider, provider_name, model, native_pdf, shared, billing,
+        #   tools, tools_reason?, context, images, price}, ...]
+        "models": _with_facts(rt),
         "default": rt["default"]["id"] if rt["default"] else "",
+        # The model each task uses ({role: {pick, model, state}}), the chat
+        # header's favorites, and whether chat still holds step 71's pick.
+        "roles": rt["roles"],
+        "favorites": rt["favorites"],
+        "chat_migrated": rt["chat_migrated"],
+        # What names a pick or a favorite no longer offered, by its id
+        # ({model, connection}; ai_settings.missing_picks).
+        "missing": missing_picks(user_id, rt),
         # Set-up machine-translation engines [{id: "engine:<id>", label}] —
         # the translation picker offers them next to the models.
         "translate_engines": translate_engines.configured(user_id),
@@ -548,6 +602,10 @@ def ai_models(request: Request):
         # an OpenAI-protocol key; the chat's mic shows only then). The same
         # entries /ai/transcribe picks from, models picked or not.
         "transcribe": any(ai_protocols.of(conf).transcription(conf) for conf in rt["providers"].values()),
+        # The connection dictation goes through with the chat model as the
+        # hint (ai_settings.transcriber_of), null when none can take it:
+        # the Dictation row of Settings → AI → Models names it.
+        "transcriber": _transcriber(rt),
         "default_prompt": _SYSTEM_PROMPT,   # shown in the prompt editor
         "metadata_prompt": METADATA_PROMPT,  # AI metadata-extraction fallback
         "cite_prompt": CITE_PROMPT,          # PPT-style citation generator
@@ -556,6 +614,50 @@ def ai_models(request: Request):
         # no shared entry applies): the account card's meter.
         "allowance": rt["allowance"],
     }
+
+
+class ModelRolesRequest(BaseModel):
+    # Each a registry id offered, "" for the chat model (translate: or a
+    # configured "engine:<id>"); left out = unchanged.
+    chat: str | None = None
+    metadata: str | None = None
+    translate: str | None = None
+    ink: str | None = None
+    favorites_add: list[str] = Field(default_factory=list, max_length=50)
+    favorites_remove: list[str] = Field(default_factory=list, max_length=200)
+
+
+@router.put("/ai/models/roles")
+def ai_model_roles(payload: ModelRolesRequest, request: Request):
+    """Set the model some tasks use, and add or remove favorites, in one
+    write of the account's ``ai-models`` pref (ai_settings.set_roles): 400
+    for a pick not offered or past 50 favorites; a chat pick clears
+    ``chat_migrated``. Any account, a guest's too (among the models it may
+    use); never a link visitor or an integration token."""
+    user_id = require_user_id(request)
+    picks = {role: getattr(payload, role) for role in ("chat", "metadata", "translate", "ink")
+             if getattr(payload, role) is not None}
+    return set_roles(user_id, ai_runtime(user_id), {k: v.strip() for k, v in picks.items()},
+                     payload.favorites_add, payload.favorites_remove)
+
+
+class ModelImportRequest(BaseModel):
+    # This browser's picks from before they followed the account.
+    chat: str = ""
+    metadata: str = ""
+    translate: str = ""
+
+
+@router.post("/ai/models/import")
+def ai_model_import(payload: ModelImportRequest, request: Request):
+    """The client's one-time move of a browser's own picks into the
+    account (ai_settings.import_roles): each taken only while the account's
+    is unset (chat also while it holds step 71's pick), atomically; a pick
+    not offered is skipped. {taken, roles, favorites, chat_migrated}."""
+    user_id = require_user_id(request)
+    return import_roles(user_id, ai_runtime(user_id),
+                        {"chat": payload.chat.strip(), "metadata": payload.metadata.strip(),
+                         "translate": payload.translate.strip()})
 
 
 # --- Per-user AI provider entries (GUI key management) ------------------------
@@ -606,18 +708,27 @@ class AIProviderRequest(BaseModel):
     base_url: str | None = None  # "" = protocol default
     models: str | None = None    # comma-separated model names; "" = none offered
     test_model: str | None = None  # model probes use (Test button / login check); "" = first model
+    # How its calls are paid for, overriding the connection's own
+    # (ai_settings.billing_of): "api", "subscription", "local"; "" = none.
+    billing: str | None = None
 
 
 @router.get("/ai/usage")
-def ai_usage_summary(request: Request):
-    """Token usage of the signed-in account's AI calls, as the providers
-    reported it: totals for today / 7 days / 30 days / all kept rows, the
-    30-day split by kind (chat, translate, metadata, cite, test) and by
-    model. Calls through the server's shared entries count here too, and
-    ``allowance`` is their 24-hour allowance ({limit, used, exhausted}; None
-    when no shared entry applies — ai_settings.shared_allowance)."""
+def ai_usage_summary(request: Request, period: Literal["week", "month", "year", "all"] = "month",
+                     kind: str = ""):
+    """Token usage and estimated cost of the signed-in account's AI calls,
+    as the providers reported them (ai_usage.summary): the unfiltered
+    windows (today, 7 days, 30 days, every row kept) and daily calendar,
+    for ``period`` the totals and the split by kind, and the split by model
+    of ``kind`` alone ("" = every kind); each counts object split by
+    billing. Calls through the
+    server's shared entries count here too, and ``allowance`` is their
+    24-hour allowance ({limit, used, exhausted}; None when no shared entry
+    applies — ai_settings.shared_allowance)."""
     user_id = require_user_id(request)
-    return {**ai_usage.summary(user_id), "allowance": shared_allowance(user_id)}
+    if kind and kind not in ai_usage.KINDS:
+        raise HTTPException(status_code=400, detail="unknown kind")
+    return {**ai_usage.summary(user_id, period, kind), "allowance": shared_allowance(user_id)}
 
 
 @router.delete("/ai/usage")
@@ -966,12 +1077,22 @@ def ai_provider_test(provider_id: str, request: Request, payload: AIProviderTest
     return _probe_entry(user_id, entry, payload.model if payload else "", tools_model=tools_model)
 
 
+def _entry_conf(entry: dict) -> dict:
+    """A saved entry's protocol and effective base URL: what tells its
+    service preset (and so its quota reader) apart."""
+    proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
+    base = ((entry.get("base_url") or "").strip() or (proto.base_url if proto else "")).rstrip("/")
+    return {"protocol": entry.get("protocol"), "base_url": base}
+
+
 # Sync def: this read-only account call runs in FastAPI's threadpool.
 @router.post("/ai/providers/{provider_id}/usage")
 def ai_provider_usage(provider_id: str, request: Request):
-    """The subscription allowance of a sign-in entry (Protocol.account_usage).
+    """What is left of a connection's plan, for any connection with a quota
+    reader (ai_protocols.quota_reader: a ChatGPT sign-in's own, OpenCode
+    Go's from its preset), as windows ({available, windows, plan_type}).
 
-    API-key protocols have no portable quota endpoint: OpenAI-compatible
+    Pay-per-token providers have no portable quota endpoint: OpenAI-compatible
     gateways and Anthropic-style services all expose different billing/admin
     APIs. Report that honestly instead of presenting token counts as quota.
     """
@@ -980,27 +1101,34 @@ def ai_provider_usage(provider_id: str, request: Request):
     entry = _saved_entry(request, user_id, provider_id)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
-    proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
-    if not proto or not proto.has_account_usage:
+    reader = ai_protocols.quota_reader(_entry_conf(entry))
+    if reader is None:
         return {"available": False,
                 "reason": "This API-key provider does not expose a standard remaining-usage percentage."}
 
+    signed_in = _is_oauth_protocol(entry.get("protocol"))
     clear_refresh_backoff(user_id, provider_id)
     conf = ai_runtime(user_id)["providers"].get(provider_id)
     if not conf:
-        return {"available": False, "auth": True, "reason": "Sign in again to query usage."}
+        return {"available": False, "auth": True,
+                "reason": "Sign in again to query usage." if signed_in else "Set an API key to query usage."}
     try:
-        data = _renewing(user_id, provider_id, conf, lambda c: ai_catalog.fetch_json(proto.account_usage_request(c)))
+        data = _renewing(user_id, provider_id, conf, lambda c: ai_catalog.fetch_json(reader.account_usage_request(c)))
     except chatgpt_oauth.RefreshUnavailable:
         return {"available": False, "auth": False,
                 "reason": "Couldn't reach OpenAI to renew the sign-in — try again."}
     except urllib.error.HTTPError as e:
         kind = failure_kind(e)
+        refusal = reader.refusal(e.code) if kind != "blocked" else ""
+        if refusal:
+            # The key works but the plan doesn't cover it (OpenCode Go's 403).
+            return {"available": False, "auth": False, "reason": refusal}
         if kind == "auth":
-            # Expired/revoked sign-in: an expected state, not a server error —
-            # report it in-body so the UI can say "reconnect".
+            # Expired/revoked sign-in, a rejected key: an expected state, not
+            # a server error — report it in-body so the UI can say "reconnect".
             return {"available": False, "auth": True,
-                    "reason": "The sign-in expired — sign in again in this entry's edit form."}
+                    "reason": "The sign-in expired — sign in again in this entry's edit form." if signed_in
+                    else "The provider rejected the API key — update it in this connection's form."}
         if kind == "blocked":  # the server's network, not the sign-in
             return {"available": False, "auth": False, "reason": f"Usage inquiry refused: {_listing_detail(e)}"}
         raise HTTPException(status_code=502,
@@ -1009,7 +1137,7 @@ def ai_provider_usage(provider_id: str, request: Request):
         raise HTTPException(status_code=502, detail=f"usage inquiry failed: {e}")
     if not isinstance(data, dict):
         raise HTTPException(status_code=502, detail="usage inquiry returned invalid data")
-    usage = proto.account_usage(data)
+    usage = reader.account_usage(data)
     return {"available": bool(usage["windows"]), **usage,
             "reason": "" if usage["windows"] else "The provider returned no usage windows."}
 
@@ -1039,9 +1167,12 @@ class ModelCatalogRequest(BaseModel):
 def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
     """Model names offered by a provider, for the settings form's model
     picker, asked live (ai_catalog.list_models): an API-key protocol with the
-    typed key or the saved entry's, a sign-in protocol with a connected
-    entry's token. An admin editing a shared entry names it by its
-    ``server:<id>``."""
+    typed key or the saved entry's (none for a local server's preset or a
+    custom endpoint: ai_settings.key_optional), a sign-in protocol with a
+    connected entry's token. An admin editing a shared entry names it by its
+    ``server:<id>``. ``facts`` gives each model's {context, images, price}
+    (ai_catalog.listing_facts; price only for a connection paid per
+    token)."""
     user_id = require_key_owner(request)
     entry = {}
     protocol = payload.protocol
@@ -1055,10 +1186,10 @@ def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
         conf = _signed_in_conf(user_id, payload.provider_id, proto)
     else:
         key = (payload.api_key or "").strip() or (entry.get("api_key") or "").strip()
-        if not key:
-            raise HTTPException(status_code=400, detail="enter the API key first, then load the model list")
         base = ((payload.base_url if payload.base_url is not None else entry.get("base_url") or "").strip()
                 or proto.base_url).rstrip("/")
+        if not key and not key_optional({"protocol": proto.id, "base_url": base}):
+            raise HTTPException(status_code=400, detail="enter the API key first, then load the model list")
         conf = {"protocol": proto.id, "api_key": key, "base_url": base, "name": ""}
     # A key the provider refuses is the form's problem (400); a sign-in's
     # listing failing is the upstream's (502).
@@ -1069,7 +1200,8 @@ def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
         raise HTTPException(status_code=status, detail=f"model list failed: {_listing_detail(e)}")
     except Exception as e:
         raise HTTPException(status_code=status, detail=f"model list failed: {e}")
-    return {"models": [m["id"] for m in models]}
+    billing = billing_of({**entry, "id": payload.provider_id, "protocol": proto.id, "base_url": conf["base_url"]})
+    return {"models": [m["id"] for m in models], "facts": ai_catalog.listing_facts(conf, models, billing)}
 
 
 # Sync def: the listing / catalog fetches run in the threadpool.
@@ -1139,11 +1271,19 @@ def ai_health(payload: AIHealthRequest, request: Request):
     conf = ai_runtime(user_id)["providers"].get(entry.get("id"))
     if not conf:
         return {**result, **_no_credential(entry)}
+    reader = None
     try:
-        _renewing(user_id, entry.get("id"), conf, lambda c: ai_catalog.fetch_json(ai_protocols.of(c).ping_request(c)))
+        # A connection with a quota asks its quota endpoint, which checks the
+        # key against the plan too (OpenCode's listing answers without one).
+        reader = ai_protocols.quota_reader(conf)
+        _renewing(user_id, entry.get("id"), conf, lambda c: ai_catalog.fetch_json(
+            reader.account_usage_request(c) if reader else ai_protocols.of(c).ping_request(c)))
     except chatgpt_oauth.RefreshUnavailable:
         return {**result, **_RENEWAL_UNREACHABLE}
     except urllib.error.HTTPError as e:
+        refusal = reader.refusal(e.code) if reader and failure_kind(e) != "blocked" else ""
+        if refusal:
+            return {**result, "ok": False, "auth": True, "kind": "auth", "error": refusal}
         if failure_kind(e) == "auth":
             return {**result, "ok": False, "auth": True, "kind": "auth", "error": _upstream_detail(e, 200)}
         if e.code in (404, 405):
@@ -1814,7 +1954,7 @@ def ai_chat_context(payload: AIChatContextRequest, request: Request):
     user_id = request.state.user_id
     try:  # the connection decides whether search_web rides along
         rt = require_ai_runtime(user_id)
-        entry = _resolve_model(rt, payload.model)
+        entry = _resolve_model(rt, payload.model, "chat")
     except HTTPException:
         rt = entry = None
     # As the live chat sees it: a streamed chat, whose asking tools are armed.
@@ -1843,10 +1983,13 @@ def ai_chat(payload: AIChatRequest, request: Request):
     user_id = request.state.user_id
     try:
         rt = require_ai_runtime(user_id)
+        # The model the header shows, else the chat model; one no longer
+        # offered is refused, never answered by another (the chat's error
+        # card reads the kind: ai_client.failure_kind).
+        entry = _resolve_model(rt, payload.model, "chat")
     except HTTPException as e:
         return _failure_response(e.status_code, e.detail, _failure_info(e))
 
-    entry = _resolve_model(rt, payload.model)
     effort = resolve_effort(payload.effort)
     speed = resolve_speed(payload.speed)
     # Only a streamed reply can show an approval card and wait for it.
@@ -1859,7 +2002,6 @@ def ai_chat(payload: AIChatRequest, request: Request):
     # how many of the oldest turns are left out, and the budget for what the
     # message points at, to fit the model's window.
     state = {"drop": 0, "quote": passage_budget(payload)}
-    count_usage = ai_usage.recorder("chat", entry, rt)
     cache_key = _cache_key(user_id, ws, payload)
     history_len = len([h for h in payload.history if isinstance(h, dict) and not h.get("error")])
     conf = rt["providers"].get(entry["provider"]) or {}
@@ -1913,7 +2055,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
             pass  # read too slowly: the helper's next line is its whole state again
 
     scope["helper"] = Helper(
-        ws=ws, on_usage=count_usage,
+        ws=ws, on_usage=lambda usage: count_usage(usage),
         on_status=helper_status if payload.stream else None,
         open_call=lambda talk, htools: open_upstream(talk.messages, talk.system, talk.files,
                                                      True, htools, []),
@@ -1928,6 +2070,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
                 "speed": _sent_speed(speed, rt, entry, tools), "tools": bool(tools)}
     if tools_off:
         answered["tools_off"] = tools_off
+    # Each call's report is recorded with what it cost (ai_usage.recorder,
+    # which puts billing and cost on it): at the speed the wire asked for,
+    # unless the report names the one that served it — so it is recorded
+    # before _served_speed takes that off the report.
+    count_usage = ai_usage.recorder("chat", entry, rt, answered["speed"])
 
     # What one picture costs on the wire this call goes over, for the
     # window estimate (every picture is normalized to one size first).
@@ -2132,9 +2279,9 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         # The provider's token report closes the turn — after
                         # the model line again when it served another speed.
                         for u in usage:
+                            count_usage(u)
                             if _served_speed(answered, u):
                                 yield json.dumps({"model": answered}) + "\n"
-                            count_usage(u)
                             yield json.dumps({"usage": u}) + "\n"
                         steered = steering.take() if steering and not truncated else None
                         if not steered:
@@ -2184,8 +2331,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
         with open_with_fallback(False) as resp2:
             text = _read_reply(resp2, _protocol(rt, entry), usage.append)
         for u in usage:
-            _served_speed(answered, u)
             count_usage(u)
+            _served_speed(answered, u)
         shortened = _shortened(payload, scope)
         return {"response": text, "model": answered, "context": state.get("coverage") or [],
                 **({"usage": usage[0]} if usage else {}),

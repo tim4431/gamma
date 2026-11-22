@@ -194,18 +194,27 @@ it, square, so the stretches meet without a seam at any screen scale; the
 chip's starts under its pill, the last tab's (`.groupEnd`) stops short of
 its end, and those two ends are round.
 
-The open group's active tab draws `.stripGroupOutline` instead, one outline
-of 2 px borders laid over the tab and its band (`z-index` 1; the tab's own
-border and the band's go clear): its top and sides, the tab's top corners,
-down to `--tab-foot` above the strip's foot, then a foot each side
-(`::before`, `::after`), a box `--tab-foot` square whose border carries the
-side on down and turns out into the line, as Chrome's tab flares. The
-three are borders on the same columns. The sides reach 2 px into the feet,
-through a transparent bottom border the feet hang from: at a screen scale
-that puts an edge inside a device pixel (125 %, 150 %), sides that stopped
-where the feet start paled there, and the outline with no bottom border
-leaked a sliver of its colour along its bottom edge. The flare fits a pane's
-strip too, rising from the head's border into the tab.
+The open group's active tab draws `.stripGroupOutline` instead, laid over
+the tab and its band (`z-index` 1; the tab's own border and the band's go
+clear): its top and sides, 2 px borders with the tab's top corners, down
+to `--tab-foot` above the strip's foot, then a foot each side (`::before`,
+`::after`), a box `--tab-foot` square holding a quarter ring centred on its
+outer top corner, which carries the side on down and turns it out into the
+line, as Chrome's tab flares. Beyond the ring, between the curve and the
+tab, the foot is the tab's own fill (`--bg-surface`), as Chrome's tab shape
+takes in its flare: it covers whatever stretch of the line reaches in under
+the flare, so the two sides flare alike (the stretch before the tab reaches
+over the gap into it, the one after starts beyond it, and without the fill
+the left foot sat on a filled corner of line the right one lacked). The
+ring and the fill are one radial gradient (`--foot`), its steps half a
+pixel wide for the smoothing: a bordered box's rounded corner clips away
+what lies outside the curve, where the fill belongs, and a shadow clipped
+to the box left a pale seam along its edge. The sides reach 2 px into the
+feet, through a transparent bottom border the feet hang from: at a screen
+scale that puts an edge inside a device pixel (125 %, 150 %), sides that
+stopped where the feet start paled there, and the outline with no bottom
+border leaked a sliver of its colour along its bottom edge. The flare fits
+a pane's strip too, rising from the head's border into the tab.
 
 ## Tests
 

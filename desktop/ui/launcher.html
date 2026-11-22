@@ -175,10 +175,25 @@
         </div>
         <label class="switch"><input type="checkbox" role="switch" id="swLogin" aria-label="Start at login"><span class="switchTrack"></span></label>
       </div>
+      <div class="setRow" id="rowOpenWithFiles" hidden>
+        <div>
+          <div class="l">Gamma in Open with</div>
+          <div class="d" id="openWithFilesText"></div>
+        </div>
+        <label class="switch"><input type="checkbox" role="switch" id="swOpenWithFiles" aria-label="Gamma in Open with"><span class="switchTrack"></span></label>
+      </div>
+      <div class="setRow" id="rowOpenWithFolders" hidden>
+        <div>
+          <div class="l" id="openWithFoldersLabel"></div>
+          <div class="d" id="openWithFoldersText"></div>
+        </div>
+        <label class="switch"><input type="checkbox" role="switch" id="swOpenWithFolders"><span class="switchTrack"></span></label>
+      </div>
       <div class="setRow">
         <div>
           <div class="l">Local server storage</div>
           <div class="d path" id="dataRootText"></div>
+          <div class="d" id="dataRootGoes" hidden>Uninstalling the Microsoft Store version deletes this folder and the libraries in it. To keep them past an uninstall, move them to a folder of your own with Change…</div>
           <div class="moveProgress" id="dataMove" hidden>
             <progress id="dataMoveBar" max="1" value="0"></progress>
             <div class="d" id="dataMoveText"></div>
@@ -481,6 +496,7 @@
     $('swBackground').checked = Boolean(state.settings.background);
     $('swLogin').checked = Boolean(state.settings.openAtLogin);
     $('rowLogin').hidden = Boolean(state.mas);
+    renderOpenWith(state.openWith);
     $('advanced').hidden = Boolean(state.packaged);
     renderUpdate(state.update || {});
     $('setPython').value = state.settings.pythonPath || '';
@@ -491,7 +507,28 @@
     $('setStatic').placeholder = state.detected.staticDir;
     $('dataRootText').textContent = state.dataRoot;
     $('btnDataRootReset').hidden = !state.settings.dataRoot;
+    $('dataRootGoes').hidden = !state.dataRootGoesWithApp;
     showDataMove(state.dataMove);
+  }
+
+  // Gamma's entries in File Explorer, the Windows installer's two parts
+  // (main.js lib/openWith.js): a row each where it can be switched or shown;
+  // none elsewhere, and no file types row in the Store build, whose are fixed.
+  function renderOpenWith(ow) {
+    const allUsers = ' Installed for all users: an administrator changes this by running the installer again.';
+    const row = (name, part, text) => {
+      $(`row${name}`).hidden = !part;
+      if (!part) return;
+      $(`sw${name}`).checked = part.on;
+      $(`sw${name}`).disabled = !part.editable;
+      $(`${name[0].toLowerCase()}${name.slice(1)}Text`).textContent = text + (part.editable ? '' : allUsers);
+    };
+    row('OpenWithFiles', ow && ow.files, ow ? `${ow.types} files list Gamma under Open with and in Default apps. Gamma becomes their default app only when you choose it.` : '');
+    row('OpenWithFolders', ow && ow.folders, ow ? `In a folder's right-click menu${ow.store ? '' : ' (on Windows 11, under Show more options)'}, and on an open folder's background.` : '');
+    if (ow) {
+      $('openWithFoldersLabel').textContent = `${ow.verb} on folders`;
+      $('swOpenWithFolders').setAttribute('aria-label', `${ow.verb} on folders`);
+    }
   }
 
   // A storage-folder move under way: a bar under the setting and the bytes
@@ -645,6 +682,17 @@
     await gammaShell.setSettings({ openAtLogin: $('swLogin').checked });
     refresh();
   };
+  for (const [id, part] of [['swOpenWithFiles', 'files'], ['swOpenWithFolders', 'folders']]) {
+    $(id).onchange = async () => {
+      $(id).disabled = true; // reg.exe takes a moment
+      try {
+        await gammaShell.setOpenWith(part, $(id).checked);
+      } catch (e) {
+        setStatus(cleanErr(e), true);
+      }
+      refresh();
+    };
+  }
   $('btnSaveSettings').onclick = async () => {
     await gammaShell.setSettings({
       pythonPath: $('setPython').value.trim(),

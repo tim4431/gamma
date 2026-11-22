@@ -10,7 +10,8 @@
 #     app_packages.iphoneos/             the server's dependencies as iOS device wheels
 #     app_packages.iphonesimulator/      ... and as simulator wheels; a build keeps
 #                                        the one for its platform (project.yml)
-#     app/                               backend/app.py, backend/gamma/, backend/gamma_mobile.py
+#     app/                               backend/app.py, backend/gamma/, backend/gamma_mobile.py,
+#                                        backend/tessdata/ (the text recognition models)
 #     frontend_dist/                     the built web app the server serves
 #
 # Everything it makes is generated and gitignored (ipad/.gitignore). It is
@@ -251,12 +252,16 @@ install_packages() {
 # unchanged build stays quick and no .pyc is older than its source. (A
 # deleted module's .pyc would be harmless, since a .pyc in __pycache__
 # without its source is never imported; the clear-out removes it anyway.)
+# The text recognition models go beside gamma/, where config.tessdata_dir()
+# looks when nothing says otherwise: the server serves them to the page,
+# which reads a scan's pages in the window (docs/dev/ipad.md "What runs").
 install_app() {
   local stamp=$out/.app-bytecode
   mkdir -p "$out/app"
   rsync -a --delete --exclude __pycache__ --exclude '*.pyc' \
     "$repo_dir/backend/gamma/" "$out/app/gamma/"
   rsync -a "$repo_dir/backend/app.py" "$repo_dir/backend/gamma_mobile.py" "$out/app/"
+  rsync -a --delete "$repo_dir/backend/tessdata/" "$out/app/tessdata/"
   if [ ! -f "$stamp" ] || [ ! -d "$out/app/__pycache__" ] ||
      [ -n "$(find "$out/app" -name __pycache__ -prune -o -type f -cnewer "$stamp" -print)" ]; then
     find "$out/app" -name __pycache__ -type d -prune -exec rm -rf {} +

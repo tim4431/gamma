@@ -8,6 +8,10 @@
 // arguments, through ActivateApplication, so the app runs as the package:
 // its virtualized AppData, its one instance, which takes them from there.
 //
+// The launcher's switch hides it (lib/openWith.js): while the app's data
+// directory holds GAMMA_FOLDER_VERB_OFF, GetState says hidden, and Explorer
+// leaves the verb out of the menu.
+//
 // Plain COM, no ATL, WRL or WIL, so MSVC and MinGW-w64 both build it
 // (scripts/build-open-with.cjs); scripts/after-pack.cjs puts it beside
 // Gamma.exe in the Store package only. verb.h is generated from the table.
@@ -102,6 +106,31 @@ std::wstring PackageFamilyName() {
     if (!full.empty() && fromFull(full.c_str(), &length, name) == ERROR_SUCCESS) return name;
   }
   return L"";
+}
+
+std::wstring Env(const wchar_t* name) {
+  wchar_t value[MAX_PATH];
+  DWORD n = GetEnvironmentVariableW(name, value, ARRAYSIZE(value));
+  return n > 0 && n < ARRAYSIZE(value) ? std::wstring(value, n) : L"";
+}
+
+bool Exists(const std::wstring& path) {
+  return !path.empty() && GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+// Whether the launcher's switch has hidden the verb: the file is in the
+// app's data directory, %APPDATA%\<GAMMA_DATA_DIR>. The package's copy of it
+// is %LOCALAPPDATA%\Packages\<family>\LocalCache\Roaming\<GAMMA_DATA_DIR>, where the app
+// writes it; that path is read directly, so the answer holds whether or not
+// the surrogate sees the package's merged view of %APPDATA%, which is read
+// too (outside a package, the native test's).
+bool Hidden() {
+  std::wstring tail = std::wstring(L"\\") + GAMMA_DATA_DIR + L"\\" + GAMMA_FOLDER_VERB_OFF;
+  std::wstring family = PackageFamilyName();
+  std::wstring local = Env(L"LOCALAPPDATA");
+  if (!family.empty() && !local.empty() && Exists(local + L"\\Packages\\" + family + L"\\LocalCache\\Roaming" + tail)) return true;
+  std::wstring roaming = Env(L"APPDATA");
+  return !roaming.empty() && Exists(roaming + tail);
 }
 
 // One argument as CommandLineToArgvW reads it back: in quotes, the
@@ -249,7 +278,7 @@ class OpenWithGamma final : public IExplorerCommand, public IObjectWithSite {
   }
   IFACEMETHODIMP GetState(IShellItemArray*, BOOL, EXPCMDSTATE* state) override {
     if (!state) return E_POINTER;
-    *state = ECS_ENABLED;
+    *state = Hidden() ? ECS_HIDDEN : ECS_ENABLED;
     return S_OK;
   }
   IFACEMETHODIMP Invoke(IShellItemArray* items, IBindCtx*) override {

@@ -3,7 +3,7 @@
 ## Package locally
 
 ```bash
-python desktop/build_backend.py   # freeze backend (venv python, given the pinned PyInstaller; ~50 MB onedir)
+python desktop/build_backend.py   # freeze backend (venv python, given the pinned PyInstaller; ~225 MB onedir on Windows)
 cd desktop && npm run pack        # unpacked app in dist/{win,linux}-unpacked or dist/mac* (fast test)
 npm run e2e:packaged              # the suite against the frozen bundle
 npm run dist                      # real installer (NSIS .exe / .dmg + .zip / .deb)
@@ -44,6 +44,19 @@ as `LSMinimumSystemVersion`, so an older macOS refuses to open the app.
 The update notice on macOS only links to the release page and does not
 know the floor, so the release notes name it.
 
+Recognizing the text of scanned PDFs (*Recognize text in this PDF*,
+`gamma/ocr_engine.py`) needs macOS 15: the tesserocr wheels the frozen
+server carries are built for it (`macosx_15_0`). On macOS 13 and 14 the
+server reads no text itself: it reports `ocr.where` `window` in
+`/api/server-config`, and the item reads the pages in the app's window
+with tesseract.js from the bundled models
+([documents.md](../../docs/dev/documents.md#recognized-text)), so the
+window must stay open meanwhile; scans uploaded with no text are not
+recognized by themselves there. Tesseract and its models add about
+65 MB to the Windows bundle (the wheel's libraries are 56 MB, 33 MB of them
+ICU's data) and about 16 MB to the Mac one (9 MB of libraries, 7 MB of
+models).
+
 The Mac App Store's `.pkg` is a build of its own, made by hand on a Mac
 that holds the App Store team's certificates: *Mac App Store* below.
 
@@ -52,8 +65,8 @@ the user may choose, without taking a type over from the app that opens it
 ([architecture.md](architecture.md) "Opening files and folders"). The file
 types are one table, `tests/shared/openwith.json`: PDF, Markdown (`.md`,
 `.markdown`), LaTeX (`.tex`), BibTeX (`.bib`) and Typst (`.typ`).
-`scripts/openwith.cjs` reads it and writes five files that are committed:
-`assets/installer.nsh`, `assets/appx-extensions.xml`,
+`scripts/openwith.cjs` reads it and writes six files that are committed:
+`assets/openwith.nsh`, `lib/openwith.json`, `assets/appx-extensions.xml`,
 `native/open-with/verb.h`, `assets/linux/gamma-open.desktop` and
 `assets/linux/gamma.nemo_action`.
 Change the table, then run `npm run openwith`; `test/openWith.test.js`
@@ -63,15 +76,22 @@ format registry disagree. An extension taken out of the table goes in the
 generator's `dropped` list, so the NSIS update that drops it deletes what
 an earlier version wrote. What each target registers:
 
-- **NSIS installer** (`assets/installer.nsh`): every type of the table, and
-  *Open with Gamma* on a folder and on the empty background of an open one
-  (on Windows 11 under *Show more options*). The uninstaller removes
-  exactly what the installer wrote; an update keeps every entry.
+- **NSIS installer** (`assets/openwith.nsh`, put in electron-builder's
+  hooks by the hand-written `assets/installer.nsh`): every type of the
+  table, and *Open with Gamma* on a folder and on the empty background of
+  an open one (on Windows 11 under *Show more options*). A page after the
+  directory page offers the two as checkboxes, on for a first install; the
+  choice is recorded and an update keeps it, and the launcher's Settings
+  change it later (`lib/openWith.js`, for a per-user install). The
+  uninstaller removes exactly what the installer wrote, and never another
+  app's *Open with* entries; it deletes Gamma's data only when its *Gamma's
+  data* page is ticked ([architecture.md](architecture.md#shell-state)).
 - **Store package** (`assets/appx-extensions.xml`): every type of the
   table, and *Open with Gamma* on a folder and on an open folder's
-  background, in Windows 11's first menu too. A packaged app's verb is a
-  COM class it carries: `native/open-with/`, a DLL built at packaging time
-  (*Microsoft Store* below).
+  background, in Windows 11's first menu too, which the launcher's Settings
+  can hide. A packaged app's verb is a COM class it carries:
+  `native/open-with/`, a DLL built at packaging time (*Microsoft Store*
+  below).
 - **macOS dmg/zip** (`mac` in the config): every type of the table as an
   alternate viewer, and folders (`public.folder`): a folder dropped on the
   Dock icon or `open -a Gamma <dir>` opens it. Finder has no entry.
@@ -94,7 +114,7 @@ has no push trigger. The `release` skill dispatches it against whatever is
 on `main` (`gh workflow run desktop.yml --ref main`); a merge to `main`
 releases no app. Every run builds the web app once, then Windows + macOS +
 Linux (pin the version → take the built web app → backend freeze →
-frozen-server health check → electron-builder → signature verification →
+frozen-server health and OCR check → electron-builder → signature verification →
 packaged `--smoke`; the Linux job additionally `apt install`s the `.deb` on
 the runner and runs the `--smoke` self-test from `/opt/Gamma/gamma`,
 sandbox on, under Xvfb), the Android app, the AI plugins and the browser
@@ -276,7 +296,10 @@ the launcher with no server configured.
   `%LOCALAPPDATA%\Packages\xwtim.GammaPDF_<hash>\LocalCache\Roaming\gamma-desktop`.
   A Store install and an NSIS install never see each other's servers, and
   **uninstalling the Store app deletes that folder**, including local
-  servers' PDFs and databases.
+  servers' PDFs and databases, with no question (an MSIX has no
+  uninstaller of its own). While the storage root is there, the launcher
+  says so under *Local server storage* and points to *Change…*, which
+  moves the libraries to a folder outside the package.
 - That merge exists only inside the package: Explorer, and anything else
   the app hands a path to, sees the plain `%APPDATA%\gamma-desktop`, which
   is not there (*Location is not available*). `lib/hostPath.js` turns such a
@@ -445,8 +468,11 @@ so they are set per build: `GAMMA_MAS_VERSION` (e.g. `1.1`) and
 the launcher and the server's dashboard report, as on the iPad. The config
 refuses to load without them.
 
-**Build**, on a Mac (the architecture is the build machine's, since the
-frozen server is; arm64 on Apple silicon):
+**Build**, on a Mac running macOS 15 or later (the architecture is the
+build machine's, since the frozen server is, arm64 on Apple silicon; on an
+older macOS requirements.txt's marker skips tesserocr, which has no wheel
+there, and the app's server has no engine of its own: its scans are read
+in the window):
 
 ```bash
 (cd frontend && npm ci && npm run build)

@@ -1611,7 +1611,7 @@ preference, with explicit fetch and push when you want one side to win
   copy, whichever is later; when the account server stores it under
   another time (clamped from the future, or cut to the millisecond), the
   local row takes that time.
-- **Never.** `ai-settings` and `ai-provider` never sync. Nothing syncs
+- **Never.** `ai-settings` and `ai-models` never sync. Nothing syncs
   without cloud sign-in or without a linked identity holding a token, so a
   server without cloud sign-in makes no call at all (a test asserts it).
 

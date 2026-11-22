@@ -2,8 +2,9 @@
 "Performance budgets"): a page of 1,000 blocks read, keystrokes and batches
 committed, the text and ink merges. Each case checks what it computed, then
 times it: 3 untimed warmups, 20 timed runs with a garbage collection before
-each, and its nearest-rank p95 (of 20 runs the single slowest is left out)
-held to a fixed budget, about 5x what an idle desktop measured.
+each (and before a commit, pages.db's WAL emptied), and its nearest-rank
+p95 (of 20 runs the single slowest is left out) held to a fixed budget,
+about 5x what an idle desktop measured.
 
 Marked ``perf``, which pytest.ini leaves out of every run that does not ask
 for it, and never under xdist: ``python -m pytest tests/test_perf.py -m perf
@@ -195,6 +196,20 @@ def _text(ws, block_id):
         return conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()[0]
 
 
+def _empty_wal(ws):
+    """Before a timed commit, outside the timed span: pages.db's WAL
+    checkpointed and the next commit sent back to its start, as the
+    collection empties the heap, so no run pays for the automatic checkpoint
+    the earlier runs' commits made due. Its fsync is the disk's time, not
+    commit_ops': on a disk (tmpfs has none) every fourth run of the
+    keystrokes paid one, and on CI's p95 was one. RESTART keeps the file, so
+    the commits write over its frames as a running server's do (TRUNCATE
+    would have them grow it again, ~5% slower)."""
+    with connect_pages_db(ws) as conn:
+        busy, _frames, _copied = conn.execute("PRAGMA wal_checkpoint(RESTART)").fetchone()
+    assert not busy
+
+
 def test_commit_ops_twenty_keystrokes(page, request):
     ws, target = page["ws"], page["last"]
 
@@ -209,7 +224,7 @@ def test_commit_ops_twenty_keystrokes(page, request):
     type_keys(None)
     assert _seq(ws) == before + 20
     assert _text(ws, target) == typed + "x" * 20
-    budget(request, measure(type_keys), 12)
+    budget(request, measure(type_keys, setup=lambda: _empty_wal(ws)), 12)
 
 
 def test_commit_ops_a_50_op_batch(page, request):
@@ -224,7 +239,7 @@ def test_commit_ops_a_50_op_batch(page, request):
     before = _seq(ws)
     batch(None)
     assert _seq(ws) == before + 1
-    budget(request, measure(batch), 8)
+    budget(request, measure(batch, setup=lambda: _empty_wal(ws)), 8)
 
 
 _long = random.Random(11)
@@ -247,7 +262,7 @@ def test_commit_ops_a_stale_set_merged_into_a_20000_character_block(page, reques
     theirs_first()
     stale(None)
     assert _text(ws, target) == LONG[:5000] + "THEIRS" + LONG[5000:15000] + "OURS" + LONG[15000:]
-    budget(request, measure(stale, setup=theirs_first), 10)
+    budget(request, measure(stale, setup=lambda: (theirs_first(), _empty_wal(ws))), 10)
 
 
 def _scattered(text, k, tag, rnd):

@@ -11,3 +11,9 @@ static const GUID CLSID_OpenWithGamma = {0xa5ac2231, 0x021b, 0x477c, {0x84, 0x6c
 #define GAMMA_VERB_TITLE L"Open with &Gamma"
 #define GAMMA_APP_ID L"Gamma"
 #define GAMMA_EXE L"Gamma.exe"
+
+// The launcher's switch (lib/openWith.js): while this file is in the app's
+// data directory, %APPDATA%\<GAMMA_DATA_DIR> (the package's copy of it), the
+// verb is hidden.
+#define GAMMA_DATA_DIR L"gamma-desktop"
+#define GAMMA_FOLDER_VERB_OFF L"folder-verb-off"

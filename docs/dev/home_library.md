@@ -955,7 +955,7 @@ page the panel is on:
   between workspaces") | Copy link · Copy PDF (Copy file for another format: the desktop app, one
   page whose document is a file, the shell's `copy-file` ask,
   [architecture.md](../../desktop/docs/architecture.md)) · Share… · Export… ·
-  Ask AI about this page · Properties | Delete (Del). The three rows for
+  Properties | Delete (Del). The three rows for
   pages inside pages are in "Sub-pages" above. Properties, for one page, opens the read-only
   Properties popover at the menu's point
   ([ui-design.md](ui-design.md#the-properties-popover)). The shortcuts are each row's `keys`: the effective chords

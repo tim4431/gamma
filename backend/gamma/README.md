@@ -108,7 +108,11 @@ recording.py       audio recordings: the recording block's rules, its label and 
 block_index.py     the notes index (block_fts in pages.db, kept by triggers): its queries
 search/            the document text index (text_fts in data.db): index (schema, writes, queries), indexer (extraction, the indexing job), hits (the one hit builder)
 pdf_meta.py        a PDF's manifest for the viewer: bytes, page count, page sizes (data.db)
-pdf_text.py        PDF reading through PyMuPDF: text, glyphs, labels, a page as pixels (page_raster, page_rasters)
+pdf_text.py        PDF reading through PyMuPDF: text, glyphs, labels, a page as pixels (page_raster, page_rasters); a recognized page's words in place of its layer
+pdf_scan.py        scanned pages: a page told a scan (an invisible OCR layer) or a picture, and a layer's words put back in visual rows
+pdf_ocr.py         text recognized from a stored PDF's scanned pages: the store every reader reads through, the runs (server, window), forgetting it (docs/dev/documents.md "Recognized text")
+ocr_engine.py      the recognition engine (Tesseract through tesserocr, backend/tessdata's models): where text is recognized, the engines lent a page at a time
+ocr_auto.py        the automatic recognition of a scan uploaded with no text: the markers, one file at a time, yielding to a person's run
 textnorm.py        search text normalization and fuzzy matching (both indexes, block search)
 
 # Jobs, notices and diagnostics

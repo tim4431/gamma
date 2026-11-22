@@ -9,8 +9,8 @@
 //   wins on load, a change saves only the entries it touched, localStorage
 //   stays the instant-paint cache.
 // - "browser": describes this device and stays in this browser.
-// The AI provider entries and the active AI key are not preferences here:
-// they keep their own account-wide keys (ai-settings, ai-provider).
+// The AI connections and each task's model are not preferences here: they
+// keep their own account-wide keys (ai-settings, ai-models).
 //
 // A codec clamps a stored string back into range (parse returns undefined
 // to fall back to the default), so a stale or hand-edited value never
@@ -105,16 +105,6 @@ export const FREE_TRANSLATE_ENGINE = "engine:microsoft";
 // AI calls open and answers 429 past that, so translation leaves room for a
 // chat.
 export const TRANSLATE_PARALLEL_MAX = 4;
-
-// What translation sends for the "Translate with" pick, given the set-up
-// services and the chat models on offer: the pick while it is still
-// offered; with no chat model at all, the free service; else "" (follow
-// the chat model). A service id starts with "engine:".
-export function translateModelFor(pick, engines, models) {
-  if (pick && [...engines, ...models].some((m) => m.id === pick)) return pick;
-  if (!models.length && engines.some((e) => e.id === FREE_TRANSLATE_ENGINE)) return FREE_TRANSLATE_ENGINE;
-  return "";
-}
 
 // Agent tool permissions (Settings → AI → Tool usage › Tools), one map per chat
 // KIND: "folder" (the home/folder chat), "pdf" (a page with a PDF attached)
@@ -336,17 +326,11 @@ export const PREFS = {
     return out;
   })),
 
-  // --- Models (Settings → AI → Connections; the translation pick is
-  // Translation › Service's "Translate with") ---
-  // Model picks name entries of this server's provider list ("<entry>:<model>"),
-  // which never leave the server, so they stay with the browser like the chat
-  // model itself (App.jsx `gamma-chat-model`). "" = follow the chat model; a
-  // stale pick (provider/model removed) also falls back.
-  metaModel: pref("gamma-meta-model", BROWSER, ""),
-  translateModel: pref("gamma-translate-model", BROWSER, ""),
-  // Voice dictation (mic button): transcription model + spoken language
-  // ("" = the display language, "auto" = let the model detect it); the same
-  // Models section.
+  // --- Dictation (Settings → AI → Models › Models for each task) ---
+  // The task models themselves are the account's, on this server
+  // (ai/useAiModels.js). Voice dictation (mic button): transcription model +
+  // spoken language ("" = the display language, "auto" = let the model
+  // detect it), this browser's.
   dictationModel: pref("gamma-dictation-model", BROWSER, "gpt-4o-transcribe"),
   dictationLang: pref("gamma-dictation-lang", BROWSER, ""),
 
@@ -365,7 +349,8 @@ export const PREFS = {
   // (gamma-chat-follow-up, Queue by default), which this replaces, holds in
   // a profile says nothing of a choice.
   chatFollowUpMode: pref("gamma-chat-follow-up-mode", ACCOUNT, "steer", oneOf(["steer", "queue"])),
-  // Connection check of the active provider at login (POST /api/ai/health):
+  // Connection check, at login, of the connections the tasks' models go
+  // through (POST /api/ai/health, one each):
   // "ping" (default) is the free credential check — OAuth entries hit the
   // usage endpoint, API keys list /v1/models, both 401 on a dead credential
   // without spending tokens; "test" runs the tiny live completion (the same

@@ -41,10 +41,12 @@ const STREAMED_SHARE = 0.9;
 // A failure every later request would meet too, which stops the job at
 // once: the shared AI allowance used up (a 429 without Retry-After; one
 // with it is the account's AI calls all in use, which requestChunk waits
-// out), or Gamma refusing the request itself — not signed in, no access to
-// the workspace (401, 403), or no AI provider to ask (503).
+// out), Gamma refusing the request itself — not signed in, no access to
+// the workspace (401, 403), or no AI provider to ask (503) — or the model
+// the job started with no longer offered (`kind` model_unavailable): a job
+// asks one model throughout, so its paper never mixes two.
 export const finalRefusal = (err) =>
-  (err?.status === 429 && !(err.retryAfter > 0)) || [401, 403, 503].includes(err?.status);
+  (err?.status === 429 && !(err.retryAfter > 0)) || [401, 403, 503].includes(err?.status) || err?.kind === "model_unavailable";
 
 // The chunk requests in flight across jobs, `n` at most: a job has
 // `parallel` workers, but jobs of several documents run side by side, and

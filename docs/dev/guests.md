@@ -162,7 +162,11 @@ rolling 24 hours:
 `demo_mode` is a server setting (`settings` KV, Settings → Users → Guests)
 that `GAMMA_DEMO=1` overrides, reported with its source like the public
 URL. It changes presentation, not rules: guests, their expiry and the
-allowance work the same on every server.
+allowance work the same on every server. One default differs: a demo
+server recognizes no text of scanned PDFs, whatever Settings says, unless `GAMMA_OCR=on`
+([debugging.md](debugging.md#text-recognition)), since a book's run takes
+hours of the CPU every visitor shares. A guest may never start one, and
+the Document menu does not offer it to a guest.
 
 - The login page (`auth/LoginPage.jsx`, while `GET /api/server-config`
   says `demo` and guests are allowed) is a small landing page. On the left
@@ -190,7 +194,7 @@ allowance work the same on every server.
   with the hint that it stays until then or until log-out. Every guest
   sees that line, demo server or not.
 - What an account spent through the shared entries in the last 24 hours
-  shows in Settings → AI → Token usage ("Shared allowance"), not in the
+  shows in Settings → AI → Usage ("Shared allowance"), not in the
   account popover, which rings storage only.
 
 demo.gammapdf.com is its own compose project on the VPS, in a folder next

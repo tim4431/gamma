@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { OPS, getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { figureRegions, markFigures, pageRegions, paintedBoxes } from "../src/pdf/pageFigures.js";
 import { pageFlow } from "../src/pdf/pageFlow.js";
+import { pageText } from "../src/pdf/pageText.js";
 import { pageFaces } from "../src/pdf/pdfFonts.js";
 import { segmentPage, textRuns } from "../src/pdf/pdfTranslate.js";
 import { createPlanner } from "../src/pdf/translatePlan.js";
@@ -384,7 +385,7 @@ async function readPage(data) {
   const doc = await getDocument({ data, verbosity: 0 }).promise;
   const page = await doc.getPage(1);
   const vp = page.getViewport({ scale: 1 });
-  const tc = await page.getTextContent();
+  const tc = await pageText(page);
   const faces = await pageFaces(page, new Set(tc.items.map((it) => it.fontName)), new Map());
   const paras = segmentPage(textRuns(tc.items, vp.transform, { faces, styles: tc.styles }));
   const regions = await figureRegions(page);

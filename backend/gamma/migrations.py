@@ -2420,6 +2420,84 @@ def _v69_far_answers(ws: str, pages: sqlite3.Connection, data) -> None:
         pages.execute("ALTER TABLE computer_chat_runs ADD COLUMN answers TEXT NOT NULL DEFAULT '{}'")
 
 
+def _v71_entry_lists(conn: sqlite3.Connection) -> tuple[dict, dict]:
+    """``(own, shared)``: every account's own AI provider entries as
+    ``{account id: {entry id: entry}}`` (its ``ai-settings`` pref) and the
+    server's shared ones as ``{entry id: entry}`` (the ``ai_providers``
+    setting; only their keys and sign-ins are sealed, never the fields read
+    here)."""
+    def entries(text):
+        try:
+            value = json.loads(text or "{}")
+        except ValueError:
+            return {}
+        listed = value.get("providers") if isinstance(value, dict) else None
+        return {e["id"]: e for e in listed or [] if isinstance(e, dict) and isinstance(e.get("id"), str)}
+    own = {user_id: entries(value) for user_id, value in conn.execute(
+        "SELECT user_id, value FROM user_prefs WHERE workspace_id = '' AND key = 'ai-settings'")} \
+        if "user_id" in _columns(conn, "user_prefs") else {}
+    row = conn.execute("SELECT value FROM settings WHERE key = 'ai_providers'").fetchone() \
+        if _columns(conn, "settings") else None
+    return own, entries(row[0]) if row else {}
+
+
+def _v71_ai_models(conn: sqlite3.Connection) -> None:
+    """Models are picked per task across every connection, and usage says
+    how each call was paid for (docs/dev/ai.md "Provider and models",
+    "Token usage"). ``ai_usage`` gains ``billing`` ('' = not known) and
+    ``cost`` (USD, NULL = unknown), and ``billing`` is filled where the
+    stored rows prove it: a ``server:`` provider id was the server's shared
+    entry (``shared``), an id that is one of the account's own ChatGPT
+    sign-ins a ``subscription`` (a saved entry never changes between a
+    sign-in and a key); every other row stays '' and no cost is guessed.
+    Each account's ``ai-provider`` pref (the one connection the client
+    offered models from) becomes the chat pick of a new ``ai-models`` pref
+    — that entry's first model, marked ``chat_migrated`` — when the account
+    has no ``ai-models`` yet and the entry still exists with a model picked;
+    then every ``ai-provider`` row goes. Re-runnable: the columns are added
+    only where ``_columns()`` lacks them, only rows whose billing is '' are
+    filled, an existing ``ai-models`` is never touched, and once the
+    ``ai-provider`` rows are gone there is nothing left to move."""
+    cols = _columns(conn, "ai_usage")
+    if cols and "billing" not in cols:
+        conn.execute("ALTER TABLE ai_usage ADD COLUMN billing TEXT NOT NULL DEFAULT ''")
+    if cols and "cost" not in cols:
+        conn.execute("ALTER TABLE ai_usage ADD COLUMN cost REAL")
+    own, shared = _v71_entry_lists(conn)
+    if cols:
+        conn.execute("UPDATE ai_usage SET billing = 'shared' WHERE billing = '' AND substr(provider_id, 1, 7) = 'server:'")
+        for user_id, entries in (own.items() if "user_id" in cols else ()):
+            for entry_id, entry in entries.items():
+                if entry.get("protocol") == "chatgpt" and not entry_id.startswith("server:"):
+                    conn.execute("UPDATE ai_usage SET billing = 'subscription' WHERE billing = '' "
+                                 "AND user_id = ? AND provider_id = ?", (user_id, entry_id))
+    if "user_id" not in _columns(conn, "user_prefs"):  # a hand-built file of before step 25's shape
+        conn.commit()
+        return
+    now = page_now()
+    for user_id, value in conn.execute(
+            "SELECT user_id, value FROM user_prefs WHERE workspace_id = '' AND key = 'ai-provider'").fetchall():
+        if conn.execute("SELECT 1 FROM user_prefs WHERE user_id = ? AND workspace_id = '' AND key = 'ai-models'",
+                        (user_id,)).fetchone():
+            continue
+        try:
+            picked = json.loads(value)
+        except ValueError:
+            picked = None
+        if not isinstance(picked, str) or not picked:
+            continue
+        entry = (shared if picked.startswith("server:") else own.get(user_id, {})).get(picked) or {}
+        models = [m.strip() for m in str(entry.get("models") or "").split(",") if m.strip()]
+        if not models:
+            continue
+        conn.execute(
+            "INSERT INTO user_prefs (user_id, workspace_id, key, value, updated_at) VALUES (?, '', 'ai-models', ?, ?)",
+            (user_id, json.dumps({"chat": f"{picked}:{models[0]}", "metadata": "", "translate": "", "ink": "",
+                                  "favorites": [], "chat_migrated": True}), now))
+    conn.execute("DELETE FROM user_prefs WHERE key = 'ai-provider'")
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -2455,6 +2533,7 @@ STEPS = [
     (67, "computer_asks", _v67_computer_asks),
     (68, "far_chats", _v68_computer_dirs),
     (70, "integration_deletes", _v70_integration_deletes),
+    (71, "ai_models", _v71_ai_models),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

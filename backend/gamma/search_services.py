@@ -311,11 +311,9 @@ def _ai_search(saved, query, limit, *, recency, site, ai, meter):
     record = ai_usage.recorder("chat", entry, runtime)
 
     def on_usage(usage):
-        record(usage)
+        record(usage)  # puts the call's billing and cost on the report
         if meter is not None:
-            for key, value in usage.items():
-                if isinstance(value, int):
-                    meter[key] = meter.get(key, 0) + value
+            ai_client.meter_usage(meter, usage)
 
     try:
         # Only a connection that took an effort for the chat is sent one;

@@ -28,8 +28,7 @@ close and reopen through View.
 - **Getting it back.** View (≡, `header.view`) → Windows → **AI Chat**,
   **Notes**, **PDF** (or **Notebook view**). The palette's "Show or hide
   the chat / notes / PDF" commands have no default key. The chat also
-  comes back through a library card's "Ask AI about this page",
-  "Transcribe with AI" on a drawing, and the tours that `show` it; the PDF
+  comes back through "Transcribe with AI" on a drawing, and the tours that `show` it; the PDF
   through the paperclip popover's "Show the PDF", a highlight's note or a
   chat citation.
 - **Why it bites.** Visibility is saved with each page's layout, and a page
@@ -108,7 +107,7 @@ close and reopen through View.
   Fetched date of 14 October; a red ! for unverified), and the BibTeX
   export's "Keep this .bib up to date" link for Overleaf.
 - **Settings** has no anchors, and offers wait while it is open; only
-  Connections (from the AI chat tour) and Gamma Cloud (a hint) are ever
+  Models (from the AI chat tour) and Gamma Cloud (a hint) are ever
   pointed at.
 
 ## The shell

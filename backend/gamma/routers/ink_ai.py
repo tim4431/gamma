@@ -1,9 +1,9 @@
 """The handwriting selection's AI actions (docs/dev/handwriting_ai.md):
 /ai/ink/shapes behind Redraw as shapes and /ai/ink/text behind Convert to
 text. Each takes the selected strokes as the client's draft holds them —
-saved or not — makes one call to the chat's model and answers with what
-the client applies: shape records for the strokes they replace, or the
-Markdown of a text box. What is sent and how the reply is read is
+saved or not — makes one call to the handwriting task's model and answers
+with what the client applies: shape records for the strokes they replace,
+or the Markdown of a text box. What is sent and how the reply is read is
 gamma/ink_ai.py; nothing is stored here.
 
 Both answer in NDJSON as /ai/translate/brief does: ``{"ping": 1}`` lines
@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .. import ai_catalog, ai_usage
 from .. import ink as inkmod
@@ -41,7 +41,7 @@ _TIMEOUT = 180
 # user waits on this one call.
 _RETRIES = 1
 CANNOT_SEE = ("This model cannot see pictures, which reading handwriting needs; "
-              "pick another model for the chat.")
+              "pick another handwriting model in Settings → AI → Models.")
 # Past the stroke file's own caps (ink.InkTooLarge): the redraw says its own
 # sentence, which the client also gives for its 300 strokes.
 TOO_MUCH_TO_CONVERT = "Too much handwriting to convert at once; select less."
@@ -51,9 +51,8 @@ CUT_OFF = "the AI's answer was cut off at its length limit; select less"
 class InkAiRequest(BaseModel):
     """The selected strokes: ``space`` and ``strokes`` as a gamma-ink v2
     file holds them (``ink.parse_ink`` checks the pen strokes among them,
-    its caps included; ``_pen_ink``), and the registry id of the chat's
-    model."""
-    model: str = Field(default="", max_length=300)
+    its caps included; ``_pen_ink``). The call runs on the handwriting
+    task's model: a request names none."""
     space: Any = None
     strokes: Any = None
 
@@ -86,13 +85,13 @@ def _pen_ink(payload: InkAiRequest, too_large: str):
     return pen, offered if kept is None else [kept[i] for i in offered]
 
 
-def _model(user_id: str, requested: str):
+def _model(user_id: str):
     """``(runtime, entry, sees)``: the account's AI runtime (503 without a
-    provider), the model the request names (else the default, as
-    everywhere), and whether it takes pictures — unless a listing says it
-    does not, it is sent them, as chat does."""
+    provider), the handwriting task's model (the chat model while it has
+    none of its own), and whether it takes pictures — unless a listing says
+    it does not, it is sent them, as chat does."""
     rt = require_ai_runtime(user_id)
-    entry = _resolve_model(rt, requested)
+    entry = _resolve_model(rt, "", "ink")
     conf = rt["providers"][entry["provider"]]
     return rt, entry, ai_catalog.image_input(entry["provider"], conf, entry["model"])[0] is not False
 
@@ -129,7 +128,7 @@ def ai_ink_shapes(payload: InkAiRequest, request: Request):
     pen, offered = _pen_ink(payload, ink_ai.TOO_MANY_STROKES)
     if len(offered) > ink_ai.MAX_REDRAW_STROKES:
         raise HTTPException(status_code=413, detail=ink_ai.TOO_MANY_STROKES)
-    rt, entry, sees = _model(user_id, payload.model)
+    rt, entry, sees = _model(user_id)
     # The call opens inside the stream: a refusal is a 429 while it can be.
     _check_door(rt, entry, user_id)
 
@@ -157,7 +156,7 @@ def ai_ink_text(payload: InkAiRequest, request: Request):
     what one stroke file holds."""
     user_id = require_user_id(request)
     pen, _ = _pen_ink(payload, TOO_MUCH_TO_CONVERT)
-    rt, entry, sees = _model(user_id, payload.model)
+    rt, entry, sees = _model(user_id)
     if not sees:
         raise HTTPException(status_code=400, detail=CANNOT_SEE)
     _check_door(rt, entry, user_id)

@@ -57,9 +57,11 @@ def test_translate_requires_a_provider():
     # leak that cookie into later test modules.
     from gamma.app import app
 
+    # A model named needs a connection; with none named the free service
+    # translates (test_ai_model_roles).
     c = TestClient(app)
     assert c.post("/api/login-guest").status_code == 200
-    r = c.post("/api/ai/translate", json={"texts": ["hello"], "lang": "zh-CN"})
+    r = c.post("/api/ai/translate", json={"texts": ["hello"], "lang": "zh-CN", "model": "Ab3_x-9z:claude-x"})
     assert r.status_code == 503
 
 
@@ -227,6 +229,29 @@ def test_translate_prompt_names_the_language_and_the_break_marker(carol, monkeyp
     assert "into Japanese" in seen["system"]
     assert "{br}" in seen["system"] and "{lang}" not in seen["system"]
     assert "<sN>" in seen["system"]
+    assert "OCR" not in seen["system"]
+
+
+def test_translate_prompt_reads_through_ocr_errors_when_asked(carol, monkeypatch):
+    # A chunk the viewer read from a scan's OCR layer says so; the rule goes
+    # into the system prompt, before the language's own note, and nothing
+    # in the user turn changes.
+    seen = []
+
+    def fake(messages, system, entry, rt, **kw):
+        seen.append((system, messages))
+        return segmented(texts_of(messages))
+
+    monkeypatch.setattr("gamma.routers.translate._call_ai", fake)
+    for ocr in (True, False):
+        r = carol.post("/api/ai/translate", json={
+            "texts": [f"Rksum4 of an old scan, ocr {ocr}"], "lang": "zh-CN", "ocr": ocr})
+        assert r.status_code == 200, r.text
+    (with_ocr, turn_ocr), (without, turn_plain) = seen
+    assert "read by OCR from a scanned page" in with_ocr
+    assert with_ocr.index("read by OCR") < with_ocr.index("full-width punctuation")
+    assert "read by OCR" not in without
+    assert turn_ocr[-1]["content"].replace("True", "False") == turn_plain[-1]["content"]
 
 
 def test_translate_sends_the_context_and_asks_again_without_the_neighbours(carol, monkeypatch):
@@ -391,7 +416,9 @@ def test_translate_streams_partials(carol, monkeypatch):
     assert opened == [["stream one", "stream two"]]  # duplicate collapsed upstream
     assert lines[-1] == {"translations": ["第一段", "第二段", "第一段"],
                          "model": lines[-1]["model"], "cached": False, "redone": 0, "failed": [], "effort": "",
-                         "brief": True}
+                         "brief": True,
+                         # the translate task's model, the chat model while it has none of its own
+                         "routed": {"role": "translate", "model": lines[-1]["model"], "fallback": False}}
     partials = lines[:-1]
     assert partials[0] == {"i": [0, 2], "text": "第一"}  # both slots of the shared source
     assert {"i": [0, 2], "text": "第一段"} in partials
@@ -402,7 +429,8 @@ def test_translate_streams_partials(carol, monkeypatch):
     assert r.status_code == 200
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     assert lines == [{"translations": ["第二段", "第一段"], "model": lines[0]["model"], "cached": True, "redone": 0,
-                      "failed": [], "effort": "", "brief": True}]
+                      "failed": [], "effort": "", "brief": True,
+                      "routed": {"role": "translate", "model": lines[0]["model"], "fallback": False}}]
     assert len(opened) == 1
 
 
@@ -500,7 +528,8 @@ def test_translate_with_google(dave, monkeypatch):
     assert r.status_code == 200, r.text
     assert r.json() == {"translations": ["G:Google one.", "  ", "G:Google two.", "G:Google one."],
                         "model": "engine:google", "cached": False, "redone": 0, "failed": [],
-                        "effort": "", "brief": True}
+                        "effort": "", "brief": True,
+                        "routed": {"role": "translate", "model": "engine:google", "fallback": False}}
     (req,) = calls
     assert req.get_header("X-goog-api-key") == "AIza-secret-key-9876"
     assert "key=" not in req.full_url
@@ -511,7 +540,7 @@ def test_translate_with_google(dave, monkeypatch):
                                              "model": "engine:google", "stream": True})
     assert [json.loads(line) for line in r.text.splitlines() if line.strip()] == [
         {"translations": ["G:Google two."], "model": "engine:google", "cached": True, "redone": 0, "failed": [],
-         "effort": "", "brief": True}]
+         "effort": "", "brief": True, "routed": {"role": "translate", "model": "engine:google", "fallback": False}}]
     assert len(calls) == 1
 
 
@@ -632,7 +661,8 @@ def test_engine_tokens_go_out_as_placeholders_and_a_broken_one_is_asked_again(da
     assert r.json() == {"translations": ["M:droplets,{v1} but hard to see.{v2}", "M:where {v1} is the flux.",
                                          "M:the set {1} and {v1}.", "lost {v1} here."],
                         "model": "engine:microsoft", "cached": False, "redone": 2, "failed": [3],
-                        "effort": "", "brief": True}
+                        "effort": "", "brief": True,
+                        "routed": {"role": "translate", "model": "engine:microsoft", "fallback": False}}
     first, again = (json.loads(req.data) for req in calls)
     # A paper's own "{1}" would read back as a token: that text goes as it is.
     assert first == ["droplets,{1} but hard to see.{2}", "where {1} is the flux.", "the set {1} and {v1}.",

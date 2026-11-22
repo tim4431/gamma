@@ -1,0 +1,113 @@
+// The ways to connect an AI service, read off GET /api/ai/settings's
+// `protocols` and `services` (the named presets, gamma/ai_protocols/
+// services.py): the connect dialog's service cards, which preset a
+// connection was made from, and what that says about it (a key it may go
+// without, what it is billed as). Pure, so
+// tests/aiServices.test.mjs imports it; the dialog's state is
+// providerEditor.js.
+import { T, t } from "../shared/i18n/i18n.js";
+
+// The protocols' own names, with the chat's setup tiles' hints, on those
+// tiles and the dialog's cards.
+export const SERVICE_TILES = {
+  chatgpt: { label: t("ChatGPT"), hint: t("Sign in with your subscription. No API key.") },
+  anthropic: { label: t("Anthropic"), hint: t("Claude models, with an API key") },
+  openai: { label: t("OpenAI API"), hint: t("GPT models, with an API key") },
+};
+
+// The named services by vendor, in the server's order (the chat's setup
+// card names them on its Other tile).
+export function serviceGroups(services) {
+  const groups = [];
+  for (const service of services || []) {
+    const name = service.group || service.label;
+    const group = groups.find((item) => item.name === name);
+    if (group) group.services.push(service);
+    else groups.push({ name, services: [service] });
+  }
+  return groups;
+}
+
+// The connect dialog's first step: every way to connect as a card, in three
+// groups. Signing in or a subscription (the sign-in protocols, then the
+// presets billed as a subscription), an API key (the key protocols, then
+// the pay-per-token presets), and on this computer or network (the local
+// presets, then a custom endpoint). A vendor's presets of one group are
+// one card whose `plans` the dialog offers side by side (Qwen's
+// international and China endpoints); a plan is a preset's id, a protocol
+// id, or "custom". `only(protocolId)` keeps the cards whose protocol it
+// accepts (an edit offers only the kind the entry is). Each card has its
+// billing tag ("" for a custom endpoint, whose billing is the user's).
+export const SERVICE_SECTIONS = [
+  ["signin", T("Sign in or subscription")], ["key", T("API key")], ["local", T("On your computer or network")],
+];
+const sectionOf = (preset) => (preset.billing === "subscription" ? "signin" : preset.billing === "local" ? "local" : "key");
+
+export function serviceSections(info, { only = null } = {}) {
+  const offered = (protocolId) => !only || only(protocolId);
+  const cards = { signin: [], key: [], local: [] };
+  for (const p of info?.protocols || []) {
+    if (!offered(p.id)) continue;
+    const oauth = p.auth === "oauth";
+    cards[oauth ? "signin" : "key"].push({
+      id: p.id, label: SERVICE_TILES[p.id]?.label || p.label, billing: oauth ? "subscription" : "api",
+      plans: [{ id: p.id, label: p.label }],
+    });
+  }
+  for (const preset of info?.services || []) {
+    if (!offered(preset.protocol)) continue;
+    const section = sectionOf(preset);
+    const vendor = preset.group || preset.label;
+    const plan = { id: preset.id, label: preset.plan || preset.label, note: preset.note || "" };
+    const card = cards[section].find((item) => item.vendor === vendor);
+    if (card) card.plans.push(plan);
+    else cards[section].push({ id: `${section}:${vendor}`, vendor, label: preset.label, billing: preset.billing || "api", plans: [plan] });
+  }
+  const keyProtocol = (info?.protocols || []).find((p) => p.auth !== "oauth");
+  if (keyProtocol && offered(keyProtocol.id)) {
+    cards.local.push({ id: "custom", label: t("Custom endpoint"), billing: "", hint: t("Any compatible address"), plans: [{ id: "custom", label: t("Custom endpoint") }] });
+  }
+  return SERVICE_SECTIONS.map(([id, title]) => ({ id, title, cards: cards[id] })).filter((section) => section.cards.length);
+}
+
+// The named service an entry (or a form) was made from: the preset with its
+// protocol and base URL (the server's service_of), else null.
+export function serviceOf(entry, info) {
+  const base = baseOf(entry);
+  return (info?.services || []).find((s) => s.protocol === entry?.protocol && s.base_url === base) || null;
+}
+
+// A base URL as the server compares it: trimmed, without trailing slashes.
+const baseOf = (entry) => (entry?.base_url || "").trim().replace(/\/+$/, "");
+
+// Which plan a form is on: the one picked in it, else what its protocol and
+// base URL say (a preset, a protocol at its own endpoint, or "custom").
+export function formService(form, info) {
+  if (!form) return "";
+  if (form.service) return form.service;
+  if (form.custom) return "custom";
+  const preset = serviceOf(form, info);
+  if (preset) return preset.id;
+  const base = baseOf(form);
+  return base && base !== baseOf({ base_url: info?.protocols?.find((p) => p.id === form.protocol)?.default_base_url }) ? "custom" : form.protocol;
+}
+
+// A key connection that may be saved without a key, by the server's rule
+// (gamma/ai_settings.py key_optional, case for case: the `keyless` cases of
+// tests/shared/ai_models.json): its preset's `key_optional` (Ollama), or
+// a custom endpoint, which may be a server on this network
+// that asks for nothing. An empty base URL, or the protocol's own, is the
+// provider's endpoint, which takes a key.
+export function keyOptional(form, info) {
+  const protocol = (info?.protocols || []).find((p) => p.id === form?.protocol);
+  if (!protocol || protocol.auth === "oauth") return false;
+  const base = baseOf(form);
+  if (!base || base === baseOf({ base_url: protocol.default_base_url })) return false;
+  const preset = serviceOf(form, info);
+  return !preset || !!preset.key_optional;
+}
+
+// What "Auto" bills a key entry as (gamma/ai_settings.py, "Billing of a
+// connection"): its preset's billing, else pay per token.
+export const autoBilling = (form, info) => (info?.services || []).find((s) => s.id === formService(form, info))?.billing || "api";
+

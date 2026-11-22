@@ -30,7 +30,7 @@ import sqlite3
 from collections import namedtuple
 from contextlib import contextmanager
 
-from .. import pdf_meta, storage, translate_store
+from .. import pdf_meta, pdf_ocr, storage, translate_store
 from ..blocks_store import load_props
 from ..db import connect_data_db, page_now
 from ..documents.model import file_hash, page_document, stored_name
@@ -151,8 +151,19 @@ def _stamp(conn: sqlite3.Connection, doc_id: str, units, format: str, lines: int
          int(lines or 0), int(bool(truncated))))
 
 
+def _read_as_now(conn: sqlite3.Connection, doc_id: str, ocr_stamp: str | None) -> bool:
+    """Whether a document's text, read while the stamp of its recognized
+    text was ``ocr_stamp`` (gamma/pdf_ocr.py; None: no stamp recorded, not
+    a PDF's), is still what its readers read: the stamp is the same now,
+    read inside the caller's write transaction. Otherwise a recognition
+    went live since, and the run that applied it indexed the document
+    again (or will: the apply marked its row stale); a text read before
+    that, stored now, would put the old layer back over it."""
+    return ocr_stamp is None or pdf_ocr.current_stamp(conn, doc_id) == ocr_stamp
+
+
 def store_doc(conn: sqlite3.Connection, doc_id: str, units, *, format: str = "pdf", lines: int = 0,
-              truncated: bool = False) -> None:
+              truncated: bool = False, ocr_stamp: str | None = None) -> None:
     """Replace a document's rows with ``units`` — ``(unit number, normalized
     text)`` pairs; none records a document without text, so a broken file
     isn't re-parsed on every search — and stamp it current, with its count
@@ -162,25 +173,38 @@ def store_doc(conn: sqlite3.Connection, doc_id: str, units, *, format: str = "pd
     (committed here); until the last one the document counts as missing
     (``missing``), and an interrupted run leaves only rows the next one
     deletes. Inside a transaction the caller holds (``store_docs``) every
-    write is part of that one."""
+    write is part of that one. ``ocr_stamp``: the stamp of the recognized
+    text the units were read with (``index_doc``'s); each transaction
+    writes only while it is still the document's (``_read_as_now``), and
+    the first one past it stops the store, the document left to the next
+    pass."""
     ensure_schema(conn)
     units = list(units)
     with write_txn(conn):
+        if not _read_as_now(conn, doc_id, ocr_stamp):
+            return
         conn.execute("DELETE FROM text_fts_docs WHERE doc_id = ?", (doc_id,))
         _delete_rows(conn, doc_id)
     for start in range(0, len(units), STORE_CHUNK):
         with write_txn(conn):
+            if not _read_as_now(conn, doc_id, ocr_stamp):
+                return
             _insert_rows(conn, doc_id, units[start:start + STORE_CHUNK])
     with write_txn(conn):
-        _stamp(conn, doc_id, units, format, lines, truncated)
+        if _read_as_now(conn, doc_id, ocr_stamp):
+            _stamp(conn, doc_id, units, format, lines, truncated)
 
 
 def store_docs(conn: sqlite3.Connection, stored) -> None:
     """Store several documents, ``[(doc_id, units, {format, lines,
-    truncated})]``, in one write transaction: the indexer's batch, so a
-    work folder of small files is a few hundred transactions, not three per
-    file. A document of more than STORE_CHUNK units is stored on its own
-    (``store_doc``'s chunks), never holding the write lock for a book."""
+    truncated, ocr_stamp})]``, in one write transaction: the indexer's
+    batch, so a work folder of small files is a few hundred transactions,
+    not three per file. A document of more than STORE_CHUNK units is
+    stored on its own (``store_doc``'s chunks), never holding the write
+    lock for a book. A PDF's ``ocr_stamp`` (``index_doc``'s) is the stamp
+    of the recognized text it was read with: a document whose stamp moved
+    on since is not stored (``_read_as_now``), left as the apply left it
+    for the next pass."""
     ensure_schema(conn)
     small, large = [], []
     for doc_id, units, meta in stored:
@@ -188,6 +212,8 @@ def store_docs(conn: sqlite3.Connection, stored) -> None:
     if small:
         with write_txn(conn):
             for doc_id, units, meta in small:
+                if not _read_as_now(conn, doc_id, meta.get("ocr_stamp")):
+                    continue
                 conn.execute("DELETE FROM text_fts_docs WHERE doc_id = ?", (doc_id,))
                 _delete_rows(conn, doc_id)
                 _insert_rows(conn, doc_id, units)
@@ -195,7 +221,7 @@ def store_docs(conn: sqlite3.Connection, stored) -> None:
                        meta.get("truncated", False))
     for doc_id, units, meta in large:
         store_doc(conn, doc_id, units, format=meta.get("format", "pdf"), lines=meta.get("lines", 0),
-                  truncated=meta.get("truncated", False))
+                  truncated=meta.get("truncated", False), ocr_stamp=meta.get("ocr_stamp"))
     settle(conn)
 
 
@@ -247,10 +273,24 @@ def purge_unused(ws: str, pages_conn: sqlite3.Connection) -> None:
     deleted for good, a block carrying a document deleted, a document
     detached, a restore): the index rows, the manifests and the kept
     translations of documents no block carries any more (``_live_docs``) —
-    nothing else cleans them up. Reads every block's properties, so callers
-    run it only when a document may have gone, and once for a pass over
-    many pages (``trash._swept_after``); a replacement purges the one hash
-    it let go (``purge_doc``). Never raises (derived data)."""
+    nothing else cleans them up — and the text recognized on the scanned
+    pages of PDFs neither a block carries nor the workspace still stores
+    (``pdf_ocr.purge``, which asks the store of those recognized files
+    alone, not the store's listing): that text describes the file, which
+    stays a highlight's reference after a replacement for as long as it is
+    stored (gamma/upload_gc.py, whose purge of the file drops it), and a
+    later relocation reads it there. Reads every block's properties, so
+    callers run it only when a document may have gone, and once for a pass
+    over many pages (``trash._swept_after``); a replacement purges the one
+    hash it let go (``purge_doc``), never its recognized text. Never raises
+    (derived data)."""
+
+    def stored(doc_id: str) -> bool:
+        try:
+            return storage.exists(ws, stored_name(doc_id, ".pdf"))
+        except ValueError:  # a name that is no stored file's
+            return False
+
     try:
         live = _live_docs(pages_conn)
         with connect_data_db(ws) as conn:
@@ -261,6 +301,7 @@ def purge_unused(ws: str, pages_conn: sqlite3.Connection) -> None:
                 drop_docs(conn, [r[0] for r in conn.execute("SELECT doc_id FROM text_fts_docs") if r[0] not in live])
                 pdf_meta.purge(conn, live)
                 translate_store.purge(conn, live)
+                pdf_ocr.purge(conn, live, stored)
             settle(conn)
     except Exception as e:  # noqa: BLE001 — derived data: the next sweep tries again
         log.warning(f"[search] cleanup of unused documents failed: {e}")

@@ -1,4 +1,4 @@
-// The rows of Settings → AI → Agents → Servers this computer answers
+// The rows of Settings → AI → Local agents → Servers this computer answers
 // (SettingsAgents.jsx AnsweredServers; step 4.1 of
 // docs/research/agents-as-participants-plan.md), pure: what each link to
 // another server (GET /api/computer-links) says and which shell ask each of

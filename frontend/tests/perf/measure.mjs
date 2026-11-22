@@ -17,8 +17,12 @@ export const quantile = (sorted, q) => sorted[Math.min(sorted.length, Math.max(1
 // timed span (fresh data for a cold run). Either may be async. Under
 // `node --expose-gc` (npm run test:perf) a garbage collection runs between
 // setup and the call, so one run does not pay for the garbage of the last
-// one or of its setup. → {p50, p95, max, ms}, in milliseconds, `ms` every
-// timed run ascending.
+// one or of its setup. test:perf also passes `--no-concurrent-sweeping`, so
+// the collection has swept the heap before gc() returns: otherwise V8 sweeps
+// on helper threads during the timed run, which on few cores and a heap the
+// earlier cases filled (ink.perf.mjs keeps ~240 MB) took 1-6x the run
+// itself. → {p50, p95, max, ms}, in milliseconds, `ms` every timed run
+// ascending.
 export async function measure(fn, { warmup = 3, runs = 20, setup } = {}) {
   const ms = [];
   for (let r = 0; r < warmup + runs; r++) {

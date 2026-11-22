@@ -1,8 +1,9 @@
 // What the desktop app registers with the operating system: the generated
-// files match the table (tests/shared/openwith.json), the NSIS uninstaller
-// removes exactly what the installer writes, and the build configs take
-// their file types from the generator (docs/architecture.md "Opening files
-// and folders").
+// files match the table (tests/shared/openwith.json), the NSIS installer
+// writes each of its two parts only when chosen and removes it otherwise,
+// its uninstaller removes exactly what it writes and never another app's
+// entries, and the build configs take their file types from the generator
+// (docs/architecture.md "Opening files and folders").
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -13,19 +14,39 @@ const openwith = require('../scripts/openwith.cjs');
 const DESKTOP = path.resolve(__dirname, '..');
 const FIXTURE = JSON.parse(fs.readFileSync(path.resolve(DESKTOP, '..', 'tests', 'shared', 'openwith.json'), 'utf8'));
 
-// One NSIS line as its instruction and string arguments ("…", '…' or `…`).
+// One NSIS line as its instruction and string arguments ("…", '…' or `…`);
+// the generated macro that deletes a key once empty reads as `IfEmpty`.
 function parse(line) {
-  const t = line.trim();
+  const t = line.trim().replace(/^!insertmacro gammaDeleteKeyIfEmpty\b/, 'IfEmpty');
   const op = t.split(/\s+/, 1)[0];
   const flag = /^\S+\s+(\/\w+)/.exec(t)?.[1] || '';
   const args = [...t.matchAll(/"([^"]*)"|'([^']*)'|`([^`]*)`/g)].map((m) => m[1] ?? m[2] ?? m[3]);
   return { op, flag, args };
 }
 
-function macro(text, name) {
+const REGISTRY_OP = /^(WriteReg|DeleteReg|IfEmpty$)/;
+
+function macroText(text, name) {
   const m = new RegExp(`!macro ${name}\\n([\\s\\S]*?)!macroend`).exec(text);
   assert.ok(m, `no ${name}`);
-  return m[1].split('\n').map(parse).filter((l) => /^(WriteReg|DeleteReg)/.test(l.op));
+  return m[1];
+}
+
+function macro(text, name) {
+  return macroText(text, name).split('\n').map(parse).filter((l) => REGISTRY_OP.test(l.op));
+}
+
+// A part of parts() as the NSIS lines it becomes.
+const asLines = (entries) => entries.map((e) => (e.type
+  ? { op: e.type === 'none' ? 'WriteRegNone' : 'WriteRegStr', flag: '', args: e.type === 'none' ? [e.key, e.name] : [e.key, e.name, e.data] }
+  : { op: { value: 'DeleteRegValue', key: 'DeleteRegKey', ifEmpty: 'IfEmpty' }[e.op], flag: '', args: e.op === 'value' ? [e.key, e.name] : [e.key] }));
+
+// The install's block for one part: what `${if} <v> = 1` writes and what its `${else}` removes.
+function branches(text, v) {
+  const m = new RegExp(`\\$\\{if\\} \\${v} = 1\\n([\\s\\S]*?)\\n\\s+\\$\\{else\\}\\n([\\s\\S]*?)\\n\\s+\\$\\{endIf\\}`).exec(macroText(text, 'gammaOpenWithInstall'));
+  assert.ok(m, `no block for ${v}`);
+  const lines = (s) => s.split('\n').map(parse).filter((l) => REGISTRY_OP.test(l.op));
+  return { on: lines(m[1]), off: lines(m[2]) };
 }
 
 const under = (key, root) => key === root || key.startsWith(root + '\\');
@@ -62,6 +83,13 @@ test('Store: the folder verb is the class of native/open-with/, on a folder and 
   const config = require('../electron-builder.cjs');
   assert.ok(h.includes(`#define GAMMA_APP_ID L"${config.appx.applicationId}"`));
   assert.ok(h.includes(`#define GAMMA_EXE L"${config.productName}.exe"`));
+  // The launcher's switch hides it by a file in the app's data directory,
+  // which Electron names after package.json's name (the packaged one has no
+  // productName); the app writes it to app.getPath('userData').
+  assert.ok(h.includes(`#define GAMMA_DATA_DIR L"${require('../package.json').name}"`));
+  assert.ok(!('productName' in require('../package.json')), 'a productName would rename the data directory');
+  assert.ok(h.includes(`#define GAMMA_FOLDER_VERB_OFF L"${openwith.OPEN_WITH.off}"`));
+  assert.strictEqual(require('../lib/openwith.json').storeOff, openwith.OPEN_WITH.off);
   // The DLL goes in by the afterPack hook; native/ itself never ships.
   assert.strictEqual(config.afterPack, 'scripts/after-pack.cjs');
   assert.ok(!config.files.some((f) => f.startsWith('native')));
@@ -102,7 +130,7 @@ test('Store: the manifest template is electron-builder\'s', {
 
 test('NSIS: per kind a ProgID, per extension Open with, the folder verbs, and their quoting', () => {
   const text = openwith.nsis();
-  const install = macro(text, 'customInstall');
+  const install = macro(text, 'gammaOpenWithInstall').filter((l) => l.op.startsWith('WriteReg'));
   for (const k of FIXTURE.kinds) {
     assert.ok(text.includes(`WriteRegStr SHELL_CONTEXT "Software\\Classes\\${k.progid}\\shell\\open\\command" "" '"$appExe" "%1"'`));
     for (const ext of k.exts) {
@@ -118,53 +146,139 @@ test('NSIS: per kind a ProgID, per extension Open with, the folder verbs, and th
   }
   assert.ok(!/Drive\\shell|Folder\\shell|\*\\shell/.test(text));
   assert.ok(text.includes('WriteRegStr SHELL_CONTEXT "Software\\RegisteredApplications" "${PRODUCT_NAME}" "Software\\${APP_ID}\\Capabilities"'));
-  // The uninstall runs only when not an update; SHChangeNotify ends both.
-  assert.match(text, /!macro customUnInstall\n {2}\$\{ifNot\} \$\{isUpdated\}\n[\s\S]*SHChangeNotify[^\n]*\n {2}\$\{endIf\}\n!macroend/);
-  assert.match(text, /SHChangeNotify[^\n]*\n!macroend\n\n!macro customUnInstall/);
+  // SHChangeNotify ends the install and the uninstall (installer.nsh runs the
+  // uninstall only when not an update: test/installer.test.js).
+  assert.match(macroText(text, 'gammaOpenWithInstall'), /SHChangeNotify[^\n]*\n$/);
+  assert.match(macroText(text, 'gammaOpenWithUnInstall'), /SHChangeNotify[^\n]*\n$/);
 });
 
-test('NSIS: the uninstaller removes exactly what the installer writes', () => {
-  const install = macro(openwith.nsis(), 'customInstall');
-  const uninstall = macro(openwith.nsis(), 'customUnInstall');
-  const whole = uninstall.filter((l) => l.op === 'DeleteRegKey' && !l.flag).map((l) => l.args[0]);
-  const values = uninstall.filter((l) => l.op === 'DeleteRegValue').map((l) => l.args.slice(0, 2).join('|'));
-  const writes = install.filter((l) => l.op.startsWith('WriteReg'));
+// Whether `removals` undo `writes`: each write's key goes whole, or its value
+// does; each removal is of something written (a key once empty: a written
+// key or one above one); a whole key is never an extension's, whose may
+// hold another app's entries.
+function assertUndoes(removals, writes, what) {
+  const whole = removals.filter((l) => l.op === 'DeleteRegKey').map((l) => l.args[0]);
+  const values = removals.filter((l) => l.op === 'DeleteRegValue').map((l) => l.args.slice(0, 2).join('|'));
   for (const w of writes) {
     const [key, name] = w.args;
     const gone = whole.some((root) => under(key, root)) || (name && values.includes(`${key}|${name}`));
-    assert.ok(gone, `nothing in customUnInstall removes ${key} ${name}`);
+    assert.ok(gone, `nothing in ${what} removes ${key} ${name}`);
   }
-  // Each delete is of something the installer wrote, and a whole key is
-  // never an extension's (.pdf's holds another reader's entries).
   for (const root of whole) {
-    assert.ok(writes.some((w) => under(w.args[0], root)), `customUnInstall deletes ${root}, never written`);
+    assert.ok(writes.some((w) => under(w.args[0], root)), `${what} deletes ${root}, never written`);
     assert.doesNotMatch(root, /^Software\\Classes\\\.[a-z0-9]+(\\|$)/);
   }
-  for (const v of values) assert.ok(writes.some((w) => w.args.slice(0, 2).join('|') === v), `customUnInstall deletes the value ${v}, never written`);
-  // Per extension: the value, then its OpenWithProgids key and its own key, both /ifempty.
-  for (const k of FIXTURE.kinds) {
-    for (const ext of k.exts) {
-      const i = uninstall.findIndex((l) => l.op === 'DeleteRegValue' && l.args[0] === `Software\\Classes\\${ext}\\OpenWithProgids` && l.args[1] === k.progid);
-      assert.ok(i >= 0, `no DeleteRegValue for ${ext}`);
-      assert.deepStrictEqual(uninstall[i + 1], { op: 'DeleteRegKey', flag: '/ifempty', args: [`Software\\Classes\\${ext}\\OpenWithProgids`] });
-      assert.deepStrictEqual(uninstall[i + 2], { op: 'DeleteRegKey', flag: '/ifempty', args: [`Software\\Classes\\${ext}`] });
-    }
+  for (const v of values) assert.ok(writes.some((w) => w.args.slice(0, 2).join('|') === v), `${what} deletes the value ${v}, never written`);
+  for (const l of removals.filter((x) => x.op === 'IfEmpty')) {
+    assert.ok(writes.some((w) => under(w.args[0], l.args[0])), `${what} deletes ${l.args[0]} once empty, never written there`);
   }
+}
+
+test('NSIS: each part is written when on and removed when off, its choice recorded first', () => {
+  const text = openwith.nsis();
+  const { files, folders } = openwith.parts();
+  for (const [v, p] of [['$gammaFiles', files], ['$gammaFolders', folders]]) {
+    const { on, off } = branches(text, v);
+    assert.deepStrictEqual(on, asLines(p.write));
+    assert.deepStrictEqual(off, asLines(p.remove));
+    assertUndoes(off, on, `${v} off`);
+  }
+  const install = macroText(text, 'gammaOpenWithInstall');
+  // Read back when the page did not run (an update, a silent install), then recorded, then applied.
+  const at = (s) => { const i = install.indexOf(s); assert.ok(i >= 0, s); return i; };
+  assert.ok(at('${if} $gammaChosen != 1\n    Call gammaReadChoice') < at('WriteRegDWORD SHELL_CONTEXT "Software\\${APP_ID}" "OpenWithFiles" $gammaFiles'));
+  assert.ok(at('"OpenWithFolders" $gammaFolders') < at('${if} $gammaFiles = 1'));
+  assert.ok(at('${if} $gammaFiles = 1') < at('${if} $gammaFolders = 1'));
+  // The folder part is the verbs alone, the files part everything else.
+  assert.ok(folders.write.every((w) => /\\Directory\\(Background\\)?shell\\Gamma(\\command)?$/.test(w.key)));
+  assert.ok(!files.write.some((w) => /\\Directory\\/.test(w.key)));
 });
 
-test('NSIS: an extension dropped from the table is deleted by customInstall, the same three in order', () => {
-  assert.ok(!macro(openwith.nsis(), 'customInstall').some((l) => l.op.startsWith('Delete')));
-  const install = macro(openwith.nsis([{ ext: '.ltx', progid: 'Gamma.latex' }]), 'customInstall');
-  const i = install.findIndex((l) => l.op === 'DeleteRegValue' && l.args[0] === 'Software\\Classes\\.ltx\\OpenWithProgids');
-  assert.ok(i >= 0);
-  assert.deepStrictEqual(install.slice(i, i + 4), [
+test('NSIS: the page offers both parts, ticked as recorded (on when not), and an update skips it', () => {
+  const page = macroText(openwith.nsis(), 'gammaOpenWithPage');
+  const say = openwith.words();
+  assert.match(page, /^\s+Page custom gammaOpenWithShow gammaOpenWithLeave$/m);
+  assert.match(page, /Function gammaOpenWithShow\n\s+\$\{if\} \$\{isUpdated\}\n\s+Abort\n\s+\$\{endIf\}\n\s+Call gammaReadChoice/);
+  for (const [v, value] of [['$gammaFiles', 'OpenWithFiles'], ['$gammaFolders', 'OpenWithFolders']]) {
+    assert.ok(page.includes(`ReadRegDWORD ${v} SHELL_CONTEXT "Software\\\${APP_ID}" "${value}"\n    \${if} \${Errors}\n      StrCpy ${v} 1`), v);
+  }
+  assert.ok(page.includes(`\${NSD_CreateCheckbox} 0 0 100% 14u "${say.files}"`));
+  assert.ok(page.includes(`\${NSD_CreateCheckbox} 0 20u 100% 14u "${say.folders}"`));
+  assert.ok(page.includes(`"${say.note}"`));
+  assert.match(page, /\$\{NSD_GetState\} \$gammaFilesBox \$gammaFiles\n\s+\$\{NSD_GetState\} \$gammaFoldersBox \$gammaFolders\n\s+StrCpy \$gammaChosen 1/);
+  // The types in words are the table's kinds, in order.
+  assert.strictEqual(openwith.typesPhrase().replace(' and ', ', '), FIXTURE.kinds.map((k) => k.name.split(' ')[0]).join(', '));
+  assert.ok(say.files.includes(openwith.typesPhrase()));
+  assert.ok(say.folders.includes(FIXTURE.folder_verb.replace('&', '')));
+  // The page and the install's variables exist in an assisted installer alone.
+  const config = require('../electron-builder.cjs');
+  assert.strictEqual(config.nsis.oneClick, false);
+  assert.strictEqual(config.nsis.include, 'installer.nsh');
+});
+
+test('NSIS: the uninstaller removes exactly what the installer writes', () => {
+  const install = macro(openwith.nsis(), 'gammaOpenWithInstall');
+  const uninstall = macro(openwith.nsis(), 'gammaOpenWithUnInstall');
+  assertUndoes(uninstall, install.filter((l) => l.op.startsWith('WriteReg')), 'the uninstall');
+  const { files, folders } = openwith.parts();
+  assert.deepStrictEqual(uninstall, [
+    ...asLines([...files.remove, ...folders.remove]),
+    { op: 'DeleteRegKey', flag: '', args: ['Software\\${APP_ID}'] },
+  ]);
+});
+
+test('NSIS: an extension\'s keys go only once empty, after Gamma\'s value; never by /ifempty, which keeps no value', () => {
+  const text = openwith.nsis();
+  for (const removals of [branches(text, '$gammaFiles').off, macro(text, 'gammaOpenWithUnInstall')]) {
+    for (const k of FIXTURE.kinds) {
+      for (const ext of k.exts) {
+        const i = removals.findIndex((l) => l.op === 'DeleteRegValue' && l.args[0] === `Software\\Classes\\${ext}\\OpenWithProgids` && l.args[1] === k.progid);
+        assert.ok(i >= 0, `no DeleteRegValue for ${ext}`);
+        assert.deepStrictEqual(removals.slice(i + 1, i + 3), [
+          { op: 'IfEmpty', flag: '', args: [`Software\\Classes\\${ext}\\OpenWithProgids`] },
+          { op: 'IfEmpty', flag: '', args: [`Software\\Classes\\${ext}`] },
+        ]);
+      }
+    }
+  }
+  assert.doesNotMatch(text.replace(/^\s*;.*$/gm, ''), /\/ifempty/);
+  // The macro deletes a key with no value (EnumRegValue's error, the default
+  // value included) and no subkey, and leaves the caller's registers.
+  const m = macroText(text, 'gammaDeleteKeyIfEmpty KEY');
+  assert.match(m, /^\s+Push \$R8\n\s+Push \$R9\n\s+ClearErrors\n\s+EnumRegValue \$R8 SHELL_CONTEXT "\$\{KEY\}" 0\n\s+\$\{if\} \$\{Errors\}\n\s+EnumRegKey \$R9 SHELL_CONTEXT "\$\{KEY\}" 0\n\s+\$\{if\} \$R9 == ""\n\s+DeleteRegKey SHELL_CONTEXT "\$\{KEY\}"\n/);
+  assert.match(m, /Pop \$R9\n\s+Pop \$R8\n$/);
+});
+
+test('NSIS: an extension dropped from the table is deleted by the install after both parts, the same three in order', () => {
+  const after = (text) => macro(text, 'gammaOpenWithInstall').slice(macro(text, 'gammaOpenWithInstall').findLastIndex((l) => l.args[0]?.includes('\\Directory\\Background\\shell\\Gamma')) + 1);
+  assert.deepStrictEqual(after(openwith.nsis()), []);
+  assert.deepStrictEqual(after(openwith.nsis([{ ext: '.ltx', progid: 'Gamma.latex' }])), [
     { op: 'DeleteRegValue', flag: '', args: ['Software\\Classes\\.ltx\\OpenWithProgids', 'Gamma.latex'] },
-    { op: 'DeleteRegKey', flag: '/ifempty', args: ['Software\\Classes\\.ltx\\OpenWithProgids'] },
-    { op: 'DeleteRegKey', flag: '/ifempty', args: ['Software\\Classes\\.ltx'] },
+    { op: 'IfEmpty', flag: '', args: ['Software\\Classes\\.ltx\\OpenWithProgids'] },
+    { op: 'IfEmpty', flag: '', args: ['Software\\Classes\\.ltx'] },
     { op: 'DeleteRegValue', flag: '', args: ['Software\\${APP_ID}\\Capabilities\\FileAssociations', '.ltx'] },
   ]);
-  // After every write, so a reinstall of the same version is no different.
-  assert.ok(install.slice(i).every((l) => l.op.startsWith('Delete')));
+});
+
+test('the launcher\'s switches take the installer\'s parts and record, its defines put in, and its words', () => {
+  const rt = require('../lib/openwith.json');
+  const config = require('../electron-builder.cjs');
+  // The installer's ${APP_ID} and ${PRODUCT_NAME} are the config's appId and
+  // productName (not the app's own name, which is package.json's); the app
+  // puts in only $appExe, its path.
+  const fill = (v) => (typeof v === 'string' ? v.replace(/\$\{APP_ID\}/g, config.appId).replace(/\$\{PRODUCT_NAME\}/g, config.productName) : v);
+  const filled = (entries) => entries.map((e) => Object.fromEntries(Object.entries(e).map(([k, v]) => [k, fill(v)])));
+  const parts = openwith.parts();
+  for (const name of Object.keys(parts)) {
+    assert.deepStrictEqual(rt.parts[name], { value: parts[name].value, write: filled(parts[name].write), remove: filled(parts[name].remove) });
+  }
+  assert.deepStrictEqual(Object.keys(rt.parts), Object.keys(parts));
+  assert.strictEqual(rt.record, `Software\\${config.appId}`);
+  assert.ok(rt.parts.files.write.some((w) => w.key === 'Software\\RegisteredApplications' && w.name === 'Gamma'));
+  assert.doesNotMatch(JSON.stringify(rt), /\$\{/);
+  assert.strictEqual(rt.types, openwith.typesPhrase());
+  assert.strictEqual(rt.verb, FIXTURE.folder_verb.replace('&', ''));
+  assert.ok(config.files.includes('lib/**'));
 });
 
 test('Linux: the folder entries carry the verb, and the .deb maps them by absolute path', () => {

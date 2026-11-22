@@ -1,5 +1,5 @@
-/* A tree's rows (explorer/TreeRow.jsx): the Files window's and a synced
-   folder's folder view. Each is indented by its depth (--level, set on the
+/* A tree's rows (explorer/TreeRow.jsx): the Files window's, a synced
+   folder's folder view and the folder browser's (folderBrowser.css). Each is indented by its depth (--level, set on the
    row), 28px tall under a pointer and 44px under a finger on a phone, with
    a guide line down the middle of each folder's chevron above it. The "⋯"
    shows on hover through .rowMenuHost (shared/styles/app.css). */

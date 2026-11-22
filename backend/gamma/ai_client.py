@@ -59,7 +59,7 @@ class AllowanceExhausted(CallRefused):
     def __init__(self, used: int, limit: int):
         super().__init__(status_code=429, detail=(
             f"This server's shared AI allowance for your account is used up ({used} of {limit} "
-            "tokens in the last 24 hours). Add your own key in Settings → AI → Connections, or try again later."))
+            "tokens in the last 24 hours). Add your own key in Settings → AI → Models, or try again later."))
         self.used, self.limit = used, limit
 
 
@@ -270,6 +270,8 @@ def failure_kind(error: Exception) -> str:
     if isinstance(error, TooManyCalls):
         return "rate"
     if isinstance(error, HTTPException):
+        if getattr(error, "kind", ""):
+            return error.kind  # ai_settings.ModelUnavailable: "model_unavailable"
         return "not_configured" if error.status_code == 503 else "other"
     status = error.status if isinstance(error, UpstreamError) else (
         error.code if isinstance(error, urllib.error.HTTPError) else 0)
@@ -462,12 +464,35 @@ def normalize_usage(raw, provider_protocol) -> dict | None:
 
 
 def add_usage(total: dict | None, usage: dict | None) -> dict | None:
-    """Sum two normalized usage dicts (either may be None)."""
+    """Sum two usage dicts (either may be None; tests/shared/ai_models.json
+    ``sums``, which the client's addUsage passes too): the counts, and the
+    costs each call's recorder put on its report (ai_usage.recorder) —
+    summed, never priced again from summed tokens, and left out when no
+    call had one. A call paid per token whose cost is unknown (or a sum
+    that already said so) sets ``unpriced``. ``billing`` is the calls'
+    own when they agree, else "mixed"."""
     if not usage:
         return total
-    if not total:
-        return dict(usage)
-    return {k: total.get(k, 0) + usage.get(k, 0) for k in ("input", "output", "cache_read", "cache_write")}
+    out = {k: (total or {}).get(k, 0) + usage.get(k, 0) for k in ("input", "output", "cache_read", "cache_write")}
+    calls = [u for u in (total, usage) if u]
+    costs = [u["cost"] for u in calls if u.get("cost") is not None]
+    if costs:
+        out["cost"] = round(sum(costs), 8)
+    if any(u.get("unpriced") or (u.get("billing") == "api" and u.get("cost") is None) for u in calls):
+        out["unpriced"] = True
+    billing = usage.get("billing") if total is None or total.get("billing") == usage.get("billing") else "mixed"
+    if billing:
+        out["billing"] = billing
+    return out
+
+
+def meter_usage(meter: dict, usage: dict | None) -> None:
+    """Add one call's report into ``meter`` in place, as add_usage sums: a
+    helper's or a web search's running total, which the chat's reply
+    reports as its own."""
+    total = add_usage(meter or None, usage)
+    meter.clear()
+    meter.update(total or {})
 
 
 def read_reply(response, provider_protocol, on_usage=None, on_stop=None) -> str:

@@ -48,6 +48,8 @@ struct HostInfo: Encodable, Equatable {
     /// is turned off while the page says it shows a bar of its own there
     /// (`editMenu`, ShellWebView).
     var editMenu = true
+    /// The screen stays on while the page says (`keepAwake`, ScreenAwake).
+    var keepAwake = true
 
     static var current: HostInfo {
         HostInfo(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0")
@@ -235,12 +237,17 @@ enum WebMessage: Equatable {
     /// the menu would cover), on again after. A `shown` that is missing or
     /// no Bool is on.
     case editMenu(shown: Bool)
+    /// The screen kept on (`on`), or let sleep again: while the page reads a
+    /// scan's text in the window, which pauses while the app is away. Only
+    /// an `on` of true keeps it on, so a message the shell cannot read never
+    /// holds the screen.
+    case keepAwake(on: Bool)
 
     enum Scheme: String, Decodable { case light, dark }
 }
 
 extension WebMessage: Decodable {
-    private enum Keys: String, CodingKey { case type, pointerId, at, tool, bg, scheme, name, kind, id, offset, shown }
+    private enum Keys: String, CodingKey { case type, pointerId, at, tool, bg, scheme, name, kind, id, offset, shown, on }
     private struct Point: Decodable { let x, y: Double }
 
     init(from decoder: Decoder) throws {
@@ -268,6 +275,8 @@ extension WebMessage: Decodable {
             self = .shellBar(shown: try? c.decodeIfPresent(Bool.self, forKey: .shown))
         case "editMenu":
             self = .editMenu(shown: (try? c.decodeIfPresent(Bool.self, forKey: .shown)) ?? true)
+        case "keepAwake":
+            self = .keepAwake(on: (try? c.decodeIfPresent(Bool.self, forKey: .on)) ?? false)
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown message \(type)")
         }

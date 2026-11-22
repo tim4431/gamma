@@ -45,4 +45,17 @@ function hostPath(p, {
   return p;
 }
 
-module.exports = { hostPath, packageFamily };
+// Whether what a Store install writes at `p` lands in the package's private
+// copy, which Windows deletes with the package: under %APPDATA% or
+// %LOCALAPPDATA%, outside Packages. Anywhere else (a folder the person
+// chose, in Documents or on another drive) outlives an uninstall.
+function goesWithPackage(p, {
+  store = process.windowsStore,
+  appData = process.env.APPDATA,
+  localAppData = process.env.LOCALAPPDATA,
+} = {}) {
+  if (!store || !p || !appData || !localAppData) return false;
+  return [appData, localAppData].some((real) => isUnder(p, real)) && !isUnder(p, path.join(localAppData, 'Packages'));
+}
+
+module.exports = { hostPath, packageFamily, goesWithPackage };

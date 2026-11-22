@@ -54,6 +54,8 @@ def test_prefs_never_serve_the_reserved_ai_settings_key(guest):
     # /api/ai/settings endpoint may read it.
     assert guest.get("/api/prefs/ai-settings").status_code == 400
     assert guest.put("/api/prefs/ai-settings", json={"value": {}}).status_code == 400
+    # Nor the model each task uses: only /api/ai/models/roles checks a pick.
+    assert guest.put("/api/prefs/ai-models", json={"value": {"chat": "x:y"}}).status_code == 400
 
 
 def test_profile_is_one_account_wide_object(alice):
@@ -189,15 +191,15 @@ def test_workspace_prefs_are_kept_in_their_workspace(alice):
     assert alice.put("/api/prefs/open-tabs", json={"value": ["home-tab"]}, headers={"X-Gamma-Workspace": home}).status_code == 200
     assert alice.put("/api/prefs/open-tabs", json={"value": ["other-tab"]}, headers={"X-Gamma-Workspace": other}).status_code == 200
     assert alice.put("/api/prefs/read-pos", json={"value": {"d1": 4}}, headers={"X-Gamma-Workspace": home}).status_code == 200
-    assert alice.put("/api/prefs/ai-provider", json={"value": "mine"}, headers={"X-Gamma-Workspace": other}).status_code == 200
+    assert alice.put("/api/prefs/notices-seen", json={"value": "mine"}, headers={"X-Gamma-Workspace": other}).status_code == 200
     assert alice.get("/api/prefs/open-tabs", headers={"X-Gamma-Workspace": other}).json()["value"] == ["other-tab"]
     assert alice.get("/api/prefs/open-tabs").json()["value"] == ["home-tab"]  # no workspace named: the default one
-    assert alice.get("/api/prefs/ai-provider", headers={"X-Gamma-Workspace": home}).json()["value"] == "mine"
+    assert alice.get("/api/prefs/notices-seen", headers={"X-Gamma-Workspace": home}).json()["value"] == "mine"
     kept_home, in_users_db = _stored(home, me)
     assert kept_home == {"open-tabs": '["home-tab"]', "read-pos": '{"d1": 4}'}
     assert _stored(other, me)[0] == {"open-tabs": '["other-tab"]'}
-    assert ("", "ai-provider") in in_users_db and not {k for _, k in in_users_db} & {"open-tabs", "read-pos"}
-    assert db.get_pref(me, "open-tabs", other)[0] == ["other-tab"] and db.get_pref(me, "ai-provider", home)[0] == "mine"
+    assert ("", "notices-seen") in in_users_db and not {k for _, k in in_users_db} & {"open-tabs", "read-pos"}
+    assert db.get_pref(me, "open-tabs", other)[0] == ["other-tab"] and db.get_pref(me, "notices-seen", home)[0] == "mine"
     # a synced copy older than the stored value is not written; a newer one is
     stamp = db.get_pref(me, "open-tabs", home)[1]
     assert db.set_pref(me, "open-tabs", ["stale"], home, updated_at="2020-01-01T00:00:00.000000Z") == stamp
@@ -285,16 +287,26 @@ def test_second_provider_adds_its_models(alice):
 
 
 def test_the_other_services_are_presets_grouped_by_vendor(alice):
-    # Every preset is the openai protocol at its vendor's endpoint, grouped
-    # for the dialog's Service menu, with a plan label and a key page.
+    # Whatever presets there are, each is complete for the dialog: an
+    # entry protocol at an http(s) endpoint, a vendor group and a plan, how
+    # it is paid for, a quota reader for the one it names, and a version in
+    # a base URL said to name one.
+    import re
+
+    from gamma.ai_protocols import PROTOCOLS
+    from gamma.ai_protocols.quota import READERS
+
     services = alice.get("/api/ai/settings").json()["services"]
-    assert list(dict.fromkeys(s["group"] for s in services)) == ["DeepSeek", "Kimi", "Qwen", "GLM", "OpenRouter"]
+    assert services and len({s["id"] for s in services}) == len(services)
     for s in services:
-        assert s["protocol"] == "openai" and s["plan"]
-        assert s["base_url"].startswith("https://") and s["key_url"].startswith("https://")
-    by_id = {s["id"]: s for s in services}
-    assert by_id["glm"]["base_url"] == "https://api.z.ai/api/paas/v4"
-    assert by_id["qwen-coding"]["note"] and "note" not in by_id["kimi-code"]
+        assert s["label"] and s["group"] and s["plan"] and s["protocol"] in PROTOCOLS
+        assert re.match(r"^https?://", s["base_url"]) and not s["base_url"].endswith("/")
+        assert isinstance(s["key_placeholder"], str) and isinstance(s["key_url"], str)
+        assert s["billing"] in ("api", "subscription", "local")
+        if s["usage"]:
+            assert s["usage"] in READERS and s["quota"]
+        if s["versioned"]:
+            assert re.search(r"/v\d+[a-z]*(/|$)", s["base_url"])
     # An entry made from one is recognised again by its endpoint.
     r = alice.post("/api/ai/providers", json={
         "protocol": "openai", "api_key": "sk-kimi-code-test-1234",
@@ -340,6 +352,64 @@ def test_deepseek_service_preset(alice, monkeypatch):
     assert seen["url"] == "https://api.deepseek.com/v1/models"
 
     alice.delete(f"/api/ai/providers/{entry['id']}")
+
+
+def test_gemini_names_its_version_in_its_base_url(alice, monkeypatch):
+    # Gemini's OpenAI endpoint is /v1beta/openai: the listing and the chat
+    # go right under it, with no /v1 after it; any other base that names no
+    # version still gets one.
+    from gamma import ai_catalog
+    from gamma.ai_protocols import WIRES
+    from gamma.ai_protocols.base import api_url
+
+    base = "https://generativelanguage.googleapis.com/v1beta/openai"
+    seen = {}
+    monkeypatch.setattr(ai_catalog, "fetch_json", lambda req: seen.update(url=req.full_url) or {
+        "data": [{"id": "gemini-x"}]})
+    r = alice.post("/api/ai/model-catalog", json={"protocol": "openai", "api_key": "AIza-test-key", "base_url": base + "/"})
+    assert r.status_code == 200, r.text
+    assert r.json()["models"] == ["gemini-x"] and seen["url"] == base + "/models"
+    request = WIRES["openai"].request({"protocol": "openai", "api_key": "k", "base_url": base},
+                                      [{"role": "user", "content": "hi"}], "", "gemini-x")
+    assert request.full_url == base + "/chat/completions"
+    assert api_url("https://gateway.example.org/openai", "/models") == "https://gateway.example.org/openai/v1/models"
+
+
+def test_each_connection_names_its_service(alice):
+    # `service` (ai_settings.service_id), which picks the connection's logo:
+    # the preset its endpoint is, the protocol at its own endpoint, else
+    # custom. An entry made from a preset since dropped (Mistral's, LM
+    # Studio's) is such a custom endpoint: named by its protocol, paid per
+    # token, its key optional.
+    from gamma import ai_settings
+    from gamma.ai_protocols import PROTOCOLS
+
+    assert ai_settings.service_id({"protocol": "chatgpt", "base_url": ""}) == "chatgpt"
+    key = "sk-service-test-1234"
+    fields = {
+        "deepseek": {"protocol": "openai", "api_key": key, "base_url": "https://api.deepseek.com/"},
+        "anthropic": {"protocol": "anthropic", "api_key": key, "base_url": "https://api.anthropic.com"},
+        "openai": {"protocol": "openai", "api_key": key, "base_url": ""},
+        "mistral": {"protocol": "openai", "api_key": key, "base_url": "https://api.mistral.ai/v1"},
+        "lmstudio": {"protocol": "openai", "base_url": "http://localhost:1234/v1"},
+    }
+    made = {}
+    for name, body in fields.items():
+        r = alice.post("/api/ai/providers", json={**body, "models": f"{name}-model"})
+        assert r.status_code == 200, r.text
+        made[name] = next(p for p in r.json()["providers"] if p["models"] == f"{name}-model")
+    try:
+        services = {name: p["service"] for name, p in made.items()}
+        assert services == {"deepseek": "deepseek", "anthropic": "anthropic", "openai": "openai",
+                            "mistral": "custom", "lmstudio": "custom"}
+        for gone in ("mistral", "lmstudio"):
+            assert made[gone]["label"] == PROTOCOLS["openai"].label
+            assert made[gone]["billing"] == "api" and made[gone]["key_optional"] is True
+        rows = {m["provider"]: m for m in alice.get("/api/ai/models").json()["models"]}
+        assert {name: rows[p["id"]]["service"] for name, p in made.items()} == services
+    finally:
+        for p in made.values():
+            alice.delete(f"/api/ai/providers/{p['id']}")
 
 
 def test_provider_validation(alice):

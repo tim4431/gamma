@@ -51,9 +51,11 @@ documentation with the code.
   [hotkeys](hotkeys.md), [settings](settings.md),
   [UI design](ui-design.md), [i18n](i18n.md), and the
   [source map](../../frontend/src/README.md).
-- **AI providers:** build per-user configuration through `ai_runtime(user)`;
+- **AI providers:** build per-user configuration through `ai_runtime(user)`
+  and resolve a request's model with `resolve_model(rt, requested, role)`;
   protocol-specific behavior belongs in `gamma/ai_protocols/`, and model
-  listings/context windows come from the live catalog. See [AI](ai.md).
+  listings, context windows and prices come from the live catalog. See
+  [AI](ai.md).
 - **Validation:** test the affected modules and their direct consumers;
   browser behavior needs the relevant end-to-end scenarios. A frontend change
   passes `npm run lint` ([Frontend lint](debugging.md#frontend-lint)). Documentation
@@ -93,7 +95,7 @@ These describe the implementation unless explicitly marked as plans.
 | A folder of the workspace and a directory on this computer kept in step, notes both ways, a PDF pushed to a page, and a file read where it is: what lands on disk, the lens, links and highlights, a round and the engine's classes (notes, PDF, picture, and a work folder's file of any format), conflicts, the rules, the desktop app, the routes, the gamma-sync client | [Synced vaults](synced_vaults.md) |
 | PDF transport, manifests, caching, and load timing | [PDF loading](pdf_loading.md) |
 | Ink format, input, editing, merging, and PDF ink import/export | [Handwriting](handwriting.md) |
-| The lasso selection's Convert menu: handwriting redrawn as clean shapes or turned into a text box by the chat's model, and copied or saved as SVG | [Handwriting and AI](handwriting_ai.md) |
+| The lasso selection's Convert menu: handwriting redrawn as clean shapes or turned into a text box by the handwriting model, and copied or saved as SVG | [Handwriting and AI](handwriting_ai.md) |
 | Sheets of paper in a page, the notes and notebook views, paper | [Notebooks](notebooks.md) |
 | Typed text boxes on PDF pages and sheets, and their PDF interchange | [Text boxes](text_boxes.md) |
 | Photos and images placed on PDF pages and sheets: moving, turning, cropping and flipping them, the upload, the `/Stamp` they become in the annotated PDF, and Notability's pictures | [Pictures](pictures.md) |
@@ -103,11 +105,11 @@ These describe the implementation unless explicitly marked as plans.
 | The typesetting engine both PDF writers share, and the annotated-PDF export | [PDF typesetting](pdf_typesetting.md) |
 | Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |
 | Folders and labels, pages inside pages, page cards, recents, and trash | [Home library](home_library.md) |
-| A page's document, the `doc` property, of any format: the format registry, the stored shape and its rules (the listed state of a file too large to keep), the one read and its predicates (the file a page owns, the file it shows, read in place, a library PDF), one library page per stored file, migration steps 52 and 55, the shared fixtures, the viewer registry and the viewers (the code view with its highlight ranges, the picture with its regions, the player, the file pane) | [Documents](documents.md) |
+| A page's document, the `doc` property, of any format: the format registry, the stored shape and its rules (the listed state of a file too large to keep), the one read and its predicates (the file a page owns, the file it shows, read in place, a library PDF), text extraction, a scanned page's OCR layer read in rows and the text recognized from a scanned page's picture (the engine, the run on the server or in the window, automatic runs, forgetting it, the store, every reader), one library page per stored file, migration steps 52 and 55, the shared fixtures, the viewer registry and the viewers (the code view with its highlight ranges, the picture with its regions, the player, the file pane) | [Documents](documents.md) |
 | Work folders: a synced vault's folder whose tracked files are pages that follow the disk, the library rule (what the library lists, what is a paper), the op rule (who may refile, rename or trash a file), `.gammaignore` and the tracking dialog, the takeover of older vaults, Add to library and Save a copy, migration step 53, and every root-page reader classified | [Work folders](work_folders.md) |
 | Pages side by side: the open tabs arranged into two panes, each with its strip, its page buttons and its page, split by a tab's menu, the topbar's right-click or a drag onto a side of the page; the ringed live pane and the view of the other, drawn as the page itself, with the docked windows around the groups; this browser's arrangement over the synced tabs | [Tab groups](tab_groups.md) |
 | Chrome's tab groups in a strip: a named, coloured run of tabs behind a chip that collapses it, made from a tab's menu, edited from the chip's, dragged whole or a tab in and out of it; kept on the synced tabs, their look once on the server; the rules every tabs list is held to; how a group moves with the panes | [Groups in the tab strip](strip_groups.md) |
-| Provider configuration, chat, and the library agent | [AI](ai.md) |
+| Provider configuration, the model each task uses, chat, token usage and estimated cost, and the library agent | [AI](ai.md) |
 | Agent tools and guardrails | [AI tools](ai_tools.md) |
 | Long-paper context and grounding | [AI context](ai_context.md) |
 | Chat buckets per page and folder, the active conversation, the archive, and exporting a conversation with its pictures | [Chat history](chat_history.md) |

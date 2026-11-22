@@ -142,7 +142,7 @@ def _start(ws: str, event: dict, to: str, name: str, by_name: str) -> dict:
     if enabled() and computer == agents.here_id():
         row = store.usable(actor, ws, name)
         if row is None:
-            return refused(name, "off", f"Turn on {label} in Settings → AI → Agents first.")
+            return refused(name, "off", f"Turn on {label} in Settings → AI → Local agents first.")
         lent = row["set_by"] != actor
         # where the thread's conversation works, else the one that opened the thread, else the page's chat
         dir = next((c["dir"] for c in (mine, opener, chat) if c is not None and c["agent"] == name), "")

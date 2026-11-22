@@ -127,7 +127,8 @@ export async function inkAiScenarios({ server, browser, alice, bob, makePdf, ste
     const [body] = sent.shapes;
     assertEq(JSON.stringify(body.strokes.map((s) => s.id)), JSON.stringify(["box"]), "the selected stroke alone");
     assertEq(JSON.stringify([body.space.kind, body.space.page, body.space.width]), JSON.stringify(["pdf-page", 1, 612]), "in its group's space");
-    assert(typeof body.model === "string", "the chat's model rides along");
+    // The server asks the account's handwriting model (backend/tests/test_ink_ai.py).
+    assertEq(Object.hasOwn(body, "model"), false, "no model named: the handwriting task's is the server's to resolve");
     const strokes = await saved();
     assertEq(strokes.map((s) => s.id).includes("box"), false, "the drawn box is gone");
     assert(strokes.some((s) => s.id === "word"), "the word stays as drawn");

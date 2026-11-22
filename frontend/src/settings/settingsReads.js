@@ -43,18 +43,23 @@ export const PANE_READS = {
     "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
   proxy: () => ["/admin/proxy"],
   integrations: () => ["/integrations/tokens"],
-  // Agents: the account's other computers, the servers this computer
-  // answers, and whom an agent's owner may let use it, which the desktop
-  // app's rows offer (its own server's links alone)
+  // Local agents: the account's other computers (which the rail reads too,
+  // to know whether to offer the pane: chat/agents.js showsLocalAgents),
+  // the servers this computer answers, and whom an agent's owner may let
+  // use it, which the desktop app's rows offer (its own server's links alone)
   agents: ({ signedIn, desktop }) => [signedIn && "/computers", signedIn && desktop && "/computer-links",
     signedIn && desktop && { path: "/local-agents/people", later: true }],
   translation: ({ lang }) => ["/translate/engines", "/translations/stats", termsOf(lang)],
+  // AI → Usage opens on the last 30 days of every task.
+  usage: () => [usageOf("month")],
   tools: ({ admin }) => ["/ai/search-services", admin && "/admin/settings"],
   maintenance: () => ["/quota", "/metadata/status"],
 };
 export const backupsOf = (id) => `/workspaces/${encodeURIComponent(id)}/backups`;
 // The workspace's glossary in one target language.
 export const termsOf = (lang) => `/translate/terms?lang=${encodeURIComponent(lang || "zh-CN")}`;
+// The account's AI usage over a period, of one task ("" for every task).
+export const usageOf = (period, kind = "") => `/ai/usage?${new URLSearchParams({ period, ...(kind ? { kind } : {}) })}`;
 
 // A pane's reads as [{path, then, later}].
 function readsOf(pane, who) {
@@ -145,11 +150,12 @@ export function createSettingsReads() {
 export const SettingsReadsContext = React.createContext(null);
 // A reader used outside the dialog (the share popover's account directory)
 // reads through a store of its own, as it would without one: once as it
-// mounts, kept no longer than it stays.
-export function useSettingsStore() {
+// mounts, kept no longer than it stays. `given`: the store to read through
+// instead, for the dialog itself, which provides it (its rail).
+export function useSettingsStore(given = null) {
   const shared = React.useContext(SettingsReadsContext);
   const own = React.useRef(null);
-  if (shared) return shared;
+  if (given || shared) return given || shared;
   own.current ||= createSettingsReads();
   return own.current;
 }
@@ -157,9 +163,10 @@ export function useSettingsStore() {
 // One path's answer for a section: {data (null until read), error, set,
 // reload}. Reading it on mount takes a fresh answer or one on its way
 // instead of asking again; `poll` reads it again every so many ms while
-// mounted. A null path reads nothing.
-export function useSettingsRead(path, { poll = 0 } = {}) {
-  const store = useSettingsStore();
+// mounted; `store` the store to read through (useSettingsStore's `given`).
+// A null path reads nothing.
+export function useSettingsRead(path, { poll = 0, store: given = null } = {}) {
+  const store = useSettingsStore(given);
   const subscribe = React.useCallback((fn) => (path ? store.subscribe(path, fn) : () => {}), [store, path]);
   const entry = React.useSyncExternalStore(subscribe, () => (path ? store.get(path) : NONE));
   React.useEffect(() => {

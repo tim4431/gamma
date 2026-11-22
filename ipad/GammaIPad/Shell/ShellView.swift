@@ -58,6 +58,7 @@ final class ShellController: UIViewController {
     private var attempt = 0
     private var scheme: WebMessage.Scheme?
     private var sceneStyle: (any UITraitChangeRegistration)?
+    private let awake = ScreenAwake()
 
     /// The bar's strip below the status bar: bar.html's `.bar` on the iPad,
     /// 44 px under its env(safe-area-inset-top) padding.
@@ -84,8 +85,20 @@ final class ShellController: UIViewController {
         shell.navigation.presenter = self
         shell.navigation.onLoad = { [weak self] failure in
             guard let self else { return }
-            if let failure { self.model.loadFailed(failure) } else { self.model.pageLoaded() }
+            if let failure {
+                self.model.loadFailed(failure)
+            } else {
+                // A new document: what the last one asked of the screen is over.
+                self.awake.pageGone()
+                self.model.pageLoaded()
+            }
         }
+        shell.onProcessEnded = { [weak self] in self?.awake.pageGone() }
+        // The screen the page keeps on sleeps while the app is away (ScreenAwake).
+        NotificationCenter.default.addObserver(self, selector: #selector(cameToFront),
+                                               name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(wentAway),
+                                               name: UIApplication.didEnterBackgroundNotification, object: nil)
         shell.onChange = { [weak self] in self?.pushState() }
         shell.bridge.onMessage = { [weak self] message in self?.answer(message) ?? [:] }
         chrome.onCall = { [weak self] method, args in try await self?.call(method, args) }
@@ -416,7 +429,18 @@ final class ShellController: UIViewController {
         case let .editMenu(shown):
             shell.webView.editMenuShown = shown
             return [:]
+        case let .keepAwake(on):
+            awake.page(asks: on)
+            return [:]
         }
+    }
+
+    @objc private func cameToFront() {
+        awake.app(inFront: true)
+    }
+
+    @objc private func wentAway() {
+        awake.app(inFront: false)
     }
 
     /// The captured Pencil held still: the page answers at once, from the
@@ -464,5 +488,43 @@ final class ShellController: UIViewController {
                 self?.applyScheme()
             }
         }
+    }
+}
+
+/// The screen kept on while the page asks (`keepAwake`): a text recognition
+/// reading a scan's pages in the window, which pauses while the app is away,
+/// so Auto-Lock would stop it. The system's idle timer is off only while the
+/// page asks and the app is in front: it goes back on when the app goes to
+/// the background and off again when the app is active, so nothing rests on
+/// what iOS keeps meanwhile. What the page asked is its document's: a new
+/// document, or the end of the page's process, lets the screen sleep
+/// (`pageGone`).
+@MainActor
+final class ScreenAwake {
+    private var asked = false
+    private var inFront = true
+    /// Sets the system's idle timer off (true) or on; a test's stand-in.
+    private let idleTimerDisabled: @MainActor (Bool) -> Void
+
+    init(idleTimerDisabled: @escaping @MainActor (Bool) -> Void = { UIApplication.shared.isIdleTimerDisabled = $0 }) {
+        self.idleTimerDisabled = idleTimerDisabled
+    }
+
+    func page(asks on: Bool) {
+        asked = on
+        apply()
+    }
+
+    func pageGone() {
+        page(asks: false)
+    }
+
+    func app(inFront: Bool) {
+        self.inFront = inFront
+        apply()
+    }
+
+    private func apply() {
+        idleTimerDisabled(asked && inFront)
     }
 }

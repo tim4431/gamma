@@ -1,11 +1,19 @@
 """AI provider entries (GUI-managed API keys): each account's own, and the
 server's shared ones.
 
-Users manage a LIST of provider entries (Settings → AI → Connections), each:
+Users manage a LIST of provider entries (Settings → AI → Models), each:
   {"id", "name", "protocol": a key of ai_protocols.PROTOCOLS, "api_key" (or
-   "oauth" tokens for a sign-in protocol), "base_url": "" = protocol default,
-   "models": "a, b" = comma list ("" = none offered yet), "test_model",
-   "created_at", "tool_checks": whether each model calls tools on it}
+   "oauth" tokens for a sign-in protocol; "" for a keyless local server,
+   key_optional), "base_url": "" = protocol default, "models": "a, b" =
+   comma list ("" = none offered yet), "test_model", "created_at",
+   "billing": an override of how its calls are paid for (billing_of),
+   "tool_checks": whether each model calls tools on it}
+
+Which model each task uses is the account's reserved ``ai-models`` pref
+({"chat", "metadata", "translate", "ink": a registry id, or "" for the chat
+model; "favorites": [ids]; "chat_migrated"}), resolved against the models
+offered into ``ai_runtime()["roles"]`` (resolve_roles) and written only by
+set_roles and import_roles.
 
 Entries live in users.db `user_prefs` under the account-wide reserved
 `ai-settings` key, which the generic /api/prefs endpoints refuse to serve: the
@@ -41,7 +49,7 @@ import time
 from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 
-from . import ai_protocols, ai_usage
+from . import ai_protocols, ai_usage, translate_engines
 from .chatgpt_oauth import RefreshUnavailable
 from .db import connect_users_db, get_pref, page_now, set_pref, update_pref
 from .logbuf import log
@@ -49,6 +57,7 @@ from .publisher_sessions import cipher
 from .server_settings import _get_raw, _set_raw
 
 AI_SETTINGS_PREF_KEY = "ai-settings"
+AI_MODELS_PREF_KEY = "ai-models"
 
 MAX_KEY_LEN = 512
 MAX_URL_LEN = 300
@@ -56,6 +65,8 @@ MAX_MODELS_LEN = 1000
 MAX_NAME_LEN = 60
 MAX_PROVIDERS = 20
 MAX_TOOL_REASON = 200
+# An entry's billing override ("" = from the connection: billing_of).
+BILLING_OVERRIDES = ("", "api", "subscription", "local")
 
 
 def _entries_of(value) -> list:
@@ -132,19 +143,47 @@ def apply_provider_fields(entry: dict, fields) -> None:
         if len(test_model) > 100:
             raise HTTPException(status_code=400, detail="test model name too long")
         entry["test_model"] = test_model
+    billing = getattr(fields, "billing", None)
+    if billing is not None:
+        billing = str(billing).strip()
+        if billing not in BILLING_OVERRIDES:
+            raise HTTPException(status_code=400, detail='billing is "", "api", "subscription" or "local"')
+        if billing and oauth_entry:
+            raise HTTPException(status_code=400, detail="a sign-in is always a subscription")
+        if billing:
+            entry["billing"] = billing
+        else:
+            entry.pop("billing", None)
+
+
+def key_optional(entry: dict) -> bool:
+    """Whether an API-key entry may go without a key: a preset that says so
+    (``key_optional``: a local server), or a custom endpoint — neither the
+    protocol's own nor a named service's. ``entry`` needs its protocol and
+    base URL."""
+    proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
+    if not proto or proto.auth == "oauth":
+        return False
+    base = (entry.get("base_url") or "").strip().rstrip("/")
+    if not base or base == proto.base_url.rstrip("/"):
+        return False
+    service = ai_protocols.service_of({"protocol": entry.get("protocol"), "base_url": base})
+    return service is None or bool(service.get("key_optional"))
 
 
 def new_key_entry(fields, entry_id: str) -> dict:
     """A new API-key entry from an add request (``fields.protocol`` plus the
-    editable fields); 400 on a sign-in or unknown protocol or a missing key."""
+    editable fields); 400 on a sign-in or unknown protocol or a missing key
+    (a local server's preset and a custom endpoint may go without one:
+    key_optional)."""
     if fields.protocol not in ai_protocols.PROTOCOLS or is_oauth_protocol(fields.protocol):
         raise HTTPException(status_code=400, detail="unknown protocol")
-    if not (fields.api_key or "").strip():
-        raise HTTPException(status_code=400, detail="API key required")
     entry = {"id": entry_id, "protocol": fields.protocol,
              "name": "", "api_key": "", "base_url": "", "models": "",
              "created_at": page_now()}
     apply_provider_fields(entry, fields)
+    if not entry["api_key"] and not key_optional(entry):
+        raise HTTPException(status_code=400, detail="API key required")
     return entry
 
 
@@ -190,7 +229,55 @@ def mask_entry(entry: dict, hint: bool = True) -> dict:
         "account": (oauth.get("email") or "") if hint else "",
         # Whether each picked model calls tools here: nothing secret.
         "tool_checks": tool_checks(entry),
+        # How its calls are paid for (billing_of), and the override the
+        # entry stores ("" = none).
+        "billing": billing_of(entry),
+        "billing_override": entry.get("billing") if entry.get("billing") in BILLING_OVERRIDES else "",
+        # Which service it is, for its logo (service_id).
+        "service": service_id(entry),
+        # Whether a quota reader says what is left of its plan
+        # (ai_protocols.quota_reader: POST /api/ai/providers/{id}/usage),
+        # and whether it may go without a key (key_optional).
+        "quota": ai_protocols.quota_reader({"protocol": entry.get("protocol"),
+                                            "base_url": entry.get("base_url") or ""}) is not None,
+        "key_optional": key_optional(entry),
     }
+
+
+def billing_of(entry: dict) -> str:
+    """How a call through a connection is paid for — one of
+    ai_usage.BILLINGS — from the whole entry (a stored one, or a runtime
+    conf with its ``id``) and whose it is: a server's shared entry is
+    ``shared`` (the member pays nothing; the allowance meters it), a
+    sign-in a ``subscription``, else the entry's own override, else its
+    service preset's (the coding plans and OpenCode Go a subscription,
+    Ollama ``local``), else ``api``, per token."""
+    if is_server_id(entry.get("id")):
+        return "shared"
+    if is_oauth_protocol(entry.get("protocol")):
+        return "subscription"
+    if entry.get("billing") in BILLING_OVERRIDES[1:]:
+        return entry["billing"]
+    service = ai_protocols.service_of({"protocol": entry.get("protocol"),
+                                       "base_url": entry.get("base_url") or ""})
+    return (service or {}).get("billing") or "api"
+
+
+def service_id(entry: dict) -> str:
+    """Which service a connection is, the ``service`` the browser picks its
+    logo by (on the masked entry and on each registry row): the preset its
+    protocol and base URL make (``service_of``: ``deepseek``,
+    ``kimi-code``), else its protocol while it points at the protocol's own
+    endpoint (``openai``, ``anthropic``, a ``chatgpt`` sign-in), else
+    ``custom``, an entry made from a preset since dropped included.
+    ``entry`` needs its protocol and base URL."""
+    protocol = entry.get("protocol") or ""
+    base = (entry.get("base_url") or "").strip().rstrip("/")
+    service = ai_protocols.service_of({"protocol": protocol, "base_url": base})
+    if service:
+        return service["id"]
+    proto = ai_protocols.PROTOCOLS.get(protocol)
+    return protocol if proto and base in ("", proto.base_url.rstrip("/")) else "custom"
 
 
 def protocol_choices() -> dict:
@@ -199,7 +286,15 @@ def protocol_choices() -> dict:
     protocols = [{"id": pid, "label": proto.label, "default_base_url": proto.base_url, "auth": proto.auth,
                   "key_placeholder": proto.key_placeholder, "key_url": proto.key_url}
                  for pid, proto in ai_protocols.PROTOCOLS.items()]
-    return {"protocols": protocols, "services": ai_protocols.SERVICES}
+    # Each preset with its optional fields spelled out: how it is paid for,
+    # its quota reader and whether one reads it (``quota``, as on a saved
+    # entry), whether a key may be left out, and whether its base URL
+    # already names its version.
+    services = [{**s, "billing": s.get("billing") or "api", "usage": s.get("usage") or "",
+                 "quota": ai_protocols.quota_reader(s) is not None,
+                 "key_optional": bool(s.get("key_optional")), "versioned": bool(s.get("versioned"))}
+                for s in ai_protocols.SERVICES]
+    return {"protocols": protocols, "services": services}
 
 
 # --- the server's shared entries ----------------------------------------------
@@ -422,10 +517,11 @@ def shared_access(user_id: str) -> tuple[list, int]:
 
 
 def _has_credential(entry: dict) -> bool:
+    """A sign-in's token, a key, or none needed (key_optional)."""
     if is_oauth_protocol(entry.get("protocol")):
         oauth = entry.get("oauth")
         return isinstance(oauth, dict) and bool(oauth.get("access_token"))
-    return bool((entry.get("api_key") or "").strip())
+    return bool((entry.get("api_key") or "").strip()) or key_optional(entry)
 
 
 def server_entries_for(user_id: str) -> list:
@@ -683,24 +779,16 @@ def _refreshed_server_oauth(provider_id: str, flow, rejected: str = "") -> dict 
                            lambda: _entry_oauth(load_server_ai()["providers"], provider_id), write, flow, rejected)
 
 
-def ai_runtime(user_id: str) -> dict:
-    """The effective AI config for a request, built from the provider entries
-    of the account ``user_id`` (an id) followed by the server's shared ones
-    (``shared_access``):
-    {"providers": {id: {api_key, base_url, protocol, name}},
-    "models": [{"id": "<pid>:<model>", "provider": pid, "provider_name",
-    "model", "native_pdf", "shared", "tools", "tools_reason"?}], "default":
-    the first model — the account's own when it has one, else the
-    server's — or None, "enabled": bool, "allowance": {"limit", "used",
-    "exhausted"} or None}.
-
-    ``allowance`` is None unless a shared entry made it into the runtime
-    (limit 0 = unlimited). Under a limit every shared provider conf carries
-    ``"allowance": {"user", "limit"}``, which ai_client.open_ai checks
-    before each call. The shared models stay listed once it is used up; a
-    refused call says why."""
+def _registry(user_id: str, refresh: bool = True) -> tuple[dict, list, int]:
+    """``(providers, models, limit)``: the connections the account
+    ``user_id`` (an id) may use — its own entries followed by the server's
+    shared ones (``shared_access``) — as runtime confs by entry id, the
+    model registry they offer, and the shared allowance's limit. A sign-in
+    due for renewal is renewed here unless ``refresh`` is off (the notices,
+    which only need to know what is offered: the set is the same either
+    way, a stale token included)."""
     shared, limit = shared_access(user_id)
-    providers, models = {}, []
+    providers, models, seen = {}, [], set()
     for e in own_entries(user_id) + shared:
         protocol = e.get("protocol")
         proto = ai_protocols.PROTOCOLS.get(protocol)
@@ -712,14 +800,17 @@ def ai_runtime(user_id: str) -> dict:
             "base_url": ((e.get("base_url") or "").strip() or proto.base_url).rstrip("/"),
             "protocol": protocol,
             "name": name,
+            # How its calls are paid for: the recorder and the masked entry read it.
+            "billing": billing_of(e),
         }
+        service = service_id(e)
         if proto.auth == "oauth":
             # Sign-in entry: the bearer token comes from the sign-in and is
             # refreshed lazily here (persisted so other requests reuse it).
             oauth = e.get("oauth") if isinstance(e.get("oauth"), dict) else None
             if not oauth or not oauth.get("access_token"):
                 continue
-            if proto.oauth.needs_refresh(oauth) and not _backed_off(oauth):
+            if refresh and proto.oauth.needs_refresh(oauth) and not _backed_off(oauth):
                 refreshed = (_refreshed_server_oauth(pid, proto.oauth) if is_server_id(pid)
                              else _refreshed_oauth(user_id, pid, proto.oauth))
                 oauth = refreshed or oauth
@@ -732,26 +823,121 @@ def ai_runtime(user_id: str) -> dict:
                 conf["refresh_unreachable"] = True
         else:
             key = (e.get("api_key") or "").strip()
-            if not key:
+            if not key and not key_optional(e):
                 continue
             conf["api_key"] = key
         providers[pid] = conf
         checks = tool_checks(e)
         for model in entry_models(e):
             mid = f"{pid}:{model}"
-            if mid not in [m["id"] for m in models]:
-                check = checks.get(model)
-                models.append({"id": mid, "provider": pid, "provider_name": name, "model": model,
-                               # Whether the provider takes the PDF file itself
-                               # (native document part); if not, the chat sends
-                               # extracted text.
-                               "native_pdf": proto.native_pdf,
-                               "shared": is_server_id(pid),
-                               # Whether it calls tools here: True, False (its
-                               # chats go without them, for ``tools_reason``),
-                               # None = not checked yet.
-                               "tools": check["ok"] if check else None,
-                               **({"tools_reason": check["reason"]} if check and not check["ok"] else {})})
+            if mid in seen:
+                continue
+            seen.add(mid)
+            check = checks.get(model)
+            models.append({"id": mid, "provider": pid, "provider_name": name, "model": model,
+                           # Whether the provider takes the PDF file itself
+                           # (native document part); if not, the chat sends
+                           # extracted text.
+                           "native_pdf": proto.native_pdf,
+                           "shared": is_server_id(pid),
+                           "billing": conf["billing"],
+                           # Which service its connection is, for its logo.
+                           "service": service,
+                           # Whether it calls tools here: True, False (its
+                           # chats go without them, for ``tools_reason``),
+                           # None = not checked yet.
+                           "tools": check["ok"] if check else None,
+                           **({"tools_reason": check["reason"]} if check and not check["ok"] else {})})
+    return providers, models, limit
+
+
+# --- models for each task (the ``ai-models`` pref) -----------------------------
+# Every model picked on any connection the account may use is offered
+# everywhere; each task names the one it runs on. A stored pick is never
+# cleared because its model went away: it is ``missing`` (the task runs on
+# the chat model and says so) until the user picks again, and comes back
+# when its connection offers it again.
+
+ROLES = ("chat", "metadata", "translate", "ink")
+MAX_FAVORITES = 50
+MAX_PICK_LEN = 300
+# An entry's id as new_provider_id makes it (8 URL-safe characters): what
+# a registry id's model name follows (a model name may hold a colon of its
+# own, Ollama's "qwen2.5:7b").
+_ENTRY_PICK = re.compile(r"^[A-Za-z0-9_-]{8}:(.+)$")
+
+
+def model_prefs(value) -> dict:
+    """The ``ai-models`` pref as a clean object: each role's pick (a
+    registry id, ``engine:<id>`` for translate, "" = the chat model; for
+    chat "" = the first model offered), up to MAX_FAVORITES favorites, and
+    ``chat_migrated`` (chat still holds what migration step 71 wrote)."""
+    value = value if isinstance(value, dict) else {}
+
+    def pick(v):
+        return v if isinstance(v, str) and len(v) <= MAX_PICK_LEN else ""
+    favorites = value.get("favorites") if isinstance(value.get("favorites"), list) else []
+    return {**{role: pick(value.get(role)) for role in ROLES},
+            "favorites": list(dict.fromkeys(f for f in favorites if pick(f)))[:MAX_FAVORITES],
+            "chat_migrated": value.get("chat_migrated") is True}
+
+
+def load_model_prefs(user_id: str) -> dict:
+    return model_prefs(get_pref(user_id, AI_MODELS_PREF_KEY)[0] if user_id else None)
+
+
+def resolve_roles(models: list, prefs: dict, engines: list) -> dict:
+    """Each task's model, ``{role: {pick, model, state}}``: ``state`` is
+    ``ok`` (the pick is offered), ``follows`` (no pick) or ``missing`` (a
+    pick no longer offered: its connection removed, its model unpicked, a
+    shared entry that no longer admits the account, an engine no longer
+    set up); ``model`` is the pick when ok, else the chat model — for chat
+    itself the first model offered — else "". Translation takes a
+    configured engine (``engines``: translate_engines.configured) too, and
+    with no model offered at all its target is the free engine."""
+    offered = {m["id"] for m in models}
+    engine_ids = {e["id"] for e in engines}
+    first = models[0]["id"] if models else ""
+
+    def resolved(role, fallback):
+        pick = prefs.get(role) or ""
+        if not pick:
+            state = "follows"
+        elif pick in offered or (role == "translate" and pick in engine_ids):
+            state = "ok"
+        else:
+            state = "missing"
+        model = pick if state == "ok" else fallback
+        if role == "translate" and state != "ok" and not models:
+            free = translate_engines.MODEL_PREFIX + translate_engines.FREE_ENGINE
+            model = free if free in engine_ids else ""
+        return {"pick": pick, "model": model, "state": state}
+    roles = {"chat": resolved("chat", first)}
+    for role in ROLES[1:]:
+        roles[role] = resolved(role, roles["chat"]["model"])
+    return roles
+
+
+def ai_runtime(user_id: str) -> dict:
+    """The effective AI config for a request, built from the provider entries
+    of the account ``user_id`` (an id) followed by the server's shared ones
+    (``_registry``):
+    {"providers": {id: {api_key, base_url, protocol, name, billing}},
+    "models": [{"id": "<pid>:<model>", "provider": pid, "provider_name",
+    "model", "native_pdf", "shared", "billing", "service", "tools",
+    "tools_reason"?}],
+    "roles": {role: {pick, model, state}} (resolve_roles), "default": the
+    chat role's model entry (the account's chat pick, else the first model
+    — the account's own when it has one, else the server's) or None,
+    "favorites", "chat_migrated", "enabled": bool, "allowance": {"limit",
+    "used", "exhausted"} or None}.
+
+    ``allowance`` is None unless a shared entry made it into the runtime
+    (limit 0 = unlimited). Under a limit every shared provider conf carries
+    ``"allowance": {"user", "limit"}``, which ai_client.open_ai checks
+    before each call. The shared models stay listed once it is used up; a
+    refused call says why."""
+    providers, models, limit = _registry(user_id)
     allowance = None
     shared_ids = [pid for pid in providers if is_server_id(pid)]
     if shared_ids:
@@ -761,14 +947,129 @@ def ai_runtime(user_id: str) -> dict:
         if limit:
             for pid in shared_ids:
                 providers[pid]["allowance"] = {"user": user_id, "limit": limit}
+    prefs = load_model_prefs(user_id)
+    roles = resolve_roles(models, prefs, translate_engines.configured(user_id))
     return {
         "user": user_id,  # whose config this is — the usage recorder's key
         "providers": providers,
         "models": models,
-        "default": models[0] if models else None,
+        "roles": roles,
+        "default": next((m for m in models if m["id"] == roles["chat"]["model"]), None),
+        "favorites": prefs["favorites"],
+        "chat_migrated": prefs["chat_migrated"],
         "enabled": bool(models),
         "allowance": allowance,
     }
+
+
+def model_roles(user_id: str) -> dict:
+    """``resolve_roles`` of the account without renewing any sign-in or
+    reading the allowance: what the notices check on every poll."""
+    _, models, _ = _registry(user_id, refresh=False)
+    return resolve_roles(models, load_model_prefs(user_id), translate_engines.configured(user_id))
+
+
+def pick_label(pick: str) -> str:
+    """A pick as a sentence names it: a registry id's model name (a shared
+    entry's ``server:<entry>:<name>`` too), an engine's label, anything
+    else as it is."""
+    engine = translate_engines.engine_of(pick)
+    if engine:
+        return translate_engines.ENGINES.get(engine, {}).get("label") or pick
+    if is_server_id(pick):
+        parts = pick.split(":", 2)
+        return parts[2] if len(parts) == 3 else pick
+    found = _ENTRY_PICK.match(pick or "")
+    return found.group(1) if found else pick
+
+
+def missing_picks(user_id: str, rt: dict) -> dict:
+    """``{<registry id>: {model, connection}}`` for each id a task or a
+    favorite of ``rt`` (an ai_runtime) names that it no longer offers, so
+    the client names a pick without reading the id: the model's name, and
+    the name of its connection while that entry still exists (its model
+    unpicked, its sign-in gone, a shared entry that no longer admits the
+    account), else "". A translation service picked is no registry id: the
+    client words it from ``translate_engines``."""
+    offered = {m["id"] for m in rt["models"]}
+    named = [r["pick"] for r in rt["roles"].values()] + list(rt["favorites"])
+    gone = [p for p in dict.fromkeys(named) if p and p not in offered and not translate_engines.engine_of(p)]
+    if not gone:
+        return {}
+    entries = own_entries(user_id) + load_server_ai()["providers"]
+    out = {}
+    for pick in gone:
+        entry = next((e for e in entries if e.get("id") and pick.startswith(f"{e['id']}:")), None)
+        out[pick] = ({"model": pick[len(entry["id"]) + 1:], "connection": provider_label(entry)} if entry
+                     else {"model": pick_label(pick), "connection": ""})
+    return out
+
+
+def _offered(rt: dict, role: str, pick: str, engines: list) -> bool:
+    return any(m["id"] == pick for m in rt["models"]) or (role == "translate"
+                                                         and any(e["id"] == pick for e in engines))
+
+
+def _roles_view(rt: dict, prefs: dict, engines: list) -> dict:
+    return {"roles": resolve_roles(rt["models"], prefs, engines), "favorites": prefs["favorites"],
+            "chat_migrated": prefs["chat_migrated"]}
+
+
+def set_roles(user_id: str, rt: dict, picks: dict, add=(), remove=()) -> dict:
+    """Set some tasks' models and add or remove favorites, in one
+    read-modify-write of the ``ai-models`` pref. Each pick is "" (the chat
+    model) or an id ``rt`` offers (translate: or a configured engine),
+    else a 400; a chat pick clears ``chat_migrated``; more than
+    MAX_FAVORITES favorites is a 400. Returns ``{roles, favorites,
+    chat_migrated}``."""
+    engines = translate_engines.configured(user_id)
+    for role, pick in picks.items():
+        if pick and not _offered(rt, role, pick, engines):
+            raise HTTPException(status_code=400, detail=f"{pick_label(pick)} is not offered")
+    add = [f for f in add if isinstance(f, str) and f and len(f) <= MAX_PICK_LEN]
+
+    def change(value):
+        prefs = model_prefs(value)
+        for role, pick in picks.items():
+            prefs[role] = pick
+            if role == "chat":
+                prefs["chat_migrated"] = False
+        favorites = [f for f in prefs["favorites"] if f not in set(remove)]
+        favorites += [f for f in dict.fromkeys(add) if f not in favorites]
+        if len(favorites) > MAX_FAVORITES:
+            raise HTTPException(status_code=400, detail=f"at most {MAX_FAVORITES} favorite models")
+        prefs["favorites"] = favorites
+        return prefs
+    return _roles_view(rt, update_pref(user_id, AI_MODELS_PREF_KEY, change), engines)
+
+
+def import_roles(user_id: str, rt: dict, picks: dict) -> dict:
+    """A browser's picks from before they followed the account (its
+    localStorage), taken in one read-modify-write: each only while the
+    account's own is still unset — chat also while it holds what step 71
+    wrote (``chat_migrated``), which taking it clears. A pick ``rt`` does
+    not offer is skipped. Returns ``{taken: [role], roles, favorites,
+    chat_migrated}``."""
+    engines = translate_engines.configured(user_id)
+    taken = []
+
+    def change(value):
+        prefs = model_prefs(value)
+        taken.clear()
+        for role in ("chat", "metadata", "translate"):
+            pick = picks.get(role) or ""
+            if not pick or not _offered(rt, role, pick, engines):
+                continue
+            if role == "chat" and (not prefs["chat"] or prefs["chat_migrated"]):
+                prefs["chat"], prefs["chat_migrated"] = pick, False
+            elif role != "chat" and not prefs[role]:
+                prefs[role] = pick
+            else:
+                continue
+            taken.append(role)
+        return prefs
+    prefs = update_pref(user_id, AI_MODELS_PREF_KEY, change)
+    return {"taken": list(taken), **_roles_view(rt, prefs, engines)}
 
 
 def clear_refresh_backoff(user_id: str, provider_id: str) -> None:
@@ -820,43 +1121,90 @@ def renew_rejected(user_id: str, provider_id: str, rejected: str) -> str:
     return ""
 
 
+NOT_CONFIGURED = "AI not configured (add a connection and pick its models in Settings → AI → Models)"
+
+
 def require_ai_runtime(user_id: str) -> dict:
     """ai_runtime(), raising the standard 503 when no provider is usable."""
-    rt = ai_runtime(user_id)
+    return require_enabled(ai_runtime(user_id))
+
+
+def require_enabled(rt: dict) -> dict:
+    """``rt``, or the standard 503 when it offers no model."""
     if not rt["enabled"]:
-        raise HTTPException(status_code=503,
-                            detail="AI not configured (add a connection and pick its models in Settings → AI → Connections)")
+        raise HTTPException(status_code=503, detail=NOT_CONFIGURED)
     return rt
+
+
+def transcriber_of(rt: dict, model_hint: str = "") -> str:
+    """The id of the connection of ``rt`` (an ai_runtime) speech-to-text
+    goes through, "" when none can take it. It needs an OpenAI credential,
+    not chat models: an entry with none picked still transcribes. The entry
+    that surely transcribes (Protocol.transcription: OpenAI itself) comes
+    before one that may (a compatible server), the entry of ``model_hint``
+    (a model-registry id, the chat's model) first within each. Reads ``rt``
+    alone: no network."""
+    # (A shared entry's ids have a colon of their own: "server:<id>:<model>".)
+    hinted = next((m["provider"] for m in rt["models"] if m["id"] == model_hint),
+                  (model_hint or "").split(":", 1)[0])
+    ids = ([hinted] if hinted in rt["providers"] else []) + list(rt["providers"])
+    candidates = [(ai_protocols.of(rt["providers"][pid]).transcription(rt["providers"][pid]), pid) for pid in ids]
+    best = max((rank for rank, _ in candidates), default=0)
+    return next((pid for rank, pid in candidates if rank == best), "") if best else ""
 
 
 def transcriber_for(user_id: str, model_hint: str = "") -> tuple:
     """The connection the account's speech-to-text goes through, ``(protocol
-    adapter, conf)``: dictation (``/ai/transcribe``) and a recording's
-    transcript (gamma/recording.py). It needs an OpenAI credential, not chat
-    models: an entry with none picked still transcribes. The entry that
-    surely transcribes (Protocol.transcription: OpenAI itself) comes before
-    one that may (a compatible server), the entry of ``model_hint`` (a
-    model-registry id, the chat's model) first within each; the standard
-    503 when none does."""
+    adapter, conf)`` (transcriber_of): dictation (``/ai/transcribe``) and a
+    recording's transcript (gamma/recording.py); the standard 503 when none
+    can take it."""
     rt = ai_runtime(user_id)
-    # (A shared entry's ids have a colon of their own: "server:<id>:<model>".)
-    hinted = rt["providers"].get(next((m["provider"] for m in rt["models"] if m["id"] == model_hint),
-                                      (model_hint or "").split(":", 1)[0]))
-    candidates = [(ai_protocols.of(c).transcription(c), c)
-                  for c in ([hinted] if hinted else []) + list(rt["providers"].values())]
-    best = max((rank for rank, _ in candidates), default=0)
-    conf = next((c for rank, c in candidates if rank == best), None) if best else None
-    if not conf:
+    pid = transcriber_of(rt, model_hint)
+    if not pid:
         raise HTTPException(status_code=503,
-                            detail="Voice input needs an OpenAI API key (Settings → AI → Connections) — "
+                            detail="Voice input needs an OpenAI API key (Settings → AI → Models) — "
                                    "Anthropic and ChatGPT sign-in connections don't offer transcription.")
+    conf = rt["providers"][pid]
     return ai_protocols.of(conf), conf
 
 
-def resolve_model(runtime: dict, requested: str) -> dict:
-    """The runtime entry a request's model names — its registry id
-    (``<pid>:<model>``) or a bare model name — else the default."""
-    for entry in runtime["models"]:
-        if requested and requested in (entry["id"], entry["model"]):
-            return entry
-    return runtime["default"]
+class ModelUnavailable(HTTPException):
+    """A request named a model no longer offered; such a request is never
+    routed to another model. Every route answers it the same way, the app's
+    handler (gamma/app.py): a 400 ``{"detail": "<model> is no longer
+    offered", "kind": "model_unavailable"}``; a stream's error line carries
+    the same ``kind`` (ai_client.failure_kind)."""
+
+    kind = "model_unavailable"
+
+    def __init__(self, requested: str):
+        super().__init__(status_code=400, detail=f"{pick_label(requested)} is no longer offered")
+
+
+def resolve_model(runtime: dict, requested: str, role: str = "chat") -> dict | None:
+    """The registry entry a request runs on. A request that names a model
+    gets that one: its registry id (``<pid>:<model>``), or a bare model
+    name exactly one offered model has; anything else raises
+    ModelUnavailable. A request that names none gets its task's model
+    (``runtime["roles"][role]``, which is the chat model while the task's
+    own pick is unset or missing), None when nothing is offered."""
+    models = runtime.get("models") or []
+    if requested:
+        found = next((m for m in models if m["id"] == requested), None)
+        named = [m for m in models if m["model"] == requested]
+        if found is None and len(named) == 1:
+            found = named[0]
+        if found is None:
+            raise ModelUnavailable(requested)
+        return found
+    target = ((runtime.get("roles") or {}).get(role) or {}).get("model") or ""
+    return next((m for m in models if m["id"] == target), None) or runtime.get("default")
+
+
+def routed(runtime: dict, role: str, requested: str, entry) -> dict:
+    """What a task's response says of the model it ran on: ``{role, model,
+    fallback}``, ``fallback`` when the request named no model and the
+    task's own pick is missing, so the chat model stood in."""
+    state = ((runtime.get("roles") or {}).get(role) or {}).get("state")
+    model = entry.get("id", "") if isinstance(entry, dict) else str(entry or "")
+    return {"role": role, "model": model, "fallback": not requested and state == "missing"}

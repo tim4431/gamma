@@ -66,10 +66,12 @@ transport to use (`chooseTransport`), the pdf.js options of a range open
 (`rangeOpenOptions`), how a manifest becomes a page layout
 (`layoutFromManifest`, refusing anything that does not describe a readable
 document), and which page stands for the document's size
-(`typicalPageIndex`: the widest of the pages sharing the most common width,
-to the point). Fit-width sizes to that page, not to page 1: a scanned book's
+(`typicalPageIndex`: the widest page at most 5 % wider than the most common
+width, to the point). Fit-width sizes to that page, not to page 1: a scanned book's
 cover is often an image of another size, and fitting it pushed every text page
-past the viewer's edge. The viewer's load effect composes them:
+past the viewer's edge. The widest near it, because a page even a pixel wider
+than the viewer lets the view slide sideways at fit-width: a scan's pages, or
+A4 and Letter pages merged into one file, differ by a few points. The viewer's load effect composes them:
 
 1. **A parsed document from a recent visit** (`DOC_CACHE`, the last two
    `PDFDocumentProxy` objects with their layout) is committed as it is, in
@@ -529,6 +531,311 @@ upgrade; its positive controls make a broken counter fail, not pass.
 rules and the canvas bounds; other unit tests pin the snap timing,
 cancellation and older-Safari fallback. Physical iPad GPU limits, render
 times and momentum still need a device.
+
+## A scan's text layer
+
+A scanned paper is a picture of each page with an invisible text layer an
+OCR program wrote over it (render mode 3). Old layers place their words
+badly: the worst one met (*J. Phys. II* 2, 579, 1992, from HAL) sizes each
+word from its own ink, 4 to 10 pt on one printed line, gives it a substitute
+font's width, about 0.73 of the printed word, and writes it in the picture's
+flipped pixel rows, which pdf.js's `TextLayer` draws a whole line above the
+print. Selection and highlights come out patchy, find marks miss, and the
+translation cuts a page into a hundred one-line blocks. The study behind the
+repair, with its corpus of twelve scans from seven OCR producers and 3,809
+born-digital pages, is [research/ocr.md](../research/ocr.md).
+
+Every reader of a page's text goes through `pdf/pageText.js` (`pageText`):
+the text layer and Ctrl+F in `PdfViewer.jsx`, the translation's
+segmentation (`translateState.segmentNow`), the translation bench and the
+figure tests. It reads the TextContent as before and, when the page is a
+scan with an OCR layer, hands it back repaired (`repaired: true`); a page
+the server recognized is built from its recognized words instead
+([Recognized words](#recognized-words)). So what
+a reader selects, what a search marks and what a translation sends are the
+same words in the same places.
+
+- **Which pages** (`pdf/scanDetect.js`). The rule: nearly all the glyphs the
+  page shows are invisible (Tr 3 or 7, 90%) and the pictures it paints cover
+  most of it (70%, their union: a page cut into strips counts whole). Only
+  the operator list says either, and `getOperatorList` is a pass of its own
+  through the page in the worker, images decoded, which the render does not
+  share. So a `prescreen` on the TextContent comes first and passes a page
+  only when its text shows a trace of a picture's measuring: most of it
+  flipped, most of it stretched (Tz fitted to word boxes), many sizes with
+  none dominant, or origins on a scan resolution's pixel grid. It missed none
+  of the 418 scan pages it was run on (every page of ten scans and 98 of a
+  scanned book's) and passed 4.9% of the born-digital ones, at 0.1 to 0.4 ms
+  a page. A born-digital page it passes costs an operator list too: a median
+  of about 7 ms, but up to 0.6 s on a page of many vector marks, which its
+  text layer waits for. A page it passes is confirmed (`confirm`), unless the
+  document's fonts already tell: an OCR layer's fonts draw only invisible
+  text, so after one confirmed page `ScanMemo` answers for the pages drawn
+  in the same fonts. A scanned book pays one or two operator lists (39 ms
+  median on a scan, image decoding), not one a page. The confirm had no
+  false positive on the born-digital set, LaTeXiT's invisible payloads
+  included (no covering picture). A document's pages are decided one at a
+  time, and only the verdict is kept, per page proxy (`knownScan`); the
+  TextContent is read afresh each time, as before. The operator list leaves
+  the page's decoded pictures on it, so Ctrl+F, which reads every page,
+  lets a page more than two pages from the view go again (`page.cleanup()`),
+  as a translation job's segmenting does.
+- **The repair** (`pdf/scanText.js`, `repairTextContent`, 2 to 4 ms a page).
+  Words are the selection string's, cut at white space, so what is selected
+  and copied does not change. Each gets the band its matrix implies (a
+  flipped one hangs down from its origin), and consecutive words chain into
+  printed lines in stream order, never sorted: a new line where a word's band
+  leaves the line's, where it starts before the word before it ends, or
+  across a gap of three line heights (a column gutter inside an OCR line),
+  the rule the server's rows follow too. Each line
+  takes one band: the union of its words' bands where the boxes hug each
+  word's ink (words of x-height letters drawn clearly shorter than those with
+  ascenders), else their medians. Its words then tile it, each span running
+  to where the next starts with the space folded in (`"word "`), the last
+  one ending in `hasEOL`. Where boxes hug the ink, the cut is the middle of
+  the gap; where a box is an em estimate it starts at its word, and the cut
+  lies at most 0.35 line heights before the next box. A line's ends reach out
+  by half its median gap, within a line height and the page's box
+  (`page.view`). The items come out upright, `[h, 0, 0, h, x, baseline]`
+  with the span the line's band, font ids kept (`pdfFonts`, `paperFace`), the
+  styles' ascent and descent 0.8 and -0.2 so that `textRuns` reads the band
+  `TextLayer` draws. A one-character item (a line ending in "a") is
+  `[2h, 0, 0, h, …]`: `TextLayer` stretches a one-character span to its
+  width only when its matrix is stretched by more than 1.5, and would
+  otherwise draw it at a serif's width, short of its letter; every other
+  reader takes the height from the matrix's second column and only the
+  direction from its first. Rotated items pass through as pdf.js gave them,
+  a run of them (a table on its side) keeping its own breaks; a break is
+  added only where such a run meets a repaired line.
+- **What it changes.** On the corpus's poor layers the share of words a
+  span covers whole went from 26% to 98% and the translation's blocks per
+  page from 88 to 40. On the good layers (Tesseract, CVISION, LuraDocument)
+  the words' coverage held or improved, but one band a line is not always
+  closer to the print than the layer's own: on the 1913 *Physical Review*
+  (Tesseract) the ink rises above the band's top, and the lines whose band
+  covers their ink went from 65% to 54%; the 1961 *Journal de Physique*
+  went from 53 to 56 blocks a page. A paragraph of a repaired page is one block, and its
+  requests carry `ocr` ([translation.md](translation.md#the-request)).
+  Highlights made before keep their rectangles, now under the repaired
+  spans; kept translations of a scan made before are looked up by text that
+  no longer matches and stay unused. The server reads such a page's text in
+  rows of words too ([documents.md](documents.md)).
+- **What it cannot fix**, pixel-free: wrong letters ("Rksum4"), a layer
+  drifting against its picture, a producer's baseline offset, scans with no
+  layer at all. Those need the words read from the picture: Recognize text
+  in this PDF (below).
+
+### Recognized words
+
+Once a stored PDF's scanned pages are recognized, on the server or in a
+window ([documents.md](documents.md#recognized-text)), those pages read
+the recognized words in place of their own layer, here as on the server.
+
+- **The state** (`pdf/ocrState.js`, module state like `translateState`).
+  `PdfViewer.jsx` registers each document as it commits it, under the
+  stored file it is (`fileId` from App and PagePane, else the upload its
+  URL names), and asks `GET /api/ocr/<doc>` afresh on every open. A
+  folder's annotated-PDF export registers each paper it opens too, under
+  its `doc_id` and with no URL (`folderTranslation.paperLayout`). The
+  entry is per workspace and file. A page waits at most 3 s for that first
+  answer, then reads its own layer until it comes. A failed answer reads as
+  no recognized text, unless a state is already known.
+- **The words.** `pageText` asks `ocrState.lines(page)` first. A recognized
+  page's words come from `GET /api/ocr/<doc>/pages`, the page asked for and
+  the recognized pages nearest it, at most 16 a request. They are held by
+  the state's `stamp` in one store for all of the tab's documents, 800
+  pages in all, the pages read longest ago going first, whichever document
+  they are of. A new state drops its document's words of another stamp,
+  and an answer of another stamp makes the tab read the state again.
+- **The layout** (`pdf/ocrText.js`, pure). Each stored line is one band,
+  never chained again by `scanText`'s rule, so the page's text is the
+  server's: a line's words joined by a space, every line ending in
+  `hasEOL`. The words tile their line through `scanText`'s own tiling
+  (`bandLines`, `tileCuts`), the cut in the middle of each gap since the
+  boxes hug the ink. Items are laid out upright in the page as shown, then
+  each matrix is taken to user space through the inverse of the scale-1
+  viewport's transform, so a rotated or cropped page reads its words where
+  they are drawn. A one-character word is stretched `[2h, …]` as in the
+  repair, except on a quarter-turned page, where `TextLayer` reads the
+  stretch off terms the turn has zeroed. The font id is `gamma_ocr`, with
+  ascent 0.8 and descent -0.2. The TextContent carries `repaired: true`
+  and `ocr: true`, no operator list is built for the page, and
+  `knownScan` is true for it.
+- **A change.** The state's local revision only grows. The first answer
+  changes only the pages a reader read from its own layer because the 3 s
+  wait ran out (`ocrState.lines` records them); every other reader waited
+  for it, so a translation seed or job that waited is neither stopped nor
+  halted. After that, the revision moves on when the recognized pages or
+  their stamp differ from what was announced. Each changed page records
+  the revision it changed at (`pageRevision`). A page's text layer is
+  built again when its own revision moves on (`PdfPage`'s `textRev`), the
+  old layer staying until the new words are in. Ctrl+F's page texts are
+  read again under a new revision, and the viewer's translation seed runs
+  again. App's `docNonce` is `pdfDocNonce` plus
+  `ocrState.useOcrNonce(fileHash(doc) || docIdOf(pdfUrl))`, a count of the
+  changes of the on-screen document's revision that never goes back, so a
+  pinned search runs again for that document alone. The translated view
+  hears which pages changed
+  ([translation.md](translation.md#outliving-the-viewer)).
+- **When it changes.** A recognition or a forget that ends, done, stopped
+  or failed, makes every tab of the workspace that heard it end read the
+  state again (`tasks/useAppJobs.js`). Other tabs hear it from their page
+  socket: the server's `ocr` message ([collab.md](collab.md)) passes the
+  page filter whichever page carries it, and App's `onOcr` refreshes that
+  file, or the one on screen. For a message that names the file it also
+  has the tasks store list at once and look out for the end of the file's
+  OCR jobs (`tasks.expectEnd(ocrState.fileJobs(doc_id))`,
+  [tasks.md](tasks.md#the-web-app-frontendsrctasks)). That way a run that
+  started and ended between two listings is still reported. The socket
+  also asks with no message on a hello after a dropped socket and on its
+  poll rounds, which may have missed one. `refresh` always reads, and an answer that says nothing new
+  announces nothing. A session's end clears every document's state
+  (`ocrState.reset`, beside `endTranslations`) and ends this window's runs
+  (`ocrRuns.reset`).
+- **Reading in the window** (`pdf/ocrRuns.js`, `pdf/ocrTab.js`,
+  `pdf/ocrLoop.js`, `pdf/ocrRaster.js`), where `/api/server-config`'s
+  `ocr.where` is `window`. `ocrRuns` runs one scan at a time in a window,
+  since each holds an engine of about 100 MB and a page's picture; a later
+  start waits, the menu row's title then "Waiting for its turn…". tesseract.js
+  7.0.0 is in `ocrTab.js`, a chunk of its own fetched by the first run
+  ([frontend-refactor.md](frontend-refactor.md#lazy-boundaries)). Its
+  worker script and its one core (the single-file SIMD LSTM build) are
+  hashed assets of this build, and the models come from the server's
+  `ocr.models`; `workerOptions` refuses any file of another origin, so
+  nothing comes from a CDN. A browser without WebAssembly SIMD gets "This
+  browser cannot recognize text: it lacks WebAssembly SIMD." The loop
+  (`runWindow`, its server, engine and clock handed in):
+  1. It starts the `ocr-tab` job through the tasks store (`POST
+     /api/jobs/ocr` with `window: {doc_id, client, engine, langs, ver}`),
+     follows it until it reads `recognizing`, then asks the plan (`GET
+     /api/ocr/<doc>/plan`).
+  2. It opens the stored file on its own, by range requests past
+     `WHOLE_MAX_BYTES` (`openPdfDocument(url, {ranged: true})`), so the run
+     goes on while the reader is elsewhere.
+  3. Each page the plan names, one at a time: drawn as the server draws it
+     for its engine (300 dpi, less past the plan's pixel and side limits
+     or the device's canvas caps; intent `print`, which a hidden window
+     still draws, without annotations), read back in strips of 256 rows to
+     a grey PGM, the canvas released, recognized (page segmentation
+     automatic, `user_defined_dpi` the canvas's), its TSV parsed into
+     lines in 1/10000ths (`parseTsv`), and sent (`PUT
+     /api/ocr/<doc>/pages/<n>`). A page past the plan's limits, or one
+     that fails, goes as `{failed: true}`. The answer says which pages the
+     server still wants.
+  4. With none left, the job applies by itself. The window posts `POST
+     /api/ocr/<doc>/done` only while the server still wants pages it cannot
+     send (past the end of the document it opened, or sent already).
+
+  Some failed requests wait until the window is shown and go again after
+  1, 2, 4, 8 and 16 s: one with no answer, a proxy's 502, 503 or 504, the
+  server's 503 that ends "— try again" (a page's words could not be kept
+  just then), and a page's 429 from the rate limit. The start's 429 (the
+  account's tasks are full) is not retried: the run fails at once with
+  the server's reason. A 409 on the plan, a page or the done is judged
+  by the job, by what the server says about how it ended:
+  - The job is gone, failed as interrupted by a restart of the server (the
+    apps' local server), or cancelled with `progress.idle` by its idle
+    timer. The run starts the job again, at most 3 times, and the server
+    skips the pages it staged.
+  - The job is cancelled without `idle`, or still running with `stopping`
+    set. A person stopped it, on any device, however long this window was
+    away, and the run ends stopped.
+  - The job is applying (`updating`) or done, and the run ends done.
+  - Otherwise the refusal stands, such as another window taking the run
+    over. The run fails with its sentence, and the job goes on without it.
+
+  A failure on this window's side after the job started stops the job at
+  once through the tasks store (`POST /api/jobs/<id>/cancel`). Such a
+  failure is an engine that does not start, a document that does not
+  open, or a request the server refuses outright (not a 409). Without the
+  stop, the job would wait 10 minutes for pages. The pages sent wait for
+  the next run, and the tab reports only that the run failed. A page's
+  drawing and its reading have 120 s each, and the engine's start 180 s,
+  counted only while the window is shown. A page that runs out goes as
+  failed. A drawing that ran out is called off (`RenderTask.cancel`), so
+  its canvas is freed at once, and a page whose time ran out while it
+  waited behind a stalled one draws nothing once pdf.js gives it. An
+  engine that ran out is started afresh, as it is every 50 pages.
+  Tesseract's own messages go to its `debug_file`, the core's
+  `/dev/null`, rather than to the console as errors.
+
+  While a run goes, the pill says so on the channel `ocr:<docId>`
+  (`ocrRuns.followPill`, from `useAppJobs`): "Reading the pages of
+  “{title}” in this window: keep it open and in front until it is done. A
+  stop keeps what was read." Its Stop ends the run. The screen is kept on
+  meanwhile (`keepAwake` in `shared/lib/host.js`: the app shells get
+  `{type: "keepAwake", on}`, [ipad.md](ipad.md#the-host-contract); a
+  browser asks for the Screen Wake Lock, again each time the page is
+  shown). The job's row in Background tasks shows the run on every
+  device. Its Stop in this window ends the run here at once
+  (`TASK_KINDS["ocr-tab"].halt`, `ocrRuns.jobStopped`), not at the run's
+  next request. A run that waits its turn has no job yet. A row of this
+  tab's own stands for it (kind `ocr-tab`, "Waiting for its turn…"), and
+  its Stop calls the run off. At the run's turn the job's row takes over.
+- **The Document menu rows** (`ocrState.useOcrMenu`), for a writer with an
+  account (never a guest), outside share views, for a stored PDF.
+  **Recognize text in this PDF** shows on a server whose `ocr` names a
+  `where`, while `GET /api/ocr` counts pages a run would read (`todo`), a
+  stopped run's pages wait to be applied (`staged`) or the last apply's
+  steps are due (`pending`). Before a run has read which pages are scans,
+  it shows while the server counts more scanned pages than it recognized
+  or kept, or once `pageText` met a scan's layer or a page with no text
+  (`noteScan`), and not once `good_layer` is said. With staged pages and
+  nothing running it reads "Go on recognizing this PDF's text". On the
+  window path its title adds "The pages are read in this window: keep it
+  open and in front until it is done.", and a click starts the run in
+  `ocrRuns`. A run of 50 pages or fewer on the server follows in the
+  status pill. **Forget the recognized text…** (a trash icon, `danger`)
+  shows while a page reads recognized words, needs no engine, and asks
+  first ("Forget the recognized text?", `ocrState.forgetBox`); its Forget
+  starts `POST /api/jobs/ocr-drop`. Both rows are disabled while an `ocr`,
+  `ocr-tab` or `ocr-drop` job of the file waits or runs, or this window
+  reads it, their title then saying it is being recognized or forgotten.
+  There is one exception: the account's own `ocr-tab` job that is running
+  and not stopping, for another window, while no run of the file goes
+  here. The job's `params.window.client` is not this window's
+  `ocrRuns.windowClient()`, so it belongs to a window reloaded since, or
+  another one. The Recognize row is then offered as "Go on recognizing
+  this PDF's text", and its title says the pages are read on in this
+  window from the pages read, and that a window reading them now stops.
+  A click starts the run here, and the server hands it that job
+  (`window_take`, [documents.md](documents.md#recognized-text)). Known
+  limit: after a take-over the job still names the window that started
+  it, so that window's row stays disabled until the job ends.
+- **The metadata popover** (`ocrState.textStatusTitle`): its text cell says
+  when the text was recognized from the page pictures (`/api/pdf-text-status`'s
+  `ocr`), and "Its text is being recognized from the page pictures — see
+  Background tasks." while a run of the file goes. With `ocr` there and too
+  little text (`ok` false) it says "The scanned pages were recognized from
+  their pictures on {date}, but they hold little or no readable text." On
+  a PDF without text it points to Recognize text only while the Document
+  menu shows the row. The popover reads the status again when the file's
+  revision moves on.
+- **A replaced PDF** whose answer has `text_not_recognized`
+  (`ocrState.replacedNote`): the status line adds "The new file's text is
+  not recognized: choose Recognize text in this PDF in the Document menu."
+  where the row would be offered (a writer with an account, a server that
+  recognizes text, itself or in the window).
+
+Tests: `tests/ocrText.test.mjs` (the shape, the tiling, a one-character
+word, rotations and a crop box through real pdf.js viewports),
+`tests/ocrState.test.mjs` (the chunks, revisions, the first answer, a
+seed that waited for it, a late state rebuilding a page, failures, a stale
+stamp, the bound on the words held, the menu rows and `good_layer`, the
+window path, the go-on labels, another window's job taken over, the
+forget row and its confirm, the popover, the replaced-file note, a
+folder's export, App's search nonce and `fileJobs`),
+`tests/scanText.test.mjs` (`pageText` with a fake state),
+`tests/ocrRaster.test.mjs` (the zoom, the PGM, `parseTsv`, the dpi, the
+same-origin options and `debug_file`, the SIMD probe, the engine string
+held to the pin), `tests/ocrLoop.test.mjs` (the loop against a fake
+server, engine and clock: retries, the start's 429, restarts, a Stop
+however late it is seen, a Stop the job has not reached yet, the idle
+end, a failure on the window's side, hung pages and their drawing called
+off, the done POST), `tests/ocrRuns.test.mjs` (one run at a time, the
+waiting run's row, stop, the job's Stop, a failure here stopping the
+job, the pill, reset, the wake lock), and `tests/collabSession.test.mjs` /
+`collabPoll.test.mjs` (`onOcr`).
 
 ## Load phases
 

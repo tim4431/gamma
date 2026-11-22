@@ -30,8 +30,17 @@ for var in [name for name in os.environ if name.startswith(("GAMMA_S3_", "GAMMA_
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import dataclasses
+
 import pytest
 from fastapi.testclient import TestClient
+
+from gamma import server_options
+
+# No scan an upload stores is recognized by itself unless a test turns it on
+# (server_option("ocr_auto", True)): the option's default, in every data
+# directory a test makes, and what the server_option fixture goes back to.
+server_options.OPTIONS["ocr_auto"] = dataclasses.replace(server_options.OPTIONS["ocr_auto"], default=False)
 
 
 S3_TEST_BUCKET = "gamma-test"
@@ -497,6 +506,19 @@ def _agent_probes_end_with_their_test(monkeypatch):
     from gamma.local_agents import catalog
     settle_probes()
     catalog.forget()
+
+
+@pytest.fixture(autouse=True)
+def _catalog_fetches_end_with_their_test(monkeypatch):
+    """A model-catalog fetch a read path started in the background
+    (gamma/ai_catalog.py ``_background``: /api/ai/models warming its facts,
+    a stale listing refreshed) ends within the test that started it.
+    Taking ``monkeypatch`` puts the wait before the test's patches are
+    undone, so it ends under the stubs (and the offline sockets) it
+    started with."""
+    yield
+    from gamma import ai_catalog
+    ai_catalog.settle()
 
 
 @pytest.fixture(autouse=True, scope="session")

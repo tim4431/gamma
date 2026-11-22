@@ -879,7 +879,8 @@ def test_openrouter_listing_names_windows_efforts_and_pictures():
     ]}
     rows = {m["id"]: m for m in WIRES["openai"].models(data, {**CONF, "base_url": "https://openrouter.ai/api/v1"})}
     assert rows["deepseek/deepseek-v4-pro"] == {"id": "deepseek/deepseek-v4-pro", "context_window": 1_048_576,
-                                                "efforts": ["xhigh", "high"], "speeds": None, "images": False}
+                                                "efforts": ["xhigh", "high"], "speeds": None, "images": False,
+                                                "price": None}
     assert rows["meta/plain"]["efforts"] == [] and rows["meta/plain"]["images"] is True
 
 

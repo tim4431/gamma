@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 70
+SCHEMA_VERSION = 71
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -112,7 +112,9 @@ def safe_doc_id(doc_id: str) -> str:
 
 USERS_SCHEMA = [
     # One row per AI call an account made, from the provider's own token
-    # report (gamma/ai_usage.py); Settings -> AI sums them.
+    # report (gamma/ai_usage.py); Settings -> AI sums them. ``billing``: how
+    # it was paid for ('' = before step 71 kept it), ``cost``: USD for a call
+    # paid per token, NULL when unknown or nothing is spent per token.
     """CREATE TABLE IF NOT EXISTS ai_usage (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
@@ -124,7 +126,9 @@ USERS_SCHEMA = [
         input INTEGER NOT NULL DEFAULT 0,
         output INTEGER NOT NULL DEFAULT 0,
         cache_read INTEGER NOT NULL DEFAULT 0,
-        cache_write INTEGER NOT NULL DEFAULT 0
+        cache_write INTEGER NOT NULL DEFAULT 0,
+        billing TEXT NOT NULL DEFAULT '',
+        cost REAL
     )""",
     "CREATE INDEX IF NOT EXISTS ai_usage_user_at ON ai_usage (user_id, at)",
     """CREATE TABLE IF NOT EXISTS mcp_oauth (
@@ -709,6 +713,9 @@ VAULTS_SCHEMA = [
         PRIMARY KEY (ws, name, path)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_linked_files_page ON linked_files(ws, page_id)",
+    # A path's workspace and name, for the PDF reader's recognized text
+    # (gamma/pdf_ocr.py ``view_of``), which is handed a path alone.
+    "CREATE INDEX IF NOT EXISTS idx_linked_files_path ON linked_files(path)",
     """CREATE TABLE IF NOT EXISTS vault_files (
         link_id TEXT NOT NULL,
         path TEXT NOT NULL,
@@ -1462,13 +1469,15 @@ PAGES_SCHEMA = [
 
 # data.db = what the workspace can lose and rebuild: the file may be
 # deleted, and everything in it comes back on demand: the cover
-# thumbnails, the viewer's PDF manifests and the kept translations below
-# (made again by a model, so the one thing here that costs tokens to come
-# back), and the document text index (text_fts, extracted again by the
-# next search), whose tables gamma/search/index.py applies itself
-# (index.SCHEMA), since that is where an index of an older layout is
-# dropped and made again. Nothing a person wrote lives here: the chats, the
-# notes index and the translation glossary are in pages.db.
+# thumbnails, the viewer's PDF manifests, the kept translations below
+# (made again by a model, so they cost tokens to come back), the text
+# recognized from scanned pages (recognized again by Recognize text, so it
+# costs hours of CPU on a long book) and the document text index
+# (text_fts, extracted again by the next search), whose tables
+# gamma/search/index.py applies itself (index.SCHEMA), since that is where
+# an index of an older layout is dropped and made again. Nothing a person
+# wrote lives here: the chats, the notes index and the translation
+# glossary are in pages.db.
 DATA_SCHEMA = [
     # page_snaps = the recents-card cover thumbnails (small JPEG data URLs
     # captured client-side from the rendered viewer), shared by the
@@ -1501,6 +1510,37 @@ DATA_SCHEMA = [
     "CREATE TABLE IF NOT EXISTS annotation_pictures (key TEXT PRIMARY KEY, data BLOB NOT NULL, "
     "bytes INTEGER NOT NULL, at TEXT NOT NULL)",
     "DROP TABLE IF EXISTS feedback_pictures",
+    # The text recognized from a stored PDF's scanned pages
+    # (gamma/pdf_ocr.py), which every PDF text reader reads in place of
+    # the file's own layer on the pages it was applied to. pdf_ocr = one
+    # row a file (its doc_id): the engines its live pages were read with
+    # (" + " between two), the languages and pdf_ocr.VERSION of the last
+    # apply, the file's page count, how many of its pages are scans or
+    # pictures (NULL: not classified yet) and which (kinds: JSON {"<page>":
+    # "scan" | "picture"}, NULL until classified), a counter for display,
+    # the stamp the readers' caches key on (new at every applied change, ""
+    # before the first), whether an apply's finishing steps (re-index,
+    # briefs, quotes) are still to run, when. pdf_ocr_pages = one row a
+    # page (1-based): the VERSION and languages it was recognized with,
+    # whether a run staged it (0, read by nobody) or it is applied (1,
+    # live), whether the page keeps its own text (kept: no words; a scan
+    # page's layer, a picture page's own words), the share of the layer's
+    # words the recognition read too (NULL: no layer), its words, gzip of
+    # {"lines": [[[text, x0, y0, x1, y1], ...], ...]} in 1/10000 of the page
+    # as shown, top-left origin, and the engine that read it (the server's
+    # Tesseract, or a window's tesseract.js). pdf_ocr_auto = one row a file
+    # the automatic recognition of scans with no text considered
+    # (gamma/ocr_auto.py): queued, skipped (not such a scan), done or
+    # declined (stopped by a person, or its recognized text forgotten),
+    # who uploaded it, when.
+    "CREATE TABLE IF NOT EXISTS pdf_ocr (doc_id TEXT PRIMARY KEY, engine TEXT NOT NULL, langs TEXT NOT NULL, "
+    "ver INTEGER NOT NULL, pages INTEGER NOT NULL, scanned INTEGER, kinds TEXT, rev INTEGER NOT NULL, "
+    "stamp TEXT NOT NULL, pending INTEGER NOT NULL DEFAULT 0, at TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS pdf_ocr_pages (doc_id TEXT NOT NULL, page INTEGER NOT NULL, ver INTEGER NOT NULL, "
+    "langs TEXT NOT NULL, applied INTEGER NOT NULL DEFAULT 0, kept INTEGER NOT NULL DEFAULT 0, shared REAL, "
+    "words BLOB NOT NULL, engine TEXT NOT NULL DEFAULT '', PRIMARY KEY (doc_id, page))",
+    "CREATE TABLE IF NOT EXISTS pdf_ocr_auto (doc_id TEXT PRIMARY KEY, state TEXT NOT NULL, by TEXT NOT NULL, "
+    "at TEXT NOT NULL)",
 ]
 
 # Snapshots exist only to cover the (24-entry) recents queue; keep a few
@@ -2005,9 +2045,9 @@ def _open_users_db(path: str, ws: str) -> Connection:
 
 
 # Prefs that follow the account regardless of workspace (users.db
-# ``user_prefs``, workspace_id ''): the AI provider entries, the active
-# entry, the translation engine keys (gamma/translate_engines.py), and the
-# preference profile. Everything else is per account + workspace, because
+# ``user_prefs``, workspace_id ''): the AI provider entries, the model each
+# task uses, the translation engine keys (gamma/translate_engines.py), and
+# the preference profile. Everything else is per account + workspace, because
 # the value names that workspace's pages (open tabs, recents, reading
 # positions), and lives with the workspace: ``workspace_prefs`` in its
 # pages.db.
@@ -2016,7 +2056,7 @@ PROFILE_PREF_KEY = "profile"
 # on it, the base of the next three-way merge. Never served by /api/prefs.
 PROFILE_BASE_PREF_KEY = "profile-base"
 NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerprint seen}
-USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "search-services",
+USER_PREF_KEYS = frozenset({"ai-settings", "translate-engines", "search-services",
                             PROFILE_PREF_KEY, PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY,
                             # gamma/zotero_account.py PREF_KEY: the connected
                             # Zotero account, its API key sealed; never served
@@ -2025,7 +2065,12 @@ USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "
                             # gamma/skills.py PREF_KEY: the account's own
                             # skills; only routers/skills.py reads or writes
                             # it, never synced to Gamma Cloud.
-                            "skills"})
+                            "skills",
+                            # gamma/ai_settings.py AI_MODELS_PREF_KEY: the
+                            # model each task uses and the favorites; only
+                            # /api/ai/models/roles and /import write it,
+                            # never synced to Gamma Cloud.
+                            "ai-models"})
 
 
 def pref_scope(key: str, ws: str) -> str:

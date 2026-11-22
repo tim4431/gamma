@@ -343,10 +343,10 @@ export async function remoteAskScenarios(env) {
       assertEq(follower.seen.refused, "", "the shell was never refused");
     });
 
-    // Step 4.1: Settings → AI → Agents in the desktop window
+    // Step 4.1: Settings → AI → Local agents in the desktop window
     // (an Electron user agent) on the computer's own server. The shell is not
     // there to answer, so each control is seen to ask it and change nothing.
-    await step("remote-asks: Settings → AI → Agents in the desktop window lists the NAS among the servers this computer answers, its asks off, and each control asks the shell", async () => {
+    await step("remote-asks: Settings → AI → Local agents in the desktop window lists the NAS among the servers this computer answers, its asks off, and each control asks the shell", async () => {
       const ctx = await owner.context(browser, { userAgent: DESKTOP_UA });
       try {
         await ctx.addInitScript(() => {

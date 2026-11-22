@@ -36,7 +36,8 @@ data class HostInfo(
      * `pencil` (`tap` the first button, `squeeze` the second). `openFiles`:
      * the host holds the files opened in the app (OpenedFiles). `save`: the
      * host saves files the page hands it (Saves). `shellBar`: the bar above
-     * the page can be hidden, and the page offers it back.
+     * the page can be hidden, and the page offers it back. `keepAwake`: the
+     * screen stays on while the page says (`keepAwake`).
      */
     val fields: Map<String, Any?>
         get() = mapOf(
@@ -51,6 +52,7 @@ data class HostInfo(
             "openFiles" to true,
             "save" to true,
             "shellBar" to true,
+            "keepAwake" to true,
         )
 
     /** The flags as JSON, keys sorted. */
@@ -148,6 +150,14 @@ sealed interface WebMessage {
      */
     data class SaveUrl(val url: String, val name: String) : WebMessage
 
+    /**
+     * The screen kept on (`on`), or let sleep again: while the page reads a
+     * scan's text in the window, which pauses while the app is hidden. Only
+     * an `on` of true keeps it on, so a message the shell cannot read never
+     * holds the screen. Replied `{}`.
+     */
+    data class KeepAwake(val on: Boolean) : WebMessage
+
     companion object {
         /** The error reply to a message that does not decode. */
         const val NOT_UNDERSTOOD = "Gamma for Android does not understand this message."
@@ -188,6 +198,7 @@ sealed interface WebMessage {
                 "saveData" -> SaveData(string(m, "id"), long(m, "offset"), Base64.getDecoder().decode(string(m, "data")))
                 "saveDone" -> SaveDone(string(m, "id"), m["cancel"] == true)
                 "saveUrl" -> SaveUrl(string(m, "url"), m["name"] as? String ?: "")
+                "keepAwake" -> KeepAwake(m["on"] == true)
                 else -> refuse("unknown message $type")
             }
         }

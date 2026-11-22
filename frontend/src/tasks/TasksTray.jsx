@@ -11,7 +11,7 @@ import { Empty } from "../settings/SettingsKit";
 import ListMotion from "../shared/ui/ListMotion";
 import {
   ActivityIcon, AlertCircleIcon, CheckIcon, ClockIcon, CloudDownloadIcon, CopyIcon, DatabaseIcon, DownloadIcon,
-  ExportIcon, FileIcon, HardDriveIcon, ImportIcon, RefreshIcon, SearchIcon, SparklesIcon, StopIcon,
+  ExportIcon, FileIcon, HardDriveIcon, ImportIcon, RefreshIcon, ScanTextIcon, SearchIcon, SparklesIcon, StopIcon,
   ShieldIcon, TerminalIcon, Trash2Icon, UploadIcon, XIcon,
 } from "../shared/ui/Icons";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -22,7 +22,7 @@ import { Popover } from "../shared/ui/Surfaces";
 
 const ICONS = {
   activity: ActivityIcon, cloudDownload: CloudDownloadIcon, copy: CopyIcon, database: DatabaseIcon, download: DownloadIcon,
-  export: ExportIcon, file: FileIcon, hardDrive: HardDriveIcon, import: ImportIcon, search: SearchIcon,
+  export: ExportIcon, file: FileIcon, hardDrive: HardDriveIcon, import: ImportIcon, scanText: ScanTextIcon, search: SearchIcon,
   sparkles: SparklesIcon, terminal: TerminalIcon, trash: Trash2Icon, upload: UploadIcon,
 };
 

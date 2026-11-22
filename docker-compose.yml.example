@@ -27,6 +27,13 @@ services:
       # bucket are set up by an admin in Settings -> Backups; a container can
       # set them with GAMMA_S3_BUCKET and the other GAMMA_S3_* / GAMMA_OFFSITE*
       # variables instead (docs/dev/debugging.md "Off-site copies in a bucket").
+      # Recognizing the text of a scanned PDF (Document -> Recognize text in
+      # this PDF) runs on this machine's CPU, one PDF at a time on one core.
+      # Settings -> Server -> Text recognition lets more run at once on a
+      # machine with cores to spare (each holds about 50 MB of memory) or
+      # turns it off; GAMMA_OCR turns it off here, the Settings row then
+      # read-only.
+      # GAMMA_OCR: "off"
     restart: unless-stopped
 
   # Keeps the gamma container on the newest image: Watchtower polls the

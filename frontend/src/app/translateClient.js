@@ -11,10 +11,11 @@ import { requestFields } from "../pdf/translatePlan.js";
 import * as translateState from "../pdf/translateState.js";
 import { createJobFollower } from "./translateFollow.js";
 
-// POST a translation request; throws on failure with the server's reason (a
-// 429 of the shared AI allowance says what to do), its HTTP `status` and
-// `retryAfter` (seconds: the account's AI calls are all in use), which
-// translateJob.requestChunk reads to ask again.
+// POST a translation request; throws on failure with the server's reason
+// (its `detail`: a 429 of the shared AI allowance says what to do), its
+// HTTP `status`, its `kind` (model_unavailable: the model asked for is no
+// longer offered) and `retryAfter` (seconds: the account's AI calls are all
+// in use), which translateJob.requestChunk reads to ask again.
 async function post(path, body, signal) {
   const res = await fetch(`${API}${path}`, {
     method: "POST",
@@ -24,9 +25,13 @@ async function post(path, body, signal) {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
-    try { detail = (await res.json()).detail || detail; } catch {}
-    throw Object.assign(new Error(detail), { status: res.status, retryAfter: Number(res.headers.get("Retry-After")) || 0 });
+    let detail = `${res.status} ${res.statusText}`, kind = "";
+    try {
+      const said = await res.json();
+      if (typeof said.detail === "string") detail = said.detail;
+      kind = said.kind || "";
+    } catch {}
+    throw Object.assign(new Error(detail), { status: res.status, kind, retryAfter: Number(res.headers.get("Retry-After")) || 0 });
   }
   return res;
 }
@@ -62,7 +67,7 @@ export function chunkRequest(settings) {
     let final = null;
     await readNdjson(res, (events) => {
       for (const ev of events) {
-        if (ev.error) throw new Error(ev.error);
+        if (ev.error) throw Object.assign(new Error(ev.error), { kind: ev.kind || "" });
         else if (ev.translations) final = ev;
         else if (ev.stage) onStage?.(ev.stage);
         else if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
@@ -75,14 +80,16 @@ export function chunkRequest(settings) {
 // The request for the paper's brief (POST /api/ai/translate/brief), which a
 // job sends as it starts and does not wait for: the server makes the brief,
 // finds it kept, or waits for the request already making it. `paper` is
-// {pageId, head}: the page, and the document's opening text when the server
-// has not stored its PDF. `onStage` hears the stream's "stage" lines (the
+// {pageId, head, ocr}: the page, the document's opening text when the server
+// has not stored its PDF, and whether that head was read from a scan's OCR
+// layer (a stored file the server checks itself). `onStage` hears the stream's "stage" lines (the
 // first, `brief`, while it is being made). Resolves to {ready, error?};
 // throws as a chunk's request does.
 export function briefRequest(settings) {
-  return async function translateBrief({ pageId = "", head = "" }, signal, onStage) {
+  return async function translateBrief({ pageId = "", head = "", ocr = false }, signal, onStage) {
     const res = await post("/ai/translate/brief", {
-      ...(pageId ? { page_id: pageId } : {}), ...(head ? { head } : {}), ...modelFields(settings), keep: settings.keep !== false,
+      ...(pageId ? { page_id: pageId } : {}), ...(head ? { head } : {}), ...(ocr ? { ocr: true } : {}),
+      ...modelFields(settings), keep: settings.keep !== false,
     }, signal);
     let final = null;
     await readNdjson(res, (events) => {
@@ -186,8 +193,9 @@ export function endTranslations() {
 // App's side at each render, which the follower reads when a job changes —
 // `screenUrl` (the PDF on screen), `title`, `langLabel`, `postPill`,
 // `addTask`, `updateTask`, `setStatus`, `retry`, `rerun`,
-// `translateReferences`, `followsChat`, `openSettings`, `exportsTranslation`,
-// `openExport` and `statusFree`, as createJobFollower takes them.
+// `translateReferences`, `followsChat`, `fallbackNote`, `openSettings`,
+// `exportsTranslation`, `openExport` and `statusFree`, as createJobFollower
+// takes them.
 export function useTranslateJobs(props) {
   const host = useRef(null);
   host.current = props;

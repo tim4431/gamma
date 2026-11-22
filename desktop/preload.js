@@ -70,6 +70,8 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
     revealLog: (id) => ipcRenderer.invoke('shell:reveal-log', id),
     copyAddress: (id) => ipcRenderer.invoke('shell:copy-address', id),
     setSettings: (patch) => ipcRenderer.invoke('shell:set-settings', patch),
+    // Gamma's entries in File Explorer (lib/openWith.js): `files` or `folders`, on or off.
+    setOpenWith: (part, on) => ipcRenderer.invoke('shell:set-open-with', part, on),
     pickFolder: (defaultPath) => ipcRenderer.invoke('shell:pick-folder', defaultPath),
     grantFolder: (id) => ipcRenderer.invoke('shell:grant-folder', id),
     setDataRoot: (dir, opts) => ipcRenderer.invoke('shell:set-data-root', dir, opts),

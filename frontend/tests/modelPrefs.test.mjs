@@ -1,20 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { effortFor, modelLabel, providerModels, speedFor } from "../src/chat/modelPrefs.js";
-
-test("the model list is one connection's: the picked one, else the first", () => {
-  const models = [
-    { id: "a:x", provider: "a" }, { id: "a:y", provider: "a" },
-    { id: "b:x", provider: "b" }, { id: "server:c:z", provider: "server:c" },
-  ];
-  const ids = (providerId) => providerModels(models, providerId).map((m) => m.id);
-  assert.deepEqual(ids("b"), ["b:x"]);
-  assert.deepEqual(ids("server:c"), ["server:c:z"]);
-  // Nothing picked, or a pick that is gone: the first connection, never all.
-  assert.deepEqual(ids(""), ["a:x", "a:y"]);
-  assert.deepEqual(ids("removed"), ["a:x", "a:y"]);
-  assert.deepEqual(providerModels(undefined, "a"), []);
-});
+import { effortFor, modelLabel, speedFor } from "../src/chat/modelPrefs.js";
 
 test("a model that can't call tools says so in the model menus", () => {
   assert.equal(modelLabel({ model: "gemma3", tools: false, tools_reason: "upstream 400: no tools" }), "gemma3 · no tools");

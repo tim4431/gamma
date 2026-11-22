@@ -70,26 +70,30 @@ export function layoutFromManifest(m, fallback = { width: 600, height: 800 }) {
   return { heights, widths };
 }
 
-// The index of the page that stands for the document's size: the widest of
-// the pages sharing the most common width (to the point; on a tie, the wider
-// width), or -1 when no width is known. Fit-width sizes to it, and the
-// measure loop estimates the unmeasured pages from it. Page 1 alone is not
-// enough: a scanned book's cover is often an image of another size (252 pt
-// against 444 pt text pages), and fitting it put every text page 1.76× past
-// the viewer's edge. The widest of the group, because widths that round
-// alike still differ (alternating crop boxes, 444.235 and 444.239 pt) and a
-// fraction of a pixel too wide is enough for a horizontal scrollbar.
+// How much wider than the most common width a page may be and still be of
+// the document's size: a scan's pages differ by a few points, and a document
+// merged from A4 and Letter pages by 2.8 %. A cover or a landscape page
+// differs by far more.
+const NEAR_WIDTH = 0.05;
+
+// The index of the page that stands for the document's size: the widest
+// page at most NEAR_WIDTH wider than the most common width (to the point;
+// on a tie, the wider width), or -1 when no width is known. Fit-width sizes
+// to it, and the measure loop estimates the unmeasured pages from it. Page 1
+// alone is not enough: a scanned book's cover is often an image of another
+// size (252 pt against 444 pt text pages), and fitting it put every text
+// page 1.76× past the viewer's edge. The widest near it, because widths
+// differ even when they round alike (alternating crop boxes, 444.235 and
+// 444.239 pt), and a page even a pixel wider than the viewer lets the view
+// slide sideways at fit-width (615 pt pages among 612 pt ones, 4 px).
 export function typicalPageIndex(widths) {
-  const groups = new Map(); // width to the point → { count, i: its widest page }
+  const counts = new Map(); // width to the point → its pages
+  for (const w of widths) if (w > 0) counts.set(Math.round(w), (counts.get(Math.round(w)) || 0) + 1);
+  let common = 0, most = 0;
+  for (const [w, n] of counts) if (n > most || (n === most && w > common)) { common = w; most = n; }
+  let best = -1;
   widths.forEach((w, i) => {
-    if (!(w > 0)) return;
-    const key = Math.round(w), g = groups.get(key);
-    if (!g) groups.set(key, { count: 1, i });
-    else { g.count++; if (w > widths[g.i]) g.i = i; }
+    if (w > 0 && w <= common * (1 + NEAR_WIDTH) && (best < 0 || w > widths[best])) best = i;
   });
-  let best = null, bestW = 0;
-  for (const [w, g] of groups) {
-    if (!best || g.count > best.count || (g.count === best.count && w > bestW)) { best = g; bestW = w; }
-  }
-  return best ? best.i : -1;
+  return best;
 }

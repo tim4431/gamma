@@ -21,7 +21,8 @@ const PANE_FILES = {
   translation: ["SettingsTranslation.jsx"],
   keyboard: ["SettingsKeyboard.jsx"],
   agents: ["SettingsDialog.jsx", "SettingsAgents.jsx"],
-  ai: ["SettingsDialog.jsx", "SettingsAi.jsx"],
+  ai: ["SettingsDialog.jsx", "SettingsAi.jsx", "ProviderForm.jsx"],
+  usage: ["SettingsAiUsage.jsx"],
   assistant: ["SettingsDialog.jsx", "SettingsSkills.jsx"],
   tools: ["SettingsDialog.jsx", "AssistantTools.jsx", "OnlineSearch.jsx", "SettingsServerOptions.jsx"],
   integrations: ["SettingsIntegrations.jsx"],
@@ -30,8 +31,8 @@ const PANE_FILES = {
   backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "BackupBucket.jsx", "BackupDrive.jsx", "CloudCopies.jsx"],
   maintenance: ["SettingsDialog.jsx"],
   users: ["SettingsUsers.jsx", "SettingsServer.jsx", "SettingsCloudSignIn.jsx", "SettingsGuests.jsx", "SettingsReports.jsx"],
-  server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsZoteroApp.jsx", "SettingsServerOptions.jsx", "SettingsAi.jsx",
-    "SettingsWorkspacesAdmin.jsx", "SettingsBackups.jsx"],
+  server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsZoteroApp.jsx", "SettingsServerOptions.jsx", "SettingsAi.jsx", "ProviderForm.jsx",
+    "SettingsTextRecognition.jsx", "SettingsWorkspacesAdmin.jsx", "SettingsBackups.jsx"],
   proxy: ["SettingsProxy.jsx"],
   diagnostics: ["SettingsDialog.jsx"],
 };
@@ -90,6 +91,10 @@ test("labels that hold the query come first; hints and synonyms find the rest", 
   const zotero = searchSettings("zotero", all).map((r) => `${r.pane}/${r.label}`);
   assert.deepEqual(zotero.slice(0, 1), ["account/Zotero"]);
   assert.ok(zotero.includes("workspaces/Clones and Zotero links"), zotero.join(", "));
+  // the Server pane's text recognition rows, the switch of recognition itself first
+  const ocr = searchSettings("ocr", all).map((r) => r.label);
+  assert.deepEqual(ocr.slice(0, 3), ["Recognize text in scanned PDFs", "Recognize scans automatically", "Files recognized at once"]);
+  assert.equal(searchSettings("text recognition", all)[0]?.section, "Text recognition");
 });
 
 test("an admin-only section is found only by admins (the Server pane is theirs alone)", () => {
@@ -174,9 +179,11 @@ test("hostCaps: the platform's words and the gestures a host forwards", () => {
   assert.deepEqual([android.apple, android.stylus, android.pencilTap, android.pencilSqueeze], [false, true, false, true]);
 });
 
-test("Agents is a pane of its own: its entries open it, and Connections keeps the AI services alone", () => {
+test("Local agents is a pane of its own: its entries open it, and Models keeps the AI services alone", () => {
   const all = Object.keys(PANE_FILES);
-  assert.deepEqual(searchSettings("codex", all).slice(0, 1).map((r) => `${r.pane}/${r.label}`), ["agents/Agents"]);
+  assert.deepEqual(searchSettings("codex", all).slice(0, 1).map((r) => `${r.pane}/${r.label}`), ["agents/Local agents"]);
+  // where the rail does not offer it, Codex leads to Integrations, its terminal's way into the library
+  assert.deepEqual(searchSettings("codex", all.filter((pane) => pane !== "agents")).map((r) => r.pane), ["integrations"]);
   assert.ok(!SETTINGS_SEARCH.some((entry) => entry.pane === "ai" && /\bagents?\b|codex|claude/i.test(`${entry.label} ${entry.keywords}`)),
     "no agent's entry is left under Connections");
   const desktop = (query) => searchSettings(query, all, { desktop: true }).map((r) => `${r.pane}/${r.label}`);

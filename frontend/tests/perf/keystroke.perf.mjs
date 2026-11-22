@@ -8,7 +8,7 @@ import { blocksById, pageHighlights, recordingList, sheetNumbersOf, stampedList 
 import { classifyTransition, createHistory, observeTree } from "../../src/editor/blockHistory.js";
 import { refLabelsByBlock } from "../../src/editor/refLabels.js";
 import { sheetsOf } from "../../src/notebook/notebook.js";
-import { keepIfSame, keepIfSameJson, sameMap } from "../../src/shared/lib/keepIfSame.js";
+import { keepIfSame, keepIfSameJson, sameItems, sameMap } from "../../src/shared/lib/keepIfSame.js";
 import { blocksToHighlights, findBlock, flattenBlocks, updateBlockTree } from "../../src/shared/model/blockModel.js";
 import { diffTrees } from "../../src/shared/model/blockOps.js";
 import { PAGE_ID, annotatedPage } from "./fixtures.mjs";
@@ -25,7 +25,7 @@ const typed = (blocks) => updateBlockTree(blocks, lastId, (b) => ({ ...b, conten
 function session() {
   const refs = { labels: { current: new Map() }, sheets: { current: new Map() },
     recording: { current: { json: "", value: [] } }, stamped: { current: { json: "", value: [] } },
-    highlights: { current: { json: "", value: [] } } };
+    highlights: { current: null } };
   const s = { blocks: tree, base: tree, history: createHistory(tree), refs };
   derive(s, tree);
   return s;
@@ -45,7 +45,7 @@ function derive(s, blocks) {
   keepIfSameJson(refs.recording, recordingList(blocks));
   keepIfSameJson(refs.stamped, stampedList(blocks));
   const annotated = blocksToHighlights(blocks).length >= 5;
-  const highlights = keepIfSameJson(refs.highlights, pageHighlights(blocks, treeBlocks, countByBlock));
+  const highlights = keepIfSame(refs.highlights, pageHighlights(blocks, treeBlocks, countByBlock), sameItems);
   return { focused, labels, annotated, highlights };
 }
 
@@ -65,7 +65,7 @@ function typeKeys(s, n, check) {
 
 test(`${KEYS} keystrokes at the last block of a 1,000-block page, everything App runs per key`, async (t) => {
   const s = session();
-  const firstLabels = s.refs.labels.current, firstHighlights = s.refs.highlights.current.value;
+  const firstLabels = s.refs.labels.current, firstHighlights = s.refs.highlights.current;
   let typedSoFar = findBlock(tree, lastId).content;
   typeKeys(s, KEYS, ({ prev, next, derived, ops }) => {
     assert.deepEqual(ops, [{ op: "set", id: lastId, content: `${typedSoFar}x`, base: typedSoFar }]);
@@ -77,7 +77,7 @@ test(`${KEYS} keystrokes at the last block of a 1,000-block page, everything App
   });
   assert.ok(findBlock(s.blocks, lastId).content.endsWith("x".repeat(KEYS)));
   assert.equal(s.history.undo.length, 1, "one undo step for the run of typing");
-  budget(t, await measure((s) => typeKeys(s, KEYS), { setup: session }), 1400);
+  budget(t, await measure((s) => typeKeys(s, KEYS), { setup: session }), 600);
 });
 
 test(`updateBlockTree x${KEYS}: one key at the last block`, async (t) => {
@@ -94,14 +94,18 @@ test(`diffTrees x${KEYS}: one key against the base`, async (t) => {
   budget(t, await measure(() => { for (let k = 0; k < KEYS; k++) diffTrees(tree, next, PAGE_ID, pos); }), 300);
 });
 
-test(`App's highlights x${KEYS}: blocksToHighlights over 1,000 blocks, kept by their JSON`, async (t) => {
-  const next = typed(tree), flat = flattenBlocks(next);
-  const ref = { current: { json: "", value: [] } };
-  const first = keepIfSameJson(ref, pageHighlights(tree, flattenBlocks(tree), countByBlock));
+test(`App's highlights x${KEYS}: pageHighlights over 1,000 blocks, kept item by item`, async (t) => {
+  // the trees of KEYS keystrokes at the last note, each flattened as App does
+  const trees = [];
+  for (let k = 0, b = tree; k < KEYS; k++) trees.push({ blocks: (b = typed(b)), flat: flattenBlocks(b) });
+  const ref = { current: null };
+  const first = keepIfSame(ref, pageHighlights(tree, flattenBlocks(tree), countByBlock), sameItems);
   assert.equal(first.length, 400);
   assert.equal(first.filter((h) => h.threadCount).length, 20);
-  assert.equal(keepIfSameJson(ref, pageHighlights(next, flat, countByBlock)), first);
-  budget(t, await measure(() => { for (let k = 0; k < KEYS; k++) keepIfSameJson(ref, pageHighlights(next, flat, countByBlock)); }), 800);
+  const again = pageHighlights(trees[0].blocks, trees[0].flat, countByBlock);
+  assert.ok(again !== first && again.every((h, i) => h === first[i]), "a key elsewhere rebuilds no item");
+  assert.equal(keepIfSame(ref, again, sameItems), first);
+  budget(t, await measure(() => { for (const { blocks, flat } of trees) keepIfSame(ref, pageHighlights(blocks, flat, countByBlock), sameItems); }), 30);
 });
 
 test(`refLabelsByBlock x${KEYS}: 60 notes with [[refs]], kept while they read the same`, async (t) => {

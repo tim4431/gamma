@@ -132,7 +132,8 @@ exports and the AI read like any note.
 - **A picture's edits never change its file.** Crop, flip, turn and
   opacity are kept with the block.
 
-The lasso's Convert menu sends handwriting to the chat's model. **Redraw
+The lasso's Convert menu sends handwriting to the handwriting model, the
+chat's unless you pick another. **Redraw
 as shapes** turns figures into clean, editable shapes and leaves what the
 model is unsure of as it is. **Convert to text** writes Markdown with LaTeX
 into a text box, and says `[illegible]` rather than guess. Either applies

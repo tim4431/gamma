@@ -9,7 +9,8 @@
 //
 // A unit is one text the model translates and where its translation goes:
 // {src, chars, parts, targets: [{pn, i}], tokens, before, after, section}, `i`
-// a block's index on page `pn`. A paragraph that a column or page break cut
+// a block's index on page `pn`, and `ocr: true` when a block of it was read
+// from a scan's OCR layer (pdf/pageText.js). A paragraph that a column or page break cut
 // in two (or three) is ONE unit: its parts are joined with BREAK, which the
 // model keeps at the matching place, and the reply is split there again
 // (`results`). Each block's formula tokens are renumbered across the unit
@@ -184,7 +185,9 @@ function makeUnit(chain, blockAt) {
   }));
   const parts = joinParts(texts);
   const src = parts.filter(Boolean).join(` ${BREAK} `);
-  return { src, chars: src.length, parts, targets: chain, tokens };
+  const unit = { src, chars: src.length, parts, targets: chain, tokens };
+  if (chain.some((t) => blockAt(t).ocr)) unit.ocr = true;
+  return unit;
 }
 
 // A planner for one job. `paras(pn)` gives a page's segmented blocks, or null
@@ -344,15 +347,15 @@ export function createPlanner({ paras, inJob = () => true, filled = () => false,
 
 // Units → requests: a chunk closes once it holds `maxUnits` units or its text
 // reaches `maxChars`. Its context is the text before its first unit, after
-// its last, and the section its first unit sits under.
+// its last, and the section its first unit sits under, and `ocr: true` when a
+// unit of it was read from a scan's OCR layer.
 export function chunkUnits(units, { maxUnits = CHUNK_UNITS, maxChars = CHUNK_CHARS } = {}) {
   const chunks = [];
   let cur = [], chars = 0;
   const close = () => {
-    chunks.push({
-      units: cur, texts: cur.map((x) => x.src),
-      context: { before: cur[0].before || "", after: cur[cur.length - 1].after || "", section: cur[0].section || "" },
-    });
+    const context = { before: cur[0].before || "", after: cur[cur.length - 1].after || "", section: cur[0].section || "" };
+    if (cur.some((x) => x.ocr)) context.ocr = true;
+    chunks.push({ units: cur, texts: cur.map((x) => x.src), context });
     cur = [];
     chars = 0;
   };
@@ -372,12 +375,15 @@ export function chunkUnits(units, { maxUnits = CHUNK_UNITS, maxChars = CHUNK_CHA
 // paper's brief is being made (a job's first chunk, a selection), `keep`
 // (whether the server may keep the translations in the workspace), `fresh`
 // (the reader asked for the texts afresh: the server's memory and kept
-// translations are not read, and the answer replaces them) and the chunk's
-// `before`, `after` and `section`. The viewer's onTranslate and the bench both
-// send these, so the bench measures the requests the viewer makes.
-export function requestFields({ pageId = "", head = "", waitBrief = true, keep = true, fresh = false, before = "", after = "", section = "" } = {}) {
+// translations are not read, and the answer replaces them), the chunk's
+// `before`, `after` and `section`, and `ocr` (its text was read from a scan's
+// OCR layer: the prompt asks the model to read through misread letters). The
+// viewer's onTranslate and the bench both send these, so the bench measures
+// the requests the viewer makes.
+export function requestFields({ pageId = "", head = "", waitBrief = true, keep = true, fresh = false, before = "", after = "", section = "", ocr = false } = {}) {
   const out = { wait_brief: waitBrief !== false, keep: keep !== false };
   if (fresh) out.fresh = true;
+  if (ocr) out.ocr = true;
   if (pageId) out.page_id = pageId;
   if (head) out.head = head;
   if (before) out.before = before;

@@ -148,7 +148,7 @@ def channel_people(request: Request):
     """``{people: [{id, username, role}]}``: the members of the token's
     workspace who may edit it (editors and owners), its own account left
     out, by name: whom the computer's owner may let use an agent there
-    (Settings → AI → Agents on that computer)."""
+    (Settings → AI → Local agents on that computer)."""
     from ..db import connect_users_db
 
     user_id, _username, ws, _token_id = _computer(request)

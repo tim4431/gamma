@@ -1,0 +1,66 @@
+/* A provider's logo (ProviderLogo.jsx), wherever a connection is named: a
+   mono mark in the colour of the text around it, a colour one in its
+   brand's, each colour fill lifted toward the ink on a dark scheme so a
+   deep blue stays legible there. */
+.providerLogo { flex-shrink: 0; }
+[data-scheme="dark"] .providerLogoTone { fill: color-mix(in oklab, var(--logo-tone) 75%, var(--text-primary)); }
+
+/* The model menu (ModelMenu.jsx): a search box over a listbox of menu rows,
+   grouped by connection, each heading with its logo. As wide as a phone
+   allows; the list scrolls. */
+.ctxMenu.modelMenu {
+  width: min(440px, calc(100vw - 16px));
+  padding-top: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: min(480px, calc(100dvh - 16px));
+}
+.modelMenuSearch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.modelMenuSearch .aiKeyInput { margin: 0; flex: 1; min-width: 0; }
+.modelMenuList { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.modelMenuList > [role="group"]:first-child > .ctxMenuLabel { border-top: none; margin-top: 0; }
+.modelMenuList .ctxMenuLabel { display: flex; align-items: center; gap: var(--space-3); }
+.modelMenuGroupName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modelMenuBilling { margin-left: 0; flex-shrink: 0; }
+
+/* A row: the option, then its star. */
+.modelMenuRow { display: flex; align-items: center; }
+.modelMenuRow .modelMenuOption { flex: 1; min-width: 0; padding-right: var(--space-2); }
+.modelMenuOption.active { background: var(--bg-hover); }
+.modelMenuOption .ctxMenuIcon { display: none; }
+.modelMenuOption .ctxMenuText { display: flex; align-items: baseline; gap: var(--space-3); }
+.modelMenuName { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.modelMenuWhere { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--text-dim); }
+.modelMenuFacts {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: var(--space-4);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.modelMenuFact { display: inline-flex; align-items: center; }
+.modelMenuTag { margin-left: 0; }
+.modelMenuFacts .ctxMenuCheck { margin-left: 0; }
+/* The star is a frameless icon button (ctlBtn) at the compact size, as a
+   comment's ⋯ is. */
+.modelMenuRow .modelMenuStar { flex-shrink: 0; width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); margin-right: var(--space-3); }
+.modelMenuStar.on { color: var(--warn); }
+.modelMenuEmpty { padding: var(--space-4) var(--space-5); font-size: var(--fs-xs); color: var(--text-muted); }
+
+/* A phone: the facts after the price give way first, then the connection's name. */
+@media (max-width: 480px) {
+  .modelMenuWhere { display: none; }
+  .modelMenuFacts { gap: var(--space-2); padding-left: var(--space-3); }
+}

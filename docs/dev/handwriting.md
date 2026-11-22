@@ -9,7 +9,7 @@ GoodNotes store, and why the file looks the way it does, is in
 written on notebook sheets ([notebooks.md](notebooks.md)) and by the iPad
 app ([ipad.md](ipad.md)). Typed text on a page is
 [text_boxes.md](text_boxes.md). The selection's Redraw as shapes and
-Convert to text, which ask the chat's model, and its Copy as SVG and
+Convert to text, which ask the handwriting model, and its Copy as SVG and
 Download SVG are [handwriting_ai.md](handwriting_ai.md).
 
 - Server: `gamma/ink.py`, `gamma/routers/ink.py` and `gamma/ink_view.py`;
@@ -888,7 +888,7 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     transcribe; select less."
   - A shared page's view has no chat to ask: there the item says so on
     the pill.
-- **Redraw as shapes** asks the chat's model to redraw the selection's
+- **Redraw as shapes** asks the handwriting model to redraw the selection's
   figures as shape strokes, and **Convert to text** to put a text box with
   its text in its place, each as one undo step. **Copy as SVG** and
   **Download SVG**, the rest of the Convert menu, give the selected
@@ -4102,7 +4102,7 @@ reach.
     - `transcribe` ("Transcribe a selection", below).
     - `redraw` and `to-text` (Redraw as shapes, Convert to text,
       `askAboutSelection`): one request to `/api/ai/ink/shapes` or `/text`
-      with `ai.model` (App's `chatSendModel`), a task row (`ai.addTask`,
+      with no model (the server asks the handwriting model), a task row (`ai.addTask`,
       `ai.updateTask`, the tasks store's local rows) and a pill while it
       is out. `ai` is null in a shared page's view, which has none, and a
       page view has one request at a time (`aiRef`); leaving the page

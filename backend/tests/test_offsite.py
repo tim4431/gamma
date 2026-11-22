@@ -625,6 +625,7 @@ def test_the_endpoints_are_admin_only(admins, anon):
     _, user = admins
     for method, path in (("GET", "/api/admin/offsite"), ("PUT", "/api/admin/offsite"),
                          ("POST", "/api/admin/offsite/test"), ("POST", "/api/admin/offsite/run"),
+                         ("POST", "/api/admin/offsite/browse"),
                          ("GET", "/api/admin/offsite/snapshots"),
                          ("DELETE", "/api/admin/offsite/snapshots/ws-a/20261003-100000-task-0123456789ab")):
         assert user.request(method, path, json={}).status_code == 403
@@ -685,6 +686,27 @@ def test_the_test_button(admin, s3_bucket):
     admin.put("/api/admin/offsite", json=unsaved)
     r = admin.post("/api/admin/offsite/test", json={"prefix": ""})  # the saved secret, an unsaved prefix
     assert r.json() == {"ok": True, "message": f"{BUCKET}: 1 object in the bucket"}
+
+
+def test_the_folder_browser_lists_the_bucket_from_its_top(admin, s3_bucket):
+    for key in ("team/a/snapshots/one.zip", "team/a/notes.txt", "team/b/", "solo.txt"):
+        s3_bucket.put_object(Bucket=BUCKET, Key=key, Body=b"12345" if key.endswith(".zip") else b"")
+    unsaved = {"bucket": BUCKET, "region": "us-east-1", "access_key": "testing", "secret_key": "testing",
+               "prefix": "team/a"}
+    top = admin.post("/api/admin/offsite/browse", json=unsaved).json()  # the bucket's top, whatever the prefix
+    assert [f["name"] for f in top["folders"]] == ["team"] and [f["name"] for f in top["files"]] == ["solo.txt"]
+    team = admin.post("/api/admin/offsite/browse", json={**unsaved, "path": "team"}).json()
+    assert [f["name"] for f in team["folders"]] == ["a", "b"] and team["files"] == []
+    a = admin.post("/api/admin/offsite/browse", json={**unsaved, "path": "team/a"}).json()
+    assert [f["name"] for f in a["folders"]] == ["snapshots"] and [f["name"] for f in a["files"]] == ["notes.txt"]
+    b = admin.post("/api/admin/offsite/browse", json={**unsaved, "path": "team/b"}).json()
+    assert b == {"folders": [], "files": [], "more": False}  # a console's "folder" object is no file
+    one = admin.post("/api/admin/offsite/browse", json={**unsaved, "path": "team/a/snapshots"}).json()["files"][0]
+    assert one["size"] == 5 and one["modified"].endswith("Z")
+    assert admin.get("/api/admin/offsite").json()["settings"]["bucket"] == ""  # browsing saves nothing
+    for body in ({**unsaved, "path": "../x"}, {**unsaved, "bucket": "x"}, {"path": ""}):
+        r = admin.post("/api/admin/offsite/browse", json=body)
+        assert r.status_code == 400 and r.json()["detail"], body
 
 
 def test_copy_now_through_the_api(admin, monkeypatch):

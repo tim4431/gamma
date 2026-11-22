@@ -7,7 +7,7 @@ What can each operating system register, and what should opening do, given
 the work-folder design of [file-explorer.md](file-explorer.md)?
 
 Status: **decided and built** (2026-11-13, differences in "As built"
-below). This note surveys what other apps register, what each target
+below; what a person can leave out, 2026-11-21, in "Leaving it out"). This note surveys what other apps register, what each target
 allows, what Gamma had, and records the decision and why. The build plan,
 unit by unit with its tests and manual checks, is
 [open-with-plan.md](open-with-plan.md). The mechanics live in
@@ -183,7 +183,11 @@ a tracking dialog by ids, and *Opened files* reads a PDF in place.
   nautilus-python extension, or a script the user installs).
 - Markdown and LaTeX on Linux, once checked that listing them moves no
   default on stock Ubuntu and Fedora.
-- Making the context entries optional in the installer.
+- The launcher's switches for an install for all users, which would need
+  an elevated `reg.exe` (one UAC prompt per switch); for now the
+  installer, run again, changes it.
+- An Android switch: its intent filters could move to an
+  `activity-alias` the app turns off with `setComponentEnabledSetting`.
 - A remembered answer to the Markdown question (*always view*, *always
   edit*), which would need a setting to take it back.
 - An *Opened files* page whose directory later becomes a work folder keeps
@@ -279,6 +283,56 @@ installer. What was checked, and what decided the details:
 The mechanics: [desktop/docs/architecture.md](../../desktop/docs/architecture.md)
 "Opening files and folders", the build and the way to try it:
 [desktop/docs/release.md](../../desktop/docs/release.md) "Microsoft Store".
+
+## Leaving it out
+
+Asked 2026-11-21: Gamma registers itself in File Explorer and on the
+iPad's share sheet by default, and some people will not want it. What can
+each target let them turn off, and where?
+
+- **Windows installer.** Decided: two parts, each one checkbox on a page
+  after the directory page, both on by default as before. The parts are
+  *Open with* with Default apps for the table's types, and the folder
+  verb. VS Code offers the same as installer tasks, its folder verb off by
+  default; Gamma keeps both on because the verb is how a work folder is
+  most often made. Every in-app update runs the installer silently, so the
+  page alone would never reach anyone already installed, and a choice made
+  there would be undone by the next update. So the installer records the
+  choice (`Software\<appId>`), an update reads it back, and the launcher's
+  Settings have the same two as switches. They write and remove the same
+  entries through `reg.exe`, from a table the generator writes beside the
+  installer's script, and rewrite the record. An install for all users
+  only shows them: its keys are in HKLM and need an administrator.
+- **Store package.** Its file types are its manifest's: Windows offers no
+  way to take one app out of *Open with*, only to choose the default. Its
+  folder verb is the DLL's, and `IExplorerCommand::GetState` can answer
+  hidden (PowerToys hides its disabled modules' verbs the same way), so the
+  launcher's switch writes a file the DLL looks for.
+- **macOS.** Nothing to switch: an *Alternate* viewer is one line in *Open
+  With*, and a folder type is used only by a drop on the Dock icon.
+- **Linux.** The file managers have their own switches: Dolphin's
+  *Configure Dolphin → Context Menu* lists the service menu, Nemo's
+  preferences list its actions.
+- **iPad.** An app's document types are fixed in its Info.plist; there is
+  no API to withdraw them at run time. The share sheet has the switch:
+  *More → Edit*, then Gamma's toggle under Suggestions hides it in every
+  app ([Apple Support](https://support.apple.com/guide/iphone/customize-sharing-options-iphc572ca489/ios),
+  [MacRumors](https://www.macrumors.com/how-to/customize-apps-ios-share-sheet/)).
+  The types stay as they are (decided 2026-11-21): each is a feature, a
+  `.zip` opening the import dialog (Notion, Obsidian, the note apps'
+  bundles, Gamma's own exports) and an image becoming a picture on the
+  page, and dropping one would take it from everyone to spare those who
+  can hide Gamma themselves. Android's are the same and stay too.
+
+Found while building it: NSIS 3.0.4 (the version electron-builder
+bundles) deletes a key with `DeleteRegKey /ifempty` when it has no
+subkeys, whatever values it holds; it has no `/ifnovalues`. Checked on a
+scratch key. The uninstaller's `/ifempty` on `<ext>\OpenWithProgids` would
+therefore have deleted another editor's entries there, VS Code's
+`VSCode.md` in `.md`'s for one. The generated `gammaDeleteKeyIfEmpty`
+deletes a key only when `EnumRegValue` finds no value (the default value
+counts) and `EnumRegKey` no subkey; the switches apply the same rule to
+`reg query`'s listing.
 
 ## Relation to earlier notes
 

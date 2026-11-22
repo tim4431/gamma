@@ -118,7 +118,7 @@ test("every preference declares one scope; the profile carries exactly the accou
   }
   // …what describes this device, or names this server's provider entries, stays here.
   for (const name of ["uiScale", "statusBarVisible", "inkPenOnly", "inkEraserMode", "inkEraserSize", "inkLassoMode", "inkLassoPictures", "inkHoverPreview",
-    "inkPencilTap", "inkPencilSqueeze", "inkHaptics", "metaModel", "translateModel"]) {
+    "inkPencilTap", "inkPencilSqueeze", "inkHaptics", "dictationModel"]) {
     assert.ok(!account.has(name), `${name} is browser-scoped`);
   }
   // Imported annotations leave the stored PDF by default, so the blocks are
@@ -186,15 +186,3 @@ test("the translated view's language defaults to the browser's when it is on off
   assert.equal(defaultTranslateLang([]), "zh-CN");
 });
 
-test("the translation pick resolves to what is sent: the pick, the free service, or the chat model", async () => {
-  const { FREE_TRANSLATE_ENGINE, translateModelFor } = await import("../src/app/prefDefs.js");
-  const free = { id: FREE_TRANSLATE_ENGINE }, google = { id: "engine:google" }, model = { id: "p1:gpt" };
-  assert.equal(translateModelFor("engine:google", [free, google], [model]), "engine:google");
-  assert.equal(translateModelFor("p1:gpt", [free], [model]), "p1:gpt");
-  // A stale pick (the service removed) follows the chat model while there is one...
-  assert.equal(translateModelFor("engine:youdao", [free], [model]), "");
-  assert.equal(translateModelFor("", [free], [model]), "");
-  // ...and falls to the free service when there is no chat model at all.
-  assert.equal(translateModelFor("engine:youdao", [free], []), FREE_TRANSLATE_ENGINE);
-  assert.equal(translateModelFor("", [], []), "");
-});

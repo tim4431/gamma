@@ -39,3 +39,14 @@ test('a path with no private copy, outside AppData, or off the Store is left alo
   assert.equal(hostPath(log, { ...env([privateLog]), store: false }), log);
   assert.equal(hostPath(log, { ...env([privateLog]), execPath: 'C:\\Program Files\\Gamma\\Gamma.exe' }), log);
 });
+
+test('a Store install\'s libraries go with the package under AppData, and stay in a folder of the person\'s own', () => {
+  const { goesWithPackage } = require('../lib/hostPath');
+  const e = env();
+  assert.equal(goesWithPackage('C:\\Users\\u\\AppData\\Roaming\\gamma-desktop\\workspaces', e), true); // the default storage folder
+  assert.equal(goesWithPackage('C:\\Users\\u\\AppData\\Local\\Gamma\\libraries', e), true);
+  assert.equal(goesWithPackage('C:\\Users\\u\\Documents\\Gamma', e), false);
+  assert.equal(goesWithPackage('D:\\Gamma', e), false);
+  assert.equal(goesWithPackage(`${CACHE}\\Roaming\\gamma-desktop\\workspaces`, e), false); // already a real path
+  assert.equal(goesWithPackage('C:\\Users\\u\\AppData\\Roaming\\gamma-desktop\\workspaces', { ...e, store: false }), false);
+});

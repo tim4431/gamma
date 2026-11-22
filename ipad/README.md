@@ -58,7 +58,7 @@ There are three parts:
 | `Server/PythonRuntime.swift` | The embedded CPython: configured and started once on a thread of its own, running `gamma_mobile.run()`; `restart` reaches the supervisor in it through the GIL |
 | `Server/Keychain.swift` | The seeded account's password in the Keychain |
 | `Server/GammaIPad-Bridging-Header.h` | Python's C API for Swift |
-| `Shell/ShellView.swift` | The window: the web view, the live stroke over it, the launcher while it is up and the bar on top unless it is hidden, the Pencil layer on their container; the chrome's calls answered, its state pushed, and the ⌘⇧L, ⌘R and ⌘⇧B shortcuts |
+| `Shell/ShellView.swift` | The window: the web view, the live stroke over it, the launcher while it is up and the bar on top unless it is hidden, the Pencil layer on their container; the chrome's calls answered, its state pushed, the ⌘⇧L, ⌘R and ⌘⇧B shortcuts, and the screen kept on while the page asks and the app is in front (`ScreenAwake`) |
 | `Shell/WebShell.swift` | The server's page's `WKWebView`, set up once: desktop content mode, no bounce, no inset adjustment, no keyboard accessory bar, inspectable in Debug builds, reloaded when the system ends its process; the silent sign-in to the local server, the session read for the bar's workspaces, and the theme's name |
 | `Shell/Chrome.swift` | The desktop's bar and launcher in web views of their own: the bundle's `chrome` folder, the `gammaShell` user script and the handler it posts to, the state pushed to the pages, and a page loaded again when the system ends its process |
 | `Shell/Bridge.swift` | The message vocabulary as Codable types, the handler the page posts to, and `send` back (`ask` when the shell needs the answer, as for `hold`). The only file that knows the web app's protocol |
@@ -128,7 +128,7 @@ needs, all of it generated and gitignored (`ipad/.gitignore`):
 | `Python.xcframework/` | CPython 3.13.16 for iOS, BeeWare's [Python-Apple-support](https://github.com/beeware/Python-Apple-support) `3.13-b16`, downloaded once and checked against the sha256 pinned in the script, with OpenSSL's privacy manifest (`python/OpenSSL.xcprivacy`) put beside its `_ssl` and `_hashlib` modules on every run |
 | `GammaIPad/Resources/python/app_packages.iphoneos/` | The server's dependencies as iOS device wheels |
 | `GammaIPad/Resources/python/app_packages.iphonesimulator/` | The same as simulator wheels; a build takes the one for its platform |
-| `GammaIPad/Resources/python/app/` | `backend/app.py`, `backend/gamma/` and `backend/gamma_mobile.py`, with bytecode compiled for the device |
+| `GammaIPad/Resources/python/app/` | `backend/app.py`, `backend/gamma/` and `backend/gamma_mobile.py`, with bytecode compiled for the device, and the text recognition models, `backend/tessdata/` (6.8 MB), beside `gamma/` |
 | `GammaIPad/Resources/python/frontend_dist/` | The built web app the local server serves |
 
 ```bash

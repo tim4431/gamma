@@ -70,6 +70,24 @@ def forget(ws: str, doc_id: str) -> int:
     return removed
 
 
+def forget_brief(ws: str, doc_id: str) -> int:
+    """Forget the document's briefs, kept and in memory, and keep its
+    translations: its text changed (its scanned pages' words recognized,
+    gamma/pdf_ocr.py), so a brief made from the old text must not steer
+    the next translation, while the paragraphs it paid for stay kept (found
+    by their source text: one whose text changed misses and is translated
+    afresh). The kept briefs go under the document's turn, then its
+    generation moves on as in ``forget``, so the memory brief and the memory
+    keys of its translations are new: they are read back from the store. A
+    request that began before writes nothing it made (``Kept._writable``).
+    How many briefs went."""
+    with _keeping(ws, doc_id):
+        removed = translate_store.forget_briefs(ws, doc_id)
+        with _LOCK:
+            _generation[(ws, doc_id)] = _generation.get((ws, doc_id), 0) + 1
+    return removed
+
+
 def clear(ws: str) -> int:
     """Forget every translation the workspace keeps, as forget does one
     document's: its kept rows and briefs, and every document's memory keys

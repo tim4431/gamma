@@ -580,8 +580,18 @@ Messages:
   the desktop app's page refetches its standing with this computer, as it
   does on every `hello` after a reconnect (`onVault`)
   (`GET /api/folder-links/page/{id}`,
-  [synced_vaults.md](synced_vaults.md#the-routes)). A client ignores a
-  message type it does not know.
+  [synced_vaults.md](synced_vaults.md#the-routes)). `ocr {doc_id, stamp}`:
+  a stored PDF's recognized text changed, a recognition applied or a
+  forget ended ([documents.md](documents.md#recognized-text)); sent to the
+  tabs that may show the file (`collab.publish_file`, below), and the tab
+  reads that file's recognition again over HTTP (`onOcr`), whichever page
+  carries it. Its tasks store also lists at once and looks out for the
+  end of the file's OCR jobs (`tasks.expectEnd`,
+  [tasks.md](tasks.md#the-web-app-frontendsrctasks)), so the server's own
+  run of an upload is reported on the page even when no listing saw it
+  run. A tab also asks with no message on a `hello` after its
+  socket dropped, and on its poll rounds while it has no socket to hear
+  one. A client ignores a message type it does not know.
 - client → server: `cursor {block, anchor, head}` (`anchor`/`head` = -1
   when no editor is open on that block) and `ink-live`. **Writes never
   travel over the socket**: they are `POST /api/pages/{id}/ops`, so auth
@@ -647,6 +657,17 @@ for its content-free nudge, `{t: "inbox"}` ([comments.md](comments.md)
 "Live delivery"); the tab then asks `/api/inbox` itself, so a socket
 admitted to one page learns nothing about another. A tab with no page open
 (the home library, Settings) has no socket and polls instead.
+
+**One file's tabs.** `collab.publish_file(ws, page_ids, message)` sends to
+everyone in the rooms of `page_ids` (the pages showing a stored file, the
+owner and its copies: `highlight_relocate.pages_showing`), share visitors
+included, and to the members' peers (no share token) in the workspace's
+other rooms, since a member's tab may show the file in a split pane or a
+dock while its one socket is its focused page's. A share visitor of
+another page hears nothing. It sends as `publish_account` does, and is a
+no-op without targets. The recognized text uses it for `{t: "ocr"}`
+(`pdf_ocr.announce`, which reads nothing when no room of the workspace is
+open).
 
 A peer is `{client, user, name, can_edit, block, anchor, head}` —
 `user` the account's username, which the handshake reads with the session;
@@ -1302,7 +1323,11 @@ running ([debugging.md](debugging.md#browser-end-to-end-suite)).
 - `backend/tests/test_collab.py` also covers `publish_account`: every
   socket of one account, in two rooms and through a share link, and no
   other account's. The Inbox's nudge reaching the recipient's sockets only
-  is in `backend/tests/test_inbox.py`.
+  is in `backend/tests/test_inbox.py`. `publish_file`'s targets (a
+  member's tab on another page and the file's share visitor yes, another
+  page's share visitor no) are in `backend/tests/test_ocr_forget.py`, and
+  `onOcr` in `frontend/tests/collabSession.test.mjs` and
+  `collabPoll.test.mjs`.
 - `backend/tests/test_collab_robustness.py`: conflict codes and the op
   index, a retried batch answered once from its log row (from a fresh
   process too, and applied again once the row is pruned), create-if-absent

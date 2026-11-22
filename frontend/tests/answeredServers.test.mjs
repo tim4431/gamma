@@ -1,4 +1,4 @@
-// The rows of Settings → AI → Agents → Servers this computer answers and the
+// The rows of Settings → AI → Local agents → Servers this computer answers and the
 // shell asks their controls send (src/settings/answeredServers.js).
 import assert from "node:assert/strict";
 import { test } from "node:test";

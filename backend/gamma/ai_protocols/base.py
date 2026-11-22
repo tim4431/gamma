@@ -28,7 +28,7 @@ import urllib.parse
 from urllib.request import Request as URLRequest
 
 from ..config import AI_BASE_URLS
-from .services import service_of
+from .services import service_of, versioned_base
 
 # The OpenAI-style wires only accept text in a tool result, so the pictures
 # follow the round's results as one user turn the model reads in call order.
@@ -59,9 +59,17 @@ def api_url(base_url: str, path: str) -> str:
     """An OpenAI-shaped endpoint under a base URL: ``{base}/v1{path}``, or
     ``{base}{path}`` when the base already ends in a version segment — a
     pasted ``…/v1`` stays one, and a service whose version is not ``v1``
-    (GLM's ``/api/paas/v4``) is reachable as documented."""
+    (GLM's ``/api/paas/v4``) is reachable as documented — or is a preset's
+    that names its version further up (``versioned``: Gemini's
+    ``/v1beta/openai``)."""
     base = (base_url or "").rstrip("/")
-    return f"{base}{path}" if re.search(r"/v\d+$", base) else f"{base}/v1{path}"
+    return f"{base}{path}" if re.search(r"/v\d+$", base) or versioned_base(base) else f"{base}/v1{path}"
+
+
+def bearer(key: str) -> dict:
+    """The Authorization header of a key, none for a keyless entry (a local
+    server: ai_settings.key_optional)."""
+    return {"Authorization": f"Bearer {key}"} if key else {}
 
 
 def reasoning_text(kept) -> dict:
@@ -198,6 +206,109 @@ def listed_efforts(row) -> list | None:
     return None
 
 
+def _per_million(value) -> float | None:
+    """A listing's per-token price (OpenRouter's strings) as USD per 1M
+    tokens, None when it is missing or no price (its "-1" for a router
+    whose price varies)."""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(n * 1e6, 6) if n >= 0 else None
+
+
+def price_number(value) -> float | None:
+    """A price given as a number (USD per 1M tokens), None when it is none."""
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 else None
+
+
+def tariff(**fields) -> dict | None:
+    """One tariff: input and output, plus the cache prices given; None
+    without both of the first two."""
+    if fields.get("input") is None or fields.get("output") is None:
+        return None
+    return {k: v for k, v in fields.items() if v is not None}
+
+
+def _openrouter_price(pricing: dict):
+    if any(str(pricing.get(k)).strip() == "-1" for k in ("prompt", "completion")):
+        return False  # a router whose price varies with the model it routes to: nobody knows it
+
+    def per_token(p):
+        return tariff(input=_per_million(p.get("prompt")), output=_per_million(p.get("completion")),
+                      cache_read=_per_million(p.get("input_cache_read")),
+                      cache_write=_per_million(p.get("input_cache_write")))
+    base = per_token(pricing)
+    if not base:
+        return None
+    tiers = []
+    for over in pricing.get("overrides") or []:
+        size = over.get("min_prompt_tokens") if isinstance(over, dict) else None
+        tier = per_token(over) if isinstance(size, int) and not isinstance(size, bool) else None
+        if not tier:
+            return False  # a tariff on a condition this reader does not know
+        tiers.append({"size": max(0, size - 1), **tier})
+    return {**base, **({"tiers": sorted(tiers, key=lambda t: t["size"])} if tiers else {})}
+
+
+def _opencode_price(cost: dict):
+    text = cost.get("text")
+    given = text.get("input") if isinstance(text, dict) else None
+    out = text.get("output") if isinstance(text, dict) else None
+    if not isinstance(given, dict) or not isinstance(out, dict):
+        return None
+    cache = given.get("cache") if isinstance(given.get("cache"), dict) else {}
+    base = tariff(input=price_number(given.get("price")), output=price_number(out.get("price")),
+                  cache_read=price_number(cache.get("read")), cache_write=price_number(cache.get("write")))
+    if not base:
+        return None
+    sizes = {}
+    for part, key in ((given, "input"), (out, "output")):
+        for over in part.get("overrides") or []:
+            when = over.get("when") if isinstance(over, dict) else None
+            gt = (when.get("context") or {}).get("gt") if isinstance(when, dict) and set(when) == {"context"} else None
+            if not isinstance(gt, int) or price_number(over.get("price")) is None:
+                return False
+            tier = sizes.setdefault(gt, {})
+            tier[key] = price_number(over["price"])
+            over_cache = over.get("cache") if key == "input" and isinstance(over.get("cache"), dict) else {}
+            for name, field in (("cache_read", "read"), ("cache_write", "write")):
+                if price_number(over_cache.get(field)) is not None:
+                    tier[name] = price_number(over_cache[field])
+    tiers = [{"size": size, **base, **tier} for size, tier in sorted(sizes.items())]
+    speeds = {}
+    for multiplier in cost.get("multipliers") or []:
+        when = multiplier.get("when") if isinstance(multiplier, dict) else None
+        if not isinstance(when, dict) or set(when) != {"service_tier"} or not isinstance(when["service_tier"], dict):
+            return False  # a time of day, a promotion's dates
+        name = SPEED_ALIASES.get(str(when["service_tier"].get("equals") or ""))
+        factor = multiplier.get("factor")
+        factor = price_number(factor.get("text") if isinstance(factor, dict) else factor)
+        if name is None or factor is None:
+            return False
+        speeds[name] = factor
+    return {**base, **({"tiers": tiers} if tiers else {}), **({"speeds": speeds} if speeds else {})}
+
+
+def listed_price(row):
+    """What a model listing row says the model costs, USD per 1M tokens:
+    ``{input, output, cache_read?, cache_write?, tiers?, speeds?}``, where
+    ``tiers`` are the tariffs past a prompt size (``[{size, input, output,
+    cache_read?, cache_write?}]``, each for a whole prompt over ``size``
+    tokens) and ``speeds`` a factor per served tier (SPEED_ORDER names).
+    None when the row names no price; False when it names one that depends
+    on something no call reports (a time of day, a promotion's dates), so
+    no other source is asked either. Read from OpenRouter's ``pricing``
+    (per-token strings) and OpenCode's ``cost.text``."""
+    if not isinstance(row, dict):
+        return None
+    if isinstance(row.get("pricing"), dict):
+        return _openrouter_price(row["pricing"])
+    if isinstance(row.get("cost"), dict):
+        return _opencode_price(row["cost"])
+    return None
+
+
 def listed_images(row) -> bool | None:
     """Whether a model listing row says the model reads pictures:
     OpenRouter's ``architecture.input_modalities``. None when the row
@@ -283,7 +394,7 @@ def sse_json(response):
 
 
 def bearer_json_request(url: str, key: str, **headers) -> URLRequest:
-    return URLRequest(url, headers={"Authorization": f"Bearer {key}", "Accept": "application/json",
+    return URLRequest(url, headers={**bearer(key), "Accept": "application/json",
                                     "User-Agent": "Gamma/model-catalog", **headers})
 
 
@@ -482,17 +593,19 @@ class Protocol:
 
     def models(self, data, conf) -> list:
         """The chat models of a listing body as ``[{id, context_window,
-        efforts, speeds}]`` (0 = the listing names no window, efforts /
-        speeds None = it names no effort levels / speed tiers —
+        efforts, speeds, images, price}]`` (0 = the listing names no window,
+        efforts / speeds None = it names no effort levels / speed tiers —
         listed_efforts, listed_speeds; images None = it doesn't say whether
-        the model reads pictures — listed_images), in the order to offer them."""
+        the model reads pictures — listed_images; price None = it names
+        none, False = one that varies — listed_price), in the order to
+        offer them."""
         rows = [r for r in (data.get("data") or []) if isinstance(r, dict) and r.get("id")]
         found = {}
         for row in rows:
             found.setdefault(str(row["id"]), row)
         return [{"id": mid, "context_window": listed_window(found[mid]),
                  "efforts": listed_efforts(found[mid]), "speeds": listed_speeds(found[mid]),
-                 "images": listed_images(found[mid])}
+                 "images": listed_images(found[mid]), "price": listed_price(found[mid])}
                 for mid in sorted(found)]
 
     def ping_request(self, conf) -> URLRequest:
@@ -510,8 +623,10 @@ class Protocol:
 
     # --- account and extras --------------------------------------------------
 
-    # A subscription quota to show. API-key protocols have none that is
-    # portable: they bill per token, behind each vendor's own billing API.
+    # A subscription quota of the protocol's own to show. API-key protocols
+    # have none that is portable: they bill per token, behind each vendor's
+    # own billing API, and a subscription's key gets its reader from its
+    # service preset (ai_protocols.quota_reader).
     has_account_usage = False
 
     def account_usage_request(self, conf) -> URLRequest:
@@ -521,6 +636,12 @@ class Protocol:
         """``{plan_type, windows: [{name, used_percent, remaining_percent,
         window_seconds, reset_at}], credits}`` from the quota response."""
         raise NotImplementedError
+
+    def refusal(self, status: int) -> str:
+        """What an HTTP ``status`` from the quota endpoint means when it is
+        the plan refusing the key rather than a dead credential ("": none
+        does; ai_protocols.quota's readers word theirs)."""
+        return ""
 
     def transcription(self, conf) -> int:
         """Speech-to-text through this entry: 0 no, 1 maybe (a compatible

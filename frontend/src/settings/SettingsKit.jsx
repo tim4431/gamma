@@ -2,7 +2,7 @@
 // else: PaneHead › Section › Row/Toggle for the panes themselves, SubDialog ›
 // Step/Field/DialogButtons for the editor dialogs they open, NavAccountCard
 // on the rail, plus the small shared controls (Segmented,
-// PictureChoices/IconChoices, ToggleGroup, Stepper, UnitInput, CharSlider,
+// PictureChoices/IconChoices/GlyphChoices, ToggleGroup, Stepper, UnitInput, CharSlider,
 // PasswordInput, TestResult, CopyField, AccountPicker, PersonRow, LogBox, Stat/StatText, Empty, FormNotice,
 // WorkspaceFolder, QuotaMeter/PercentMeter, RingMeter/StorageRing,
 // KeyCaps/KeyBinding).
@@ -267,6 +267,19 @@ export function IconChoices({ label, value, onChange, options, columns }) {
   </div>;
 }
 
+// Picture choices as compact named tiles: a 20 px glyph (a provider's logo)
+// beside a one-line name with its hint under it, every tile one height, as
+// many to a row as fit at any width — a longer set of named choices (the
+// AI connect dialog's services). `options` are [{value, label, hint, glyph}].
+export function GlyphChoices({ label, value, onChange, options }) {
+  return <div className="setGlyphTiles">
+    <PictureChoices label={label} value={value} onChange={onChange}
+      options={options.map(({ glyph, ...option }) => ({
+        ...option, preview: <span className="setTileGlyph" aria-hidden="true">{glyph}</span>,
+      }))} />
+  </div>;
+}
+
 // A row of small icon + short-name chips, each an independent on/off switch
 // (the multi-select counterpart of Segmented): the agent's per-tool
 // permissions, any "which of these" choice. `options` are
@@ -344,7 +357,8 @@ export function SubDialog({ title, onClose, children, draft, guard = null, class
           }
           if (event.key === "Tab") {
             event.stopPropagation();
-            const targets = [...ref.current.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), summary')]
+            // a tree's or a list's one row in the tab order counts (tabindex 0)
+            const targets = [...ref.current.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')]
               .filter((el) => el.getClientRects().length && !el.closest("[inert]"));
             const first = targets[0], last = targets.at(-1);
             if (event.shiftKey && (document.activeElement === first || !targets.includes(document.activeElement))) { event.preventDefault(); last?.focus(); }
@@ -601,13 +615,16 @@ export function Stat({ icon: Icon, label, value, total, title }) {
 }
 
 // A text-valued tile beside Stat's numeric ones: a version, an uptime, a
-// pair of counts. `tone` "warn" / "error" colours the frame.
-export function StatText({ icon: Icon, label, value, hint, tone = "", title }) {
+// pair of counts. `tone` "warn" / "error" colours the frame. `hint` is the
+// line under it, or a list of lines (the empty ones left out); `children`
+// come last (the Usage pane's quota bars of each subscription).
+export function StatText({ icon: Icon, label, value, hint, tone = "", title, children }) {
   return (
     <div className={`setStat setStatText ${tone}`} title={title}>
       <span className="setStatTop"><span className="setStatNum">{value}</span></span>
       <span className="setStatLabel"><Icon size={14} />{label}</span>
-      {hint ? <span className="setStatHint">{hint}</span> : null}
+      {[].concat(hint || []).filter(Boolean).map((line) => <span key={line} className="setStatHint">{line}</span>)}
+      {children}
     </div>
   );
 }

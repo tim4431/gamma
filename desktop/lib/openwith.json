@@ -1,0 +1,86 @@
+{
+  "about": "Written by scripts/openwith.cjs from tests/shared/openwith.json: edit those, then `npm run openwith`. The installer's registration in its two parts (scripts/openwith.cjs parts()), which the launcher's switches write and remove as the installer does (lib/openWith.js), and the file that hides the Store package's folder verb.",
+  "types": "PDF, Markdown, LaTeX, BibTeX and Typst",
+  "verb": "Open with Gamma",
+  "record": "Software\\io.github.tim4431.gamma",
+  "parts": {
+    "files": {
+      "value": "OpenWithFiles",
+      "write": [
+        { "key": "Software\\Classes\\Gamma.pdf", "name": "", "type": "sz", "data": "PDF document" },
+        { "key": "Software\\Classes\\Gamma.pdf\\DefaultIcon", "name": "", "type": "sz", "data": "$appExe,0" },
+        { "key": "Software\\Classes\\Gamma.pdf\\shell\\open\\command", "name": "", "type": "sz", "data": "\"$appExe\" \"%1\"" },
+        { "key": "Software\\Classes\\Gamma.markdown", "name": "", "type": "sz", "data": "Markdown document" },
+        { "key": "Software\\Classes\\Gamma.markdown\\DefaultIcon", "name": "", "type": "sz", "data": "$appExe,0" },
+        { "key": "Software\\Classes\\Gamma.markdown\\shell\\open\\command", "name": "", "type": "sz", "data": "\"$appExe\" \"%1\"" },
+        { "key": "Software\\Classes\\Gamma.latex", "name": "", "type": "sz", "data": "LaTeX source" },
+        { "key": "Software\\Classes\\Gamma.latex\\DefaultIcon", "name": "", "type": "sz", "data": "$appExe,0" },
+        { "key": "Software\\Classes\\Gamma.latex\\shell\\open\\command", "name": "", "type": "sz", "data": "\"$appExe\" \"%1\"" },
+        { "key": "Software\\Classes\\Gamma.bibtex", "name": "", "type": "sz", "data": "BibTeX database" },
+        { "key": "Software\\Classes\\Gamma.bibtex\\DefaultIcon", "name": "", "type": "sz", "data": "$appExe,0" },
+        { "key": "Software\\Classes\\Gamma.bibtex\\shell\\open\\command", "name": "", "type": "sz", "data": "\"$appExe\" \"%1\"" },
+        { "key": "Software\\Classes\\Gamma.typst", "name": "", "type": "sz", "data": "Typst source" },
+        { "key": "Software\\Classes\\Gamma.typst\\DefaultIcon", "name": "", "type": "sz", "data": "$appExe,0" },
+        { "key": "Software\\Classes\\Gamma.typst\\shell\\open\\command", "name": "", "type": "sz", "data": "\"$appExe\" \"%1\"" },
+        { "key": "Software\\io.github.tim4431.gamma\\Capabilities", "name": "ApplicationName", "type": "sz", "data": "Gamma" },
+        { "key": "Software\\io.github.tim4431.gamma\\Capabilities", "name": "ApplicationDescription", "type": "sz", "data": "Annotate PDFs and keep notes beside them." },
+        { "key": "Software\\Classes\\.pdf\\OpenWithProgids", "name": "Gamma.pdf", "type": "none" },
+        { "key": "Software\\io.github.tim4431.gamma\\Capabilities\\FileAssociations", "name": ".pdf", "type": "sz", "data": "Gamma.pdf" },
+        { "key": "Software\\Classes\\.md\\OpenWithProgids", "name": "Gamma.markdown", "type": "none" },
+        { "key": "Software\\io.github.tim4431.gamma\\Capabilities\\FileAssociations", "name": ".md", "type": "sz", "data": "Gamma.markdown" },
+        { "key": "Software\\Classes\\.markdown\\OpenWithProgids", "name": "Gamma.markdown", "type": "none" },
+        { "key": "Software\\io.github.tim4431.gamma\\Capabilities\\FileAssociations", "name": ".markdown", "type": "sz", "data": "Gamma.markdown" },
+        { "key": "Software\\Classes\\.tex\\OpenWithProgids", "name": "Gamma.latex", "type": "none" },
+        { "key": "Software\\io.github.tim4431.gamma\\Capabilities\\FileAssociations", "name": ".tex", "type": "sz", "data": "Gamma.latex" },
+        { "key": "Software\\Classes\\.bib\\OpenWithProgids", "name": "Gamma.bibtex", "type": "none" },
+        { "key": "Software\\io.github.tim4431.gamma\\Capabilities\\FileAssociations", "name": ".bib", "type": "sz", "data": "Gamma.bibtex" },
+        { "key": "Software\\Classes\\.typ\\OpenWithProgids", "name": "Gamma.typst", "type": "none" },
+        { "key": "Software\\io.github.tim4431.gamma\\Capabilities\\FileAssociations", "name": ".typ", "type": "sz", "data": "Gamma.typst" },
+        { "key": "Software\\RegisteredApplications", "name": "Gamma", "type": "sz", "data": "Software\\io.github.tim4431.gamma\\Capabilities" }
+      ],
+      "remove": [
+        { "op": "value", "key": "Software\\Classes\\.pdf\\OpenWithProgids", "name": "Gamma.pdf" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.pdf\\OpenWithProgids" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.pdf" },
+        { "op": "value", "key": "Software\\Classes\\.md\\OpenWithProgids", "name": "Gamma.markdown" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.md\\OpenWithProgids" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.md" },
+        { "op": "value", "key": "Software\\Classes\\.markdown\\OpenWithProgids", "name": "Gamma.markdown" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.markdown\\OpenWithProgids" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.markdown" },
+        { "op": "value", "key": "Software\\Classes\\.tex\\OpenWithProgids", "name": "Gamma.latex" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.tex\\OpenWithProgids" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.tex" },
+        { "op": "value", "key": "Software\\Classes\\.bib\\OpenWithProgids", "name": "Gamma.bibtex" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.bib\\OpenWithProgids" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.bib" },
+        { "op": "value", "key": "Software\\Classes\\.typ\\OpenWithProgids", "name": "Gamma.typst" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.typ\\OpenWithProgids" },
+        { "op": "ifEmpty", "key": "Software\\Classes\\.typ" },
+        { "op": "key", "key": "Software\\Classes\\Gamma.pdf" },
+        { "op": "key", "key": "Software\\Classes\\Gamma.markdown" },
+        { "op": "key", "key": "Software\\Classes\\Gamma.latex" },
+        { "op": "key", "key": "Software\\Classes\\Gamma.bibtex" },
+        { "op": "key", "key": "Software\\Classes\\Gamma.typst" },
+        { "op": "value", "key": "Software\\RegisteredApplications", "name": "Gamma" },
+        { "op": "key", "key": "Software\\io.github.tim4431.gamma\\Capabilities" }
+      ]
+    },
+    "folders": {
+      "value": "OpenWithFolders",
+      "write": [
+        { "key": "Software\\Classes\\Directory\\shell\\Gamma", "name": "", "type": "sz", "data": "Open with &Gamma" },
+        { "key": "Software\\Classes\\Directory\\shell\\Gamma", "name": "Icon", "type": "sz", "data": "$appExe,0" },
+        { "key": "Software\\Classes\\Directory\\shell\\Gamma\\command", "name": "", "type": "sz", "data": "\"$appExe\" \"%V\"" },
+        { "key": "Software\\Classes\\Directory\\Background\\shell\\Gamma", "name": "", "type": "sz", "data": "Open with &Gamma" },
+        { "key": "Software\\Classes\\Directory\\Background\\shell\\Gamma", "name": "Icon", "type": "sz", "data": "$appExe,0" },
+        { "key": "Software\\Classes\\Directory\\Background\\shell\\Gamma\\command", "name": "", "type": "sz", "data": "\"$appExe\" \"%V\"" }
+      ],
+      "remove": [
+        { "op": "key", "key": "Software\\Classes\\Directory\\shell\\Gamma" },
+        { "op": "key", "key": "Software\\Classes\\Directory\\Background\\shell\\Gamma" }
+      ]
+    }
+  },
+  "storeOff": "folder-verb-off"
+}

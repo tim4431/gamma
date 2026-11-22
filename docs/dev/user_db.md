@@ -86,8 +86,8 @@ All state is SQLite + files on disk under a data directory (env
     created_at)`, gone 180 days after it was made (migration step 49);
   - `user_prefs` — small JSON values per `(user_id, workspace_id, key)`,
     under workspace `''`: the account-wide keys (`db.USER_PREF_KEYS`: the
-    preference `profile` and its sync base `profile-base`, the active AI
-    provider, the AI provider entries, the machine-translation and online
+    preference `profile` and its sync base `profile-base`, the model each
+    AI task uses (`ai-models`), the AI provider entries, the machine-translation and online
     search services with their secrets, the seen notices, and the connected
     Zotero account, `zotero-account`: the Zotero user, a hint of the key,
     what it could do, how it came and the key itself, sealed with the data
@@ -265,7 +265,9 @@ All state is SQLite + files on disk under a data directory (env
     the account that opened the file, whom a change of it is made as
     (`actor`), and why the last
     replacement placed no highlights (`relocation_error`). One name may
-    have several paths; a path has one page;
+    have several paths; a path has one page. `idx_linked_files_path` finds
+    a path's rows, for the PDF readers' recognized text
+    (`pdf_ocr.view_of`, which is handed a path alone);
   - `vault_files` — a vault's files as the last round left them, one row a
     path (`link_id`, `path`; a trashed file's path is its trash path, with
     `was` where it lived): the page, the `kind` (its class, `notes`, `pdf`,
@@ -564,7 +566,8 @@ All state is SQLite + files on disk under a data directory (env
   code does; keep it that way).
 - `workspaces/<id>/data.db` — what the workspace can lose and rebuild: the
   file may be deleted, and everything in it comes back on demand, free but
-  for the kept translations. Nothing a person wrote lives here. It holds `page_snaps` (the recents-card cover
+  for the kept translations (a model's tokens) and the recognized text (a
+  run's CPU, hours for a book). Nothing a person wrote lives here. It holds `page_snaps` (the recents-card cover
   thumbnails, synced via `/api/page-snaps` — too big for the prefs KV;
   captured again as a PDF is read), the viewer's per-document manifests
   `pdf_docs` (byte size, page count, page sizes — `gamma/pdf_meta.py`,
@@ -572,7 +575,31 @@ All state is SQLite + files on disk under a data directory (env
   kept translations `pdf_translations` / `pdf_translation_briefs`
   (`gamma/translate_store.py`, [translation.md](translation.md) "Kept
   translations"; asked of the model again, at its cost, when they are
-  gone), the region pictures of a work folder's comment threads
+  gone), the text recognized from scanned pages (`gamma/pdf_ocr.py`,
+  [documents.md](documents.md#recognized-text)): `pdf_ocr`, a row per
+  stored file (`doc_id`; `engine` the engines its live pages were read
+  with, " + " between two, `''` after a forget, the `langs` and `ver`
+  (`pdf_ocr.VERSION`) of its last apply, its page count `pages`, `scanned`
+  its scan and picture pages and `kinds` which (JSON `{"<page>": "scan" |
+  "picture"}`), each NULL before a run classified them, `rev` a counter
+  for display, `stamp` the readers' caches key on, new at every applied
+  change and every forget and `''` before the first, `pending` while the
+  finishing steps of an apply or a forget are still to run, `at`; a forget
+  keeps the row), `pdf_ocr_pages`, a row per page
+  (`doc_id`, `page` 1-based, the `ver` and `langs` it was read with,
+  `applied` 0 while a run has it staged and nobody reads it, `kept` when
+  the page keeps its own text (a scan page's layer, or a picture page's own
+  words) and has no words, `shared` the share of the
+  layer's words the recognition read too, NULL without a layer,
+  `words`, gzip of `{"lines": [[[text, x0, y0, x1, y1], …], …]}`, and
+  `engine`, what read it: the server's Tesseract or `tesseract.js 7.0.0`;
+  a forget deletes every row of the file), and `pdf_ocr_auto`, the
+  automatic recognition's marker per file (`doc_id`; `state` `queued`,
+  `skipped`, `done` or `declined`; `by`, who uploaded it; `at`); kept
+  while a block carries the file or the workspace stores it
+  (`index.purge_unused`, which asks the store only about the recognized
+  files no block carries, `storage.exists`, without listing the uploads),
+  and dropped when `upload_gc` purges the file (`pdf_ocr.drop`), the region pictures of a work folder's comment threads
   `annotation_pictures` (JPEG bytes by key, at most 48 MB, the oldest going
   first; drawn again when asked, [annotations.md](annotations.md)) and the
   document text index `text_fts` / `text_fts_docs` (the extracted text of
@@ -584,7 +611,14 @@ All state is SQLite + files on disk under a data directory (env
   bookkeeping on its `text_fts_docs` row (`units`, `ver`, `chars`, what
   `GET /api/metadata/status` reads, `format`, `lines`, `truncated`). The
   index is built on demand (a search or a chat starts the workspace's
-  indexing job), in batches of about 500 units per transaction; the rows
+  indexing job), in batches of about 500 units per transaction. A PDF's
+  text, as the indexer extracts it, records the stamp of the recognized
+  text it was read with (`index_doc`'s `ocr_stamp`, `pdf_ocr.stamp`; not
+  stored in the index), and `store_docs` and
+  `store_doc` store it only while that stamp is still current, checked in
+  each write transaction: a text read before a recognition's apply is
+  skipped, left for the next pass, and never overwrites the run's
+  re-index. The rows
   of documents no block's document names (its `hash`, a duplicated page's
   included) are purged when a page or a document goes
   (`index.purge_unused`), and a replacement drops the one hash it let go
@@ -966,7 +1000,9 @@ track of the ones nothing uses.
   the next.
 - **The purge.** A file whose record and mtime are both older than its
   keep (30 days, or its `upload_retention` row's) is deleted
-  (`storage.delete`). The references are read again under
+  (`storage.delete`); a purged PDF's recognized text (`pdf_ocr`,
+  `pdf_ocr_pages` and `pdf_ocr_auto` in data.db) goes with it after the commit
+  (`pdf_ocr.drop`). The references are read again under
   the workspace's write lock first, so no batch can add one meanwhile, and
   each due file's date with them, one file at a time (`storage.stat`,
   never a listing of the workspace while writers wait; once the purge has

@@ -462,6 +462,10 @@ def test_model_facts_come_from_the_listing_then_models_dev(erin, monkeypatch):
     entry = next(p for p in erin.get("/api/ai/settings").json()["providers"]
                  if p["protocol"] == "chatgpt")
     model = next(m for m in erin.get("/api/ai/models").json()["models"] if m["provider"] == entry["id"])
+    # /api/ai/models warmed the caches in the background (offline here): start afresh.
+    ai_catalog.settle()
+    ai_catalog._listings.clear()
+    ai_catalog._models_dev.update(index=None, prices=None, until=0.0)
     calls = []
     listing = {"models": [{"slug": model["model"], "context_window": 272_000,
                            "supported_reasoning_levels": [{"effort": "low"}, {"effort": "medium"},
@@ -539,6 +543,83 @@ def test_context_window_lookups_keep_the_last_good_answer(monkeypatch):
     ai_catalog._models_dev["until"] = 0.0
     assert ai_catalog._listed_windows("p", conf) == {"llama": 32_768}
     assert ai_catalog._catalog_window("deepseek-chat", conf) == 131_072
+
+
+# --- the caches: stale-while-revalidate -------------------------------------------
+
+DEEPSEEK = {"protocol": "openai", "api_key": "k", "base_url": "https://api.deepseek.com", "name": "DeepSeek"}
+
+
+def _held_listing(monkeypatch, *windows):
+    """The listing answering ``windows`` in turn (one context window of
+    model ``m`` per fetch), each fetch held until ``release`` is set:
+    ``(asked, release)``, ``asked`` the fetches begun."""
+    asked, release = [], threading.Event()
+
+    def listing(req):
+        asked.append(req.full_url)
+        release.wait(10)
+        return {"data": [{"id": "m", "max_model_len": windows[min(len(asked), len(windows)) - 1]}]}
+    monkeypatch.setattr(ai_catalog, "_listings", {})
+    monkeypatch.setattr(ai_catalog, "fetch_json", listing)
+    return asked, release
+
+
+def test_a_stale_listing_is_served_at_once_while_one_refresh_runs(monkeypatch):
+    """A fact past its time is served as it is, however many ask while its
+    refresh runs; one fetch asks again, and its answer serves the next ask."""
+    asked, release = _held_listing(monkeypatch, 1000, 2000)
+    release.set()
+    assert ai_catalog._listed_windows("p", DEEPSEEK) == {"m": 1000}  # never fetched: waited for
+    release.clear()
+    for cached in ai_catalog._listings.values():
+        cached["until"] = 0.0
+    started = time.monotonic()
+    for _ in range(3):  # the refresh is held: each ask still answers at once, from the cache
+        assert ai_catalog._listed_windows("p", DEEPSEEK) == {"m": 1000}
+    assert time.monotonic() - started < 5
+    release.set()
+    ai_catalog.settle()
+    assert ai_catalog._listed_windows("p", DEEPSEEK) == {"m": 2000} and len(asked) == 2
+
+
+def test_callers_at_once_share_the_first_fetch(monkeypatch):
+    """Callers that find nothing cached yet, at the same time, all wait for
+    one fetch and all get its answer."""
+    asked, release = _held_listing(monkeypatch, 1000)
+    waiting, lock, all_in = [], threading.Lock(), threading.Event()
+    wait = ai_catalog._wait
+
+    def counted(done, seconds):
+        with lock:
+            waiting.append(done)
+            if len(waiting) == 3:
+                all_in.set()
+        wait(done, seconds)
+    monkeypatch.setattr(ai_catalog, "_wait", counted)
+    got = []
+    callers = [threading.Thread(target=lambda: got.append(ai_catalog._listed("p", DEEPSEEK, wait=None)["windows"]))
+               for _ in range(3)]
+    for t in callers:
+        t.start()
+    assert all_in.wait(10)  # all three wait on the fetch under way
+    release.set()
+    for t in callers:
+        t.join(10)
+    assert len(asked) == 1 and len(set(map(id, waiting))) == 1 and got == [{"m": 1000}] * 3
+
+
+def test_a_cold_wait_ends_at_its_timeout(monkeypatch):
+    """A caller that may wait for a listing never fetched waits as long as
+    it says and then goes on without it; the fetch it started still lands."""
+    asked, release = _held_listing(monkeypatch, 1000)
+    started = time.monotonic()
+    assert ai_catalog._listed("p", DEEPSEEK, wait=0.2)["windows"] == {}
+    assert 0.2 <= time.monotonic() - started < 5
+    assert ai_catalog._listed("p", DEEPSEEK, wait=0)["windows"] == {}  # a snapshot never waits
+    release.set()
+    ai_catalog.settle()
+    assert ai_catalog._listed("p", DEEPSEEK, wait=0)["windows"] == {"m": 1000} and len(asked) == 1
 
 
 def test_reasoning_efforts_from_an_anthropic_listing_then_models_dev(monkeypatch):

@@ -99,7 +99,11 @@ chaquopy {
     sourceSets {
         getByName("main") {
             srcDir(repo.resolve("backend"))
-            include("gamma/**", "app.py", "gamma_mobile.py")
+            // tessdata/: the text recognition models (docs/dev/android.md
+            // "What runs"). Chaquopy extracts every file of the app's code,
+            // a folder that is no package too, so they land beside gamma/,
+            // where config.tessdata_dir() looks when nothing says otherwise.
+            include("gamma/**", "tessdata/**", "app.py", "gamma_mobile.py")
             exclude("**/__pycache__/**")
         }
     }

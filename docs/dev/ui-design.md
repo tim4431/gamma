@@ -245,7 +245,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `aiKeyInput` | every text/number/password input in dialogs and settings; in a settings row one width, and a list or a pair of fields on a line of its own (`Row wide`, [settings.md](settings.md#settings-primitives)) |
 | `Palette` ([shared/ui/Palette.jsx](../../frontend/src/shared/ui/Palette.jsx)) / `PagePicker` ([library/PagePicker.jsx](../../frontend/src/library/PagePicker.jsx)) | every dialog that picks one thing from a long list by typing: a field near the top of the window, the options in sections under it (↑↓ go round, Enter takes, Esc closes), a line saying what a pick does and the keys, led by the `note` when the list cannot say it (quick open's file search under way, failed, or matching nothing). Quick open (Ctrl+P and the command palette) is one; `PagePicker` is the palette over library pages, with quick open's rows (`PageOption`, a sub-page naming the pages it is in) and its ranking: Move to page, Move into page, the PDF's link dialog. A new page picker is a `PagePicker`, never a list of its own |
 | `switch` / `switchTrack` | every on/off toggle |
-| `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`; a glyph for the choice goes in its options (`[value, label, Icon]`), never in `display`; an option's fourth element is its row's `trailing` hint after the label (the chat picker's muted "offline", amber "not ready") and its fifth the row's title, the row still pickable; `locked`, a sentence, shows the choice and takes none, the sentence each row's title (the composer's folder chip once the conversation has a turn); `actions` end the menu after a rule as plain rows (the folder chip's *Add folder…*); `start` opens it from the trigger's left edge, for a trigger at a bar's start; `ghost` draws the trigger frameless for a choice inside a line of text. No native `<select>` anywhere |
+| `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`; a glyph for the choice goes in its options (`[value, label, Icon]`), never in `display`; an option's fourth element is its row's `trailing` hint after the label (the chat picker's muted "offline", amber "not ready") and its fifth the row's title, the row still pickable; `locked`, a sentence, shows the choice and takes none, the sentence each row's title (the composer's folder chip once the conversation has a turn); `actions` end the menu after a rule as plain rows (the folder chip's *Add folder…*); `start` opens it from the trigger's left edge, for a trigger at a bar's start; `ghost` draws the trigger frameless for a choice inside a line of text; `listbox(at)` opens a listbox of the caller's at the menu's place instead of the checkmarked rows (the trigger then says `aria-haspopup="listbox"`): `TaskModelMenu` opens the model menu through it, a search box over a `ModelMenuList` whose star is a `ctlBtn` sized to `--ctl-icon-btn-xs` ([ai.md](ai.md#the-model-menu)). A choice no longer available turns the trigger amber (`--warn`), as a task row's missing model does (`.aiTaskMissing .uiSelectBtn`). No native `<select>` anywhere |
 | `useMenuTrigger` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | the menus a toolbar's buttons open on the press, one at a time per toolbar: the recording player's mode and speed, the tool strip's More, Tool and Style, the selection menu's Style and Convert, a dock window header's actions and its "⋯" ([below](#menus-and-submenus), [Dock windows](#dock-windows)) |
 | `MenuItem` / `MenuLabel` / `MenuDivider` / `SubMenuItem` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every row inside a menu, context or popover: icon column + ellipsizing label (+ `danger`, `trailing`, `keys`); `MenuDivider` between groups. `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded; a popover menu hosts one through `MenuScope` |
 | `categoryTag`, `uiTag` | chips and small badges |
@@ -329,7 +329,10 @@ is `uiClose` with an `XIcon` inside (14, inline with the title it closes;
 16 in `uiCloseLg`), never a text ×. The conventions ratchet
 ([Ratchets](#ratchets)) counts a size off this scale, a `strokeWidth` on a
 sized icon and a text ×, on any `…Icon` component and on a glyph picked into
-a plain `Icon` (`const Icon = agentKindIcon(kind)`). A synced folder's file
+a plain `Icon` (`const Icon = agentKindIcon(kind)`). The one exception to
+the stroke set is an AI provider's logo (`ai/ProviderLogo.jsx`), the
+brand's own filled mark at these sizes, its colours lifted on a dark
+scheme ([ai.md](ai.md#other-services)). A synced folder's file
 and directory icons are drawn in the same stroke, a mark per kind on the
 file sheet or the folder ([File icons](#file-icons)).
 
@@ -370,10 +373,11 @@ that list and keeps only its layout in its own rule. The kind label on a card
   into it, ← closes it or moves to its parent, Enter opens a file or opens
   and closes a folder, Space selects, Shift+F10 or the menu key opens the
   row's menu at the row. Chords with Alt, Ctrl or ⌘ pass through (Alt+←
-  is Back). The trees are the Files window's (`explorer/FileTree.jsx`)
-  and a synced folder's folder view (`explorer/FolderTree.jsx`), both with
-  the keys and the focus of `explorer/useTree.js` (`fileTree.js`
-  `keyAction`) ([Trees](#trees)); a new tree takes the same. No typeahead
+  is Back). The trees are the Files window's (`explorer/FileTree.jsx`),
+  a synced folder's folder view (`explorer/FolderTree.jsx`) and the folder
+  browser (`explorer/FolderBrowser.jsx`), all with the keys and the focus
+  of `explorer/useTree.js` (`fileTree.js` `keyAction`) ([Trees](#trees));
+  a new tree takes the same. No typeahead
   yet.
 - **Fields** show focus as the accent border plus a 3 px `--accent-bg` halo,
   on click and keyboard alike. The field list is next to the ring rule. A
@@ -1177,7 +1181,9 @@ reading `pointerType`, `matchMedia` or `navigator` itself:
   Return is then a line break's only key, and Tab and the Ctrl chords are
   missing. The editing bar ([ipad.md](ipad.md#the-editing-bar)), the
   chat's Return key ([ai.md](ai.md#the-composer)), and a field whose `autoFocus` would
-  raise a keyboard read it.
+  raise a keyboard read it. So does a new highlight's note (App's
+  `addHighlight`): it opens for typing under a mouse, and under a finger
+  or a pen it waits for a tap on its row.
 - **`touchScreen()`**: the device has a touch screen at all
   (`maxTouchPoints`), whatever is in use right now. The area-note toggle
   in the viewer's zoom column and the refusal of Safari's gesture events
@@ -1902,10 +1908,11 @@ The copies drop the ids the app and the tests find these items by
 A tree of folders and files draws every row with one component,
 `explorer/TreeRow.jsx` (its styles `explorer/tree.css`), and takes its keys
 and focus from `explorer/useTree.js` ([Keyboard focus](#keyboard-focus)).
-There are two: the Files window's (`FileTree.jsx`) and a synced folder's
+There are three: the Files window's (`FileTree.jsx`), a synced folder's
 folder view (`FolderTree.jsx`, [work_folders.md](work_folders.md) "The
 folder view"), which stands in the listing's place for a work folder's
-directory whatever the library's view.
+directory whatever the library's view, and the folder browser
+(`FolderBrowser.jsx`, below), which chooses a folder of a store.
 
 - **A row** (`.fileTreeRow`, a `treeitem`): indented by its `--level` (14
   px a level), a guide line down the middle of each folder's chevron above
@@ -1943,6 +1950,31 @@ directory whatever the library's view.
   wraps on its line, the cells (`.folderTreeCells`, `display: contents`
   beside the header) go on a muted line under it, the header goes, and a
   file's chevron slot keeps 24 px (a folder's 44).
+
+- **The folder browser** (`.folderBrowser`, `explorer/FolderBrowser.jsx`,
+  its rows `folderBrowser.js` `browserRows`) chooses a folder of anything
+  listed a level at a time, handed in as a `source` ({name, icon, list,
+  create?}, the listing gamma/backup_store.py's `listing`): Settings →
+  Backups uses it for the Google Drive folder (in the Edit dialog) and the
+  bucket's prefix (`FolderBrowserDialog`, from Browse… beside the field,
+  [settings.md](settings.md)). A bar over a framed tree: the folder chosen
+  as `crumbBtn` crumbs from the top in a `nav` (each choosing its folder),
+  New folder and Refresh (`ctlBtn`). A press on a folder chooses and opens
+  it, on the folder chosen opens or closes it; the keys are the trees'
+  (Enter and the arrows open and close, Space chooses); each folder is
+  read the first time it opens (Reading…, then a failed read's reason
+  with Try again, empty, or that one page of more was shown). Files are
+  muted rows with their size and date, never chosen; rows have no "⋯".
+  New folder puts a name field (the folder view's rename field,
+  `fileRowRename`) among the folders of the one chosen: Enter or leaving
+  it makes the folder where the source makes folders (`create`, the path
+  it answers chosen, unless another folder was chosen meanwhile; the
+  form's Save waits for it, `onBusy`), else draws it until something is
+  saved in it, as it draws a folder of the path chosen that is not there:
+  tagged `new`, "Not made yet" under it. Only a "/" is refused before the
+  store sees a name; the store's refusal is a `FormNotice` under the tree,
+  the field keeping its text. Escape drops the field. A dialog holding
+  one is `.folderBrowserDialog`, wider than a form's.
 
 ### File icons
 
@@ -2218,7 +2250,7 @@ page's notes refuse what the single-block action refuses
 | `chat/AgentChip.jsx`, `chat/agents.js`, `chat/useLocalAgents.js` | the composer's agent chip, one `MenuSelect` for every agent (the agents, each with its hint while it cannot answer — "offline", "not ready" — then the one picked's models and efforts), reading "Codex on TIM-PC · GPT-5.5 · high" (`.chatModelAgent`, then `.chatModelText`, which ellipsizes first) while there are several, the model alone with Gamma AI alone; the one agent list it, the comment field and Settings read (pure: Gamma AI, then this computer's agents the account turned on, or the agent of the computer that keeps the page's synced folder); and the per-window store of `GET /api/local-agents` ([ai.md](ai.md)) |
 | `chat/computer/ComputerStrip.jsx` | a computer agent's strip under the chat's header: a plain line (`stripLine`: the agent and where it works, kept while a turn runs, whose progress is the pill's; a spinner while it is checked, a shield while it waits for an answer, amber while it cannot run, is away or paused), Continue in a terminal and Show in Explorer ([local_agents.md](local_agents.md)) |
 | `chat/computer/PlaceChip.jsx`, `chat/computer/usedDirs.js` | the folder chip at the start of a computer agent's composer bar: a borderless `MenuSelect` (`.chatPlaceChip`, styled with `.chatModelChip` and giving way first) opening up from its left edge (`start`), the folder glyph and the directory's name (`names`: shown as it is), its menu *Works in* (Its own directory, then the offered directories, the ones used last first), *Add folder…* after a rule in the desktop app, its rows `locked` once the conversation has a turn; and this browser's record of the directories conversations began in ([local_agents.md](local_agents.md)) |
-| `settings/SettingsAgents.jsx` | Settings → AI → Agents (pane id `agents`, `BotIcon`, the AI group's first): Gamma AI's row with a jump to Connections, a `FormNotice` pointing at Integrations, this computer's agents with their `Toggle` and each one's rows nested under it (`.setSubRows`: what it may run, a `Segmented`, and its people), the Directories section with *Offer a directory…* on its rule, read-only outside the desktop app, the servers it answers with *Add a server…* on theirs, and the account's other computers read-only, each one's state a `uiTag` in its title ([settings.md](settings.md)) |
+| `settings/SettingsAgents.jsx` | Settings → AI → Local agents (pane id `agents`, `BotIcon`, the AI group's first, in the rail only where a section of it would show: `chat/agents.js` `showsLocalAgents`): this computer's agents with their `Toggle` and each one's rows nested under it (`.setSubRows`: what it may run, a `Segmented`, and its people), the Directories section with *Offer a directory…* on its rule, read-only outside the desktop app, the servers it answers with *Add a server…* on theirs, and the account's other computers read-only, each one's state a `uiTag` in its title ([settings.md](settings.md)) |
 | `chat/ChatTranscript.jsx` | the chat's one transcript, whichever agent the conversation is with: the rows of Gamma AI's messages and of a computer agent's mapped into their shape (`chat/computer/computerChat.js` `shownMessages`), the steps pill (`AgentSteps`), the cards a reply waits on, its changes, its error card and its foot; what a row offers comes from the handlers passed, never a second set of rows for another agent ([ai.md](ai.md#a-computers-agent-in-the-chat)) |
 | `chat/ChatQueue.jsx` | the queue above the composer, a `--bg-field` card the composer's box overlaps, the composer's own colour: one `.chatQueueRow` a queued message, its grip (the queued glyph, the ⋮⋮ grip where a pointer is over the row; `useDragOrder` "handle"), its first picture, its text on one line (an `AutoGrowTextarea` in its place while edited), Steer or Send as a `uiBtn ghost sm`, Delete and ⋯ as `ctlBtn`s (the ⋯ a `useMenuTrigger` menu above), a spinner and "Steering…" while the reply takes it in; a "Steered" line in the user's bubble where the reply took one ([ai.md](ai.md#queue-and-steer)) |
 | `chat/StepsPill.jsx` | a turn's steps pill, worded by its caller (ChatTranscript's `AgentSteps`, for Gamma AI's replies and a computer agent's turns alike): `MorphText` label, spinner and `.shimmerText` while live, a shield while it waits for the person, a clock and still words while a computer agent's turn is queued, a check and the failed / not allowed counts once done, the steps under a `Collapse`, the whole in the `chatStepsFold` fold ([Things that change in place](#things-that-change-in-place)) |

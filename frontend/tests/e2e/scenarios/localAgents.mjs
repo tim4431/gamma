@@ -15,7 +15,8 @@ import { TOURS } from "../../../src/guide/tours/index.js";
 // backend/tests/fake_agents/ in place of the CLIs, so no real agent ever
 // runs: the SyncTeX sample paper as a work folder with its .tex sources
 // tracked, Codex turned on for the computer by
-// the vault's maker; a passage of main.tex and one of a library PDF
+// the vault's maker and listed on in Settings → AI → Local agents, which the
+// rail offers on this server; a passage of main.tex and one of a library PDF
 // commented with Send to Codex ticked, each a turn of its thread answered
 // there under Codex's name, the .tex edited and shown so, a question of
 // Codex's own opened as a thread, the threads named in open.md on disk; a
@@ -301,6 +302,28 @@ export async function localAgentScenarios(env) {
       const listed = (await user.api("/api/folder-links")).links.find((l) => l.id === link.id);
       assertEq(listed.agent?.name, "codex", "the listing carries the agent that works in the vault");
       assertEq(listed.agent.running, null, "nothing running");
+    });
+
+    // Settings → AI → Local agents (SettingsAgents.jsx) on the server that
+    // runs this computer's agents (GET /api/local-agents says `here`): the
+    // rail offers it first in the AI group, in a plain browser too, whose
+    // rows say to change them in Gamma on this computer.
+    await step("local-agents: Settings offers Local agents first in the AI group on this computer's server, and a browser lists Codex on, to change in Gamma on this computer", async () => {
+      const ctx = await user.context(browser);
+      const page = await openPage(ctx, `${server.base}/?settings=appearance`);
+      try {
+        const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+        const rail = dialog.getByRole("navigation", { name: "Settings categories" });
+        const pane = rail.getByRole("button", { name: "Local agents", exact: true });
+        await pane.waitFor();
+        const panes = await rail.locator(".settingsNavBtn").allInnerTexts();
+        assertEq(panes[panes.indexOf("Local agents") + 1], "Models", "first in the AI group, before Models");
+        await pane.click();
+        await dialog.locator('.setSection[data-setting^="This computer"]').waitFor();
+        assertEq(await dialog.getByRole("checkbox", { name: "Codex", exact: true }).isChecked(), true, "Codex is on");
+        await dialog.getByText(/^Change these in Gamma on /).first().waitFor();
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
     });
 
     // Step 3.5: a reply ticked by its @codex.

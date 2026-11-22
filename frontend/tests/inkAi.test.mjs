@@ -428,7 +428,7 @@ const ndjson = (...lines) => new Response(lines.map((l) => JSON.stringify(l) + "
 test("askInkAi: posts the body, skips the pings, resolves with the final line", async (t) => {
   let reply = () => ndjson({ ping: 1 }, { ping: 1 }, { shapes: [{ kind: "rect", params: RECT, strokes: [0] }] });
   const { askInkAi, asked } = await client(t, () => reply());
-  const body = { model: "p1:m", space: { kind: "pdf-page", page: 1, width: 612, height: 792 }, strokes: [pen("a")] };
+  const body = { space: { kind: "pdf-page", page: 1, width: 612, height: 792 }, strokes: [pen("a")] };
   const signal = new AbortController().signal;
   assert.deepEqual(await askInkAi("shapes", body, signal), { shapes: [{ kind: "rect", params: RECT, strokes: [0] }] });
   const [{ url, init }] = asked;

@@ -58,7 +58,7 @@ from ..markdown_import import TooManyBlocks
 from ..net_guard import browsing_session
 from ..ops import after_commit, apply_ops, ensure_filing
 from ..server_settings import can_store
-from .. import pdf_meta, storage, upload_gc
+from .. import ocr_auto, pdf_meta, storage, upload_gc
 from ..storage import put_upload, url_filename
 from ..web_clip import MAX_HTML_CHARS, article_blocks
 from ..work_folders.filing import refusal_text
@@ -518,8 +518,10 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
         block = _file_page(conn, ws, actor, block, folder, labels, _remembered(block, web_meta, web_url))
         result = _result(conn, block, existed=existed, note=note)
 
-    # 4. Metadata, off the request.
+    # 4. Metadata, off the request; a new page's scan with no text recognized by itself (gamma/ocr_auto.py).
     _maybe_start_metadata(ws, actor, payload, block)
+    if not existed:
+        ocr_auto.consider(ws, doc_id, block["id"], actor)
     return result
 
 

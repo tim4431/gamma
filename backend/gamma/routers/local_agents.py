@@ -76,7 +76,7 @@ NOT_HERE = "no such page or folder of yours with an agent on this computer"
 FAR_ASKS = "This is answered on the computer that runs the agent."   # runner.FAR_ASKS
 FAR_ONCE = "A turn on another computer is allowed once at most."
 NO_AGENTS = "Agents run on the desktop app's own server."
-NONE_ON = "Turn on Codex or Claude Code in Settings → AI → Agents first."
+NONE_ON = "Turn on Codex or Claude Code in Settings → AI → Local agents first."
 LENT_FOLDER = "{agent} works for you only on the files of a synced folder."   # threads.start's ``folder``
 
 FRESH_EVERY_S = 10   # a re-probe asked for runs at most this often on this server; else the kept answers
@@ -849,7 +849,7 @@ def start_turn(body: TurnBody, request: Request):
     named = _named(body.agent)[0]
     row = _agent_of(user_id, named, ws)
     if row is None:
-        raise HTTPException(status_code=409, detail=f"Turn on {catalog.label(named)} in Settings → AI → Agents first."
+        raise HTTPException(status_code=409, detail=f"Turn on {catalog.label(named)} in Settings → AI → Local agents first."
                             if named in catalog.AGENTS else NONE_ON)
     name, label = row["agent"], catalog.label(row["agent"])
     if row["set_by"] != user_id and place["kind"] != "vault":
@@ -1161,7 +1161,7 @@ def terminal(request: Request, bucket: str = ""):
         raise HTTPException(status_code=404, detail="This conversation has no session to continue.")
     name, label = conversation["agent"], catalog.label(conversation["agent"])
     if not store.owns(user_id, name):
-        raise HTTPException(status_code=409, detail=f"Turn on {label} in Settings → AI → Agents first.")
+        raise HTTPException(status_code=409, detail=f"Turn on {label} in Settings → AI → Local agents first.")
     if chats.busy(conversation) is not None:
         raise HTTPException(status_code=409, detail=f"{label} is still working: stop it first.")
     cwd = _cwd(ws, place, conversation)

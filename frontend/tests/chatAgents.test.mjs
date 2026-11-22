@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   GAMMA, agentChoice, agentKind, agentPeople, asksNewChat, chatAgents, computerAgents, farAgents, gammaAgent, localAgent, madeBy,
-  commentAgents, newChatQuestion, pickAgent, stampLabel,
+  commentAgents, newChatQuestion, pickAgent, showsLocalAgents, stampLabel,
 } from "../src/chat/agents.js";
 import { blockAgent } from "../src/shared/model/blockModel.js";
 import { readAccountComputers } from "../src/vault/vaultState.js";
@@ -55,6 +55,17 @@ test("another computer's agents, as it announced them: those found, by their cod
   const away = computerAgents(pc({ online: false, since: "2026-11-13T14:02:00Z" }))[0];
   assert.deepEqual([away.ready, away.problem, away.since], [null, "", "2026-11-13T14:02:00Z"], "offline: nothing known of it");
   assert.deepEqual(computerAgents({ name: "X" }), []);
+});
+
+test("Settings offers Local agents only with a section to show; while a read is out, only a yes is known", () => {
+  const elsewhere = { here: false, computer: "", agents: [], dirs: [] };
+  const none = { computers: [] };
+  assert.equal(showsLocalAgents(listing(), undefined), true, "this computer's section, though it found no agent, before the computers are read");
+  assert.equal(showsLocalAgents(undefined, { computers: [pc()] }), true, "a computer shown to the server, before the listing is read");
+  assert.equal(showsLocalAgents(elsewhere, undefined), null, "nothing yet, the computers still out");
+  assert.equal(showsLocalAgents(undefined, none), null, "nothing yet, the listing still out");
+  assert.equal(showsLocalAgents(elsewhere, none), false, "a server that runs no agents, and no computer shown to it");
+  assert.equal(showsLocalAgents(null, null), false, "reads that failed show nothing");
 });
 
 test("the page's computers' agents: each agent on of each computer, a work folder's keeper's with its folder", () => {

@@ -2,10 +2,11 @@
 # prepared (ipad/scripts/build-python.sh), the Xcode project generated, the
 # unit tests on an iPad simulator, and an unsigned device build. No signing,
 # no upload: running on a device takes a developer's own team. The app
-# carries the backend and the built web app, so a change to the server's
-# dependencies, its mobile pins (backend/requirements-mobile.txt, shared
-# with Android) or its mobile entry (backend/gamma_mobile.py) starts this
-# workflow too; the code itself is the one the
+# carries the backend, the text recognition models (backend/tessdata/) and
+# the built web app, so a change to the server's dependencies, its mobile
+# pins (backend/requirements-mobile.txt, shared with Android), the models
+# or its mobile entry (backend/gamma_mobile.py) starts this workflow too;
+# the code itself is the one the
 # other checks test. The two ink fixtures the Swift ports are held to
 # (tests/shared/inkwidth.json, inkhold.json) start it as well, and so do
 # the desktop app's chrome pages (desktop/ui/), which the app carries as
@@ -20,6 +21,7 @@ on:
       - "ipad/**"
       - "backend/gamma_mobile.py"
       - "backend/requirements-mobile.txt"
+      - "backend/tessdata/**"
       - "tests/shared/inkwidth.json"
       - "tests/shared/inkhold.json"
       - "desktop/ui/**"

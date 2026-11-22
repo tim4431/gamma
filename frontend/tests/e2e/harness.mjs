@@ -110,14 +110,17 @@ export function sweepRuns() {
 // scenarios/https.mjs); a scenario may change it between two starts.
 // The server options a test server starts with (gamma/server_options.py,
 // set by manage.py set-option before it starts): nothing goes out to the
-// paper registries or models.dev. A scenario's `options` add to them.
+// paper registries or models.dev (OFFLINE), and no scan an upload stores is
+// recognized by itself (gamma/ocr_auto.py; scenarios/scanLayer.mjs turns it
+// on for its automatic steps). A scenario's `options` add to them.
 const OFFLINE = { metadata_lookup: "off", model_catalog: "off" };
+const NO_AUTO_OCR = { ocr_auto: "off" };
 
 export class Server {
   constructor({ env = {}, options = {}, static: serveApp = true, tls = null } = {}) {
     servers.push(this);
     this.env = env;
-    this.options = { ...OFFLINE, ...options };
+    this.options = { ...OFFLINE, ...NO_AUTO_OCR, ...options };
     this.serveApp = serveApp;
     this.tls = tls;
     this.agent = null;
@@ -443,10 +446,22 @@ export async function settingsPane(page, name) {
 // context or page before loading, and fake /api/ai/chat themselves. The slide
 // citation a page with metadata asks for by itself once AI looks connected
 // gets an empty answer, since no provider is there to write it.
-export const FAKE_AI_MODELS = {
-  enabled: true, default: "demo:model", efforts: ["low", "medium", "high"],
-  models: [{ id: "demo:model", provider: "demo", provider_name: "Demo", model: "model" }],
-};
+// aiModelsAnswer(models, picks) is GET /api/ai/models' answer for `models`:
+// each task's model as gamma/ai_settings.resolve_roles resolves it, a pick
+// in `picks` ({role: id}) when offered, else the chat model, the chat's
+// own the first model; no favorites.
+export function aiModelsAnswer(models, picks = {}) {
+  const offered = (id) => models.some((m) => m.id === id);
+  const role = (pick, fallback) => (!pick ? { pick: "", model: fallback, state: "follows" }
+    : offered(pick) ? { pick, model: pick, state: "ok" } : { pick, model: fallback, state: "missing" });
+  const chat = role(picks.chat, models[0]?.id || "");
+  const roles = { chat, ...Object.fromEntries(["metadata", "translate", "ink"].map((r) => [r, role(picks[r], chat.model)])) };
+  return { enabled: models.length > 0, default: chat.model, efforts: ["low", "medium", "high"], models, roles,
+    favorites: [], chat_migrated: false };
+}
+export const FAKE_AI_MODELS = aiModelsAnswer([
+  { id: "demo:model", provider: "demo", provider_name: "Demo", model: "model", billing: "api" },
+]);
 export async function fakeAiModels(target, models = FAKE_AI_MODELS) {
   await target.route("**/api/ai/models*", (route) => route.fulfill({ json: models }));
   await target.route("**/api/metadata/cite", (route) => route.fulfill({ json: { citation: "" } }));
