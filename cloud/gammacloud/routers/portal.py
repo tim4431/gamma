@@ -89,7 +89,11 @@ def plan(request: Request, checkout: str = "", returned: str = Query("", alias="
     finished portal flow. Unlike ``_app_page`` it needs only the account
     and ``billing.summary``; it renders the stored copy and never calls
     Stripe (its script's ``GET /api/billing/me`` refreshes a stale row and
-    ``GET /api/billing/details`` reads the invoices)."""
+    ``GET /api/billing/details`` reads the invoices). A browser a native
+    app opened (``pages.in_app``) goes to the Overview instead: the page
+    leads to Stripe, which a store's app may not send its people to."""
+    if pages.in_app():
+        return RedirectResponse("/", status_code=302)
     with closing(db.connect()) as conn:
         account = sessions.resolve(conn, request)
         if not account:

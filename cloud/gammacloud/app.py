@@ -126,18 +126,22 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def native_app(request: Request, call_next):
-        """Whether the pages render for a browser a native app opened for its
-        sign-in (``pages.in_app``): ``/authorize`` by the Gamma server's
-        ``gamma_app=1``, which it keeps in the ``gc_app`` cookie (or clears,
-        for a sign-in no app started), every other page by that cookie."""
+        """Whether the pages render for a browser a native app opened
+        (``pages.in_app``): a request that carries ``gamma_app=1`` (the Gamma
+        server's authorize URL for a sign-in the app started; the app's
+        Visit console, ``/?gamma_app=1``), which the ``gc_app`` cookie keeps
+        for the pages after it, and every other page by that cookie.
+        ``/authorize`` goes by its URL alone and clears the cookie for a
+        sign-in no app started."""
         authorize = request.url.path == "/authorize"
-        flag = (request.query_params.get(pages.APP_PARAM) if authorize else request.cookies.get(pages.APP_COOKIE)) == "1"
+        marked = request.query_params.get(pages.APP_PARAM) == "1"
+        flag = marked or (not authorize and request.cookies.get(pages.APP_COOKIE) == "1")
         mark = pages.IN_APP.set(flag)
         try:
             response = await call_next(request)
         finally:
             pages.IN_APP.reset(mark)
-        if authorize and flag:
+        if marked:
             sessions.set_cookie(response, "1", name=pages.APP_COOKIE, max_age=config.APP_BROWSER_TTL)
         elif authorize and pages.APP_COOKIE in request.cookies:
             response.delete_cookie(pages.APP_COOKIE, path="/")

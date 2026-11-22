@@ -14,19 +14,24 @@ script: ``json.dumps`` alone leaves ``</script>`` in a string to close the
 block, so ``_js`` writes ``<``, ``>`` and ``&`` as escapes (a reset link's
 token reaches ``reset_confirm_page``'s script this way).
 
-A browser a native app opened for its sign-in (``in_app``) gets the auth
-pages without a link to where a plan is bought: Google Play's Payments
-policy and the App Store's bar an app from leading to a payment outside
-their own billing, and gammapdf.com (its pricing) and the account's own
-pages (Plan & billing) are one click from a link there. The Gamma server
-marks the authorize URL of a sign-in the app started (``APP_PARAM``),
-``/authorize`` keeps the mark in a cookie (``APP_COOKIE``, ``app.py``'s
-``native_app``) for the pages after it, sign-up and a forgotten password
-included, and those pages show the brand without its links, send a new
-account back to the sign-in rather than to the Overview, and drop their
-links to the Overview, Devices, the plans and the download page. Their
-terms and privacy policy line (``_terms``) still links to gammapdf.com,
-whose header links its pricing, as the app's own link to the policy does.
+A browser a native app opened (``in_app``) gets the pages without a link
+to where a plan is bought: Google Play's Payments policy and the App
+Store's bar an app from leading to a payment outside their own billing,
+and gammapdf.com (its pricing) and the Plan & billing page are one click
+from a link there. The app marks the address it opens (``APP_PARAM``): the
+Gamma server's authorize URL of a sign-in the app started, and the app's
+Visit console (``/?gamma_app=1``). A cookie (``APP_COOKIE``, ``app.py``'s
+``native_app``) keeps the mark for the pages after it, sign-up and a
+forgotten password included. The auth pages show the brand without its
+links, send a new account back to the sign-in rather than to the Overview,
+and drop their links to the Overview, Devices, the plans and the download
+page. The account's own pages (the app shell) drop Plan & billing, the
+plan buttons and the links to gammapdf.com, and the Plan page itself
+sends that browser to the Overview (``routers/portal.py``), so a link
+from anywhere else, a Gamma server's Manage plan among them, ends there
+too. The terms and privacy policy line (``_terms``) still links to
+gammapdf.com, whose header links its pricing, as the app's own link to
+the policy does.
 """
 
 import contextvars
@@ -309,16 +314,18 @@ def auth(title: str, lead: str, inner: str, script: str = "") -> str:
 
 def app(title: str, lead: str, account: dict, active: str, inner: str, script: str = "", head: str = "") -> str:
     """The signed-in shell. ``head`` replaces the default title + lead block
-    (the Overview's greeting)."""
+    (the Overview's greeting). A native app's browser (``in_app``) gets no
+    Plan & billing and no links to gammapdf.com."""
     def item(key, href, label):
         return f"<a class='item {'on' if key == active else ''}' href='{href}'>{ICONS[key]}{label}</a>"
-    nav = (item("home", "/", "Overview") + item("plan", "/plan", "Plan &amp; billing") + item("devices", "/devices", "Devices")
-           + item("settings", "/settings", "Settings"))
+    nav = (item("home", "/", "Overview") + ("" if in_app() else item("plan", "/plan", "Plan &amp; billing"))
+           + item("devices", "/devices", "Devices") + item("settings", "/settings", "Settings"))
     if account["is_admin"]:
         nav += "<div class=label>Server</div>" + item("admin", "/admin", "Admin")
-    nav += ("<div class='label gl'>Gamma</div>"
-            f"<a class='item gl' href='{SITE}/download'>{ICONS['download']}Download the app{ICONS['ext']}</a>"
-            f"<a class='item gl' href='{SITE}/docs'>{ICONS['docs']}Docs{ICONS['ext']}</a>")
+    if not in_app():
+        nav += ("<div class='label gl'>Gamma</div>"
+                f"<a class='item gl' href='{SITE}/download'>{ICONS['download']}Download the app{ICONS['ext']}</a>"
+                f"<a class='item gl' href='{SITE}/docs'>{ICONS['docs']}Docs{ICONS['ext']}</a>")
     name = account.get("display_name") or account["username"]
     side = (f"<aside class=side><a class=brand href='/'>{LOGO}<span class=bw>Gamma<em>Cloud</em></span></a>{nav}<div class=grow></div>"
             f"<button class=item id=signout>{ICONS['out']}Sign out</button>"
@@ -685,12 +692,13 @@ def overview_page(account: dict, devices: list[dict], entries: list[dict], summa
                else f"We sent a link to {esc(account['email'])}.", "<button class='btn btn--sm' data-resend>Resend</button>")
         + step(signed_in, "Sign in from the Gamma app", "Done." if signed_in
                else "Install the desktop app and choose <b>Sign in with Gamma Cloud</b>.",
-               f"<a class='btn btn--primary btn--sm' href='{SITE}/download'>Download</a>")
+               "" if in_app() else f"<a class='btn btn--primary btn--sm' href='{SITE}/download'>Download</a>")
         + "</ul></section>")
 
+    get_app = "" if in_app() else f"<div class=actions><a class='btn btn--sm' href='{SITE}/download'>Get the desktop app</a></div>"
     recent = "".join(_server_row(e, False) for e in entries[:5]) or (
         f"<div class=blank>{ICONS['server']}{'No Gamma server is signed in right now.' if signed_in else 'Nothing has signed in with this account yet.'}"
-        f"<div class=actions><a class='btn btn--sm' href='{SITE}/download'>Get the desktop app</a></div></div>")
+        f"{get_app}</div>")
     more = f"<a href='/devices'>Manage{f' all {len(entries)}' if len(entries) > 5 else ''}</a>"
     signins = f"<section class=section><h2>Gamma servers <span>{more}</span></h2><div class=list>{recent}</div></section>"
     plan = pages_billing.overview_plan(account, summary)

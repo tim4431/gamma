@@ -71,8 +71,8 @@ export async function publishScenarios(env) {
       const syncRow = page.locator('.setRow[data-setting="Settings sync"]');
       await until(() => syncRow.locator(".settingDesc").textContent().then((t) => t.startsWith("Synced with Gamma Cloud")),
         { timeout: 15000, what: "the settings sync row under the link row" });
-      const open = row.getByRole("link", { name: "Open account", exact: true });
-      assertEq((await open.getAttribute("href") || "").replace(/\/$/, ""), cloud.issuer.replace(/\/$/, ""), "Open account goes to the portal");
+      const open = row.getByRole("link", { name: "Visit console", exact: true });
+      assertEq((await open.getAttribute("href") || "").replace(/\/$/, ""), cloud.issuer.replace(/\/$/, ""), "Visit console goes to the portal");
       assertEq(await open.getAttribute("target"), "_blank", "the portal opens in a new tab");
       await page.keyboard.press("Escape");
       assertNoProblems(page);

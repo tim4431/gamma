@@ -1177,11 +1177,14 @@ At the bottom of the rail:
   [onboarding.md](onboarding.md)). Then **Tracing** (browser tracing) and
   **Logs** (the browser session log).
 
-Inside the iPad and Android apps (a native host), the Account pane leaves
-out the Gamma Cloud row's *Open account*, whose page leads to the plan's
-checkout, which a store's app may not link to, and shows a *Delete Gamma
-Cloud account* row linking gammapdf.com/delete-account (`DELETE_ACCOUNT.md`),
-linked account or not ([android.md](android.md) "Publishing on Google Play").
+The Gamma Cloud row's *Visit console* opens the account server's own
+pages in a browser, once the account is linked. Inside the iPad and Android
+apps (a native host) it shows linked account or not, as the in-app way to
+delete a Gamma Cloud account, and opens `/?gamma_app=1`, which the account
+server shows without *Plan & billing* or any other link to a plan's
+checkout, which a store's app may not lead to ([android.md](android.md)
+"Publishing on Google Play", [cloud_accounts.md](cloud_accounts.md) "From a
+native app").
 
 **Shared AI provider** (Server, `SettingsAi.jsx` `SharedAiProviderSettings`)
 lists the server's shared connections with the same rows and the same

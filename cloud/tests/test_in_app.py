@@ -1,9 +1,11 @@
-"""A sign-in a native app started (pages.in_app): the Gamma server's
-authorize URL carries ``gamma_app=1``, ``/authorize`` keeps it in the
-``gc_app`` cookie, and the auth pages after it drop their links to where
-a plan is bought — no top bar to gammapdf.com and the Overview, a new
-account sent back to the sign-in, no Devices, plans or download links —
-all but the terms' and the privacy policy's, which are still open."""
+"""A browser a native app opened (pages.in_app): the Gamma server's
+authorize URL of a sign-in the app started, or the app's Visit console,
+carries ``gamma_app=1``, which the ``gc_app`` cookie keeps, and the pages
+after it drop their links to where a plan is bought — no top bar to
+gammapdf.com and the Overview, a new account sent back to the sign-in, no
+Devices, plans or download links, a console without Plan & billing whose
+Plan page sends it to the Overview — all but the terms' and the privacy
+policy's, which are still open."""
 
 import re
 from urllib.parse import urlencode
@@ -67,7 +69,7 @@ def test_the_apps_sign_in_and_sign_up_pages_drop_their_portal_links(client):
     r = client.post("/api/register", json={"email": "alice@example.org", "username": "alice",
                                            "password": "correct horse battery", "invite": invite(), "next": back})
     assert r.status_code == 201 and r.json()["redirect"] == back
-    assert "href='/plan'" in client.get("/").text, "the account's own pages are not the sign-in's"
+    assert "href='/plan'" not in client.get("/").text, "the account's own pages in that browser offer no plan either"
     page = client.get(back).text
     assert "confirmed yet" in page and HOME_LINK not in page and "Your account" not in page
     # its resend sends the new link back to the sign-in too, whose page has no Overview link
@@ -124,3 +126,33 @@ def test_a_new_account_whose_mail_failed_still_comes_back_to_the_sign_in(client,
     client.cookies.clear()
     r = client.post("/api/register", json={**body, "email": "bob@example.org", "username": "bob", "invite": invite()})
     assert r.json()["redirect"] == "/?mail=failed"
+
+
+def test_the_apps_visit_console_shows_the_account_without_its_plan(client):
+    signed_up(client, plan="free")   # the free plan's card offers a plan and self-hosting
+    outside = client.get("/").text
+    assert "href='/plan'" in outside and f"{pages.SITE}/download" in outside, "a browser of its own sees the plan"
+    r = client.get("/?gamma_app=1")
+    assert r.status_code == 200 and r.cookies.get(pages.APP_COOKIE) == "1"
+    assert f"Max-Age={config.APP_BROWSER_TTL}" in r.headers["set-cookie"]
+    # the pages after it, by the cookie: no Plan & billing, no plan buttons, nothing on gammapdf.com
+    for path in ("/", "/devices", "/settings"):
+        page = client.get(path).text
+        assert "href='/plan'" not in page and "Plan &amp; billing" not in page and not site_links(page), path
+    assert "Delete my account" in client.get("/settings").text, "deleting the account is a click away"
+    # the Plan page, reached from anywhere, is the Overview
+    r = client.get("/plan", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "/"
+    assert client.get("/plan?checkout=success", follow_redirects=False).headers["location"] == "/"
+
+
+def test_the_apps_visit_console_signed_out_signs_in_without_the_portal_links(client):
+    register(client)
+    verify(client)
+    client.post("/api/logout")
+    client.cookies.clear()
+    r = client.get("/?gamma_app=1", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"].startswith("/login")
+    assert r.cookies.get(pages.APP_COOKIE) == "1"
+    page = client.get(r.headers["location"]).text
+    assert "class=authtop" in page and SITE_LINK not in page and HOME_LINK not in page

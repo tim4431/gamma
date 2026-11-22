@@ -214,7 +214,7 @@ chose; transfers the person starts are not sharing):
 |---|---|
 | Does the app collect or share any of the required user data types? | Yes |
 | Is all of the user data collected by the app encrypted in transit? | No: the person may add a server by a plain `http` address. Gamma Cloud and any `https` server are encrypted. Answering yes would need the app to refuse `http` for the servers added |
-| Do you provide a way for users to request that their data be deleted? | Yes. The deletion URL is <https://gammapdf.com/delete-account/>, a public page that names the app and the developer and gives the steps for a Gamma Cloud account (its Settings page on account.gammapdf.com, *Delete account*); the app links to it from Settings → Account & sync. This device's library is deleted by deleting its pages in the app, clearing the app's storage or uninstalling it; a library on the person's own server, on that server |
+| Do you provide a way for users to request that their data be deleted? | Yes. The deletion URL is <https://gammapdf.com/delete-account/>, a public page that names the app and the developer and gives the steps for a Gamma Cloud account (its Settings page on account.gammapdf.com, *Delete account*); the app opens the account's pages from Settings → Account & sync → *Visit console*, where its Settings page deletes it. This device's library is deleted by deleting its pages in the app, clearing the app's storage or uninstalling it; a library on the person's own server, on that server |
 
 | Data type | Collected | Shared | Optional | Purpose |
 |---|---|---|---|---|
@@ -307,9 +307,12 @@ What Play's policies ask of the app beyond the forms, from the policy
 register in the research note and Google's pages. Settled in the app:
 
 - **Payments.** Inside the apps (any native host) the web app leaves out
-  Settings → Account & sync's *Open account* and the *Manage plan*
-  button of a Gamma Cloud hosted server's Settings → Server → Plan, so
-  the plan is read-only there. The pages they open lead to checkout:
+  the *Manage plan* button of a Gamma Cloud hosted server's Settings →
+  Server → Plan, so the plan is read-only there, and Settings → Account &
+  sync's *Visit console* opens the account server with `gamma_app=1`,
+  whose pages then leave out *Plan & billing* and the plan buttons, its
+  Plan page sending that browser to the Overview. The pages they would
+  otherwise reach lead to checkout:
   account.gammapdf.com's *Plan & billing* and its plans page go to
   Stripe, and Play's Payments policy forbids even "directly linking to a
   webpage that could lead to an alternate payment method"
@@ -334,9 +337,10 @@ register in the research note and Google's pages. Settled in the app:
   deleting the account from inside it, and the Console a public page that
   names the app and the developer as on the listing and gives the steps
   ([account deletion](https://support.google.com/googleplay/android-developer/answer/13327111)).
-  The page is <https://gammapdf.com/delete-account/>; the app links to it
-  from Settings → Account & sync, and its URL is the Data safety form's
-  answer above. This device's admin account is made and used offline,
+  The page is <https://gammapdf.com/delete-account/>, and its URL is the
+  Data safety form's answer above; inside the app, Settings → Account &
+  sync → *Visit console* opens the account's pages, where Settings →
+  *Delete account* deletes it, linked or not. This device's admin account is made and used offline,
   which Play does not count. Deleting the account deletes its library on
   the shared server and the pages it published within the hour, as the
   page says, rather than only closing them
