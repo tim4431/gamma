@@ -1204,8 +1204,8 @@ says how to change it and what each target registers):
 
 | Target | Files | Folders | Cannot |
 |---|---|---|---|
-| NSIS installer (`assets/installer.nsh`) | every type of the table, in *Open with* and Default apps | *Open with Gamma* on `Directory` and `Directory\Background` | the verb in Windows 11's first menu (under *Show more options*); several folders selected run it once each |
-| Store package (`assets/appx-extensions.xml`) | every type | *Open with Gamma* on `Directory` and `Directory\Background`, a COM class the package carries (`native/open-with/`), in Windows 11's first menu too | x64 only |
+| NSIS installer (`assets/openwith.nsh`) | every type of the table, in *Open with* and Default apps; can be left out | *Open with Gamma* on `Directory` and `Directory\Background`; can be left out | the verb in Windows 11's first menu (under *Show more options*); several folders selected run it once each |
+| Store package (`assets/appx-extensions.xml`) | every type | *Open with Gamma* on `Directory` and `Directory\Background`, a COM class the package carries (`native/open-with/`), in Windows 11's first menu too; can be hidden | x64 only; its file types cannot be left out |
 | macOS dmg/zip (`mac`) | every type, rank *Alternate* | `public.folder`: a folder dropped on the Dock icon, `open -a Gamma <dir>` | an entry in Finder |
 | Mac App Store | PDFs only | none | anything else (the sandbox) |
 | `.deb` | PDFs only (`linux.mimeTypes`) | a Dolphin service menu and a Nemo action | a GNOME Files entry |
@@ -1222,11 +1222,50 @@ gone, so the config has no top-level `fileAssociations`. The keys go under
 HKCU or HKLM as the install did; the uninstaller removes exactly what the
 installer wrote, a key it made for an extension (`.typ`, `.bib`, under
 HKCU) once that is empty, and an update keeps them, so Gamma stays the
-default where the user made it so. An extension taken out of the table
-goes in the generator's `dropped` list (`{ext, progid}`), and
-`customInstall` of the version that drops it deletes its `OpenWithProgids`
-value, then `<ext>\OpenWithProgids` and `<ext>` with `/ifempty`, and its
-`Capabilities\FileAssociations` value, so an update leaves nothing behind.
+default where the user made it so. "Once empty" is the generated macro
+`gammaDeleteKeyIfEmpty`: no value, the default included, and no subkey.
+NSIS's `DeleteRegKey /ifempty` looks at subkeys alone (3.0.4, the version
+electron-builder bundles, has no `/ifnovalues`), so it would delete
+`.md\OpenWithProgids` with another editor's entry in it. An extension
+taken out of the table goes in the generator's `dropped` list
+(`{ext, progid}`), and the install of the version that drops it
+deletes its `OpenWithProgids` value, then `<ext>\OpenWithProgids` and
+`<ext>` once empty, and its `Capabilities\FileAssociations` value, so an
+update leaves nothing behind.
+
+**Leaving the entries out.** The installer's registration is two parts,
+each a list of writes and the removals that undo them (`parts()` of the
+generator): `files`, the ProgIDs, each extension's *Open with* and the
+Default apps capabilities; `folders`, the two verb keys. The generator
+writes them as macros, `assets/openwith.nsh`, which `assets/installer.nsh`
+(electron-builder's include, hand-written) puts in electron-builder's
+hooks, since each hook may be defined once. A page after the directory
+page (`gammaOpenWithPage` in `customPageAfterChangeDir`, nsDialogs) offers
+both as checkboxes, ticked as the install's last one recorded them, both
+for a first install. The install (`gammaOpenWithInstall` in
+`customInstall`) records the two (`Software\<appId>`: `OpenWithFiles`,
+`OpenWithFolders`, REG_DWORD), then writes a part that is on and removes
+one that is off. An update runs
+silently with no page, and an install with `/S` shows none either: both
+read the record back, and an install from before the page, which has no
+record, counts as both on. The launcher's Settings show the same two as
+switches, *Gamma in Open with* and *Open with Gamma on folders*
+(`lib/openWith.js`, through `shell:set-open-with`). Their entries are
+`lib/openwith.json`, which the generator writes from the same `parts()`
+with the installer's `${APP_ID}` and `${PRODUCT_NAME}` put in (the
+config's appId and productName; the app's own name is package.json's,
+`gamma-desktop`), so the app fills in only its path.
+A switch runs `reg.exe` to write the part, or to remove it with the same
+"once empty" rule, then rewrites the record, so the next update keeps it.
+Which hive holds the record says the install: HKCU is changed; HKLM, an
+install for all users, is shown with the switches off-limits, since its
+keys need an administrator, who runs the installer again. The rows are
+there only in a packaged Windows build with a record (not in a dev run,
+the test scripts or an unpacked build). Explorer reads the verbs and *Open
+with* when it shows them, so a switch needs no notification. The Store
+package's file types are its manifest's and cannot change, so it has no
+*Open with* row; its folder verb switches by a file, `folder-verb-off` in
+the app's data directory, which the verb's DLL looks for (below).
 macOS declares each type with `LSHandlerRank` *Alternate*, which never
 outranks an app that claims it; where no app claims a type, a double click
 opens Gamma, read-only. The `.deb`'s desktop entry lists `application/pdf`
@@ -1259,7 +1298,14 @@ which takes the paths as any second start's. Every selected folder goes in
 one start, quoted as `CommandLineToArgvW` reads them back (a drive's root
 arrives as `D:\`). Outside a package (the test harness) it starts the
 `Gamma.exe` beside it; under `WindowsApps` without the package's identity it
-starts nothing, rather than the app without its data.
+starts nothing, rather than the app without its data. `GetState` says
+hidden while the launcher's switch has put `folder-verb-off` in the app's
+data directory: the DLL reads the package's copy,
+`%LOCALAPPDATA%\Packages\<family>\LocalCache\Roaming\gamma-desktop\`, by
+that path, so the answer does not depend on whether the surrogate sees the
+package's merged `%APPDATA%`, which it reads too. The names come from the
+generator (`GAMMA_DATA_DIR`, package.json's name, which Electron names the
+data directory after, and `GAMMA_FOLDER_VERB_OFF`).
 `test/openWithDll.test.js` builds the DLL and drives it as Explorer does;
 that Explorer shows it is checked by hand (checklist 4.12).
 
@@ -1776,6 +1822,27 @@ new folder may not be inside the current one or contain it. Removing a
 server offers *keep files* / *delete everything*; deletion is guarded to
 directories under the default or the configured root only.
 
+**Uninstalling.** The NSIS uninstaller keeps this folder unless asked.
+After its welcome page comes *Gamma's data* (`customUnWelcomePage` in
+`assets/installer.nsh`): one checkbox, never ticked by itself, *Also delete
+Gamma's data from this computer*. Ticked, the uninstall deletes the
+person's `%APPDATA%\gamma-desktop` (`${APP_PACKAGE_NAME}`, package.json's
+name, as Electron names userData) and electron-updater's downloads,
+`%LOCALAPPDATA%\gamma-desktop-updater`, under `SetShellVarContext current`
+whatever the install mode. That is the registry, the logs and every local
+server under the default storage root. A root of the person's own
+(`settings.dataRoot`) and the synced folders on disk stay; the page says so.
+An update runs the old uninstaller silently with `--updated`, so the page
+never shows and nothing is deleted there; electron-builder's own
+`--delete-app-data` remains for a silent uninstall. A Microsoft Store
+install has no uninstaller of Gamma's: Windows deletes the package's
+private AppData with it, this folder included, and asks nothing. So while
+a Store install's storage root is inside that copy (`goesWithPackage` in
+`lib/hostPath.js`: under `%APPDATA%` or `%LOCALAPPDATA%`), the launcher
+says under *Local server storage* that uninstalling deletes those
+libraries, and that *Change…* moves them to a folder of the person's own,
+which outlives the package.
+
 Anything that can write `servers.json` (the same OS user, a local agent)
 can already read every token in the local servers' `users.db`: the pins
 and `plainAccepted` add no new class of exposure ([docs/dev/https.md](../../docs/dev/https.md)).
@@ -1891,6 +1958,12 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   workspaces of another server an opened PDF may be carried to ("Opening
   files and folders"); no Electron, unit tested by
   `test/openFiles.test.js`.
+- `lib/openWith.js` — the launcher's two switches over Gamma's entries in
+  File Explorer: the installer's record read, a part written or removed
+  through `reg.exe` and recorded, the Store's folder verb by its file
+  ("Opening files and folders", "Leaving the entries out"). Its entries
+  are `lib/openwith.json`, generated; no Electron, unit tested by
+  `test/openWithSwitch.test.js`, against `reg.exe` itself on Windows.
 - `lib/zipNames.js` — the entry names of a zip, read from its central
   directory: whether a page's Gamma export holds its PDF before it is
   carried to another server ("Opening files and folders"); no Electron, unit tested
@@ -1937,8 +2010,11 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   secret-gated signing, the update feed's `publish` block, the file and
   folder registration per target). `scripts/openwith.cjs` — reads
   `tests/shared/openwith.json` and writes the registration the targets
-  take: `assets/installer.nsh` (the NSIS installer's file types and
-  folder verb), `assets/appx-extensions.xml` (the Store package's file
+  take: `assets/openwith.nsh` (the NSIS installer's file types and
+  folder verb, and its page that offers them, as macros that
+  `assets/installer.nsh`, electron-builder's include, puts in its hooks
+  beside the uninstaller's data question), `lib/openwith.json` (the
+  same entries for the launcher's switches), `assets/appx-extensions.xml` (the Store package's file
   types and folder verb), `native/open-with/verb.h` (what that verb's DLL
   shares with it) and `assets/linux/` (the `.deb`'s Dolphin and Nemo folder
   entries); `npm run openwith`, checked by `test/openWith.test.js`

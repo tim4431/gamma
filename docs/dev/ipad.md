@@ -795,7 +795,11 @@ Those are JPEG, PNG, GIF, WebP, HEIC, HEIF and SVG, types the system
 declares (`public.jpeg`, `public.png`, `com.compuserve.gif`,
 `org.webmproject.webp`, `public.heic`, `public.heif`, `public.svg-image`).
 The ones other apps own are at rank
-*Alternate*, so installing Gamma never makes it their default app.
+*Alternate*, so installing Gamma never makes it their default app. The
+types are fixed in the Info.plist and no API withdraws them at run time,
+so the app has no switch of its own: someone who does not want Gamma in
+the share sheet turns it off there (*More → Edit*, its toggle under
+Suggestions, for every app; [research note](../research/open-with.md#leaving-it-out)).
 Markdown and the `.note` are declared as imported types as well, for an
 iPad where no app declares them. The `.note` identifier is the one
 Notability's own Info.plist exports

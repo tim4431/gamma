@@ -53,7 +53,7 @@ const cloudSignIn = require('./lib/cloudSignIn');
 const openFiles = require('./lib/openFiles');
 const { zipNames } = require('./lib/zipNames');
 const { loadPage } = require('./lib/loadPage');
-const { hostPath } = require('./lib/hostPath');
+const { hostPath, goesWithPackage } = require('./lib/hostPath');
 const folderAccessFor = require('./lib/folderAccess');
 const microphone = require('./lib/microphone');
 const permissions = require('./lib/permissions');
@@ -70,6 +70,7 @@ const thisComputer = require('./lib/thisComputer');
 const syncPanel = require('./lib/syncPanel');
 const agentAskBar = require('./lib/agentAskBar');
 const systemFiles = require('./lib/systemFiles');
+const openWithFor = require('./lib/openWith');
 
 const BAR_H = 38;
 // The shell's word to its local servers on the routes that take a path on
@@ -1301,6 +1302,15 @@ function barState() {
 // A storage-folder move under way (shell:set-data-root): the servers it
 // moves, and the bytes copied of all of theirs. null when none runs.
 let dataMove = null;
+
+// The launcher's switches over Gamma's entries in File Explorer
+// (lib/openWith.js): the module once the app is ready, and what it last
+// read, null where there is nothing to switch.
+let openWith = null;
+let openWithState = null;
+function readOpenWith() {
+  openWith.read().then((s) => { openWithState = s; pushState(); }, (e) => console.error(`[shell] Explorer entries: ${e.message || e}`));
+}
 function dataMoveState() {
   return dataMove && { name: dataMove.name, done: dataMove.done, total: dataMove.total };
 }
@@ -1331,11 +1341,15 @@ function fullState() {
     detected: sidecar.detectDev(state.settings),
     userDataDir: hostPath(app.getPath('userData')),
     dataRoot: hostPath(registry.dataRoot(state)),
+    // A Store install's libraries in the package's own AppData, which the
+    // Store's uninstall deletes with no question (the launcher says so).
+    dataRootGoesWithApp: goesWithPackage(registry.dataRoot(state)),
     defaultDataRoot: hostPath(registry.defaultDataRoot()),
     // Names of the local servers a root change would move.
     movable: registry.localsUnderRoot(state).map((w) => w.name),
     dataMove: dataMoveState(),
     mas: Boolean(process.mas), // the launcher hides what a Mac App Store build lacks
+    openWith: openWithState,
   };
 }
 
@@ -1651,6 +1665,11 @@ function registerIpc() {
     if ('openAtLogin' in patch) setOpenAtLogin(s.openAtLogin);
     return s;
   }));
+  // A switch of the launcher's: `files` or `folders` on or off.
+  ipcMain.handle('shell:set-open-with', shellOnly(async (part, on) => {
+    openWithState = await openWith.set(String(part), on === true);
+    return openWithState;
+  }));
   ipcMain.handle('shell:folders', shellOnly((wsId) => vaults.listFolders(wsId)));
   ipcMain.handle('shell:add-folder-vault', shellOnly((wsId, folderId) =>
     withDialog('Could not sync the folder with this computer.', oneAsk(() => vaults.addFolderVault(wsId, folderId)))()));
@@ -1926,6 +1945,12 @@ function bootHidden(files) {
 app.whenReady().then(async () => {
   if (!primary) return; // quitting: the running app has the command line
   registry.init(app.getPath('userData'));
+  openWith = openWithFor.create({
+    installed: app.isPackaged && !process.env.GAMMA_SHELL_TEST,
+    store: Boolean(process.windowsStore),
+    dataDir: app.getPath('userData'),
+  });
+  readOpenWith();
   // Before any server starts: a server reaches only the folders the app
   // holds when it starts.
   if (process.mas) {

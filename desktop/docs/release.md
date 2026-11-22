@@ -65,8 +65,8 @@ the user may choose, without taking a type over from the app that opens it
 ([architecture.md](architecture.md) "Opening files and folders"). The file
 types are one table, `tests/shared/openwith.json`: PDF, Markdown (`.md`,
 `.markdown`), LaTeX (`.tex`), BibTeX (`.bib`) and Typst (`.typ`).
-`scripts/openwith.cjs` reads it and writes five files that are committed:
-`assets/installer.nsh`, `assets/appx-extensions.xml`,
+`scripts/openwith.cjs` reads it and writes six files that are committed:
+`assets/openwith.nsh`, `lib/openwith.json`, `assets/appx-extensions.xml`,
 `native/open-with/verb.h`, `assets/linux/gamma-open.desktop` and
 `assets/linux/gamma.nemo_action`.
 Change the table, then run `npm run openwith`; `test/openWith.test.js`
@@ -76,15 +76,22 @@ format registry disagree. An extension taken out of the table goes in the
 generator's `dropped` list, so the NSIS update that drops it deletes what
 an earlier version wrote. What each target registers:
 
-- **NSIS installer** (`assets/installer.nsh`): every type of the table, and
-  *Open with Gamma* on a folder and on the empty background of an open one
-  (on Windows 11 under *Show more options*). The uninstaller removes
-  exactly what the installer wrote; an update keeps every entry.
+- **NSIS installer** (`assets/openwith.nsh`, put in electron-builder's
+  hooks by the hand-written `assets/installer.nsh`): every type of the
+  table, and *Open with Gamma* on a folder and on the empty background of
+  an open one (on Windows 11 under *Show more options*). A page after the
+  directory page offers the two as checkboxes, on for a first install; the
+  choice is recorded and an update keeps it, and the launcher's Settings
+  change it later (`lib/openWith.js`, for a per-user install). The
+  uninstaller removes exactly what the installer wrote, and never another
+  app's *Open with* entries; it deletes Gamma's data only when its *Gamma's
+  data* page is ticked ([architecture.md](architecture.md#shell-state)).
 - **Store package** (`assets/appx-extensions.xml`): every type of the
   table, and *Open with Gamma* on a folder and on an open folder's
-  background, in Windows 11's first menu too. A packaged app's verb is a
-  COM class it carries: `native/open-with/`, a DLL built at packaging time
-  (*Microsoft Store* below).
+  background, in Windows 11's first menu too, which the launcher's Settings
+  can hide. A packaged app's verb is a COM class it carries:
+  `native/open-with/`, a DLL built at packaging time (*Microsoft Store*
+  below).
 - **macOS dmg/zip** (`mac` in the config): every type of the table as an
   alternate viewer, and folders (`public.folder`): a folder dropped on the
   Dock icon or `open -a Gamma <dir>` opens it. Finder has no entry.
@@ -289,7 +296,10 @@ the launcher with no server configured.
   `%LOCALAPPDATA%\Packages\xwtim.GammaPDF_<hash>\LocalCache\Roaming\gamma-desktop`.
   A Store install and an NSIS install never see each other's servers, and
   **uninstalling the Store app deletes that folder**, including local
-  servers' PDFs and databases.
+  servers' PDFs and databases, with no question (an MSIX has no
+  uninstaller of its own). While the storage root is there, the launcher
+  says so under *Local server storage* and points to *Change…*, which
+  moves the libraries to a folder outside the package.
 - That merge exists only inside the package: Explorer, and anything else
   the app hands a path to, sees the plain `%APPDATA%\gamma-desktop`, which
   is not there (*Location is not available*). `lib/hostPath.js` turns such a

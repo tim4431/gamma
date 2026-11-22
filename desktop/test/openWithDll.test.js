@@ -66,3 +66,22 @@ test('the verb names itself from the table and starts Gamma.exe with each folder
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('the launcher\'s switch hides the verb: hidden while its file is in the app\'s data directory', { skip }, () => {
+  const { test: dir } = buildOpenWith({ test: true });
+  const appData = fs.mkdtempSync(path.join(os.tmpdir(), 'gamma-open-with-appdata-'));
+  // No paths: the menu's answers alone, nothing started.
+  const state = () => lines(execFileSync(path.join(dir, 'invoke.exe'), [path.join(dir, OPEN_WITH.dll)], {
+    encoding: 'utf8', env: { ...process.env, APPDATA: appData },
+  })).state;
+  try {
+    assert.strictEqual(state(), 'enabled');
+    fs.mkdirSync(path.join(appData, OPEN_WITH.data));
+    fs.writeFileSync(path.join(appData, OPEN_WITH.data, OPEN_WITH.off), 'off\n');
+    assert.strictEqual(state(), 'hidden');
+    fs.rmSync(path.join(appData, OPEN_WITH.data, OPEN_WITH.off));
+    assert.strictEqual(state(), 'enabled');
+  } finally {
+    fs.rmSync(appData, { recursive: true, force: true });
+  }
+});

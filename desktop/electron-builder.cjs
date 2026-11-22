@@ -42,8 +42,11 @@
 // and folders"). Hence no top-level `fileAssociations`: electron-builder's
 // NSIS association makes itself the type's handler and leaves that pointing
 // nowhere after an uninstall. scripts/openwith.cjs reads the table and
-// writes assets/installer.nsh (the NSIS installer's file types and its
-// "Open with Gamma" on folders), assets/appx-extensions.xml (the Store
+// writes assets/openwith.nsh (the NSIS installer's file types and its
+// "Open with Gamma" on folders, each of which a person may leave out, and
+// the page that asks; assets/installer.nsh, the include, puts its macros in
+// electron-builder's hooks), lib/openwith.json (the same entries for the
+// launcher's switches), assets/appx-extensions.xml (the Store
 // package's file types and its "Open with Gamma", a COM class the package
 // carries: native/open-with/, put in by scripts/after-pack.cjs) and
 // assets/linux/ (the .deb's folder entries for Dolphin and Nemo); macOS
@@ -93,7 +96,9 @@ module.exports = {
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
-    include: 'installer.nsh', // assets/, generated: the file types and folder verbs (top of file)
+    // assets/: the hooks, which put in the generated openwith.nsh (top of
+    // file) and ask the uninstalling person whether Gamma's data goes too.
+    include: 'installer.nsh',
   },
   // Microsoft Store package (docs/release.md, "Microsoft Store"). The three
   // identity values are copied verbatim from Partner Center → Product
