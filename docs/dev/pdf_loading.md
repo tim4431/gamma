@@ -66,10 +66,12 @@ transport to use (`chooseTransport`), the pdf.js options of a range open
 (`rangeOpenOptions`), how a manifest becomes a page layout
 (`layoutFromManifest`, refusing anything that does not describe a readable
 document), and which page stands for the document's size
-(`typicalPageIndex`: the widest of the pages sharing the most common width,
-to the point). Fit-width sizes to that page, not to page 1: a scanned book's
+(`typicalPageIndex`: the widest page at most 5 % wider than the most common
+width, to the point). Fit-width sizes to that page, not to page 1: a scanned book's
 cover is often an image of another size, and fitting it pushed every text page
-past the viewer's edge. The viewer's load effect composes them:
+past the viewer's edge. The widest near it, because a page even a pixel wider
+than the viewer lets the view slide sideways at fit-width: a scan's pages, or
+A4 and Letter pages merged into one file, differ by a few points. The viewer's load effect composes them:
 
 1. **A parsed document from a recent visit** (`DOC_CACHE`, the last two
    `PDFDocumentProxy` objects with their layout) is committed as it is, in

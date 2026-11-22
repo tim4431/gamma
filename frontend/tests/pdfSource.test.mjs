@@ -79,6 +79,12 @@ test("typicalPageIndex: a uniform document is page 1, a tie goes to the wider wi
   assert.equal(typicalPageIndex([612, 612, 1224]), 0, "one fold-out does not shrink the rest");
 });
 
+test("typicalPageIndex: pages a little wider than the common width set the size, a landscape page does not", () => {
+  assert.equal(typicalPageIndex([612, 615, 612, 612, 615, 612]), 1, "a scan's pages a few points apart");
+  assert.equal(typicalPageIndex([595.28, 595.28, 595.28, 612]), 3, "A4 with a Letter page");
+  assert.equal(typicalPageIndex([612, 612, 615, 792]), 2, "a landscape page stays out");
+});
+
 test("typicalPageIndex ignores missing widths and has none to give for an empty layout", () => {
   assert.equal(typicalPageIndex([]), -1);
   assert.equal(typicalPageIndex([0, undefined, NaN]), -1);
