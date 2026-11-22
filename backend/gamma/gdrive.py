@@ -12,12 +12,15 @@ Google offers a server at any address for it. The OAuth client
 call that needs it; its secret is a device client's, which Google does not
 treat as secret.
 
-``Client`` keeps whole files under its folder in My Drive (``Gamma
-backups`` by default). Keys are paths: ``snapshots/<ws>/<name>.zip`` is
+``Client`` keeps whole files under its folder in My Drive, a path of
+folder names from My Drive's top (``Gamma backups`` by default,
+``Backups/Gamma`` a folder in a folder; "" My Drive itself, where the
+folder browser starts). Keys are paths: ``snapshots/<ws>/<name>.zip`` is
 the file ``<name>.zip`` in the folder ``snapshots/<ws>/`` under it, made as
 a write needs it. Drive names are not unique, so a write first looks for
 its name in its folder and replaces that file's content; a lookup takes the
-oldest of several. ``put_object`` streams a local file up in a resumable
+oldest of several, and so does ``browse``, which lists a folder's folders
+and files for the folder browser; ``make_folder`` makes a folder there. ``put_object`` streams a local file up in a resumable
 session (``CHUNK`` at a time, resumed where Drive says it stopped);
 ``get_object`` downloads into a local file, written whole; ``put_bytes``
 and ``get_bytes`` handle a small object; ``list_objects`` gives ``(key,
@@ -56,7 +59,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config, net_proxy
-from .backup_store import StoreConfigError, StoreError, check_key
+from .backup_store import StoreConfigError, StoreError, check_key, listing
 
 SCOPE = "https://www.googleapis.com/auth/drive.file"
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
@@ -377,8 +380,9 @@ def _q(value: str) -> str:
 
 
 def where(folder: str) -> str:
-    """The folder as the log and the messages name it."""
-    return f"Google Drive › {folder}"
+    """The folder as the log and the messages name it: ``Google Drive ›
+    Backups › Gamma``."""
+    return " › ".join(["Google Drive", *filter(None, folder.split("/"))])
 
 
 def _mtime(stamp: str) -> float:
@@ -389,7 +393,8 @@ def _mtime(stamp: str) -> float:
 
 
 class Client:
-    """One folder of one Google account's My Drive, reached with
+    """One folder of one Google account's My Drive (``folder``, its path
+    from My Drive's top; "" My Drive itself), reached with
     ``refresh_token`` through ``oauth``, the client it was made through.
     ``attempts``: how often a call is tried; the pane's Test tries once."""
 
@@ -401,7 +406,8 @@ class Client:
         self.folder = folder
         self.attempts = max(1, attempts)
         self.where = where(folder)
-        self._folders: dict[str, str] = {}  # "" (the folder itself), "snapshots", "snapshots/<ws>" → its id
+        self._base = folder.split("/") if folder else []
+        self._folders: dict[str, str] = {}  # a folder's path from My Drive's top → its id, as walked
         self._lock = threading.Lock()
 
     # --- calls ---
@@ -482,18 +488,18 @@ class Client:
 
     def _folder(self, path: str, *, create: bool) -> str | None:
         """The id of the folder ``path`` under the client's folder ("" the
-        folder itself, in My Drive's root); made when ``create``, else None
-        when it is not there."""
+        folder itself; ``root``, My Drive itself, for a client of no
+        folder); made when ``create``, else None when it is not there."""
         with self._lock:
-            parent, here = "root", None  # ``here``: the path walked so far, None above the client's folder
-            for name in [self.folder] + (path.split("/") if path else []):
-                here = "" if here is None else f"{here}/{name}" if here else name
+            parent, here = "root", ""  # ``here``: the path walked so far, from My Drive's top
+            for name in self._base + (path.split("/") if path else []):
+                here = f"{here}/{name}" if here else name
                 if here not in self._folders:
                     found = self._find(parent, name, folder=True)
                     if found is None:
                         if not create:
                             return None
-                        found = self._json(f"MKDIR {here or self.folder}", "POST", _api("/files"),
+                        found = self._json(f"MKDIR {here}", "POST", _api("/files"),
                                            params={"fields": "id"},
                                            body=json.dumps({"name": name, "mimeType": FOLDER_MIME,
                                                             "parents": [parent]}).encode("utf-8"),
@@ -675,3 +681,28 @@ class Client:
         resp = self._call("DELETE", _api(f"/files/{found['id']}"))
         if resp.status not in (200, 204, 404):
             raise self._fail(f"DELETE {key}", resp)
+
+    def browse(self, path: str) -> dict:
+        """What the folder ``path`` holds right in it (``backup_store.Store.
+        browse``), one page of it: of several folders of one name the
+        oldest, the one a key's walk takes. Only what Gamma made shows
+        (``drive.file``)."""
+        folder = self._folder(check_key(path) if path else "", create=False)
+        if folder is None:
+            return listing([], [])
+        found, more = self._list(f"{_q(folder)} in parents and trashed = false", one_page=True, order="createdTime")
+        folders, files, named = [], [], set()
+        for item in found:
+            name = str(item.get("name") or "")
+            stamp = str(item.get("modifiedTime") or "")
+            if item.get("mimeType") != FOLDER_MIME:
+                files.append({"name": name, "size": int(item.get("size") or 0), "modified": stamp})
+            elif name not in named:
+                named.add(name)
+                folders.append({"name": name, "modified": stamp})
+        return listing(folders, files, more=more)
+
+    def make_folder(self, path: str) -> None:
+        """Make the folder ``path`` under the client's folder, and the ones
+        above it that are not there; one already there is kept."""
+        self._folder(check_key(path), create=True)

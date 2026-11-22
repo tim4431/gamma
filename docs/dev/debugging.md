@@ -274,9 +274,10 @@ My Drive (`gamma/gdrive.py`, `gamma/gdrive_account.py`; why it is built so:
 [google-drive-backup.md](../research/google-drive-backup.md)). A task's
 *Copy to Google Drive* works as *Copy to the bucket* does, and a task may
 have both. Both clients are backup stores (`gamma/backup_store.py`: the
-`Store` interface of seven methods, `StoreError` for a call refused or
+`Store` interface of eight methods, `StoreError` for a call refused or
 unanswered, `StoreConfigError` for none that can work, the rule for a
-key), and `snapshot_copies.DESTINATIONS` names the two (`bucket`, `drive`)
+key, and `listing`, the shape of a folder's listing that `browse` gives
+the pane's folder browser), and `snapshot_copies.DESTINATIONS` names the two (`bucket`, `drive`)
 with what a message calls each, why nothing can be copied there while it
 is not set up, whether it is and its client; the scheduler, the routes and
 the jobs read a store from there, and the pane's wording of each is
@@ -288,7 +289,7 @@ Drive.
 
 **Connecting.** Only an admin connects it, in Settings → Backups → Google
 Drive, and only an admin's tasks copy to it, as with the bucket. Copies go
-to the folder `Gamma backups` (Edit… renames it). Where Gamma is opened on
+to the folder `Gamma backups` (Edit… chooses another). Where Gamma is opened on
 its own computer — the desktop app, or any server opened at a loopback
 address over plain HTTP — Connect… opens Google's authorization page
 (`POST /api/admin/gdrive/authorize`, Gamma's "Desktop app" client, PKCE):
@@ -347,11 +348,22 @@ enabled is refused with Google's own message, which links the page that
 enables it. `GAMMA_GOOGLE_ACCOUNTS_BASE`, `GAMMA_GOOGLE_OAUTH_BASE` and
 `GAMMA_GOOGLE_API_BASE` point at stand-ins for a test.
 
-**The folder.** A key's path is a folder path under the folder in My
-Drive's root: `snapshots/<ws>/<name>.zip` is `Gamma backups/snapshots/<ws>/
-<name>.zip`, so the person can find and download a copy in Drive. Folders
-are made as a write needs them and their ids kept for the client's life,
-one task run or one listing. Drive names are not unique, so a write first
+**The folder.** The folder is a path of names from My Drive's top
+(`Gamma backups`, or `Backups/Gamma` for a folder in a folder;
+`gdrive_account.check_folder`: names trimmed, none `.`, `..` or holding a
+backslash, at most 16 deep, never My Drive itself). A key's path is a
+folder path under it: `snapshots/<ws>/<name>.zip` is `Gamma backups/
+snapshots/<ws>/<name>.zip`, so the person can find and download a copy in
+Drive. Folders are made as a write needs them and their ids kept for the
+client's life, one task run or one listing. The Edit dialog's folder
+browser lists a folder from My Drive's top (`GET /api/admin/gdrive/browse`,
+`Client.browse`: one page, of several folders of one name the oldest) and
+makes one (`POST /api/admin/gdrive/folders`, `Client.make_folder`); like
+everything else it sees only what Gamma made. A bucket's prefix is chosen
+the same way (`POST /api/admin/offsite/browse`, `s3.Client.browse`: one
+listing split at `/` from the bucket's top, with the dialog's settings,
+saved or not); a bucket has no folders of its own, so a new one is only
+drawn until a copy is saved under it. Drive names are not unique, so a write first
 looks for its name in its folder and replaces that file's content (the
 oldest of several). With `drive.file`, a folder of the same name the person
 made is not seen, and one they trashed is not used: a new one is made.

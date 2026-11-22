@@ -1902,10 +1902,11 @@ The copies drop the ids the app and the tests find these items by
 A tree of folders and files draws every row with one component,
 `explorer/TreeRow.jsx` (its styles `explorer/tree.css`), and takes its keys
 and focus from `explorer/useTree.js` ([Keyboard focus](#keyboard-focus)).
-There are two: the Files window's (`FileTree.jsx`) and a synced folder's
+There are three: the Files window's (`FileTree.jsx`), a synced folder's
 folder view (`FolderTree.jsx`, [work_folders.md](work_folders.md) "The
 folder view"), which stands in the listing's place for a work folder's
-directory whatever the library's view.
+directory whatever the library's view, and the folder browser
+(`FolderBrowser.jsx`, below), which chooses a folder of a store.
 
 - **A row** (`.fileTreeRow`, a `treeitem`): indented by its `--level` (14
   px a level), a guide line down the middle of each folder's chevron above
@@ -1943,6 +1944,27 @@ directory whatever the library's view.
   wraps on its line, the cells (`.folderTreeCells`, `display: contents`
   beside the header) go on a muted line under it, the header goes, and a
   file's chevron slot keeps 24 px (a folder's 44).
+
+- **The folder browser** (`.folderBrowser`, `explorer/FolderBrowser.jsx`,
+  its rows `folderBrowser.js` `browserRows`) chooses a folder of anything
+  listed a level at a time, handed in as a `source` ({name, icon, list,
+  create?}, the listing gamma/backup_store.py's `listing`): Settings →
+  Backups uses it for the Google Drive folder (in the Edit dialog) and the
+  bucket's prefix (`FolderBrowserDialog`, from Browse… beside the field,
+  [settings.md](settings.md)). A bar over a framed tree: the folder chosen
+  as `crumbBtn` crumbs from the top (each choosing its folder), New folder
+  and Refresh (`ctlBtn`). A press on a folder chooses and opens it, on the
+  folder chosen opens or closes it; Enter does the same, Space chooses;
+  each folder is read the first time it opens (Reading…, then a failed
+  read's reason with Try again, empty, or that one page of more was
+  shown). Files are muted rows with their size and date, never chosen;
+  rows have no "⋯". New folder puts a name field (`aiKeyInput`) among the
+  folders of the one chosen: Enter or leaving it makes the folder where
+  the source makes folders (`create`), else draws it until something is
+  saved in it, as it draws a folder of the path chosen that is not there:
+  tagged `new`, "Not made yet" under it. A name that cannot be says why in
+  a `FormNotice` under the tree; Escape drops the field. A dialog holding
+  one is `.folderBrowserDialog`, wider than a form's.
 
 ### File icons
 

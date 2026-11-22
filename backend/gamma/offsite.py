@@ -345,6 +345,24 @@ def test(fields: dict | None = None) -> dict:
             (f"under {bucket.prefix}" if bucket.prefix else "in the bucket")}
 
 
+def browse(fields: dict | None, path: str) -> dict:
+    """The folder browser's listing of the folder ``path`` from the
+    bucket's top, whatever the prefix, which it is there to choose
+    (``s3.Client.browse``), tried once. ``fields``: unsaved settings laid
+    over the saved ones as ``test`` lays them. S3ConfigError with the reason
+    when they name no bucket that can work, ValueError for a path that
+    cannot be a folder."""
+    conf = settings()
+    if fields and not conf["from_env"]:
+        try:
+            conf = {**conf, **_checked(conf, fields)}
+        except ValueError as e:
+            raise s3.S3ConfigError(str(e)) from None
+    if not conf["bucket"]:
+        raise s3.S3ConfigError("No bucket is set.")
+    return s3.Client.from_settings({**conf, "prefix": ""}, attempts=1).browse(path)
+
+
 # --- naming --------------------------------------------------------------------------
 
 def key(group: str, kind: str, stamp: str) -> str:

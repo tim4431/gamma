@@ -31,10 +31,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, gdrive, gdrive_account, guests,
+from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, gdrive_account, guests,
                 hosted, integrity, jobs, ocr_auto, ocr_engine, offsite, proxy_settings, server_options, snapshot_copies,
                 workspaces, zotero_oauth)
-from ..backup_store import StoreConfigError
+from ..backup_store import StoreConfigError, StoreError
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
@@ -455,6 +455,24 @@ def test_offsite(request: Request, payload: OffsiteSettingsRequest | None = None
     return offsite.test(payload.model_dump(exclude_none=True) if payload else None)
 
 
+class OffsiteBrowseRequest(OffsiteSettingsRequest):
+    path: str = ""
+
+
+# Sync def: one listing of the bucket.
+@router.post("/offsite/browse")
+def browse_offsite(payload: OffsiteBrowseRequest, request: Request):
+    """The folder browser's listing of the folder ``path`` from the
+    bucket's top, whatever the prefix (``offsite.browse``), with the
+    unsaved settings sent laid over the saved ones as the test lays them:
+    ``backup_store.listing``'s ``{folders, files, more}``; 400 with the
+    reason when the bucket cannot be used or the path cannot be a folder."""
+    require_admin(request)
+    fields = payload.model_dump(exclude_none=True)
+    path = fields.pop("path")
+    return _store_call(offsite.browse, fields, path)
+
+
 @router.post("/offsite/run")
 def run_offsite(request: Request):
     """The environment's rounds' Copy now: ``{started: true}``, or
@@ -513,15 +531,16 @@ class DriveFolderRequest(BaseModel):
     folder: str
 
 
-def _drive_call(fn, *args):
-    """400 with the reason for a folder or client that cannot be or no
-    OAuth client (a DriveConfigError is a ValueError), 502 when Google
-    refuses or cannot be reached."""
+def _store_call(fn, *args):
+    """A call to Google Drive, or the bucket's folder browser: 400 with the
+    reason for a folder or client that cannot be, no OAuth client or a
+    bucket that cannot be used (a StoreConfigError is a ValueError), 502
+    when the store refuses or cannot be reached."""
     try:
         return fn(*args)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except gdrive.DriveError as e:
+    except StoreError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
 
@@ -562,7 +581,7 @@ def authorize_gdrive(payload: DriveAuthorizeRequest, request: Request):
     if not callback:
         raise HTTPException(status_code=400, detail="Google's page signs in only where Gamma is opened on the server's "
                                                     "own computer: connect with a code instead.")
-    return {"url": _drive_call(gdrive_account.start_browser, payload.folder, callback)}
+    return {"url": _store_call(gdrive_account.start_browser, payload.folder, callback)}
 
 
 @router.get("/gdrive/callback", response_class=HTMLResponse)
@@ -585,7 +604,7 @@ def connect_gdrive(payload: DriveConnectRequest, request: Request):
     """Start connecting: the GET's answer with ``pending``, the code to
     enter at Google's address."""
     require_admin(request)
-    return _drive_call(gdrive_account.start, payload.folder)
+    return _store_call(gdrive_account.start, payload.folder)
 
 
 @router.post("/gdrive/poll")
@@ -607,7 +626,7 @@ def cancel_gdrive(request: Request):
 def update_gdrive(payload: DriveFolderRequest, request: Request):
     """The folder new copies go to; 400 when it cannot be."""
     require_admin(request)
-    return _drive_call(gdrive_account.set_folder, payload.folder)
+    return _store_call(gdrive_account.set_folder, payload.folder)
 
 
 @router.delete("/gdrive")
@@ -616,6 +635,27 @@ def disconnect_gdrive(request: Request):
     Drive."""
     require_admin(request)
     return gdrive_account.disconnect()
+
+
+class DrivePathRequest(BaseModel):
+    path: str
+
+
+@router.get("/gdrive/browse")
+def browse_gdrive(request: Request, path: str = ""):
+    """The folder browser's listing of the folder ``path`` from My Drive's
+    top ("" My Drive itself): ``backup_store.listing``'s ``{folders, files,
+    more}``, only what Gamma made (``drive.file``)."""
+    require_admin(request)
+    return _store_call(gdrive_account.browse, path)
+
+
+@router.post("/gdrive/folders")
+def make_gdrive_folder(payload: DrivePathRequest, request: Request):
+    """Make the folder ``path`` from My Drive's top, and those above it
+    that are not there: ``{path}``, the path as made."""
+    require_admin(request)
+    return _store_call(gdrive_account.make_folder, payload.path)
 
 
 @router.post("/gdrive/test")

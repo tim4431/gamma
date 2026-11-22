@@ -154,6 +154,12 @@ ended the out-of-band copy-and-paste flow in 2023.
   workspaces to their own Drive.
 - The off-site rounds to Drive, for a small library.
 - Shared drives (a Workspace service account, `supportsAllDrives`).
+- A folder of the person's own. Since November 2026 the folder is a path
+  chosen in a folder browser (Edit…), but with `drive.file` that browser
+  lists only the folders Gamma made. A folder the person made can be
+  reached only once they pick it in Google's Picker, which grants the app
+  that one folder; the Picker runs in the browser with an API key and the
+  access token, which today never leaves the server.
 - A run against Google itself: everything here was tested against a fake.
 
 ## Sources

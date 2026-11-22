@@ -197,11 +197,12 @@ def test_googles_page_signs_in_where_gamma_is_opened_on_its_own_computer(client,
     assert here.get("/api/admin/gdrive").json()["error"] == "Google Drive access was not allowed."
 
 
-def test_a_folder_must_be_one_name(client, google):
-    for bad in ("", "   ", "a/b", "a\\b", "x" * 121):
+def test_a_folder_is_a_path_of_names_from_the_top(client, google):
+    for bad in ("", "   ", " / ", "a\\b", "a/../b", "x" * 121, "/".join("a" * 17)):
         with pytest.raises(ValueError):
             gdrive_account.start(bad)
     assert gdrive_account.check_folder("  Gamma   backups ") == "Gamma backups"
+    assert gdrive_account.check_folder("/ Backups //  Gamma / ") == "Backups/Gamma"
 
 
 # --- the client --------------------------------------------------------------------------
@@ -363,7 +364,7 @@ def test_the_connection_through_the_api(client, google):
     boss, user = login("gd_boss", "gd-boss-pw"), login("gd_user", "gd-user-pw")
     assert user.get("/api/admin/gdrive").status_code == 403
     assert boss.get("/api/admin/gdrive").json()["available"] is True
-    assert boss.post("/api/admin/gdrive/connect", json={"folder": "a/b"}).status_code == 400
+    assert boss.post("/api/admin/gdrive/connect", json={"folder": "a/../b"}).status_code == 400
     shown = boss.post("/api/admin/gdrive/connect", json={}).json()
     assert shown["pending"]["user_code"] and boss.get("/api/admin/gdrive").json()["pending"]
     assert boss.delete("/api/admin/gdrive/connect").json()["pending"] is None
@@ -379,6 +380,38 @@ def test_the_connection_through_the_api(client, google):
     assert boss.put("/api/admin/gdrive", json={"folder": ""}).status_code == 400
     assert boss.delete("/api/admin/gdrive").json()["connected"] is False
     assert boss.put("/api/admin/gdrive", json={"folder": "Server C"}).status_code == 400
+
+
+def test_the_folder_browser_lists_what_gamma_made_and_makes_folders(drive, google):
+    make_user("gd_picker", "gd-picker-pw", is_admin=1)
+    make_user("gd_member", "gd-member-pw")
+    boss = login("gd_picker", "gd-picker-pw")
+    assert login("gd_member", "gd-member-pw").get("/api/admin/gdrive/browse").status_code == 403
+    drive.put_bytes("snapshots/ws1/one.zip", b"12345")
+    google.add("Theirs", folder=True, mine=False)  # drive.file does not reach it
+    google.add("Gamma backups", folder=True)       # a second of one name: the first is the one used
+    top = boss.get("/api/admin/gdrive/browse").json()
+    assert [f["name"] for f in top["folders"]] == ["Gamma backups"] and top["files"] == [] and not top["more"]
+    held = boss.get("/api/admin/gdrive/browse", params={"path": "Gamma backups/snapshots/ws1"}).json()
+    assert [(f["name"], f["size"]) for f in held["files"]] == [("one.zip", 5)] and held["files"][0]["modified"]
+    assert boss.get("/api/admin/gdrive/browse", params={"path": "Not there"}).json() == {
+        "folders": [], "files": [], "more": False}
+    assert boss.get("/api/admin/gdrive/browse", params={"path": "a/../b"}).status_code == 400
+
+    # New folder, then the folder copies go to: a folder in a folder.
+    assert boss.post("/api/admin/gdrive/folders", json={"path": " Backups / Server A "}).json() == {
+        "path": "Backups/Server A"}
+    boss.post("/api/admin/gdrive/folders", json={"path": "Backups/Server A"})  # there already: kept, not doubled
+    assert boss.post("/api/admin/gdrive/folders", json={"path": "/"}).status_code == 400  # never My Drive itself
+    made = [google.path(f["id"]) for f in google.files.values() if f["mimeType"] == gdrive.FOLDER_MIME and f["mine"]]
+    assert made.count("Backups/Server A") == 1
+    assert boss.put("/api/admin/gdrive", json={"folder": "Backups/Server A"}).json()["folder"] == "Backups/Server A"
+    gdrive_account.client().put_bytes("snapshots/ws1/two.zip", b"2")
+    assert "Backups/Server A/snapshots/ws1/two.zip" in google.mine()
+    assert [f["name"] for f in boss.get("/api/admin/gdrive/browse", params={"path": "Backups"}).json()["folders"]] == [
+        "Server A"]
+    gdrive_account.disconnect()
+    assert boss.get("/api/admin/gdrive/browse").status_code == 400
 
 
 def _job(c, route, body):

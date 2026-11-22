@@ -344,7 +344,8 @@ export function SubDialog({ title, onClose, children, draft, guard = null, class
           }
           if (event.key === "Tab") {
             event.stopPropagation();
-            const targets = [...ref.current.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), summary')]
+            // a tree's or a list's one row in the tab order counts (tabindex 0)
+            const targets = [...ref.current.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')]
               .filter((el) => el.getClientRects().length && !el.closest("[inert]"));
             const first = targets[0], last = targets.at(-1);
             if (event.shiftKey && (document.activeElement === first || !targets.includes(document.activeElement))) { event.preventDefault(); last?.focus(); }
