@@ -52,6 +52,7 @@ import time
 from cryptography.fernet import InvalidToken
 
 from . import config, gdrive
+from .backup_store import check_key
 from .logbuf import log
 from .publisher_sessions import seal, unseal
 from .server_settings import _peek_raw, _set_raw
@@ -85,19 +86,21 @@ def _iso(at: float) -> str:
 
 def check_folder(folder) -> str:
     """The folder's path from My Drive's top: its names joined by ``/``,
-    each trimmed (an empty one dropped), at most FOLDER_MAX characters, not
-    ``.`` or ``..`` and without ``\\``, at most FOLDER_DEPTH of them, one at
-    least: never My Drive itself. ValueError otherwise."""
+    each trimmed (an empty one dropped), at most FOLDER_MAX characters and
+    a key's segment (``backup_store.check_key``), at most FOLDER_DEPTH of
+    them, one at least: never My Drive itself. ValueError otherwise."""
     if not isinstance(folder, str):
         raise ValueError("The folder must be text.")
     names = [name for name in (" ".join(part.split()) for part in folder.split("/")) if name]
     if not names:
         raise ValueError("Choose a folder in Google Drive.")
-    if len(names) > FOLDER_DEPTH or any(len(name) > FOLDER_MAX or name in (".", "..") or "\\" in name
-                                        or any(ord(c) < 32 for c in name) for name in names):
-        raise ValueError(f"The folder must be at most {FOLDER_DEPTH} folders deep, each name at most {FOLDER_MAX} "
-                         "characters, without \\.")
-    return "/".join(names)
+    try:
+        if len(names) > FOLDER_DEPTH or any(len(name) > FOLDER_MAX for name in names):
+            raise ValueError
+        return check_key("/".join(names))
+    except ValueError:
+        raise ValueError(f"Each folder's name must be at most {FOLDER_MAX} characters, not . or .., without \\ "
+                         f"or control characters, at most {FOLDER_DEPTH} folders deep.") from None
 
 
 def _read(key: str) -> dict:
@@ -489,4 +492,4 @@ def test() -> dict:
         who = {"email": "", "used": 0, "limit": 0}
     held = f"{count} or more items" if more else f"{count} item{'' if count == 1 else 's'}"
     room = f", {who['used'] / 1e9:.1f} of {who['limit'] / 1e9:.0f} GB used" if who["limit"] else ""
-    return {"ok": True, "message": f"{who['email'] or 'Google Drive'}: {held} in {drive.folder}{room}"}
+    return {"ok": True, "message": f"{who['email'] or 'Google Drive'}: {held} in {gdrive.label(drive.folder)}{room}"}

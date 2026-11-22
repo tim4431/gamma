@@ -27,7 +27,7 @@ from datetime import timezone
 from pathlib import Path
 
 from . import net_proxy
-from .backup_store import StoreConfigError, StoreError, check_key, listing
+from .backup_store import StoreConfigError, StoreError, check_key
 
 CONNECT_TIMEOUT_S = 10
 READ_TIMEOUT_S = 60
@@ -144,12 +144,14 @@ class Client:
         return int(page.get("KeyCount", len(page.get("Contents", ())))), bool(page.get("IsTruncated"))
 
     def browse(self, path: str) -> dict:
-        """What the folder ``path`` holds right in it (``backup_store.Store.
-        browse``), one listing split at ``/``: the names under it up to the
-        next ``/`` are its folders, the objects right in it its files. A
-        bucket has no folders of its own: one is there while a key is under
-        it, and holds nothing before. S3ConfigError, as ``check``, when the
-        bucket cannot be used."""
+        """What the folder ``path`` (a key's segments under the prefix; ""
+        the prefix itself) holds right in it, for the pane's folder browser:
+        ``{folders: [{name, modified: ""}], files: [{name, size, modified}],
+        more}``, one listing split at ``/``: the names under it up to the
+        next ``/`` are its folders, the objects right in it its files;
+        ``more`` when the page was cut. A bucket has no folders of its own:
+        one is there while a key is under it, and holds nothing before.
+        S3ConfigError, as ``check``, when the bucket cannot be used."""
         full = self.prefix + (check_key(path) + "/" if path else "")
         page = self._listed(Prefix=full, Delimiter="/")
         folders = [{"name": name, "modified": ""} for p in page.get("CommonPrefixes", ())
@@ -157,7 +159,7 @@ class Client:
         files = [{"name": o["Key"][len(full):], "size": o["Size"],
                   "modified": o["LastModified"].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
                  for o in page.get("Contents", ()) if o["Key"] != full]  # a console's empty "folder/" object
-        return listing(folders, files, more=bool(page.get("IsTruncated")))
+        return {"folders": folders, "files": files, "more": bool(page.get("IsTruncated"))}
 
     def put_object(self, key: str, path: Path, tick=None) -> None:
         """Store the local file at ``path`` as ``key``, streamed; an object

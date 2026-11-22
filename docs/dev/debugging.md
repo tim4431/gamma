@@ -274,10 +274,9 @@ My Drive (`gamma/gdrive.py`, `gamma/gdrive_account.py`; why it is built so:
 [google-drive-backup.md](../research/google-drive-backup.md)). A task's
 *Copy to Google Drive* works as *Copy to the bucket* does, and a task may
 have both. Both clients are backup stores (`gamma/backup_store.py`: the
-`Store` interface of eight methods, `StoreError` for a call refused or
+`Store` interface of seven methods, `StoreError` for a call refused or
 unanswered, `StoreConfigError` for none that can work, the rule for a
-key, and `listing`, the shape of a folder's listing that `browse` gives
-the pane's folder browser), and `snapshot_copies.DESTINATIONS` names the two (`bucket`, `drive`)
+key), and `snapshot_copies.DESTINATIONS` names the two (`bucket`, `drive`)
 with what a message calls each, why nothing can be copied there while it
 is not set up, whether it is and its client; the scheduler, the routes and
 the jobs read a store from there, and the pane's wording of each is

@@ -5,16 +5,18 @@
 // FolderBrowserDialog); any place that lists folders a level at a time can
 // hand it a `source`. Above the tree, the folder chosen as crumbs, New
 // folder and Refresh; the tree is TreeRow's rows with useTree's keys, the
-// Files window's: a folder opens as it is chosen, a press on the folder
-// chosen opens or closes it, its files show with their size and date, and
-// a folder is read the first time it opens (folderBrowser.js browserRows).
-// New folder names a folder in the one chosen, in place: made at once
-// where the source can make one (`create`), else drawn until something is
-// saved in it (a bucket's folders are only its keys' names).
+// Files window's: a press on a folder chooses and opens it, on the folder
+// chosen opens or closes it; Space chooses, Enter and the arrows open and
+// close; its files show with their size and date, and a folder is read the
+// first time it opens (folderBrowser.js browserRows). New folder names a
+// folder in the one chosen, in place: made at once where the source can
+// make one (`create`), else drawn until something is saved in it (a
+// bucket's folders are only its keys' names).
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { composing } from "../shared/lib/hotkeys.js";
 import { fmtBytes } from "../shared/lib/format.js";
+import FileIcon from "../shared/ui/FileIcon.jsx";
 import { FolderPlusIcon, RefreshIcon } from "../shared/ui/Icons";
 import { formatFullDate, formatShortDate } from "../library/libraryUtils";
 import { DialogButtons, FormNotice, SubDialog } from "../settings/SettingsKit";
@@ -23,19 +25,17 @@ import TreeRow from "./TreeRow.jsx";
 import { useTree } from "./useTree.js";
 import "./folderBrowser.css";
 
-// What the name field takes as it is typed; nameProblem says when a name is too long.
-const NAME_FIELD_MAX = 200;
-
 // `source`: what is browsed, the same object for the browser's life —
 // {name (the top's, "My Drive", the bucket's), icon (the top's glyph),
 // list(path) → a promise of {folders: [{name, modified}], files: [{name,
-// size, modified}], more} (gamma/backup_store.py `listing`), its error's
-// message said under the folder, and create(path) → a promise, when the
-// source makes folders (a folder of its path, those above it made too)}.
-// `value` the path chosen ("" the top, which a new folder may go in even
-// where the folder cannot be the top: the form says so), onChange(path);
+// size, modified}], more}, its error's message said under the folder, and
+// create(path) → a promise of the path as made, when the source makes
+// folders (a folder of its path, those above it made too)}. `value` the
+// path chosen ("" the top, which a new folder may go in even where the
+// folder cannot be the top: the form says so), onChange(path); onBusy(on)
+// hears while a new folder is being made, which a form's Save waits for;
 // `label` the tree's name.
-export default function FolderBrowser({ source, value, onChange, label }) {
+export default function FolderBrowser({ source, value, onChange, onBusy, label }) {
   const [reads, setReads] = useState(() => new Map());
   // the folder chosen open, and every folder above it, so it shows
   const [expanded, setExpanded] = useState(() => new Set(["", ...pathsTo(value)]));
@@ -53,6 +53,8 @@ export default function FolderBrowser({ source, value, onChange, label }) {
   // the row the keys go to once it is drawn: the folder chosen as the
   // browser opens (scrolled to, not focused), a folder named by the keys
   const reveal = useRef({ key: `folder:${value}`, focus: false });
+  const chosen = useRef(value); // the folder chosen now, for a make that ends after another was chosen
+  chosen.current = value;
 
   const rows = browserRows({ root: source.name, reads, expanded, added, naming });
 
@@ -79,9 +81,10 @@ export default function FolderBrowser({ source, value, onChange, label }) {
     if (on) next.add(path); else next.delete(path);
     return next;
   });
-  // A press on a folder: chosen and opened; on the folder chosen, opened or closed.
+  // A press on a folder: chosen and opened; on the folder chosen, opened or
+  // closed. On a failed read's note, its Try again.
   function press(row) {
-    if (row.kind === "folder" && !row.naming) {
+    if (row.kind === "folder") {
       if (row.id !== value) { onChange(row.id); open(row.id, true); }
       else open(row.id, !row.expanded);
     } else if (row.failed) read(row.id);
@@ -107,42 +110,44 @@ export default function FolderBrowser({ source, value, onChange, label }) {
   }
   async function commitName(keys) {
     if (!field.current) return;
-    const name = cleanName(naming.text);
+    const { parent, text } = naming;
+    const name = cleanName(text);
     if (!name) { stopNaming(keys); return; }
     const problem = nameProblem(name);
     if (problem) { setError(problem); return; }
-    const path = joinPath(naming.parent, name);
-    const draw = () => setAdded((was) => (was.includes(path) ? was : [...was, path]));
+    const path = joinPath(parent, name);
+    const draw = (at) => setAdded((was) => (was.includes(at) ? was : [...was, at]));
     if (rows.some((r) => r.kind === "folder" && r.id === path) || !source.create) {
-      draw();
+      draw(path);
       stopNaming(keys, path);
       onChange(path);
       return;
     }
     field.current = false;
     setNaming({ ...naming, busy: true });
+    onBusy?.(true);
     try {
-      await source.create(path);
+      const made = (await source.create(path)) || path;
       // drawn at once, and made once the folders above it that were read
       // are read again (the folder it is in may have been made with it)
-      draw();
-      for (const above of ["", ...pathsTo(naming.parent)]) if (reads.get(above)?.loaded) read(above);
-      stopNaming(keys, path);
-      onChange(path);
+      draw(made);
+      for (const above of ["", ...pathsTo(parent)]) if (reads.get(above)?.loaded) read(above);
+      stopNaming(keys, made);
+      if (chosen.current === parent) onChange(made);
     } catch (err) {
       field.current = true;
       setError(err.message || String(err));
       setNaming((was) => (was ? { ...was, busy: false } : was));
+    } finally {
+      onBusy?.(false);
     }
   }
 
   const keys = useTree({
     rows, active, setActive, selectedId: value, menuOf: () => null,
     act: (kind, row) => {
-      if (kind === "toggle" && !row.naming) {
-        onChange(row.id);
-        open(row.id, !row.expanded);
-      } else if (kind === "select" && row.kind === "folder" && !row.naming) onChange(row.id);
+      if (kind === "toggle") open(row.id, !row.expanded);
+      else if (kind === "select" && row.kind === "folder") onChange(row.id);
       else if (kind === "open") press(row);
     },
   });
@@ -161,15 +166,15 @@ export default function FolderBrowser({ source, value, onChange, label }) {
   return (
     <div className="folderBrowser">
       <div className="folderBrowserBar">
-        <span className="folderBrowserPath" title={[source.name, ...pathsTo(value).map((p) => p.slice(p.lastIndexOf("/") + 1))].join(" / ")}>
+        <nav className="folderBrowserPath" aria-label={t("Folder chosen")} title={[source.name, ...(value ? value.split("/") : [])].join(" / ")}>
           {crumbs.map((path, i) => (
             <span key={path || "/"} className="folderBrowserCrumb">
-              {i ? <span className="crumbSep">/</span> : null}
+              {i ? <span className="crumbSep" aria-hidden="true">/</span> : null}
               <button type="button" className="crumbBtn" disabled={path === value}
                 onClick={() => onChange(path)}>{i ? path.slice(path.lastIndexOf("/") + 1) : source.name}</button>
             </span>
           ))}
-        </span>
+        </nav>
         <button type="button" className="uiBtn sm" disabled={!!naming} onClick={startNaming}>
           <FolderPlusIcon size={16} /> {t("New folder")}
         </button>
@@ -181,11 +186,11 @@ export default function FolderBrowser({ source, value, onChange, label }) {
         {rows.map((row) => {
           const own = keys.rowProps(row);
           if (row.kind === "note") return <TreeRow key={row.key} row={row} {...own} onPress={press} />;
-          if (row.naming) {
+          if (row.kind === "field") {
             return (
-              <TreeRow key={row.key} row={row} {...own} name={
-                <input className="aiKeyInput folderBrowserName" autoFocus aria-label={t("New folder's name")} placeholder={t("New folder")}
-                  value={naming.text} disabled={naming.busy} maxLength={NAME_FIELD_MAX} spellCheck={false}
+              <TreeRow key={row.key} row={row} {...own} icon={<FileIcon dir size={16} />} name={
+                <input className="fileTreeName fileRowRename" autoFocus aria-label={t("New folder's name")} placeholder={t("New folder")}
+                  value={naming.text} disabled={naming.busy} spellCheck={false}
                   onChange={(e) => setNaming({ ...naming, text: e.target.value })}
                   onBlur={() => commitName(false)}
                   onKeyDown={(e) => {
@@ -216,17 +221,18 @@ export default function FolderBrowser({ source, value, onChange, label }) {
 
 // The browser in a dialog of its own, for a form whose folder is one field
 // among others (the bucket's prefix): Choose hands the folder chosen to
-// onChoose(path). `title`, `hint` the line under it; `source` and `value`
-// FolderBrowser's.
+// onChoose(path), once no new folder is being made. `title`, `hint` the
+// line under it; `source` and `value` FolderBrowser's.
 export function FolderBrowserDialog({ title, hint, source, value = "", onChoose, onClose }) {
   const [path, setPath] = useState(value);
+  const [busy, setBusy] = useState(false);
   return (
     <SubDialog title={title} onClose={onClose} className="folderBrowserDialog">
       {hint ? <p className="settingsPaneHint">{hint}</p> : null}
-      <FolderBrowser source={source} value={path} onChange={setPath} label={title} />
+      <FolderBrowser source={source} value={path} onChange={setPath} onBusy={setBusy} label={title} />
       <DialogButtons>
         <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
-        <button type="button" className="uiBtn primary" onClick={() => onChoose(path)}>{t("Choose")}</button>
+        <button type="button" className="uiBtn primary" disabled={busy} onClick={() => onChoose(path)}>{t("Choose")}</button>
       </DialogButtons>
     </SubDialog>
   );

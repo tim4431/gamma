@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config, net_proxy
-from .backup_store import StoreConfigError, StoreError, check_key, listing
+from .backup_store import StoreConfigError, StoreError, check_key
 
 SCOPE = "https://www.googleapis.com/auth/drive.file"
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
@@ -379,10 +379,15 @@ def _q(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
+def label(folder: str) -> str:
+    """The folder's path as a message shows it: ``Backups › Gamma``."""
+    return " › ".join(filter(None, folder.split("/")))
+
+
 def where(folder: str) -> str:
     """The folder as the log and the messages name it: ``Google Drive ›
     Backups › Gamma``."""
-    return " › ".join(["Google Drive", *filter(None, folder.split("/"))])
+    return " › ".join(filter(None, ["Google Drive", label(folder)]))
 
 
 def _mtime(stamp: str) -> float:
@@ -683,13 +688,16 @@ class Client:
             raise self._fail(f"DELETE {key}", resp)
 
     def browse(self, path: str) -> dict:
-        """What the folder ``path`` holds right in it (``backup_store.Store.
-        browse``), one page of it: of several folders of one name the
-        oldest, the one a key's walk takes. Only what Gamma made shows
+        """What the folder ``path`` (under the client's folder; "" the folder
+        itself) holds right in it, for the pane's folder browser:
+        ``{folders: [{name, modified}], files: [{name, size, modified}],
+        more}``, one page of it (``more`` when there was another), nothing
+        for a folder not there. Of several folders of one name the oldest,
+        the one a key's walk takes. Only what Gamma made shows
         (``drive.file``)."""
         folder = self._folder(check_key(path) if path else "", create=False)
         if folder is None:
-            return listing([], [])
+            return {"folders": [], "files": [], "more": False}
         found, more = self._list(f"{_q(folder)} in parents and trashed = false", one_page=True, order="createdTime")
         folders, files, named = [], [], set()
         for item in found:
@@ -700,7 +708,7 @@ class Client:
             elif name not in named:
                 named.add(name)
                 folders.append({"name": name, "modified": stamp})
-        return listing(folders, files, more=more)
+        return {"folders": folders, "files": files, "more": more}
 
     def make_folder(self, path: str) -> None:
         """Make the folder ``path`` under the client's folder, and the ones

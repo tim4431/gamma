@@ -194,10 +194,11 @@ function EditDialog({ status, confirm, onStatus, onClose }) {
   const [folder, setFolder] = React.useState(status.folder);
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [making, setMaking] = React.useState(false); // a new folder on its way: Save waits for it
   const [source] = React.useState(() => ({
     name: t("My Drive"), icon: HardDriveIcon,
     list: (path) => apiJson(`${ENDPOINT}/browse?${new URLSearchParams({ path })}`),
-    create: (path) => apiJson(`${ENDPOINT}/folders`, json("POST", { path })),
+    create: async (path) => (await apiJson(`${ENDPOINT}/folders`, json("POST", { path }))).path,
   }));
 
   async function save(event) {
@@ -224,13 +225,13 @@ function EditDialog({ status, confirm, onStatus, onClose }) {
       <form className="settingsForm" noValidate onSubmit={save}>
         <Field group label={t("Folder")}
           hint={t("New copies go here; the copies already in the old folder stay there. Gamma sees only the folders it made in your Drive.")}>
-          <FolderBrowser source={source} value={folder} onChange={setFolder} label={t("Folders in My Drive")} />
+          <FolderBrowser source={source} value={folder} onChange={setFolder} onBusy={setMaking} label={t("Folders in My Drive")} />
         </Field>
         {error ? <FormNotice>{error}</FormNotice> : null}
         <DialogButtons footnote={folder ? null : t("Choose a folder in My Drive: copies cannot go in My Drive itself.")}>
           <button type="button" className="uiBtn danger" onClick={disconnect}>{t("Disconnect…")}</button>
           <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="uiBtn primary" disabled={busy || !folder}>
+          <button type="submit" className="uiBtn primary" disabled={busy || making || !folder}>
             <MorphText>{busy ? t("Saving…") : t("Save")}</MorphText>
           </button>
         </DialogButtons>

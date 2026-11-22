@@ -1039,10 +1039,10 @@ Library:
   folder browser over My Drive ("Folders in My Drive": the folders and
   files Gamma made there, the folder in use chosen and open, `GET
   /api/admin/gdrive/browse`; New folder makes one at once in the folder
-  chosen, `POST /api/admin/gdrive/folders`). The folder is a path from My
-  Drive's top, shown "Backups › Gamma" in the row and the task's toggle;
-  My Drive itself cannot be it, so Save waits while it is chosen, its
-  footnote saying why. The dialog holds Disconnect…, which asks first.
+  chosen, `POST /api/admin/gdrive/folders`, Save waiting while it is
+  made). The folder is a path from My Drive's top, shown "Backups › Gamma"
+  in the row, the task's toggle and Test's answer; My Drive itself cannot
+  be it, so Save waits while it is chosen, its footnote saying why. The dialog holds Disconnect…, which asks first.
   A connection that cannot be used shows why under the rows, with
   Connect again…. A task's editor
   then has *Copy to Google Drive* (on for a new task while Drive is

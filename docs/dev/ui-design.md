@@ -370,10 +370,11 @@ that list and keeps only its layout in its own rule. The kind label on a card
   into it, ← closes it or moves to its parent, Enter opens a file or opens
   and closes a folder, Space selects, Shift+F10 or the menu key opens the
   row's menu at the row. Chords with Alt, Ctrl or ⌘ pass through (Alt+←
-  is Back). The trees are the Files window's (`explorer/FileTree.jsx`)
-  and a synced folder's folder view (`explorer/FolderTree.jsx`), both with
-  the keys and the focus of `explorer/useTree.js` (`fileTree.js`
-  `keyAction`) ([Trees](#trees)); a new tree takes the same. No typeahead
+  is Back). The trees are the Files window's (`explorer/FileTree.jsx`),
+  a synced folder's folder view (`explorer/FolderTree.jsx`) and the folder
+  browser (`explorer/FolderBrowser.jsx`), all with the keys and the focus
+  of `explorer/useTree.js` (`fileTree.js` `keyAction`) ([Trees](#trees));
+  a new tree takes the same. No typeahead
   yet.
 - **Fields** show focus as the accent border plus a 3 px `--accent-bg` halo,
   on click and keyboard alike. The field list is next to the ring rule. A
@@ -1952,18 +1953,22 @@ directory whatever the library's view, and the folder browser
   Backups uses it for the Google Drive folder (in the Edit dialog) and the
   bucket's prefix (`FolderBrowserDialog`, from Browse… beside the field,
   [settings.md](settings.md)). A bar over a framed tree: the folder chosen
-  as `crumbBtn` crumbs from the top (each choosing its folder), New folder
-  and Refresh (`ctlBtn`). A press on a folder chooses and opens it, on the
-  folder chosen opens or closes it; Enter does the same, Space chooses;
-  each folder is read the first time it opens (Reading…, then a failed
-  read's reason with Try again, empty, or that one page of more was
-  shown). Files are muted rows with their size and date, never chosen;
-  rows have no "⋯". New folder puts a name field (`aiKeyInput`) among the
-  folders of the one chosen: Enter or leaving it makes the folder where
-  the source makes folders (`create`), else draws it until something is
+  as `crumbBtn` crumbs from the top in a `nav` (each choosing its folder),
+  New folder and Refresh (`ctlBtn`). A press on a folder chooses and opens
+  it, on the folder chosen opens or closes it; the keys are the trees'
+  (Enter and the arrows open and close, Space chooses); each folder is
+  read the first time it opens (Reading…, then a failed read's reason
+  with Try again, empty, or that one page of more was shown). Files are
+  muted rows with their size and date, never chosen; rows have no "⋯".
+  New folder puts a name field (the folder view's rename field,
+  `fileRowRename`) among the folders of the one chosen: Enter or leaving
+  it makes the folder where the source makes folders (`create`, the path
+  it answers chosen, unless another folder was chosen meanwhile; the
+  form's Save waits for it, `onBusy`), else draws it until something is
   saved in it, as it draws a folder of the path chosen that is not there:
-  tagged `new`, "Not made yet" under it. A name that cannot be says why in
-  a `FormNotice` under the tree; Escape drops the field. A dialog holding
+  tagged `new`, "Not made yet" under it. Only a "/" is refused before the
+  store sees a name; the store's refusal is a `FormNotice` under the tree,
+  the field keeping its text. Escape drops the field. A dialog holding
   one is `.folderBrowserDialog`, wider than a form's.
 
 ### File icons

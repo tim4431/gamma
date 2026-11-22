@@ -316,6 +316,9 @@
 .setRow.wide > .setRowControls > :is(.aiKeyInput, .pwField, .setFieldPair) { flex: 1 1 0; width: auto; }
 .setFieldPair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .setFieldPair > :is(.aiKeyInput, .pwField) { margin-bottom: 0; }
+/* A field with its button beside it (the bucket's prefix and its Browse…). */
+.setFieldWithButton { display: flex; align-items: center; gap: var(--space-3); }
+.setFieldWithButton > .aiKeyInput { flex: 1 1 auto; min-width: 0; }
 /* Level badge in a log row (LogBox entries with a tone). */
 .sysLogLevel { flex: none; align-self: flex-start; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; padding: 1px 4px; border-radius: var(--radius-xs); }
 .sysLogLevel.warn { color: var(--warn); background: var(--warn-bg); }

@@ -1,6 +1,6 @@
 // The keys and the focus of a tree of rows (docs/dev/ui-design.md "Keyboard
-// focus"), the Files window's (FileTree.jsx) and a synced folder's folder
-// view (FolderTree.jsx) alike: one row in the tab order, what a key does
+// focus"), the Files window's (FileTree.jsx), a synced folder's folder view
+// (FolderTree.jsx) and the folder browser's (FolderBrowser.jsx) alike: one row in the tab order, what a key does
 // (fileTree.js keyAction), and the keys and the focus kept when the row
 // they were on goes (focusAfter).
 import { useLayoutEffect, useRef } from "react";

@@ -198,7 +198,7 @@ def test_googles_page_signs_in_where_gamma_is_opened_on_its_own_computer(client,
 
 
 def test_a_folder_is_a_path_of_names_from_the_top(client, google):
-    for bad in ("", "   ", " / ", "a\\b", "a/../b", "x" * 121, "/".join("a" * 17)):
+    for bad in ("", "   ", " / ", "a\\b", "a/../b", "a\x7fb", "x" * 121, "/".join("a" * 17)):
         with pytest.raises(ValueError):
             gdrive_account.start(bad)
     assert gdrive_account.check_folder("  Gamma   backups ") == "Gamma backups"
@@ -388,8 +388,7 @@ def test_the_folder_browser_lists_what_gamma_made_and_makes_folders(drive, googl
     boss = login("gd_picker", "gd-picker-pw")
     assert login("gd_member", "gd-member-pw").get("/api/admin/gdrive/browse").status_code == 403
     drive.put_bytes("snapshots/ws1/one.zip", b"12345")
-    google.add("Theirs", folder=True, mine=False)  # drive.file does not reach it
-    google.add("Gamma backups", folder=True)       # a second of one name: the first is the one used
+    google.add("Gamma backups", folder=True)  # a second of one name: the first is the one used
     top = boss.get("/api/admin/gdrive/browse").json()
     assert [f["name"] for f in top["folders"]] == ["Gamma backups"] and top["files"] == [] and not top["more"]
     held = boss.get("/api/admin/gdrive/browse", params={"path": "Gamma backups/snapshots/ws1"}).json()
@@ -406,6 +405,7 @@ def test_the_folder_browser_lists_what_gamma_made_and_makes_folders(drive, googl
     made = [google.path(f["id"]) for f in google.files.values() if f["mimeType"] == gdrive.FOLDER_MIME and f["mine"]]
     assert made.count("Backups/Server A") == 1
     assert boss.put("/api/admin/gdrive", json={"folder": "Backups/Server A"}).json()["folder"] == "Backups/Server A"
+    assert boss.post("/api/admin/gdrive/test").json()["message"] == "someone@gmail.com: 0 items in Backups › Server A"
     gdrive_account.client().put_bytes("snapshots/ws1/two.zip", b"2")
     assert "Backups/Server A/snapshots/ws1/two.zip" in google.mine()
     assert [f["name"] for f in boss.get("/api/admin/gdrive/browse", params={"path": "Backups"}).json()["folders"]] == [

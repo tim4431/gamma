@@ -139,8 +139,8 @@ function BucketDialog({ settings, onClose, onSaved }) {
           <PasswordInput {...text("secret_key", t("Secret key"))} autoComplete="new-password"
             placeholder={settings.secret_set ? t("secret set — type to replace") : undefined} />
         </Field>
-        <Field label={t("Prefix")} hint={t("Put before every name, so the bucket can hold other things")}>
-          <span className="folderField">
+        <Field group label={t("Prefix")} hint={t("Put before every name, so the bucket can hold other things")}>
+          <span className="setFieldWithButton">
             <input className="aiKeyInput" placeholder="gamma" {...text("prefix", t("Prefix"))} />
             <button type="button" className="uiBtn sm" disabled={!draft.bucket.trim()}
               title={t("Choose the prefix among the bucket's folders, reached with the settings above")}

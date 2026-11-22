@@ -3,9 +3,8 @@ under keys, which the backup tasks' snapshot copies go to
 (gamma/snapshot_copies.py) and the off-site rounds use (gamma/offsite.py).
 Two kinds implement it, alike: ``s3.Client`` (an S3-compatible bucket) and
 ``gdrive.Client`` (a folder of a Google Drive). This module holds what they
-share and nothing of either: the ``Store`` interface, the two errors, the
-rule for a key, and the shape of a folder's listing (``listing``), which
-the pane's folder browser reads (explorer/FolderBrowser.jsx).
+share and nothing of either: the ``Store`` interface, the two errors, and
+the rule for a key.
 
 A store keeps files under keys: segments joined by ``/``
 (``snapshots/<ws>/<name>.zip``), relative to the store's own place (the
@@ -62,11 +61,6 @@ class Store(Protocol):
     def delete_object(self, key: str) -> None:
         """Remove the file; one already gone is no error."""
 
-    def browse(self, path: str) -> dict:
-        """What the folder ``path`` (a key's segments; "" the store's own
-        place) holds right in it, as ``listing`` shapes it; a folder that
-        is not there holds nothing."""
-
 
 def check_key(key: str, *, prefix: bool = False) -> str:
     """``key`` when it can name a file: segments joined by ``/``, none
@@ -80,14 +74,3 @@ def check_key(key: str, *, prefix: bool = False) -> str:
         if not part or part in (".", "..") or "\\" in part or any(ord(c) < 32 or ord(c) == 127 for c in part):
             raise ValueError(f"unsafe object key: {key!r}")
     return key
-
-
-def listing(folders: list[dict], files: list[dict], *, more: bool = False) -> dict:
-    """A folder's listing as the folder browser reads it: ``{folders:
-    [{name, modified}], files: [{name, size, modified}], more}``, each list
-    by name (``modified`` an ISO time, "" when the store keeps none);
-    ``more`` when the store held more than one page and the rest were left
-    out."""
-    def by(entry):
-        return entry["name"].casefold(), entry["name"]
-    return {"folders": sorted(folders, key=by), "files": sorted(files, key=by), "more": more}

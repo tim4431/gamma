@@ -45,7 +45,3 @@
   color: var(--text-muted);
   font-size: var(--fs-xs);
 }
-.folderBrowserName { flex: 1 1 auto; min-width: 0; padding: 1px 6px; }
-/* A folder's field with its Browse… beside it (the bucket's prefix). */
-.folderField { display: flex; align-items: center; gap: var(--space-3); }
-.folderField > .aiKeyInput { flex: 1 1 auto; min-width: 0; }

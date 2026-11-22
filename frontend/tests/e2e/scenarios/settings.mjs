@@ -1842,31 +1842,42 @@ export async function settingsScenarios(env) {
       assertEq(await field(edit, "Secret key").inputValue(), "", "the secret never comes back");
       assertEq(await field(edit, "Secret key").getAttribute("placeholder"), "secret set — type to replace");
       // Browse… beside the prefix lists the bucket's folders from its top, with the dialog's settings: a
-      // folder opens as it is chosen, its files show with their size, and a new folder is drawn until a
-      // copy is saved under it. Choose fills the field.
+      // press on a folder chooses and opens it; the keys are the trees' (the arrows open and close, Space
+      // chooses); its files show with their size, and a new folder is drawn until a copy is saved under
+      // it. Choose fills the field.
       stand.objects.set("team/old/one.zip", { body: Buffer.from("12345"), at: new Date().toISOString() });
       await edit.getByRole("button", { name: "Browse…", exact: true }).click();
       const browse = page.getByRole("dialog", { name: "Choose the prefix", exact: true });
       const item = (name) => browse.getByRole("treeitem", { name, exact: true });
+      const crumbs = async () => (await browse.locator(".folderBrowserPath .crumbBtn").allInnerTexts()).join("/");
       await item("team").click();
+      await item("old").waitFor();
+      assertEq(await crumbs(), "gamma-e2e/team", "a press chooses the folder and opens it");
+      await item("team").press("ArrowLeft");
+      await item("old").waitFor({ state: "detached" });
+      assertEq(await crumbs(), "gamma-e2e/team", "← closes the folder, which stays chosen");
+      await item("gamma-e2e").press("Space");
+      assertEq(await crumbs(), "gamma-e2e", "Space chooses");
+      await item("team").press("ArrowRight");
+      await item("old").waitFor();
+      assertEq(await crumbs(), "gamma-e2e", "→ opens a folder without choosing it");
       await item("old").click();
       const file = browse.getByRole("treeitem", { name: /^one.zip/ });
       await file.waitFor();
       assert((await file.innerText()).includes("5 B"), "a file shows its size");
-      assertEq((await browse.locator(".folderBrowserPath .crumbBtn").allInnerTexts()).join("/"), "gamma-e2e/team/old",
-        "the crumbs name the folder chosen");
+      assertEq(await crumbs(), "gamma-e2e/team/old", "the crumbs name the folder chosen");
       await browse.locator(".folderBrowserPath").getByRole("button", { name: "team", exact: true }).click();
       await browse.getByRole("button", { name: "New folder", exact: true }).click();
       const name = browse.getByRole("textbox", { name: "New folder's name", exact: true });
-      await name.fill("  e2e  copies ");
+      await name.fill("e2e");
       await name.press("Enter");
-      const newFolder = browse.getByRole("treeitem", { name: /^e2e copies/ });
+      const newFolder = browse.getByRole("treeitem", { name: /^e2e/ });
       await until(async () => (await newFolder.getAttribute("aria-selected")) === "true", { what: "the new folder chosen" });
       assertEq(await newFolder.locator(".uiTag").innerText(), "new", "drawn as not made yet");
       await browse.getByRole("button", { name: "Choose", exact: true }).click();
       await browse.waitFor({ state: "detached" });
-      assertEq(await field(edit, "Prefix").inputValue(), "team/e2e copies", "Choose fills the prefix");
-      assert(!stand.objects.has("team/e2e copies/"), "a bucket's new folder is no object");
+      assertEq(await edit.getByRole("textbox", { name: "Prefix", exact: true }).inputValue(), "team/e2e", "Choose fills the prefix");
+      assert(!stand.objects.has("team/e2e/"), "a bucket's new folder is no object");
       stand.objects.delete("team/old/one.zip");
       // Cancel with an unsaved edit asks first; discarded, nothing is sent.
       await edit.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -2170,8 +2181,9 @@ export async function settingsScenarios(env) {
       assert(!(file in (await google.state()).files), "and Drive");
 
       // Edit… chooses the folder new copies go to in a tree of My Drive, which shows only what Gamma
-      // made, the folder in use chosen and open; New folder makes one at once in the folder chosen, My
-      // Drive itself here, which cannot be the folder. It holds Disconnect…, which revokes the access.
+      // made, the folder in use chosen and open; My Drive itself cannot be the folder. New folder makes
+      // one at once in the folder chosen, Drive's refusal of a name said under the tree; a Save pressed
+      // while the name is typed waits for the folder. It holds Disconnect…, which revokes the access.
       const edit = page.getByRole("dialog", { name: "Edit Google Drive", exact: true });
       await row(page, "someone@gmail.com").getByRole("button", { name: "Edit…", exact: true }).click();
       const tree = edit.getByRole("tree", { name: "Folders in My Drive", exact: true });
@@ -2181,22 +2193,29 @@ export async function settingsScenarios(env) {
       const save = edit.getByRole("button", { name: "Save", exact: true });
       await item("My Drive").click();
       assert(await save.isDisabled(), "My Drive itself cannot be the folder");
-      await edit.getByText("Choose a folder in My Drive: copies cannot go in My Drive itself.", { exact: true }).waitFor();
+      await item("Gamma backups").click();
       await edit.getByRole("button", { name: "New folder", exact: true }).click();
       const name = edit.getByRole("textbox", { name: "New folder's name", exact: true });
-      await name.fill("Server A");
+      await name.fill("..");
       await name.press("Enter");
+      await edit.locator(".folderBrowser [role=alert]").filter({ hasText: "not . or .." }).waitFor();
+      assertEq(await name.inputValue(), "..", "a refused name stays in the field");
+      await name.fill("Server A");
+      await save.click(); // the field's blur makes the folder; Save waits for it, so this press saves nothing
       await until(async () => (await item("Server A").getAttribute("aria-selected")) === "true", { what: "the new folder chosen" });
-      assert((await admin.api("/api/admin/gdrive/browse")).folders.some((f) => f.name === "Server A"), "made in Drive at once");
+      assert(await edit.isVisible(), "a Save pressed while the folder was made did not save the folder before it");
+      const held = await admin.api(`/api/admin/gdrive/browse?${new URLSearchParams({ path: "Gamma backups" })}`);
+      assert(held.folders.some((f) => f.name === "Server A"), "made in Drive at once");
       await save.click();
       await edit.waitFor({ state: "detached" });
-      assertEq(await row(page, "someone@gmail.com").locator(".settingDesc").innerText(), "Server A · backup tasks can copy their snapshots here");
+      assertEq(await row(page, "someone@gmail.com").locator(".settingDesc").innerText(),
+        "Gamma backups › Server A · backup tasks can copy their snapshots here");
       await row(page, "someone@gmail.com").getByRole("button", { name: "Edit…", exact: true }).click();
       await edit.getByRole("button", { name: "Disconnect…", exact: true }).click();
       await page.locator(".confirmModal").getByRole("button", { name: "Disconnect", exact: true }).click();
       await row(page, "Not connected").waitFor();
       assertEq((await google.state()).revoked, 1, "the token was revoked at Google");
-      assertNoProblems(page);
+      assertNoProblems(page, ["POST /api/admin/gdrive/folders -> 400"]); // the refused ".."
     } finally {
       await ctx?.close();
       await drive.stop();
