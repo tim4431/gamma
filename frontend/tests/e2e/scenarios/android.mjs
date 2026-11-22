@@ -12,8 +12,9 @@
 // name) and a refused one, with no
 // browser download; a file the app was given; the shell's bar; no folder
 // picker; the server inside the app on Settings › Server; Gamma Cloud in
-// Account & sync with no Open account and a link to the page on deleting
-// the account, and the privacy policy under Help; and the chrome
+// Account & sync with a Visit console that opens the account server
+// without its plan's pages, linked or not, and the privacy policy under
+// Help; and the chrome
 // pages (desktop/ui) under the app's chrome.js, beside the iPad's and the
 // desktop's. Chromium in a tablet-sized touch context, emulation, not a
 // device.
@@ -487,7 +488,7 @@ export async function androidScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("android: Account & sync offers no Open account (its pages lead to a plan's checkout) and links the page on deleting a Gamma Cloud account, linked or not, found by the search too; Help links the privacy policy", async () => {
+  await step("android: Account & sync's Visit console opens the account server marked as the app's (no plan's checkout there), linked or not, found by the search for deleting the account too; Help links the privacy policy", async () => {
     // What /api/auth/cloud/status answers: a linked account, then none
     // with cloud sign-in on, then cloud sign-in off.
     let status = { identity: { username: "alice-cloud", email: "alice@example.org", plan: "free", linked_at: "2026-11-01T09:00:00Z" },
@@ -505,22 +506,22 @@ export async function androidScenarios(env) {
       await page.getByRole("button", { name: "Account & sync", exact: true }).click();
       await row("Gamma Cloud").waitFor();
     };
-    const deleteLink = async (what) => {
-      const link = row("Delete Gamma Cloud account").getByRole("link", { name: "Delete account", exact: true });
-      assertEq(await link.getAttribute("href"), "https://gammapdf.com/delete-account/", `${what}: the page on deleting the account`);
+    const consoleLink = async (what, issuer = "https://account.example.org") => {
+      const link = row("Gamma Cloud").getByRole("link", { name: "Visit console", exact: true });
+      assertEq(await link.getAttribute("href"), `${issuer}/?gamma_app=1`, `${what}: the account server, marked as the app's`);
       assertEq(await link.getAttribute("target"), "_blank", `${what}: opened outside the app`);
     };
     try {
       await openAccount();
       const cloud = row("Gamma Cloud");
       await cloud.getByText("alice-cloud", { exact: false }).waitFor();
-      assertEq(await cloud.getByRole("link", { name: "Open account" }).count(), 0, "no Open account in the app");
       assert(await cloud.getByRole("button", { name: "Unlink", exact: true }).count(), "Unlink stays");
-      await deleteLink("linked");
-      // the settings search finds it in the app
+      await consoleLink("linked");
+      assertEq(await row("Delete Gamma Cloud account").count(), 0, "no row of its own: the console deletes the account");
+      // the settings search for deleting the account finds the row
       await page.getByRole("searchbox", { name: "Search settings" }).fill("delete cloud");
-      await page.locator(".settingsSearchResult").filter({ has: page.getByText("Delete Gamma Cloud account", { exact: true }) }).click();
-      await row("Delete Gamma Cloud account").waitFor({ state: "visible" });
+      await page.locator(".settingsSearchResult").filter({ has: page.getByText("Gamma Cloud", { exact: true }) }).first().click();
+      await row("Gamma Cloud").waitFor({ state: "visible" });
       // the privacy policy, under Help
       await nav("Help & diagnostics").click();
       const privacy = row("Privacy policy").getByRole("link", { name: "Open", exact: true });
@@ -531,10 +532,10 @@ export async function androidScenarios(env) {
       status = { identity: null, enabled: true, issuer: "https://account.example.org", connected: true };
       await openAccount();
       await row("Gamma Cloud").getByRole("button", { name: "Link Gamma Cloud account", exact: true }).waitFor();
-      await deleteLink("not linked");
+      await consoleLink("not linked");
       status = { identity: null, enabled: false, issuer: "", connected: null };
       await openAccount();
-      await deleteLink("cloud sign-in off");
+      await consoleLink("cloud sign-in off, no account server named here", "https://account.gammapdf.com");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

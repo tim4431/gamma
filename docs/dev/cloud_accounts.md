@@ -878,15 +878,22 @@ leaves out *Your account*, and its *Resend the mail* sends the request's
 button's `data-next`); the verify link's page has no *Overview* link.
 The confirm card and the chooser name Devices without linking it, the
 no-library page leaves out *See plans* and *Get the desktop app*, and an
-error page has no *Back* to the Overview. The account's own pages (the
-app shell) are unchanged. Two ways still reach a plan: the reset page
-carries no request, so *Forgot password?* then *Back to sign in*, or the
-mailed reset link, ends signed in on the Overview; and the sign-in,
-register and sign-up pages' terms line links to gammapdf.com/terms/
-and gammapdf.com/privacy/, whose site header links *Pricing*, as the
-privacy policy the app itself opens does. Closing that needs a
-gammapdf.com page without the header, for the app's links and this one
-alike.
+error page has no *Back* to the Overview. The app's *Visit console*
+(Settings → Account & sync) opens `/?gamma_app=1`, which any page takes
+as the same mark. In a marked browser the account's own pages (the app
+shell) leave out *Plan & billing*, the Overview's plan buttons and the
+buttons of its payment and read-only strips, and their links to
+gammapdf.com (*Download the app*, *Docs*, *Self-host instead*), and
+`/plan` sends the browser to the Overview, so a link to it from
+anywhere else (a Gamma server's *Manage plan*, the account page a
+library's Settings opens) ends there too. *Delete account* stays on
+Settings, as the app's in-app way to delete the account. The mark lasts
+the cookie's hour, also for the console opened by hand in that browser.
+One way still reaches a plan: the sign-in, register and sign-up pages'
+terms line links to gammapdf.com/terms/ and gammapdf.com/privacy/, whose
+site header links *Pricing*, as the privacy policy the app itself opens
+does. Closing that needs a gammapdf.com page without the header, for the
+app's links and this one alike.
 
 ### The entrance
 

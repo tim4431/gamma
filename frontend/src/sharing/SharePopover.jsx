@@ -294,7 +294,7 @@ function ShareLinkRow({ url, copied, onCopy, invited, onStop }) {
 // ""), `error` the last refusal's detail (or {message, limit} when the plan's
 // cap refused it), `copied` / `onCopy` the cloud link's copy, `canEdit` false
 // for a workspace viewer (nothing to press), `accountUrl` the Gamma Cloud
-// account page (the Settings Account row's "Open account"), offered at the
+// account page (the Settings Account row's "Visit console"), offered at the
 // plan's cap except inside the apps, which may not send people to buy
 // outside their store (docs/dev/android.md "Publishing on Google Play").
 function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish, onUnpublish, onSync, onLink, accountUrl }) {

@@ -260,9 +260,7 @@ export async function settingsScenarios(env) {
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await page.locator('.setNavAccount[aria-current="page"]').waitFor();
       assertEq(await page.locator('[data-guide="account.menu"]').count(), 0, "the menu closes");
-      // the link to the page on deleting a Gamma Cloud account is the apps' (android.mjs); a browser keeps Open account (publish.mjs)
       await row(page, "Gamma Cloud").waitFor();
-      assertEq(await row(page, "Delete Gamma Cloud account").count(), 0, "no Delete Gamma Cloud account row in a browser");
       assertNoProblems(page);
     } finally {
       await ctx.close();

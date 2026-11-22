@@ -19,8 +19,7 @@ import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 // the iPad and Android apps) in `hostOnly(flags, entry)`, a flag or the list
 // of flags its row is shown under: the host's own, or those hostCaps
 // derives from them. One shown in every app takes `platform`, which every
-// host declares (Account & sync › Delete Gamma Cloud account). One only the
-// desktop app reads (Reading › PDFs › Add opened PDFs to the library) is
+// host declares. One only the desktop app reads (Reading › PDFs › Add opened PDFs to the library) is
 // wrapped in `desktopOnly`.
 const e = (pane, label, section, hint, keywords, target) => ({ pane, label, section, hint, keywords, target: target || label });
 const admin = (entry) => ({ ...entry, admin: true });
@@ -156,12 +155,10 @@ const entries = [
   e("tools", t("Read window"), t("Tool limits"), t("Document text per read tool call"), "advanced context characters"),
   e("integrations", t("Integrations"), null, t("Access for Codex, Claude Code, DeepSeek Harness, or any MCP assistant: reading, and editing notes where you allow it."), "external assistants Codex Claude Code DeepSeek Harness dsh plugins MCP tokens read-only edit view role permissions revoke connections workspaces access setup command"),
   e("account", t("Account & sync"), null, t("Your account, Gamma Cloud link and settings sync"), "profile account user"),
-  e("account", t("Gamma Cloud"), null, t("Publish pages for free and carry your settings to your other servers"), "cloud link unlink sign-in identity plan publish sync set up"),
+  e("account", t("Gamma Cloud"), null, t("Publish pages for free and carry your settings to your other servers"), "cloud link unlink sign-in identity plan publish sync set up console account devices delete remove erase close"),
   e("account", t("Zotero"), null, t("Link a Zotero library to a workspace and keep the two in step"), "zotero library libraries link sync connect disconnect reconnect api key oauth sign-in references citations"),
   e("account", t("Settings sync"), null, t("Carry these settings to your other Gamma servers"), "sync cloud fetch push profile preferences"),
   e("account", t("Publishing"), null, t("Pages you publish to Gamma Cloud"), "sync publish published pages Gamma Cloud share stop conflicts"),
-  hostOnly("platform", e("account", t("Delete Gamma Cloud account"), null, t("How to delete it, and what that removes, on gammapdf.com"),
-    "remove erase close cancel account cloud data privacy gammapdf.com")),
   e("workspaces", t("Workspaces"), null, t("Personal and shared workspaces, export and import"), "library libraries default new personal shared"),
   e("workspaces", t("Clones and Zotero links"), null, t("Offline copies of workspaces on other Gamma servers, and workspaces kept in step with a Zotero library"), "sync clone mirror offline copy remote workspace origin server pull push detach reattach conflicts zotero library link"),
   e("workspaces", t("Your storage"), t("Storage"), t("all personal workspaces"), "storage quota space used disk"),

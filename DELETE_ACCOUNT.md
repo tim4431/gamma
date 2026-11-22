@@ -1,13 +1,14 @@
 # Deleting your Gamma Cloud account
 
-_Last updated: 2026-11-08._
+_Last updated: 2026-11-21._
 
 This page is for people who use **Gamma PDF**, the app published on
 Google Play by **Gamma PDF**, or another Gamma app (the desktop app for
 Windows, macOS and Linux, and the iPad app), and who made a Gamma Cloud
 account. It gives the steps to delete the account, says what deleting it
-removes and when, and what it leaves alone. The Android and iPad apps link
-to it from Settings → Account & sync → *Delete Gamma Cloud account*.
+removes and when, and what it leaves alone. In the Android and iPad apps,
+Settings → Account & sync → *Visit console* opens your account's pages,
+where step 2 below starts.
 
 ## What a Gamma Cloud account is
 

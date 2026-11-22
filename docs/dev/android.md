@@ -1419,12 +1419,15 @@ wins over the labels here.
 - **Policy points**, from the policy register in the research note; the
   details and the open questions are in
   [android/STORE.md "Before the first review"](../../android/STORE.md#before-the-first-review):
-  - Inside the apps (any native host) the web app leaves out Settings →
-    Account & sync's *Open account* and a hosted server's *Manage plan*:
-    account.gammapdf.com's *Plan & billing* and plans pages lead to
-    Stripe Checkout, and Play's Payments policy forbids linking to "a
-    webpage that could lead to an alternate payment method"
+  - Inside the apps (any native host) the web app leaves out a hosted
+    server's *Manage plan*: account.gammapdf.com's *Plan & billing* and
+    plans pages lead to Stripe Checkout, and Play's Payments policy
+    forbids linking to "a webpage that could lead to an alternate payment
+    method"
     ([payments](https://support.google.com/googleplay/android-developer/answer/10281818)).
+    Settings → Account & sync's *Visit console* opens the account server
+    with `gamma_app=1`, whose pages then leave out *Plan & billing* and
+    every plan button, and whose Plan page goes to the Overview.
     For the same reason the account server's sign-in and sign-up pages,
     in the browser the app's Gamma Cloud sign-in opens, show their brand
     without its links to gammapdf.com and the account home, and lead a new
@@ -1436,8 +1439,9 @@ wins over the labels here.
     create, since the sign-in's browser offers sign-up, so the app needs
     an in-app way to start deleting it and a public web page for the Data
     safety form ([account deletion](https://support.google.com/googleplay/android-developer/answer/13327111)).
-    The page is <https://gammapdf.com/delete-account/>, and the app links
-    to it from Settings → Account & sync. Deleting the account deletes its
+    The page is <https://gammapdf.com/delete-account/>, and the app's
+    Settings → Account & sync → *Visit console* opens the account
+    server, whose Settings page deletes the account, linked or not. Deleting the account deletes its
     library on the shared server and its published pages within the hour
     ([cloud_accounts.md](cloud_accounts.md) "A deleted account on the
     share host"), since Play does not count closing them as deletion.
