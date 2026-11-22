@@ -1659,7 +1659,9 @@ lays, or its line's tone at a quarter): a text selection ended by a
 mouse's `mouseup` or a pen's lift (`pdf/penSelect.js`), not a finger's,
 goes to `onSelectionFinished` with `{highlighter: true}` instead of
 opening the popup, and App adds it in the armed highlighter's look with
-its note open for typing. App returns the new highlight's id, and at once
+its note open for typing (for a mouse: a pen's waits for a tap on its row,
+as the focus would raise the on-screen keyboard, `touchTyping()`). App
+returns the new highlight's id, and at once
 for a pen, once the mouse moves on for a mouse
 ([ui-design.md](ui-design.md#the-pdf-viewer)), the bar over that highlight
 opens (`kind: "made"`). A finger's selection still gets the popup, with the

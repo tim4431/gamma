@@ -84,7 +84,7 @@ import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
 import { backdropPress, menuPress, triggerPress } from "../shared/ui/press.js";
-import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
+import { lastPointer, touchScreen, touchTyping } from "../shared/lib/pointer.js";
 import { appShell, nativeHost, postToHost } from "../shared/lib/host.js";
 import { dispositionName, saveBlob } from "../shared/lib/saveFile.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
@@ -8209,8 +8209,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const withId = { ...highlight, id: highlight.id || makeId() };
     const nextBlocks = addHighlightAsBlock(blocks, { ...withId, place });
     // Open the new block immediately so the user can type the note without
-    // an extra click. addHighlightAsBlock appends at the top level.
-    if (edit) {
+    // an extra click. addHighlightAsBlock appends at the top level. Not on an
+    // on-screen keyboard (touchTyping), which the focus would raise over the
+    // page at every highlight: there a tap on the row opens its note.
+    if (edit && !touchTyping()) {
       startEditing(withId.id);
       pendingFocusRef.current = withId.id;
     }
@@ -8223,8 +8225,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return withId.id;
   }
   // A region drawn on the picture (the image viewer's tip): a highlight
-  // block placed under image_position, its row's editor open for a note,
-  // or its thread's field for a comment (commentOnNewHighlight, whose
+  // block placed under image_position, its row's editor open for a note
+  // (addHighlight's), or its thread's field for a comment (commentOnNewHighlight, whose
   // abandoned-comment cleanup is the passage's).
   function addRegion(position, { color, comment = false } = {}) {
     const id = addHighlight({ quote: "", position, color: highlightColor(color) || DEFAULT_HIGHLIGHT }, { edit: !comment, place: POSITION_KEY.image });

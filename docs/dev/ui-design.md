@@ -1180,7 +1180,9 @@ reading `pointerType`, `matchMedia` or `navigator` itself:
   Return is then a line break's only key, and Tab and the Ctrl chords are
   missing. The editing bar ([ipad.md](ipad.md#the-editing-bar)), the
   chat's Return key ([ai.md](ai.md#the-composer)), and a field whose `autoFocus` would
-  raise a keyboard read it.
+  raise a keyboard read it. So does a new highlight's note (App's
+  `addHighlight`): it opens for typing under a mouse, and under a finger
+  or a pen it waits for a tap on its row.
 - **`touchScreen()`**: the device has a touch screen at all
   (`maxTouchPoints`), whatever is in use right now. The area-note toggle
   in the viewer's zoom column and the refusal of Safari's gesture events

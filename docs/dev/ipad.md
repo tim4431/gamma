@@ -1877,8 +1877,10 @@ The iPad app shows this same bar, since it is the web app.
   once when the editor opens (`touchTyping()` in `shared/lib/pointer.js`,
   [ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)). A
   read-only page opens no editor, so it has no bar, and nor do folded
-  Notes: the editor a highlight made on the PDF opens waits for them to
-  open, and its bar with it ([ui-design.md](ui-design.md#dock-windows)).
+  Notes ([ui-design.md](ui-design.md#dock-windows)). A new highlight's
+  note opens no editor here, so the keyboard stays down at every
+  highlight: a tap on its row opens it, as any note's
+  ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)).
 - **What it looks like.** The markup tool strip's surface and separators
   (`.pdfInkBar`, `.pdfInkSep`), centred and floating 6 px above what it
   sits on. Its `ctlBtn`s carry the strip's 16 px icons and are 36 px, the
