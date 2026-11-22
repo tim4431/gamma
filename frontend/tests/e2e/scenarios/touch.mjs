@@ -176,9 +176,11 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
   });
 
   // A folded window holds its rows but opens no editor there (ui-design.md
-  // "Dock windows"): a highlight made on the PDF with Notes folded opens its
-  // note's editor when they open, as it did when a fold unmounted them.
-  await step("touch: a highlight made while Notes are folded opens its note's editor only as they open, with the focus, and no editing bar or cursor chip before", async () => {
+  // "Dock windows"): a highlight made on the PDF by mouse with Notes folded
+  // opens its note's editor when they open, as it did when a fold unmounted
+  // them. A finger's opens none (touchTyping: it would raise the keyboard),
+  // not even as Notes open; a tap on its row does.
+  await step("touch: a mouse's highlight made while Notes are folded opens its note's editor only as they open, with the focus, and no editing bar or cursor chip before; a finger's opens none until its row is tapped", async () => {
     const hup = await alice.upload("/api/uploads", makePdf([["Highlight me while the notes are folded", "And me, with a mouse"]]), "folded.pdf", "application/pdf");
     const hpaper = await alice.api(`/api/blocks/by-doc/${hup.doc_id}`, { method: "POST", body: { default_title: "Folded highlight paper", source_url: hup.source_url } });
     await alice.api("/api/blocks", { method: "POST", body: { parent_id: hpaper.id, content: "A note already here" } });
@@ -207,8 +209,14 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
         const bar = await centre(grip);
         if (finger) await page.touchscreen.tap(bar.x, bar.y); else await grip.click();
         await page.locator('.dockWindow:not(.collapsed) [data-guide="notes.grip"]').waitFor();
-        await until(() => page.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), { what: "the new note's editor takes the focus as Notes open" });
-        if (finger) await page.locator(".editBar:not(.moving)").waitFor();
+        if (finger) {
+          await sleep(600); // past the editing bar's wait for the keyboard
+          assertEq(await page.locator(".blockEditorCm").count(), 0, "a finger's highlight opens no editor as Notes open");
+          assertEq(await page.locator(".editBar").count(), 0, "nor the editing bar");
+          await page.locator(".sidebar .blockRowWrap", { hasText: "Highlight me" }).locator(".blockBody").tap();
+          await page.locator(".editBar:not(.moving)").waitFor();
+        }
+        await until(() => page.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), { what: finger ? "a tap on the new row opens its note's editor" : "the new note's editor takes the focus as Notes open" });
         await page.locator(".chatSelChip.isCursor").waitFor();
         const typed = finger ? "written by finger as Notes opened" : "written by mouse as Notes opened";
         await page.keyboard.type(typed);
