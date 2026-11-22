@@ -7792,9 +7792,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Stop sharing failed: {message}", { message: err.message }));
     }
   }
-  // The home page menu's Copy link / Share… / Export… / Ask AI. The last
-  // three act on the open page, so the page is opened first and the action
-  // runs once it is the one on screen (the effect below).
+  // The home page menu's Copy link / Share… / Export…. The last two act on
+  // the open page, so the page is opened first and the action runs once it
+  // is the one on screen (the effect below; a chat thread's "ask" too).
   function copyPageLink(id) {
     copyText(withWorkspace(`${window.location.origin}/?page=${encodeURIComponent(id)}`))
       .then((ok) => setStatus(ok ? t("Link copied.") : t("Couldn't copy the link.")));
@@ -15415,9 +15415,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   !many && (
                     <MenuItem key="export" icon={ExportIcon} title={t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
                       onClick={() => openPageThen(homeMenu.id, "export", homeMenu.panel)}>{t("Export…")}</MenuItem>
-                  ),
-                  !many && !shareMode && (
-                    <MenuItem key="ask" icon={SparklesIcon} onClick={() => openPageThen(homeMenu.id, "ask", homeMenu.panel)}>{t("Ask AI about this page")}</MenuItem>
                   ),
                   !many && (
                     <MenuItem key="props" icon={BracesIcon} onPointerEnter={BlockProperties.preload}

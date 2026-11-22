@@ -28,8 +28,7 @@ close and reopen through View.
 - **Getting it back.** View (≡, `header.view`) → Windows → **AI Chat**,
   **Notes**, **PDF** (or **Notebook view**). The palette's "Show or hide
   the chat / notes / PDF" commands have no default key. The chat also
-  comes back through a library card's "Ask AI about this page",
-  "Transcribe with AI" on a drawing, and the tours that `show` it; the PDF
+  comes back through "Transcribe with AI" on a drawing, and the tours that `show` it; the PDF
   through the paperclip popover's "Show the PDF", a highlight's note or a
   chat citation.
 - **Why it bites.** Visibility is saved with each page's layout, and a page
