@@ -15,8 +15,9 @@ template, also the key of the frontend's catalog, ``app/notices.js``) plus
 its ``params``, so the browser shows it in the interface language; ``title``
 is the same sentence filled in, for API readers and older frontends.
 
-Sources are plain functions ``fn(user_id) -> Notice | None`` (the
-account's id) registered with ``@source``; each must be cheap — a cached,
+Sources are plain functions ``fn(user_id)`` (the account's id) that return
+a Notice, a list of them (one source for several alike things) or None,
+registered with ``@source``; each must be cheap — a cached,
 in-memory or small database read — because ``for_user`` runs them on every
 poll of ``GET /api/notices``. Admin-only sources are skipped for everyone
 else.
@@ -32,8 +33,8 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 
-from . import (backup_schedule, cloud_auth, cloud_sync, hosted, integrity, join_requests, logbuf, reports,
-               server_settings, sync_engine, translate_engines, version, zotero_sync)
+from . import (ai_settings, backup_schedule, cloud_auth, cloud_sync, hosted, integrity, join_requests, logbuf,
+               reports, server_settings, sync_engine, translate_engines, version, zotero_sync)
 from .db import NOTICES_SEEN_PREF_KEY, connect_users_db, get_pref, update_pref
 from .server_settings import MB
 
@@ -64,7 +65,7 @@ _SOURCES: list[tuple[callable, bool]] = []
 
 
 def source(*, admin_only=False):
-    """Register a notice source: ``fn(user_id) -> Notice | None``."""
+    """Register a notice source: ``fn(user_id) -> Notice | list[Notice] | None``."""
     def wrap(fn):
         _SOURCES.append((fn, admin_only))
         return fn
@@ -291,6 +292,30 @@ def hosted_plan(user_id):
 
 
 @source()
+def ai_model_missing(user_id):
+    """Each task whose model is no longer offered (gamma/ai_settings.py, the
+    ``ai-models`` pref: its connection removed, its model unpicked, a shared
+    entry that no longer admits the account), a notice per task seen once
+    per missing pick: the chat uses the first model offered meanwhile, the
+    other tasks the chat model. The pref is read first, and the registry
+    (built without renewing a sign-in) only when a task has a pick at
+    all."""
+    prefs = ai_settings.load_model_prefs(user_id)
+    if not any(prefs[role] for role in ai_settings.ROLES):
+        return []
+    roles = ai_settings.model_roles(user_id)
+    # The sentences are written in the call: the frontend's catalog test
+    # reads them there (tests/notices.test.mjs).
+    return [notice(f"ai-model-{role}", roles[role]["pick"], "warn", "ai", {
+        "chat": "The chat model {model} is no longer available.",
+        "metadata": "The metadata model {model} is no longer available; the chat model is used instead.",
+        "translate": "The translation model {model} is no longer available; the chat model is used instead.",
+        "ink": "The handwriting model {model} is no longer available; the chat model is used instead.",
+    }[role], model=ai_settings.pick_label(roles[role]["pick"]))
+        for role in ai_settings.ROLES if roles[role]["state"] == "missing"]
+
+
+@source()
 def free_translate_failing(user_id):
     """Microsoft's free translation endpoint keeps failing for this account
     (translate_engines' in-memory streak); gone after one success."""
@@ -357,8 +382,11 @@ def seen_map(user_id: str) -> dict:
 
 def for_user(user_id: str, is_admin: bool) -> list[dict]:
     """The unresolved notices of an account, strongest tone first."""
-    found = [notice for fn, admin_only in _SOURCES if is_admin or not admin_only
-             if (notice := fn(user_id)) is not None]
+    found = []
+    for fn, admin_only in _SOURCES:
+        if is_admin or not admin_only:
+            got = fn(user_id)
+            found += got if isinstance(got, list) else [got] if got is not None else []
     if not found:
         return []
     seen = seen_map(user_id)

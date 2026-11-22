@@ -157,9 +157,11 @@ offers Try again. The job stops, with the last failure's reason, only when:
 - `FAILS_IN_A_ROW` (3) chunks fail with no success between them: the
   provider is down, not one connection lost;
 - or a chunk's failure is final (`finalRefusal`): a 429 without
-  `Retry-After`, or a 401, 403 or 503 from Gamma (not signed in, no access,
-  no AI provider). A 429 whose `Retry-After` runs past the patience is not
-  final: it drops that chunk only.
+  `Retry-After`, a 401, 403 or 503 from Gamma (not signed in, no access,
+  no AI provider), or a `model_unavailable` (the model the job started
+  with is no longer offered: a job asks one model throughout, so a paper
+  never mixes two). A 429 whose `Retry-After` runs past the patience is
+  not final: it drops that chunk only.
 
 The server asks the model again for what its reply got wrong ("The
 server"), or a service with its tokens in another form ("Machine-translation
@@ -186,6 +188,10 @@ or, when Gamma found no AI provider to ask (the stopping request's
 `refused` status, 503), "Open settings". So "Try again" after a stopped
 "Translate references too" asks for those reference lists again, and after
 a stopped retry of the untranslated paragraphs for their pages alone.
+
+A job that ran on the chat model because the translation task's pick is
+no longer offered ends its task row with "used gpt-6-astra: the
+translation model is unavailable" (`fallbackNote`, set as the job starts).
 
 Once a session, a hint follows a job's end. When "Translate with" follows
 the chat model and the session's first job that reached the model had a
@@ -315,7 +321,7 @@ opens in the original.
   matches `<lang>|<other entry>:<name>` and `<lang>|server:<entry>:<name>`,
   since the rows are kept under the model's name): a connection removed and
   made again, which gets a new entry id, or a switch between one's own key
-  and a shared one, finds the same rows. With no chat model on offer and no
+  and a shared one, finds the same rows. With no model on offer and no
   service picked in Translate with (the free service, or nothing, stands in
   for one), a paper left under a chat model's key in the same language opens
   under that key: its lookups name that model, its entries are kept under it
@@ -1244,6 +1250,22 @@ order: no joined paragraph touched one of these blocks.
 `chunkRequest` in `app/translateClient.js` sends them with `texts`, `lang`,
 `model`, `effort`, `speed` and `stream: true`.
 
+`model` is what "Translate with" names: the account's translation task
+(`ai-models.translate`, [ai.md](ai.md#models-for-each-task)), the same pick
+as Settings → AI → Models' Translation row, kept on the server. The client
+sends the model the server resolved for it (`roles.translate.model`): the
+pick, a service as `engine:<id>`, the chat model while the task follows it
+or its pick is gone, and the free service when no model is offered at all.
+A job keeps the requests it started with, so it asks one model
+throughout; a model it named that goes away meanwhile answers 400
+`{detail, kind: "model_unavailable"}` (a stream's error line `{error,
+kind}`), whose top-level `kind` `translateClient.js` reads, which stops the job rather than finishing on another
+model (`finalRefusal`, above). A request with no `model` gets the same
+resolution on the server (`routers/translate.py` `_target`), before any AI
+connection is required, so an account with services alone still
+translates. The final object's `routed` (`{role, model, fallback}`) says
+what ran.
+
 A reply comes back per unit. `translateReply.results` splits a joined unit's
 translation at its `{br}` markers. When the model lost or doubled one, it
 cuts by the parts' lengths at the nearest sentence or clause boundary, never
@@ -1713,11 +1735,11 @@ a writer clears it):
   account's own or has an entry id's shape, 8 URL-safe characters, as one
   since removed does) by its name alone, with no AI runtime built, so a seed
   decrypts no key and refreshes no sign-in, and a member with no provider
-  set up reads what the others kept; only a bare name (which may hold a
-  colon of its own, "qwen2.5:7b") or none goes through the account's
-  runtime (`ai_runtime`, which raises nothing): the model it lists, else the
-  name as sent, else its default. The answer's `model` is the name the rows
-  are under, `""` when nothing names one. A row is
+  set up reads what the others kept; a bare name (which may hold a colon
+  of its own, "qwen2.5:7b") as it is; only none goes through the account's
+  runtime (`ai_runtime`, which raises nothing): the translate task's
+  target, a service's `engine:<id>` or a model's name. The answer's `model`
+  is the name the rows are under, `""` when nothing is offered. A row is
   named by `Kept.src` from the text and the workspace's glossary on the
   server, as `/api/ai/translate` names it, so nothing about the key is the
   client's to send and a text using a term changed since misses. The caps of `/api/ai/translate` (200 texts, 60k
@@ -2146,9 +2168,11 @@ the original unless it is the one open.
 
 ## Machine-translation services
 
-"Translate with" also offers the services in `gamma/translate_engines.py`.
-The viewer then sends `model: "engine:<id>"`, and `/api/ai/translate` hands
-the misses to `translate_engines.translate` instead of a chat model.
+"Translate with" also offers the services in `gamma/translate_engines.py`,
+as a group of its model menu. With one picked, the translation task
+resolves to `engine:<id>`, the viewer sends `model: "engine:<id>"`, and
+`/api/ai/translate` hands the misses to `translate_engines.translate`
+instead of a chat model.
 
 - **Microsoft (free)** needs no setup. It is the endpoint Edge's own page
   translation calls: `POST

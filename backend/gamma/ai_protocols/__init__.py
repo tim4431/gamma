@@ -17,6 +17,7 @@ from .base import SPEED_ORDER, Protocol
 from .chatgpt import ChatGPT
 from .openai import OpenAIChat
 from .responses import OPENAI_RESPONSES
+from .quota import READERS
 from .services import DEFAULT_MAX_TOKENS, SERVICES, service_of
 
 # Every wire a call may go over, by id; the ones an entry may name come
@@ -37,5 +38,16 @@ def of(conf: dict) -> Protocol:
     return WIRES[conf["protocol"]]
 
 
-__all__ = ["DEFAULT_MAX_TOKENS", "PROTOCOLS", "SERVICES", "SPEED_ORDER", "WIRES", "Protocol", "get", "of",
-           "service_of"]
+def quota_reader(conf: dict):
+    """The quota reader of a connection (``conf``: a runtime conf, or an
+    entry's protocol and base URL): its protocol's own (the ChatGPT
+    sign-in), else the one its service preset names (``usage``: OpenCode
+    Go); None for a connection whose plan has no quota to read."""
+    proto = WIRES.get(conf.get("protocol"))
+    if proto is not None and proto.has_account_usage:
+        return proto
+    return READERS.get((service_of(conf) or {}).get("usage"))
+
+
+__all__ = ["DEFAULT_MAX_TOKENS", "PROTOCOLS", "SERVICES", "SPEED_ORDER", "WIRES", "Protocol", "get",
+           "of", "quota_reader", "service_of"]

@@ -6,13 +6,13 @@ Where every setting lives, and how the Settings dialog is built.
 
 | Layer | Storage | Examples |
 |---|---|---|
-| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-pen-writes-pdf`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`), the papers this browser left showing their translation (`gamma-translated:<user>@<workspace>`, `pdf/translateRecall.js`, [translation.md](translation.md#a-paper-opened-again)) and the directories its conversations with a computer's agent began in, so a new one starts where the last did (`gamma-agent-dirs-used`, `chat/computer/usedDirs.js`, [local_agents.md](local_agents.md) "The strip") |
+| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-pen-writes-pdf`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the dictation model and language (`gamma-dictation-model`, `gamma-dictation-lang`; the other tasks' models are the account's `ai-models`, below), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`), the papers this browser left showing their translation (`gamma-translated:<user>@<workspace>`, `pdf/translateRecall.js`, [translation.md](translation.md#a-paper-opened-again)) and the directories its conversations with a computer's agent began in, so a new one starts where the last did (`gamma-agent-dirs-used`, `chat/computer/usedDirs.js`, [local_agents.md](local_agents.md) "The strip") |
 | Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer)), the tours (whether they are suggested, `suggestTours`, and which the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, the PDFs' page direction (`pdfFlow`), smooth wheel scrolling, how search opens, how a replaced PDF's highlights, and a changed text file's ranges, are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds))), handwriting (the habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the text highlighters (`highlightPresets`, [Text highlighters](#text-highlighters)) and the released builds' highlighter colour, which only seeds the first (`highlighterColor`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), a comment field's *Send to {agent}* tick as the person left it last (`commentSendTo`, which the tick itself sets, with no row; the Chat pane's Chat section's tag holds it, [comments.md](comments.md) "Sent to an agent"), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
-| Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`, with their groups, [strip_groups.md](strip_groups.md#where-it-is-kept)), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
+| Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`, with their groups, [strip_groups.md](strip_groups.md#where-it-is-kept)), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
 | Per account, done reminders | `users.db` `reminders_done`, a row per dismissed reminder (its key, the workspace it was last found in, when), written by `POST /api/reminders/done` and kept while the reminder exists ([mentions.md](mentions.md) "Reminders"); no pref, as there may be thousands (the `reminders-done` prefs key held them before migration step 39) | which of the account's reminders it has dismissed, in every browser |
-| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)), and the account's own skills under the reserved `skills` key (`/api/ai/skills*`, never synced to Gamma Cloud, [skills.md](skills.md#storage)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / Tavily / SearXNG / OpenAlex settings, the account's skills |
+| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)), and the account's own skills under the reserved `skills` key (`/api/ai/skills*`, never synced to Gamma Cloud, [skills.md](skills.md#storage)), and the model each task uses under the reserved `ai-models` key (`/api/ai/models`, written by `/api/ai/models/roles` and `/import`, never synced to Gamma Cloud, [ai.md](ai.md#models-for-each-task)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / Tavily / SearXNG / OpenAlex settings, the account's skills, the chat, metadata, translation and handwriting models and the favorite models |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
 | Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the server options (the `options` key, `gamma/server_options.py`, among them the text recognition's `ocr`, `ocr_auto` and `ocr_workers`), the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), the Google Drive connection (the `gdrive` key via `/api/admin/gdrive`, its refresh token encrypted the same way), the network proxy (the `proxy` key via `/api/admin/proxy`, its password encrypted the same way, [network_proxy.md](network_proxy.md)), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
 
@@ -71,8 +71,10 @@ from `SECTION_PREFS` in
 of `PREFS`. `tests/sectionPrefs.test.mjs` checks the table against `PREFS`
 and against every `scope="account"` in the panes' sources, and that every
 account preference is held by a section. A browser preference inside an
-account section carries its own tag on its row (`Row`'s `scope="browser"`):
-"Translate with" in Translation › Service is the one case.
+account section carries its own tag on its row (`Row`'s `scope="browser"`).
+Dictation and Dictation language do so in AI → Models › Models for each
+task, whose other rows are the account's task models, kept on the server
+rather than in the profile ([ai.md](ai.md#models-for-each-task)).
 
 `useProfileSync` returns its overall state (signed-out / loading
 / loaded / pending / pushing / failed) and, as sets of preference names:
@@ -214,7 +216,8 @@ error changes the fingerprint and the notice is back by itself. Nothing is
 dismissed for good, and nothing is per browser.
 
 Sources are functions `fn(user_id)` (the account's id) registered with `@source` in
-`gamma/notices.py`; each returns a Notice or None and must be a cached,
+`gamma/notices.py`; each returns a Notice, a list of them (`for_user`
+flattens it) or None, and must be a cached,
 in-memory or small database read, because `GET /api/notices` runs them on
 every poll. Admin-only sources are skipped for members; guests, share views
 and integration tokens get an empty list. The sources:
@@ -234,6 +237,7 @@ and integration tokens get an empty list. The sources:
 | `cloud-setup` | admins | Users | info | cloud sign-in is off, or on but the server still has to be connected (`cloud_auth.needs_connect`); Users → Sign-in turns it on | `off` / `connect`, so each state is seen once |
 | `join-requests` | admins | Users | info | Gamma Cloud accounts ask to join this server (`join_requests.waiting`: the waiting requests, [cloud_accounts.md](cloud_accounts.md) "Requests to join"); Users → Sign-in lists them | when the newest waiting one was made: a new request brings it back, a decided one does not |
 | `reports` | admins | Users | info | open reports someone other than this admin made here (`reports.waiting`; [api.md](api.md) "Reports"); Users → Reports lists them | the newest open one: a new report brings it back, a resolved one does not |
+| `ai-model-chat`, `ai-model-metadata`, `ai-model-translate`, `ai-model-ink` | everyone | AI (Models) | warn | that task's model pick is no longer offered (its connection removed, the model unpicked, a shared entry that no longer admits the account): the task runs on the chat model meanwhile ([ai.md](ai.md#models-for-each-task)); action "Choose model". One source, `ai_model_missing`, returns them as a list: it reads the pref, and builds the registry only when a task has a pick, without renewing a sign-in (`ai_settings.model_roles`) | the pick, so each pick that went missing is seen once |
 | `free-translate` | everyone who met the failures | Translation | warn | Microsoft's free translation service failed `FREE_ALERT_AFTER` (3) times in a row, in memory (`translate_engines.free_failing`); one success ends it, and the Microsoft row names the error | the streak's start time |
 | `hosted` | admins (grace), everyone (read-only) | Server for admins, Account for members | warn / error | a hosted container's cached plan answer (`hosted.limits`, from memory) is in `grace` (admins only; names `grace_until`) or read-only (everyone) — [cloud_accounts.md](cloud_accounts.md) "Hosted containers" | the status and since when it holds (`status_since`), so each episode is seen once |
 | `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
@@ -278,16 +282,18 @@ Manage page, whose breadcrumb leads back.
 A pane holds one subject, so a person looking for a setting guesses its
 pane from its name: how things look (Appearance) apart from what the bars
 offer (Toolbars); papers and notes (Reading & editing) apart from the pen
-(Handwriting); who the chat talks to (Agents) apart from the AI services it
-reaches (Connections); the server's people and who may come in (Users)
+(Handwriting); who the chat talks to (Agents) apart from the models and the
+AI services that supply them (Models), and both apart from what the calls
+used (Usage); the server's people and who may come in (Users)
 apart from the machine itself (Server); help apart from what it is about
 (tours sit in Help & diagnostics). A new setting goes into the pane whose
 subject it is, not the one with room. The rail is 224 px at 100 % (one line
 for "Language & translation") and its rows 27.5 px. The groups' rows touch
-and their captions sit 6 px apart, so an admin's nineteen panes fit the
-dialog's full height (`min(800px, 100dvh - 48px)`). On a shorter window the
-groups scroll between the account card and Help, which stay where they are
-(`.settingsNavList`, with a thin scrollbar so the rail keeps its width).
+and their captions sit 4 px apart, so an admin's twenty panes fit the
+dialog's full height (`min(800px, 100dvh - 48px)`). On a shorter window
+anyone's may not fit: then the groups scroll between the
+account card and Help, which stay where they are (`.settingsNavList`, with
+a thin scrollbar so the rail keeps its width).
 Panes carry no explanatory subtitle, but for three whose name says little
 of what they hold: Integrations, Backups and Network proxy
 ([research/settings-layout.md](../research/settings-layout.md) "Weighed and
@@ -546,11 +552,12 @@ Preferences:
   and translate-on-select. Each row's hint says what tells it apart, since
   its tooltip is out of reach on touch: "Translate with" says a chat model
   reads the paper first and keeps its terms while a service is quick and
-  needs no AI, and Keep translations says a paper translated again needs no
+  needs no AI (or, in red, that its pick is no longer offered: the same `taskRow` as Settings → AI's task rows), and Keep translations says a paper translated again needs no
   AI call. **Service** (the account's tag, for Keep
   translations; the services' keys are the account's too, kept on the
-  server): "Translate with" (a chat model or a set-up translation service;
-  a browser pref, tagged on its row), the Microsoft (free) row with only
+  server): "Translate with" (a model or a set-up translation service: the
+  account's translation task, the same `TaskModelMenu` as Settings → AI →
+  Models with the services as a group, [ai.md](ai.md#the-model-menu)), the Microsoft (free) row with only
   Test (no key), the Google / Youdao credential rows with Test / Edit /
   remove. Then **Keep translations** (`translateKeep`, default on, sent as
   `keep` with every translation and brief request: the server keeps a
@@ -605,10 +612,10 @@ AI:
   fields read ([local_agents.md](local_agents.md) "The client"); what
   sends people to it (the chat's tiles for an agent found here, a
   refusal's sentence) opens `openSettings("agents")` and says "Settings →
-  AI → Agents". It leads with **Gamma AI**, with the connection it uses
-  ("Uses ChatGPT", read from the masked key list App loads as an AI pane
-  opens, `gammaAiConnection` in SettingsAi.jsx), or *Not connected* and a
-  *Set up* that opens Connections. Under it, for an account with
+  AI → Agents". It leads with **Gamma AI**, with the model and connection
+  it uses ("Uses gpt-6-astra (ChatGPT)": the account's chat model,
+  `gammaAiConnection` in SettingsAi.jsx over `ai/useAiModels.js`), or *Not
+  connected* and a *Set up* that opens Models. Under it, for an account with
   Integrations, a `FormNotice` (`info`) says that Codex or Claude Code
   reads the library from its terminal through Integrations, with *Open
   Integrations*. On the desktop
@@ -674,30 +681,65 @@ AI:
   first* or *Turned off*; and one per
   computer of another account's whose agent serves this one, titled
   *TIM-PC, alice's*, its notice saying what alice lends, its agent tagged *Lent to you*.
-- **Connections** (pane id `ai`): **AI services**, the provider list (empty state: one sentence and the Add
-  button, which opens the connect dialog, "Connect an AI service": service
-  tiles (`IconChoices`: ChatGPT, Anthropic, OpenAI API, Other — Other opens
-  the named services by vendor, a Plan menu for a vendor with several, or a
-  custom endpoint and its API format; [ai.md](ai.md#other-services)), the key with the
-  provider's placeholder, a "Get a key at …" link and the live check, then
-  the models with the name and test model under More options; its button is
-  Connect, and the new connection is tested once saved; each model tag on a
-  row shows whether the model calls tools on that connection (a check, a ban
-  with the reason and date on hover, or nothing before its first chat with
-  tools), and a click on the tag checks it again ([ai.md](ai.md#models-that-cant-call-tools));
-  the server's shared entries follow the account's own as read-only
-  rows tagged "Shared by this server", selectable as the active key but
-  without Test / Manage / delete; with no key picked, or the picked one
-  removed, the first connection that offers models is the active one, here
-  and in the chat's model menu), the login connection check, the models
-  (default chat, metadata, dictation) and the account's token usage
-  ([ai.md](ai.md) "Token usage"). While a shared entry applies, the usage
-  opens with a **Shared allowance** row ("12k of 50k tokens in the last
-  24 h", a red "used up" tag once spent; "12k tokens in the last 24 h · no
-  limit" without one, [guests.md](guests.md)). The account menu's card shows
-  the same numbers under the storage meter. The check, models and usage
-  sections appear only once a provider exists; a guest sees the usage too,
-  without Reset. The chat's setup card (no AI connected, `ChatSetupCard` in
+- **Models** (pane id `ai`, the head and the nav row once named
+  Connections; [SettingsAi.jsx](../../frontend/src/settings/SettingsAi.jsx)
+  `AiSettings`), three sections ([ai.md](ai.md#models-for-each-task)):
+  - **Models for each task**: Chat, Metadata & citations, Translation and
+    Handwriting, each a row with its `TaskModelMenu`
+    ([ai.md](ai.md#the-model-menu)) and under its name what `roleStatus`
+    says: the model's connection and billing, "Uses chat model", or, red
+    (`aiTaskMissing`), "claude-sonnet-4-6 (Work key) is no longer available.
+    Using gpt-6-astra (ChatGPT) instead." with the button reading Choose…
+    and turned amber (`.aiTaskMissing .uiSelectBtn`). The hint and the
+    class come from `taskRow` (`ai/aiModels.js`), which Translate with
+    (Language & translation) shares. Then Dictation (the transcription
+    model, a browser pref, its hint naming the connection it goes through,
+    red with an amber trigger when none can) and the
+    dictation language. "Add a connection below to choose models." while
+    nothing is offered.
+  - **Connections**: "+ Add provider" on its rule once there is a list; the
+    empty state is one sentence and the Add button. A card per connection
+    (`ProviderRow`): its name, a status dot from the last Test or login
+    check (green while it works, red with the failure's headline), its
+    billing tag (Pay per token, Subscription, Shared by this server, Free
+    (local)), the key hint and address, its model tags, the last result
+    with its fix ("✗ OpenAI rejected the API key — Update key"), and the
+    quota bars of a connection with a quota (`provider.quota` from
+    `GET /api/ai/settings`: a sign-in, OpenCode Go). Each model tag shows
+    whether the model calls tools on that connection (a check, a ban with
+    the reason and date on hover, or nothing before its first chat with
+    tools), and a click on the tag checks it again
+    ([ai.md](ai.md#models-that-cant-call-tools)). Test, Usage (with a
+    quota only), Manage and Remove. Remove asks first, naming what each
+    task that loses its model will use instead (`removalNotice`). The
+    server's shared entries follow the account's own as read-only cards,
+    tagged "Shared by this server", without Test / Usage / Manage / Remove
+    (an admin manages them under Settings → Server).
+  - **Connection check** (the account's tag): Check at login, whose hint
+    names the connections the tasks use ("Checks ChatGPT, Work key when
+    Gamma opens", `connectionsInUse`), one `/api/ai/health` each.
+
+  The connect dialog, "Connect an AI service" (`ProviderForm.jsx`, its
+  state `useProviderEditor` in `settings/providerEditor.js`): 1 the
+  service, a searchable grid of cards in three groups ("Sign in or
+  subscription", "API key", "On your computer or network",
+  `serviceSections` in `settings/aiServices.js`), each with its billing
+  tag, a vendor's plans as a `Segmented` under its card, a custom endpoint
+  with its address and API format ([ai.md](ai.md#other-services)); 2 the
+  key with the provider's placeholder, a "Get a key at …" link and the live
+  check, optional for a local preset or a custom endpoint (`keyOptional`
+  in `aiServices.js`, the server's rule), or the ChatGPT
+  sign-in; 3 the models, a searchable checklist of the live listing with
+  each model's context window, pictures and, on a pay-per-token
+  connection, price (the menu's `ModelFacts`), "Add by name" always
+  there, and a saved name the listing lacks kept and tagged "not listed";
+  under More options the name, the test model and, for a key, Billing
+  (Auto (what it resolves to), Pay per token, Subscription, Free (local)).
+  Its button is Connect, and the new connection is tested once saved. The
+  connection check appears only once a provider exists, and never for a
+  guest, who cannot store keys.
+
+  The chat's setup card (no AI connected, `ChatSetupCard` in
   `chat/ChatDock.jsx`) reads the masked key list alongside `/api/ai/models`
   and shows once both are in, tiles and all. Until the chat knows whether
   an AI is connected it is a plain frame, with no header tools and no
@@ -707,10 +749,29 @@ AI:
   focus reaches a tile, and the add dialog, set to the tile's service, opens
   with Settings on the list the card read while the pane reads its own (a
   chat error card's fix opens an entry's form once the list has loaded,
-  `openAiKeysEditor({entry})`); the card's tiles and the dialog's service tiles are one list
-  (`aiServiceTiles` in `settings/providerEditor.js`). Once a connection made from the
+  `openAiKeysEditor({entry})`); the card's tiles are `aiServiceTiles(info)` in
+  `settings/providerEditor.js` (the protocols, then Other; no options). Once a connection made from the
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
+- **Usage** (pane id `usage`, after Models,
+  [SettingsAiUsage.jsx](../../frontend/src/settings/SettingsAiUsage.jsx)):
+  the account's AI calls for a period, read through `useSettingsRead`
+  (`usageOf(period, kind)`; `PANE_READS.usage` reads the month, "What a
+  pane reads"), Refresh on its `PaneHead`. A `Segmented` period (7 days,
+  30 days, 12 months, All), the tiles (`StatText`s in a `.setStats.fit`
+  row, `StatText` taking a list of hint lines and children: Est. API
+  spend, Subscriptions with each plan's quota bars, Shared, Tokens), the **Shared
+  allowance** row while a shared entry applies ("12k of 50k tokens in the
+  last 24 h", a red "used up" tag once spent; "12k tokens in the last 24 h ·
+  no limit" without one, [guests.md](guests.md)), the chart stacked by
+  billing with Reset under it, **By model** (a sortable table, its task
+  chips a `ToggleGroup`) and **By task** ([ai.md](ai.md#token-usage)). The
+  account menu's card shows the allowance's numbers under the storage
+  meter. A guest sees the pane too, without Reset. Settings search finds
+  the task rows (Chat, Metadata & citations, Translation, Handwriting,
+  Dictation, Dictation language) under Models › Models for each task,
+  Connections and Check at login there, and Usage, Shared allowance, By
+  model and By task here.
 - **Chat**: five sections. **Chat** holds the default reasoning effort,
   the default speed, the follow-up while a reply runs (`chatFollowUpMode`,
   a Steer / Queue `Segmented`, [ai.md](ai.md#queue-and-steer)) and the
@@ -1093,7 +1154,7 @@ linked account or not ([android.md](android.md) "Publishing on Google Play").
 
 **Shared AI provider** (Server, `SettingsAi.jsx` `SharedAiProviderSettings`)
 lists the server's shared connections with the same rows and the same
-add/edit form as Connections (`ProviderRow`, `ProviderForm`; both forms'
+add/edit form as Models' Connections (`ProviderRow`, `ProviderForm`; both forms'
 state is `useProviderEditor`, here over `/api/admin/ai-providers`, for the
 account's list over `/api/ai/providers` in App). An entry is an API-key service or a ChatGPT
 subscription signed in with the account form's steps
@@ -1106,7 +1167,8 @@ last, a `categoryTag` chip per named account with a compact
 `AccountPicker` to add one ([ai.md](ai.md) "Shared provider entries",
 *Access*; administrators always have access, the step's hint says so). Each
 row says who may use it on an Access line, and has Test, Manage and delete,
-plus Usage (the subscription's windows) on a sign-in; "+ Add provider" is
+plus Usage (the subscription's windows) on a connection with a quota (a
+sign-in, OpenCode Go); "+ Add provider" is
 the section's action.
 While at least one shared entry exists, two `UnitInput` rows set the shared
 allowance, **Allowance per account** and **Allowance per guest**: tokens per
@@ -1324,6 +1386,10 @@ section reads through `useSettingsRead` is named in `PANE_READS`
 (`tests/settingsReads.test.mjs`). The Chat pane's skills sections are the
 exception: they read the chat's own skill store (`chat/useSkills.js`),
 which the "/" menu shares, so naming its path here would read it twice.
+The AI → Usage pane's `PANE_READS.usage` reads the month over every task
+(`usageOf("month")`), what the pane opens on; another period or task the
+user picks there is read through `useSettingsRead` the same way, the last
+answer kept on screen until its own is in.
 At 150 ms of latency the Server pane, measured while it still held the
 sign-in, guests, storage-defaults and reports sections that are now in
 Users, made 8 requests in two waves and switched once, at 208 ms, with
@@ -1710,9 +1776,10 @@ it lasts for one conversation and stays in the browser
 
 Reasoning effort, speed, the context budgets, the tools switch and the
 permissions are account preferences: they live in the profile and follow the account to
-every browser. The chat model stays with the browser, remembered per
-provider entry; provider selection and credentials keep their own account
-keys. Context presets change the three budgets together: Standard
+every browser. The chat model is the account's chat task, kept on this
+server with the other tasks' models (`ai-models`, [ai.md](ai.md#models-for-each-task)),
+so the chip's pick reaches every device; credentials keep their own
+account key. Context presets change the three budgets together: Standard
 is 60,000 / 6,000 / 120,000 characters, Larger doubles them, and Custom exposes
 the exact values without changing them.
 
@@ -1782,7 +1849,7 @@ the strip's order in the PDF and the notebook viewer; Customize top bar…
 from a right-click on the bar's empty space),
 shared chat settings, mobile layout (Appearance and Toolbars fitting a
 phone without horizontal scrolling), administrator account separation, an
-admin's rail (Agents first in the AI group, nineteen panes fitting a
+admin's rail (Agents first in the AI group, twenty panes fitting a
 900 px window, a 640 px one scrolling the groups alone), and
 Backups › Bucket: an admin's alone, tagged so, reached from Server backups'
 Off-site copies, set up in its dialog (an endpoint

@@ -601,13 +601,16 @@ export function Stat({ icon: Icon, label, value, total, title }) {
 }
 
 // A text-valued tile beside Stat's numeric ones: a version, an uptime, a
-// pair of counts. `tone` "warn" / "error" colours the frame.
-export function StatText({ icon: Icon, label, value, hint, tone = "", title }) {
+// pair of counts. `tone` "warn" / "error" colours the frame. `hint` is the
+// line under it, or a list of lines (the empty ones left out); `children`
+// come last (the Usage pane's quota bars of each subscription).
+export function StatText({ icon: Icon, label, value, hint, tone = "", title, children }) {
   return (
     <div className={`setStat setStatText ${tone}`} title={title}>
       <span className="setStatTop"><span className="setStatNum">{value}</span></span>
       <span className="setStatLabel"><Icon size={14} />{label}</span>
-      {hint ? <span className="setStatHint">{hint}</span> : null}
+      {[].concat(hint || []).filter(Boolean).map((line) => <span key={line} className="setStatHint">{line}</span>)}
+      {children}
     </div>
   );
 }

@@ -508,6 +508,19 @@ def _agent_probes_end_with_their_test(monkeypatch):
     catalog.forget()
 
 
+@pytest.fixture(autouse=True)
+def _catalog_fetches_end_with_their_test(monkeypatch):
+    """A model-catalog fetch a read path started in the background
+    (gamma/ai_catalog.py ``_background``: /api/ai/models warming its facts,
+    a stale listing refreshed) ends within the test that started it.
+    Taking ``monkeypatch`` puts the wait before the test's patches are
+    undone, so it ends under the stubs (and the offline sockets) it
+    started with."""
+    yield
+    from gamma import ai_catalog
+    ai_catalog.settle()
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _no_timed_upload_pass():
     """The upload GC's full pass over every workspace runs only when a test

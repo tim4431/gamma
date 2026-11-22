@@ -36,7 +36,8 @@ from ..ai_client import (
     wire_protocol as _wire_protocol,
 )
 from ..ai_protocols.base import truncated_stop
-from ..ai_settings import ai_runtime, is_server_id, own_entries, require_ai_runtime, resolve_model as _resolve_model
+from ..ai_settings import (ai_runtime, is_server_id, own_entries, require_enabled, resolve_model as _resolve_model,
+                           routed)
 from ..auth import actor_of, can_write, require_user_id, require_ws
 from ..db import safe_doc_id
 from ..logbuf import log
@@ -88,7 +89,7 @@ _BRIEF_TIMEOUT = 90
 class AITranslateRequest(StorableBody):
     texts: list = Field(default_factory=list)  # source paragraphs, viewer order
     lang: str = "zh-CN"   # target language code (TRANSLATE_LANGS key)
-    model: str = ""       # model registry id, or "engine:<id>" (a translation service); "" = the user's default
+    model: str = ""       # model registry id, or "engine:<id>" (a translation service); "" = the translate task's
     effort: str = ""      # reasoning effort; "" = the model's lowest level (_translate_effort)
     speed: str = ""       # service tier; "" or unsupported = the provider's usual routing
     # NDJSON stream: {"i": [indices], "text": partial} lines as the model
@@ -157,6 +158,30 @@ def _model_levels(listing, rt: dict, entry: dict, what: str) -> list:
     return levels or []
 
 
+def _target(user_id: str, requested: str) -> tuple:
+    """``(engine, rt, entry, routed)``: what a translation request runs on,
+    settled before any AI connection is required. A service it names
+    (``engine:<id>``); a model it names (a 400 model_unavailable when no
+    longer offered, never another model); else the translate task's target
+    (ai_settings.resolve_roles): its service or its model — the chat model
+    standing in for a pick no longer offered — and, with no model offered
+    at all, the free service, so an account with services only keeps
+    translating. ``engine`` is "" for a model, ``entry`` None for a
+    service; ``routed`` the response's provenance (ai_settings.routed)."""
+    engine = translate_engines.engine_of(requested)
+    if engine:
+        return engine, None, None, {"role": "translate", "model": requested, "fallback": False}
+    rt = ai_runtime(user_id)
+    if not requested:
+        target = rt["roles"]["translate"]["model"]
+        engine = translate_engines.engine_of(target)
+        if engine:
+            return engine, rt, None, routed(rt, "translate", "", target)
+    require_enabled(rt)  # no model offered at all: the standard 503
+    entry = _resolve_model(rt, requested, "translate")
+    return "", rt, entry, routed(rt, "translate", requested, entry)
+
+
 def _translate_effort(requested: str, rt: dict, entry: dict) -> str:
     """The effort a translation call asks for: the user's pick
     (Settings → Language & translation), else the model's lowest level
@@ -222,12 +247,14 @@ def _paper_keys(request: Request, user_id: str, ws: str, paper, lang: str, model
 
 
 def _final(batch: TranslateBatch, translated: list, model: str, effort: str, brief: bool,
-           redone: int = 0, failed: list | None = None) -> dict:
+           redone: int = 0, failed: list | None = None, ran: dict | None = None) -> dict:
     """A translation's final object, plain or the last NDJSON line, with
     ``translated`` settled into ``batch``. A service asks for no effort
-    (""), and counts as having the brief (ai_translate)."""
+    (""), and counts as having the brief (ai_translate). ``ran``: the
+    provenance (``routed``: {role, model, fallback})."""
     return {"translations": batch.settle(translated), "model": model, "cached": not batch.miss,
-            "redone": redone, "failed": failed or [], "effort": effort, "brief": brief}
+            "redone": redone, "failed": failed or [], "effort": effort, "brief": brief,
+            **({"routed": ran} if ran else {})}
 
 
 def _ndjson(line: dict) -> str:
@@ -286,7 +313,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
     # A machine-translation engine ("engine:<id>", Settings → Language and
     # Translation) needs no AI provider and takes no brief and no glossary
     # (its keys carry no stamp); anything else resolves to a chat model.
-    engine = translate_engines.engine_of(payload.model)
+    engine, rt, entry, ran = _target(user_id, payload.model)
     if engine:
         engine_conf = translate_engines.credentials(user_id, engine)
         model_id = translate_engines.MODEL_PREFIX + engine
@@ -325,14 +352,12 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         # model's are: the viewer marks and counts it and asks for it again.
         failed = [j for j, t in enumerate(translated) if t is None]
         translated = [s if t is None else t for s, t in zip(src, translated)]
-        return reply_with(_final(batch, translated, model_id, "", True, len(redo), batch.at(failed)))
+        return reply_with(_final(batch, translated, model_id, "", True, len(redo), batch.at(failed), ran))
 
-    rt = require_ai_runtime(user_id)
-    entry = _resolve_model(rt, payload.model)
     model_id, model_name = entry["id"], entry["model"]
     effort = _translate_effort(payload.effort, rt, entry)
     speed = _translate_speed(payload.speed, rt, entry)
-    count_usage = ai_usage.recorder("translate", entry, rt)
+    count_usage = ai_usage.recorder("translate", entry, rt, speed)
 
     # The workspace's glossary (a page's workspace; none without a page):
     # each call carries the terms its texts use, and a text that uses one is
@@ -429,10 +454,10 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         # viewer shows the original there instead of erroring.
         failed = [j for j, t in enumerate(translated) if t is None]
         translated = [s if t is None else t for s, t in zip(src, translated)]
-        return _final(batch, translated, model_id, effort, with_brief(brief), len(redo), batch.at(failed))
+        return _final(batch, translated, model_id, effort, with_brief(brief), len(redo), batch.at(failed), ran)
 
     def cached(brief, batch):
-        return _final(batch, [], model_id, effort, with_brief(brief))
+        return _final(batch, [], model_id, effort, with_brief(brief), ran=ran)
 
     # A streamed request that will wait for the brief request starts its
     # response at once and waits inside the stream, where keepalive_lines
@@ -541,15 +566,16 @@ def ai_translate_brief(payload: AITranslateBriefRequest, request: Request):
     ws, paper = _paper(request, payload.page_id, payload.head)
     if not paper:
         return _one_line(answer(None, "there is no paper to read: no page and no opening text"))
-    rt = require_ai_runtime(user_id)
-    entry = _resolve_model(rt, payload.model)
+    engine, rt, entry, _ = _target(user_id, payload.model)
+    if engine:  # the translate task's own target is a service
+        return _one_line(answer(None))
     key, kept = _paper_keys(request, user_id, ws, paper, lang, entry["model"], payload.keep)
     brief = translate_context.made_brief(key, kept)
     if brief is not None:
         return _one_line(answer(brief))
     effort = _translate_effort(payload.effort, rt, entry)
     speed = _translate_speed(payload.speed, rt, entry)
-    count_usage = ai_usage.recorder("translate", entry, rt)
+    count_usage = ai_usage.recorder("translate", entry, rt, speed)
     # The call opens inside the stream, as a streamed translation's does.
     _check_door(rt, entry, user_id)
 
@@ -628,21 +654,21 @@ def _kept_model(user_id: str, requested: str) -> str:
     shared entry's ``server:<entry>:<name>``: ``_registry_name``), which is
     what the viewer sends, so a lookup builds no AI runtime (no key
     decrypted, no sign-in refreshed) and a member with no provider reads
-    what the others kept. Only a bare name, or none, is read through the
-    account's runtime: the model it lists under that name, else the name as
-    it is; with none named, the runtime's default; "" when nothing names
-    one."""
+    what the others kept; a bare name as it is. Only none named is read
+    through the account's runtime: the translate task's target (a service's
+    ``engine:<id>``, a model's name); "" when nothing is offered."""
     engine = translate_engines.engine_of(requested)
     if engine:
         return translate_engines.MODEL_PREFIX + engine
-    name = _registry_name(user_id, requested)
-    if name:
-        return name
+    if requested:
+        return _registry_name(user_id, requested) or requested
     rt = ai_runtime(user_id)
-    entry = _resolve_model(rt, requested)
-    if entry and (not requested or requested in (entry["id"], entry["model"])):
-        return entry["model"]
-    return requested
+    target = rt["roles"]["translate"]["model"]
+    engine = translate_engines.engine_of(target)
+    if engine:
+        return translate_engines.MODEL_PREFIX + engine
+    entry = next((m for m in rt["models"] if m["id"] == target), None)
+    return entry["model"] if entry else ""
 
 
 # Sync def: it reads data.db.

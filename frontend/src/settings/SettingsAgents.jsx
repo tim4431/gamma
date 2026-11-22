@@ -1,6 +1,6 @@
 // Settings → AI → Agents (docs/dev/settings.md "AI",
 // docs/dev/local_agents.md "Who turns it on"): who the chat talks to.
-// Gamma AI, with the connection it uses and a jump to Connections; a line
+// Gamma AI, with the connection it uses and a jump to Models; a line
 // pointing at Integrations, where Codex or Claude Code reads the library
 // from its terminal; then this computer, on the desktop app's own server
 // (GET /api/local-agents, chat/useLocalAgents.js): each agent it found, its
@@ -92,7 +92,7 @@ export function SettingsAgents({ connection, signedIn, setStatus, onConnections,
         {connection ? <span className="uiTag">{t("Ready")}</span> : (
           <span className="setRowControls">
             <span className="uiTag warn">{t("Not connected")}</span>
-            <button type="button" className="uiBtn sm primary" title={t("Open Settings → AI → Connections")}
+            <button type="button" className="uiBtn sm primary" title={t("Open Settings → AI → Models")}
               onClick={onConnections}>{t("Set up")}</button>
           </span>
         )}

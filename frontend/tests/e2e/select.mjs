@@ -195,6 +195,9 @@ export const RULES = [
   ["frontend/src/editor/pathLinkContext.js", ["sub-pages", "notes-pdf-share", "explorer"]],
   // (text-search: a note's line link is a pill; text-anchors: a text range's row, its dot and its title)
   ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search", "text-anchors"]],
+  // the account's models for each task and the model menu: the chat's model chip, Settings → AI → Models,
+  // Translate with, and the model the translation and handwriting requests go to
+  ["frontend/src/ai/**", [...CHAT, "settings", "translation", "ink-ai", "local-agents", "remote-chat"]],
   // skills in the chat (docs/dev/skills.md): the "/" menu's pure pieces and the catalog every composer reads
   // (local-agents: a skill turn to Codex; settings: the Skills pane tells the catalog of its writes)
   ["frontend/src/chat/skills.js", [...CHAT, "local-agents"]],

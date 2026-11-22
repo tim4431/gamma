@@ -108,7 +108,7 @@ close and reopen through View.
   Fetched date of 14 October; a red ! for unverified), and the BibTeX
   export's "Keep this .bib up to date" link for Overleaf.
 - **Settings** has no anchors, and offers wait while it is open; only
-  Connections (from the AI chat tour) and Gamma Cloud (a hint) are ever
+  Models (from the AI chat tour) and Gamma Cloud (a hint) are ever
   pointed at.
 
 ## The shell

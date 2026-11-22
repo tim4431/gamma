@@ -5,7 +5,10 @@
 // (deleted or turned off since the chat read the catalog: the 400 of
 // gamma/routers/ai.py, whose message goes back in the composer); a
 // connection probe adds "no_model" (an
-// entry with no model picked); "network" is the browser losing Gamma
+// entry with no model picked); "model_unavailable" is a request naming a
+// model no connection offers any more (gamma/ai_settings.py resolve_model:
+// its connection was removed or the model unpicked since the chat read the
+// list); "network" is the browser losing Gamma
 // itself; "agent" is a computer agent's turn that failed, whose computer
 // says why in its own sentence (`said`, chat/computer/computerChat.js
 // shownMessages). The chat's error card, the login check's warning strip
@@ -13,15 +16,15 @@
 // here, so no two of them word one failure differently.
 //
 // `fix` names the card's main action (ChatDock turns it into a button):
-// connect / own_key open Settings → Connections, key / signin / connection
+// connect / own_key open Settings → AI → Models, key / signin / connection
 // open the failing connection's own form, proxy opens Settings → Network
 // proxy (an admin's), new_chat starts over, skills opens Settings → Chat at
-// Your skills. `switchModel` says another model could get around the
+// Your skills, models opens Settings → AI → Models. `switchModel` says another model could get around the
 // failure.
 import { t } from "../shared/i18n/i18n.js";
 
 export const FAILURE_KINDS = ["not_configured", "allowance", "auth", "blocked", "rate", "overloaded",
-  "unreachable", "bad_endpoint", "too_long", "no_model", "network", "skill", "other"];
+  "unreachable", "bad_endpoint", "too_long", "no_model", "model_unavailable", "network", "skill", "other"];
 
 export function failureCopy(kind, { provider = "", auth = "key", said = "" } = {}) {
   const name = provider || t("The AI service");
@@ -91,6 +94,12 @@ export function failureCopy(kind, { provider = "", auth = "key", said = "" } = {
         text: t("The connection offers no model yet. Edit it and pick at least one."),
         fix: "connection", switchModel: true,
       };
+    case "model_unavailable":
+      return {
+        headline: t("That model is no longer offered"),
+        text: t("Its connection was removed or the model was unpicked. Pick another model for this chat."),
+        fix: "models", switchModel: true,
+      };
     case "network":
       return { headline: t("Lost the connection to Gamma"), text: t("The browser lost its connection to the Gamma server. Check your network, then retry.") };
     case "skill":
@@ -115,6 +124,7 @@ export function fixLabel(fix) {
     proxy: t("Network proxy"),
     new_chat: t("New chat"),
     skills: t("Manage skills…"),
+    models: t("Choose model"),
   }[fix] || "";
 }
 

@@ -70,7 +70,7 @@ made, each line only when it happened:
 - the note and the `llm` label, when their demo ran to the end.
 
 Two tiles follow. **Ask the paper** starts the AI chat tour when an AI
-provider is connected, else opens Settings → Connections (App's
+provider is connected, else opens Settings → AI → Models (App's
 `openSettings` service). **More tours** opens the account menu's Tours
 list. Then the footnote "Replay any tour from the account menu" and
 **Done**. "done" is recorded when the card opens, and closing it (Done, ×,
@@ -167,7 +167,7 @@ no voice step.
 - **No AI connected** (`aiConfigured: false`, and `aiEditable`: the account
   can store keys — a guest cannot, and gets no tour): one step on the chat's
   setup card (`chat.setup`), "Connect an AI to use chat". Clicking a tile
-  opens Settings → Connections, whose `settings.opened {pane: "ai"}` ticks
+  opens Settings → AI → Models, whose `settings.opened {pane: "ai"}` ticks
   it. The message box is disabled then, so nothing is typed into it. The
   card also lists the agents found on a computer, which need no
   connection ([ai.md](ai.md#a-computers-agent-in-the-chat)): one the

@@ -43,7 +43,7 @@ from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
 from ..ai_context import pdf_excerpt as _pdf_excerpt
 from ..ai_context import pdf_path as _pdf_path
-from ..ai_settings import ai_runtime, require_ai_runtime
+from ..ai_settings import ai_runtime, require_ai_runtime, routed
 from ..auth import require_user_id, require_ws
 from ..blocks_store import write_lock
 from ..ops import StorableBody, after_commit, apply_ops, props_patch
@@ -1031,10 +1031,10 @@ def _verify_ai_meta(meta: dict, text: str, hints: str = "", doc: _Document | Non
     return meta, "", "ai_reading"
 
 
-def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | None:
+def _ai_extract_meta(text: str, prompt: str, rt: dict) -> dict | None:
     system = (prompt or METADATA_PROMPT).strip()[:4000]
     try:
-        entry = _resolve_model(rt, model)
+        entry = _resolve_model(rt, "", "metadata")
         raw = _call_ai(
             [{"role": "user", "content": f"First pages of the paper:\n\n{text}"}],
             # Generous cap: reasoning models spend invisible tokens before the JSON
@@ -1148,7 +1148,7 @@ def _picked(answer) -> int | None:
         return None
 
 
-def _ai_pick(text: str, records: list[dict], rt: dict, model: str = "") -> int | None:
+def _ai_pick(text: str, records: list[dict], rt: dict) -> int | None:
     """Ask the AI which of ``records`` — records the document's text names
     without tying them to it — describes the document, whose opening
     ``text`` the caller sizes: its index, None when
@@ -1158,7 +1158,7 @@ def _ai_pick(text: str, records: list[dict], rt: dict, model: str = "") -> int |
     usage."""
     listing = "\n".join(_record_lines(i + 1, r) for i, r in enumerate(records))
     try:
-        entry = _resolve_model(rt, model)
+        entry = _resolve_model(rt, "", "metadata")
         raw = _call_ai(
             [{"role": "user", "content": f"Opening text of the document:\n\n{text}"
                                          f"\n\nRecords:\n{listing}"}],
@@ -1182,13 +1182,13 @@ def _ai_pick(text: str, records: list[dict], rt: dict, model: str = "") -> int |
     return None
 
 
-def _make_ppt_cite(rt: dict, meta: dict | None, bibtex: str, prompt: str = "", model: str = "") -> str:
+def _make_ppt_cite(rt: dict, meta: dict | None, bibtex: str, prompt: str = "") -> str:
     """The minimal slide-deck citation, one AI call over the BibTeX (else the
-    meta JSON). Shared by the metadata fetch (generated alongside the record)
-    and POST /metadata/cite (regenerate)."""
+    meta JSON) on the metadata model. Shared by the metadata fetch
+    (generated alongside the record) and POST /metadata/cite (regenerate)."""
     system = (prompt or CITE_PROMPT).strip()[:4000]
     source = bibtex or json.dumps(meta, indent=2)
-    entry = _resolve_model(rt, model)
+    entry = _resolve_model(rt, "", "metadata")
     return _call_ai([{"role": "user", "content": source}], system, entry, rt,
                     max_tokens=4000, timeout=120,
                     on_usage=ai_usage.recorder("cite", entry, rt)).strip()
@@ -1393,27 +1393,25 @@ def web_names_a_work(web) -> bool:
 
 
 class MetaFetchRequest(BaseModel):
+    # The AI part runs on the account's metadata model: a lookup names none.
     block_id: str
     prompt: str = ""   # custom AI metadata-extraction prompt (empty = built-in)
-    model: str = ""
     force: bool = False
     context_char_limit: int = Field(default=6000, ge=100, le=1_000_000)
     cite_prompt: str = ""  # custom PPT-citation prompt for the citation generated alongside
-    cite_model: str = ""
 
 
 # Sync endpoints: external lookups + PyMuPDF text extraction run in the threadpool.
 @router.post("/metadata/fetch")
 def metadata_fetch(payload: MetaFetchRequest, request: Request):
     ws = require_ws(request, write=True)
-    return fetch_page_metadata(ws, payload.block_id, request.state.user_id, prompt=payload.prompt, model=payload.model,
+    return fetch_page_metadata(ws, payload.block_id, request.state.user_id, prompt=payload.prompt,
                                force=payload.force, context_char_limit=payload.context_char_limit,
-                               cite_prompt=payload.cite_prompt, cite_model=payload.cite_model)
+                               cite_prompt=payload.cite_prompt)
 
 
-def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", model: str = "",
-                        force: bool = False, context_char_limit: int = 6000,
-                        cite_prompt: str = "", cite_model: str = "") -> dict:
+def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", force: bool = False,
+                        context_char_limit: int = 6000, cite_prompt: str = "") -> dict:
     """The lookup behind POST /api/metadata/fetch, callable off-request (the
     extension's /api/clip runs it in a background thread). ``actor`` is the
     id of the account on whose behalf it runs — its AI providers do the AI
@@ -1570,6 +1568,10 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     rt = ai_runtime(actor)
     can_pick = bool(rt["enabled"] and text)
     rejected = frozenset()  # the records the AI's check said are not this document
+    # Once the AI was asked, the answer says which model that was: the
+    # metadata model, or the chat model standing in for one no longer
+    # offered (``routed``).
+    asked_ai = False
     if not meta:
         # No identifier ties a record — Crossref bibliographic search,
         # queried with the web page's title and first author (its own tags),
@@ -1649,7 +1651,8 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
         # first page at least: an issue-clipped article's title sits after
         # the previous article's tail.
         opening = text[:min(SCAN_CHARS, max(context_char_limit, doc.page_one))]
-        pick = _ai_pick(opening, [r for r, _, _ in named], rt, model) if can_pick else AI_PICK_FAILED
+        asked_ai = asked_ai or can_pick
+        pick = _ai_pick(opening, [r for r, _, _ in named], rt) if can_pick else AI_PICK_FAILED
         if pick is None:
             rejected = frozenset(str(r.get("doi") or "").lower() for r, _, _ in named) - {""}
             named = []
@@ -1658,7 +1661,8 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
             if pick != AI_PICK_FAILED:
                 match = "ai"
     if not meta and not named and rt["enabled"] and text:
-        read = _ai_extract_meta(text[:context_char_limit], prompt, model, rt)
+        asked_ai = True
+        read = _ai_extract_meta(text[:context_char_limit], prompt, rt)
         if read:
             # Upgrade to a registry record where possible; drop identifiers
             # that resolve nowhere and aren't in the PDF (fabrications) or
@@ -1693,7 +1697,8 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     ppt_cite = ""
     if rt["enabled"]:
         try:
-            ppt_cite = _make_ppt_cite(rt, meta, bibtex, cite_prompt, cite_model)
+            asked_ai = True
+            ppt_cite = _make_ppt_cite(rt, meta, bibtex, cite_prompt)
         except Exception as e:
             log.warning(f"[metadata] slide citation failed: {e}")
     title = str(meta.get("title") or "").strip()
@@ -1713,17 +1718,16 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     # renamed it: a concurrent lookup may have done the rename first, and the
     # client shows whatever comes back here.
     return {"meta": meta, "bibtex": bibtex, "ppt_cite": ppt_cite, "source": meta.get("source", ""),
-            "cite_key": cite_key, "cached": False, "title_updated": title_updated, "page_title": page_title}
+            "cite_key": cite_key, "cached": False, "title_updated": title_updated, "page_title": page_title,
+            **({"routed": routed(rt, "metadata", "", _resolve_model(rt, "", "metadata"))} if asked_ai else {})}
 
 
 class MetaBatchRequest(BaseModel):
     block_ids: list[str]
     force: bool = True  # False: a page that has its record keeps it (the upload follow-up)
     prompt: str = ""
-    model: str = ""
     context_char_limit: int = Field(default=6000, ge=100, le=1_000_000)
     cite_prompt: str = ""
-    cite_model: str = ""
 
 
 class _Batch:
@@ -1759,6 +1763,7 @@ class _Batch:
 
     def run(self, job, ws: str, actor: str) -> dict:
         fetched = failed = 0
+        ran = None  # the model the lookups' AI part ran on (``routed``), fallback if any fell back
         try:
             while True:
                 with _batches_lock:
@@ -1770,8 +1775,11 @@ class _Batch:
                     self.taken += 1
                 job.progress(done=done, total=total, unit="papers", item=title)
                 try:
-                    fetch_page_metadata(ws, block_id, actor, force=force, **options)
+                    found = fetch_page_metadata(ws, block_id, actor, force=force, **options)
                     fetched += 1
+                    if found.get("routed"):
+                        ran = {**found["routed"], "fallback": bool(ran and ran["fallback"])
+                               or found["routed"]["fallback"]}
                 except HTTPException:  # nothing found (negative-cached on the page), or the page went
                     failed += 1
                 except Exception as e:  # noqa: BLE001 — one paper's failure never ends the batch
@@ -1782,7 +1790,7 @@ class _Batch:
                 self._close()
         job.progress(done=len(self.items), total=len(self.items), unit="papers", item="")
         return {"papers": len(self.items), "fetched": fetched, "failed": failed,
-                **({"skipped": self.skipped} if self.skipped else {})}
+                **({"skipped": self.skipped} if self.skipped else {}), **({"routed": ran} if ran else {})}
 
 
 _batches: dict[tuple[str, str], _Batch] = {}  # (account, workspace) → its open batch
@@ -1823,8 +1831,8 @@ def metadata_batch(payload: MetaBatchRequest, request: Request):
     papers = [(i, titles[i]) for i in wanted if i in titles]  # own pages only, in the order asked
     if not papers:
         raise HTTPException(status_code=400, detail="no papers to look up")
-    options = {"prompt": payload.prompt, "model": payload.model, "context_char_limit": payload.context_char_limit,
-               "cite_prompt": payload.cite_prompt, "cite_model": payload.cite_model}
+    options = {"prompt": payload.prompt, "context_char_limit": payload.context_char_limit,
+               "cite_prompt": payload.cite_prompt}
     key = (user_id, ws)
     with _batches_lock:
         batch = _batches.get(key)
@@ -1965,9 +1973,8 @@ def metadata_verify(payload: MetaVerifyRequest, request: Request):
 
 
 class CiteRequest(BaseModel):
-    block_id: str
+    block_id: str  # the citation runs on the account's metadata model
     prompt: str = ""   # custom PPT-citation prompt (empty = built-in)
-    model: str = ""
     force: bool = False  # regenerate even when a cached citation exists
 
 
@@ -1983,11 +1990,12 @@ def metadata_cite(payload: CiteRequest, request: Request):
     if not meta and not bibtex:
         raise HTTPException(status_code=409, detail="no metadata yet — fetch metadata first")
     try:
-        citation = _make_ppt_cite(rt, meta, bibtex, payload.prompt, payload.model)
+        citation = _make_ppt_cite(rt, meta, bibtex, payload.prompt)
     except CallRefused:
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI call failed: {e}")
     # cache alongside the rest of the metadata
     _save_props(ws, payload.block_id, {"ppt_cite": citation}, actor=request.state.user_id)
-    return {"citation": citation, "cached": False}
+    return {"citation": citation, "cached": False,
+            "routed": routed(rt, "metadata", "", _resolve_model(rt, "", "metadata"))}

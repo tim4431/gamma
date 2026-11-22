@@ -194,7 +194,7 @@ the Document menu does not offer it to a guest.
   with the hint that it stays until then or until log-out. Every guest
   sees that line, demo server or not.
 - What an account spent through the shared entries in the last 24 hours
-  shows in Settings → AI → Token usage ("Shared allowance"), not in the
+  shows in Settings → AI → Usage ("Shared allowance"), not in the
   account popover, which rings storage only.
 
 demo.gammapdf.com is its own compose project on the VPS, in a folder next

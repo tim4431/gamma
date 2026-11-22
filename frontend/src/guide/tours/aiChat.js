@@ -19,7 +19,7 @@ export default {
   show: "chat",
   steps: [
     // No AI connected: the one thing that makes the chat work. Clicking a
-    // tile opens Settings → Connections, which finishes the tour.
+    // tile opens Settings → AI → Models, which finishes the tour.
     { id: "chat-setup", anchor: "chat.setup", placement: "left", requires: { aiConfigured: false, aiEditable: true },
       title: T("Connect an AI to use chat"),
       body: T("Pick a service: add its key, or sign in with ChatGPT."),

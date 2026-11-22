@@ -50,7 +50,8 @@ export const SECTION_PREFS = Object.freeze({
     // Its Translation button is the strip's translate mode, a second view
     // of Toolbars › Viewer tools.
     "Viewer & selection": ["viewerTools", "translateLang", "selTranslate", "selTranslateAuto"],
-    // "Translate with" there stays with the browser (its row's own tag).
+    // "Translate with" there is the account's translation task, kept on
+    // the server with the other tasks' models (ai/useAiModels.js).
     Service: ["translateKeep"],
     Speed: ["translateEffort", "translateSpeed", "translateParallel"],
   }),

@@ -57,8 +57,8 @@ function stateOf(code, ready, label, where, said = "") {
 }
 
 // Gamma AI, as the AI info says it (`aiInfo`, GET /api/ai/models; `models`
-// the chat's connection's, providerModels): `connection` the connection's
-// name, `ready` null until the info is in.
+// its registry, every connection's): `connection` the first model's
+// connection's name, `ready` null until the info is in.
 export function gammaAgent(aiInfo, models = []) {
   const ready = aiInfo ? !!aiInfo.enabled : null;
   return {

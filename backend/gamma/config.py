@@ -346,7 +346,7 @@ def offsite_env() -> dict:
 
 # --- AI chat -----------------------------------------------------------------
 # AI configuration is per-user, not env: each user adds provider entries in the
-# GUI (Settings → AI → Connections), resolved per request by
+# GUI (Settings → AI → Models), resolved per request by
 # gamma/ai_settings.ai_runtime(); the protocols themselves are the adapters in
 # gamma/ai_protocols/. Each protocol's default base URL is shown as the
 # placeholder in the GUI and used when an entry leaves it blank; another

@@ -183,7 +183,7 @@ def test_ai_read_book_is_confirmed_by_the_registries(guest, monkeypatch):
     search confirms them, and the stored record is the registry's."""
     text = BOOK_TEXT.replace("ISBN 0-935702-11-3\n", "")
     page = _paper_page(guest, text, monkeypatch, ai_enabled=True)
-    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m: "m")
+    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m, role="chat": "m")
     calls = []
 
     def fake_ai(messages, system, model, rt, **kw):
@@ -224,7 +224,7 @@ def test_a_regenerated_slide_citation_reads_the_entry_every_surface_prints(guest
     meta = dict(OL_HIT)
     page = make_page(guest, "Lasers", properties={"meta": meta})
     monkeypatch.setattr(metadata, "require_ai_runtime", lambda user: {"enabled": True})
-    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, model: "m")
+    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, model, role="chat": "m")
     sent = []
 
     def fake_ai(messages, system, model, rt, **kw):
@@ -232,13 +232,14 @@ def test_a_regenerated_slide_citation_reads_the_entry_every_surface_prints(guest
         return "Siegman, 1986"
     monkeypatch.setattr(metadata, "_call_ai", fake_ai)
     r = guest.post("/api/metadata/cite", json={"block_id": page["id"]})
-    assert r.json() == {"citation": "Siegman, 1986", "cached": False}
+    assert r.json() == {"citation": "Siegman, 1986", "cached": False,
+                        "routed": {"role": "metadata", "model": "m", "fallback": False}}
     assert sent == [build_entry(meta)] and sent[0].startswith("@book{siegman1986")
 
 
 def test_unconfirmed_ai_paper_is_flagged_but_notes_are_not(guest, monkeypatch):
     page = _paper_page(guest, "Some lecture text about lasers.", monkeypatch, ai_enabled=True)
-    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m: "m")
+    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, m, role="chat": "m")
     monkeypatch.setattr(metadata, "_crossref_search", lambda q, rows=5: [])
     monkeypatch.setattr(metadata, "_book_search", lambda t, a="": [])
     monkeypatch.setattr(metadata, "_call_ai",

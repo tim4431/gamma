@@ -458,8 +458,8 @@ def _lines(r):
     return lines[-1]
 
 
-def _body(*strokes, model="claude-ink"):
-    return {"model": model, "space": SPACE, "strokes": list(strokes)}
+def _body(*strokes):
+    return {"space": SPACE, "strokes": list(strokes)}
 
 
 def _picture_of(call):
@@ -526,13 +526,12 @@ def test_a_redraw_takes_300_pen_strokes_and_no_more(ann, monkeypatch):
 def test_handwriting_the_file_format_refuses_is_a_400(ann, monkeypatch):
     calls = _fake(monkeypatch, '{"shapes": []}')
     bad = [
-        {"model": "claude-ink", "strokes": [ROUGH_BOX]},                              # no space
-        {"model": "claude-ink", "space": {"kind": "pdf-page", "width": 600, "height": 800},
-         "strokes": [ROUGH_BOX]},                                                    # no page number
+        {"strokes": [ROUGH_BOX]},                                                    # no space
+        {"space": {"kind": "pdf-page", "width": 600, "height": 800}, "strokes": [ROUGH_BOX]},  # no page number
         _body({**ROUGH_BOX, "color": "red"}),
         _body(ROUGH_BOX, ROUGH_BOX),                                                 # one id twice
         _body({**ROUGH_BOX, "pts": []}),
-        {"model": "claude-ink", "space": SPACE, "strokes": "box"},
+        {"space": SPACE, "strokes": "box"},
     ]
     for route in ("shapes", "text"):
         for body in bad:
@@ -547,8 +546,7 @@ def test_handwriting_the_file_format_refuses_is_a_400(ann, monkeypatch):
 def test_a_transcription_sends_the_picture_and_reads_back_markdown(ann, monkeypatch):
     calls = _fake(monkeypatch, "```markdown\nW is for $W = Fd$\n```")
     canvas = {"kind": "canvas", "width": 595.28, "height": 841.89}
-    r = ann.post("/api/ai/ink/text", json={"model": "claude-ink", "space": canvas,
-                                           "strokes": [HIGHLIGHT, LABEL]})
+    r = ann.post("/api/ai/ink/text", json={"space": canvas, "strokes": [HIGHLIGHT, LABEL]})
     assert _lines(r) == {"text": "W is for $W = Fd$"}
     (call,) = calls
     assert call["system"] == ink_ai.TEXT_SYSTEM
@@ -616,7 +614,7 @@ def test_a_transcription_needs_a_model_that_sees_pictures(ann, monkeypatch):
     r = ann.post("/api/ai/ink/text", json=_body(LABEL))
     assert r.status_code == 400
     assert r.json()["detail"] == ("This model cannot see pictures, which reading handwriting needs; "
-                                  "pick another model for the chat.")
+                                  "pick another handwriting model in Settings → AI → Models.")
     assert calls == []
     # Unknown is not "cannot": the picture goes, as chat sends it.
     monkeypatch.setattr("gamma.ai_catalog.image_input", lambda *a: (None, ""))

@@ -326,6 +326,15 @@ test("a refusal every later request would meet stops the job at once", async () 
     assert.equal(s.asked.length, 2, `${status}`);
     assert.equal(last(w.statuses).error, `refused ${status}`);
   }
+  // The model the job started with is no longer offered: it stops with the
+  // server's reason rather than mix another model's text into the paper.
+  const gone = server(() => {
+    throw Object.assign(new Error("claude-x is no longer offered"), { status: 400, kind: "model_unavailable" });
+  });
+  const x = viewer();
+  await x.job(gone.translate, { parallel: 1 }).run();
+  assert.equal(gone.asked.length, 2);
+  assert.equal(last(x.statuses).error, "claude-x is no longer offered");
 });
 
 test("a chunk turned away by a busy account past the wait's patience is dropped, not a refusal of the job", async () => {

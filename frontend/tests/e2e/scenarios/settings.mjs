@@ -1,4 +1,4 @@
-import { Account, FAKE_AI_MODELS, PYTHON, ROOT, Server, arrived, fakeAiModels, keyLabel, keyParts, makePdf, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, PYTHON, ROOT, Server, aiModelsAnswer, arrived, fakeAiModels, keyLabel, keyParts, makePdf, wanted } from "../harness.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -40,55 +40,77 @@ export async function settingsScenarios(env) {
     await row(page, label).waitFor({ state: "visible" });
   }
 
-  await step("settings: usage chart combines overall totals with themed daily and monthly bars", async () => {
-    const daily = Array.from({ length: 365 }, (_, index) => ({
-      date: new Date(Date.UTC(2025, 8, 29 + index)).toISOString().slice(0, 10),
-      calls: index < 356 ? 0 : index % 7 + 1,
-      input: index < 356 ? 0 : (index % 13 + 1) * 1000,
-      output: index < 356 ? 0 : 200,
-      cache_read: index < 356 ? 0 : 300, cache_write: 0,
-    }));
+  // Settings → AI → Usage's chart (UsageChart.jsx, usageChartData.js): a bar
+  // per day stacked by what its calls were billed as, Cost stacking the
+  // pay-per-token calls alone. The days are faked over the real answer.
+  await step("settings: the Usage chart stacks each day by billing, switches to calls, cost and monthly bars, and follows the theme", async () => {
+    // The last nine of 365 days hold calls, half (rounded up) paid per token
+    // at half a cent each, the rest out of a subscription.
+    const daily = Array.from({ length: 365 }, (_, index) => {
+      const calls = index < 356 ? 0 : index % 7 + 1;
+      const input = index < 356 ? 0 : (index % 13 + 1) * 1000, output = index < 356 ? 0 : 200;
+      const api = Math.ceil(calls / 2), apiTokens = calls ? Math.round((input + output) * api / calls) : 0;
+      // A billing's share of the day, its tokens all counted as input.
+      const part = (n, tokens, cost) => ({ calls: n, input: tokens, output: 0, cache_read: 0, cache_write: 0, cost });
+      return {
+        date: new Date(Date.UTC(2025, 8, 29 + index)).toISOString().slice(0, 10), calls, input, output,
+        cache_read: index < 356 ? 0 : 300, cache_write: 0, cost: api * 0.005, priced_calls: api, unpriced_calls: 0,
+        billing: !calls ? {} : { api: part(api, apiTokens, api * 0.005),
+          ...(calls > api ? { subscription: part(calls - api, input + output - apiTokens, 0) } : {}) },
+      };
+    });
     let empty = false;
     const { ctx, page } = await setup(undefined, async (context) => {
-      await context.route("**/api/ai/usage", async (route) => {
+      await context.route((url) => url.pathname === "/api/ai/usage", async (route) => {
         const response = await route.fetch();
         const data = await response.json();
-        await route.fulfill({ json: { ...data, first_at: "2025-09-01T00:00:00", windows: { ...data.windows,
-          all: { input: 900000, output: 10000, calls: 100, cache_read: 180000, cache_write: 0 } },
-          daily: empty ? daily.map((day) => ({ ...day, calls: 0, input: 0, output: 0, cache_read: 0 })) : daily } });
+        await route.fulfill({ json: { ...data, first_at: "2025-09-01T00:00:00",
+          daily: empty ? daily.map((day) => ({ ...day, calls: 0, input: 0, output: 0, cache_read: 0, cost: 0, priced_calls: 0, billing: {} })) : daily } });
       });
     });
     try {
       await openSettings(page);
-      await nav(page, "Connections").click();
+      await nav(page, "Usage").click();
       const graph = page.locator(".usageChart");
+      await graph.waitFor();
       await graph.scrollIntoViewIfNeeded();
       assertEq(await graph.locator("button.usageChartBar").count(), 30);
-      assertEq(await graph.locator(".usageChartHeadline strong").innerText(), "910k", "totals include retained usage outside the chart window");
-      assertEq(await page.locator(".settingsPane .setStats").count(), 0, "no separate period totals");
       const today = graph.locator('[data-date="2026-09-28"]');
       await today.click();
       assert((await graph.locator(".usageChartDetail").innerText()).includes("1 call"));
+      assertEq(await today.locator(".usageChartSeg").evaluateAll((els) => els.map((el) => el.dataset.kind).join()), "api", "a day of one paid call");
       await today.press("ArrowLeft");
+      const before = graph.locator('[data-date="2026-09-27"]');
       assertEq(await graph.locator('button[aria-pressed="true"].usageChartBar').getAttribute("data-date"), "2026-09-27");
+      // Seven calls: four paid per token, three out of the subscription,
+      // stacked in that order, each named in the detail.
+      assertEq(await before.locator(".usageChartSeg").evaluateAll((els) => els.map((el) => el.dataset.kind).join()), "api,subscription",
+        "the day stacked by billing");
+      const split = await graph.locator(".usageChartDetail .usageChartLegend").innerText();
+      assert(split.includes("Pay per token") && split.includes("Subscription"), `the detail splits the day: ${split}`);
       await graph.getByRole("button", { name: "Calls", exact: true }).click();
       assertEq(await today.getAttribute("data-value"), "1");
+      assertEq(await before.getAttribute("data-value"), "7");
+      await graph.getByRole("button", { name: "Cost", exact: true }).click();
+      assertEq(Number(await before.getAttribute("data-value")), 0.02, "the cost of the paid calls alone");
+      assertEq(await before.locator(".usageChartSeg").evaluateAll((els) => els.map((el) => el.dataset.kind).join()), "api",
+        "no subscription in the cost");
       await graph.getByRole("button", { name: "Tokens", exact: true }).click();
       assertEq(await today.getAttribute("data-value"), "1200");
       if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-light.png` });
       await graph.getByRole("button", { name: "Chart interval", exact: true }).click();
       await page.getByRole("menuitemradio", { name: "Monthly · last 12 months", exact: true }).click();
       assertEq(await graph.locator("button.usageChartBar").count(), 12);
-      assertEq(await graph.locator(".usageChartHeadline strong").innerText(), "910k");
       const september = graph.locator('[data-date="2026-09-01"]');
       assertEq(Number(await september.getAttribute("data-value")), daily.reduce((sum, day) => sum + day.input + day.output, 0));
       if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-monthly.png` });
       await graph.getByRole("button", { name: "Chart interval", exact: true }).click();
       await page.getByRole("menuitemradio", { name: "Daily · last 30 days", exact: true }).click();
       await today.click();
-      const color = await today.locator(".usageChartFill").evaluate((el) => getComputedStyle(el).backgroundColor);
+      const paid = today.locator('.usageChartSeg[data-kind="api"]');
+      const color = await paid.evaluate((el) => getComputedStyle(el).backgroundColor);
       await page.evaluate(() => { document.documentElement.dataset.theme = "sepia"; document.documentElement.dataset.scheme = "light"; });
-      assert((await today.locator(".usageChartFill").evaluate((el) => getComputedStyle(el).backgroundColor)) !== color, "bars follow the theme accent");
+      assert((await paid.evaluate((el) => getComputedStyle(el).backgroundColor)) !== color, "bars follow the theme accent");
       if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-sepia.png` });
       await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.dataset.scheme = "dark"; });
       if (flags.keep) await graph.screenshot({ path: `${server.dir}/usage-chart-dark.png` });
@@ -128,22 +150,37 @@ export async function settingsScenarios(env) {
         await row(page, "Translation services").scrollIntoViewIfNeeded();
         await page.screenshot({ path: `${server.dir}/settings-translation.png`, animations: "disabled" });
       }
-      // The saved service joins the picker next to the chat models.
-      await row(page, "Translate with").getByRole("button", { name: "Translate with", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Google Cloud Translation" }).click();
-      await until(() => page.evaluate(() => localStorage.getItem("gamma-translate-model")).then((v) => v === "engine:google"));
+      // The saved service joins the translation task's model menu, after the
+      // connections' models; the pick is the account's (Settings → AI →
+      // Models' Translation row is the same task).
+      const translateWith = row(page, "Translate with").getByRole("button", { name: "Translate with", exact: true });
+      await translateWith.click();
+      const services = page.getByRole("listbox", { name: "Translate with", exact: true }).getByRole("group", { name: "Translation services" });
+      assertEq((await services.getByRole("option").allInnerTexts()).join(), "Microsoft (free),Google Cloud Translation");
+      await services.getByRole("option", { name: "Google Cloud Translation" }).click();
+      await until(async () => (await translateWith.innerText()) === "Google Cloud Translation", { what: "the button names the service" });
+      await until(async () => JSON.stringify((await user.api("/api/ai/models")).roles.translate)
+        === JSON.stringify({ pick: "engine:google", model: "engine:google", state: "ok" }), { what: "the account's translation task on the service" });
       // Reasoning effort means nothing to a translation service; the Speed
       // section keeps only the parallel requests.
       await row(page, "Parallel requests").waitFor();
       assertEq(await row(page, "Translation effort").count(), 0);
       assertEq(await row(page, "Translation speed").count(), 0);
+      // Its key removed, the pick stays and says it is gone: the chat model
+      // translates meanwhile, and the button asks for another.
       await google.getByRole("button", { name: "Remove key", exact: true }).click();
       await until(() => google.innerText().then((text) => text.includes("Not set up")));
       assertEq((await user.api("/api/ai/models")).translate_engines.map((e) => e.id).join(), "engine:microsoft");
+      await until(async () => (await translateWith.innerText()) === "Choose…", { what: "the button asks for another" });
+      assert((await row(page, "Translate with").getAttribute("class")).includes("aiTaskMissing"), "the row warns in red");
+      const instead = await row(page, "Translate with").locator(".settingDesc").innerText();
+      assert(instead.includes("test-model-a") && instead.includes("Test connection"), `the row says what translates instead: ${instead}`);
+      assertEq((await user.api("/api/ai/models")).roles.translate.state, "missing");
       assertNoProblems(page);
     } finally {
       await ctx.close();
       await user.api("/api/translate/engines/google", { method: "DELETE" });
+      await user.api("/api/ai/models/roles", { method: "PUT", body: { translate: "" } });
     }
   });
 
@@ -395,24 +432,25 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("settings: model discovery updates automatically and long lists scroll", async () => {
+  await step("settings: model discovery updates automatically, the long checklist scrolls and searches, and a name the list lacks is added by name", async () => {
     const { ctx, page } = await setup({ width: 800, height: 650 });
     try {
       const calls = [];
-      let oldResponseSent = false;
       const models = Array.from({ length: 100 }, (_, i) => `gpt-test-${String(i).padStart(3, "0")}`);
       await page.route("**/api/ai/model-catalog", async (route) => {
         const body = route.request().postDataJSON();
         calls.push(body);
         if (body.api_key === "old-key") await new Promise((resolve) => setTimeout(resolve, 1500));
         await route.fulfill({ json: { models: body.api_key === "old-key" ? ["stale-model"] : models } });
-        if (body.api_key === "old-key") oldResponseSent = true;
       });
+      // The older key's answer, which lands last.
+      const oldAnswer = page.waitForResponse((response) => response.url().endsWith("/api/ai/model-catalog")
+        && response.request().postDataJSON()?.api_key === "old-key");
       await openSettings(page);
-      await nav(page, "Connections").click();
+      await nav(page, "Models").click();
       await page.getByRole("button", { name: "Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
-      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "OpenAI API", exact: true }).click();
+      await dialog.getByRole("group", { name: "API key", exact: true }).getByRole("button", { name: "OpenAI API", exact: true }).click();
       const key = dialog.locator('input[autocomplete="new-password"]');
       assertEq(await key.getAttribute("placeholder"), "sk-proj-…", "the provider's own key shape");
       assertEq(await dialog.getByRole("link", { name: /^Get a key at platform\.openai\.com/ }).getAttribute("href"), "https://platform.openai.com/api-keys");
@@ -424,37 +462,45 @@ export async function settingsScenarios(env) {
       // The live list doubles as the key check, and its first model is picked.
       await dialog.getByText("Key works · 100 models available", { exact: true }).waitFor();
       await dialog.getByRole("button", { name: "Remove gpt-test-000", exact: true }).waitFor();
-      const input = dialog.getByRole("combobox", { name: "Add a model" });
-      // The dialog scrolls in this short window, and a scroll closes the list:
-      // bring the box into view before opening it.
-      await input.scrollIntoViewIfNeeded();
-      await page.waitForTimeout(100);
-      await input.click();
-      const list = page.getByRole("listbox", { name: "Available models" });
-      assertEq(await list.getByRole("option").count(), 99);
+      const list = dialog.getByRole("group", { name: "Available models", exact: true });
+      const box = (name) => list.getByRole("checkbox", { name, exact: true });
+      assertEq(await list.getByRole("checkbox").count(), 100, "every model listed");
+      assertEq(await box("gpt-test-000").isChecked(), true, "the first one ticked");
+      // The list scrolls inside the dialog, which fits this short window.
+      await list.scrollIntoViewIfNeeded();
       const bounds = await list.boundingBox();
       assert(bounds.y >= 0 && bounds.y + bounds.height <= 650, "model list fits the viewport");
       assert(await list.evaluate((el) => el.scrollHeight > el.clientHeight), "long list is scrollable");
       await list.hover();
       await page.mouse.wheel(0, 1600);
       await until(() => list.evaluate((el) => el.scrollTop > 0));
-      await input.fill("099");
-      await list.getByRole("option", { name: "gpt-test-099", exact: true }).click();
+      // The search narrows it; a tick adds the model, an untick takes it off.
+      const search = dialog.getByRole("searchbox", { name: "Search models", exact: true });
+      await search.fill("099");
+      assertEq((await list.getByRole("checkbox").count()), 1, "the search narrows the list");
+      await box("gpt-test-099").check();
       await dialog.getByRole("button", { name: "Remove gpt-test-099", exact: true }).waitFor();
-      await input.click();
-      await input.press("ArrowUp");
-      await input.press("Enter");
-      await dialog.getByRole("button", { name: "Remove gpt-test-098", exact: true }).waitFor();
-      await input.fill("my-custom-model");
-      await input.press("Enter");
+      await search.fill("");
+      await box("gpt-test-000").uncheck();
+      await until(async () => (await dialog.getByRole("button", { name: "Remove gpt-test-000", exact: true }).count()) === 0,
+        { what: "the unticked model off the picks" });
+      // A name the list doesn't show is added by name, and stays listed, tagged.
+      const byName = dialog.getByRole("textbox", { name: "Model name", exact: true });
+      await byName.fill("my-custom-model");
+      await byName.press("Enter");
       await dialog.getByRole("button", { name: "Remove my-custom-model", exact: true }).waitFor();
-      // Let the older response land; it must not replace the new catalog.
-      await until(() => oldResponseSent);
-      await until(() => page.getByRole("button", { name: "100 usable" }).isVisible());
-      await input.click();
-      await input.press("Escape");
-      assertEq(await list.count(), 0);
-      assert(await dialog.isVisible(), "Escape dismisses the list without closing the dialog");
+      const custom = list.locator(".docPickerItem").filter({ hasText: "my-custom-model" });
+      assertEq(await custom.getByRole("checkbox").isChecked(), true);
+      await custom.getByText("not listed", { exact: true }).waitFor();
+      assertEq(await list.locator(".docPickerItem").first().innerText().then((text) => text.startsWith("my-custom-model")), true,
+        "the name the list lacks first");
+      assertEq(await byName.inputValue(), "", "the box empties for the next name");
+      // Let the older response land (and the page take it in, a frame on);
+      // it must not replace the new catalog.
+      await (await oldAnswer).finished();
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assertEq(await dialog.getByRole("button", { name: "100 usable" }).isVisible(), true, "the new catalog stays");
+      assertEq(await box("stale-model").count(), 0, "nothing of the stale one");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -468,14 +514,18 @@ export async function settingsScenarios(env) {
         await route.fulfill({ json: { models: ["deepseek-flash", "deepseek-v4-pro"] } });
       });
       await openSettings(page);
-      await nav(page, "Connections").click();
+      await nav(page, "Models").click();
       await page.getByRole("button", { name: "Add provider", exact: true }).click();
       // The connection is tested once saved; the test is answered here, offline.
       await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "deepseek-flash", latency_ms: 300 } }));
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
-      // Other opens the named services, the first one chosen.
-      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Other", exact: true }).click();
-      assert((await dialog.getByRole("button", { name: "Service", exact: true }).innerText()).includes("DeepSeek"), "the first named service");
+      // The named services are cards among the API keys', the search finding one.
+      await dialog.getByRole("searchbox", { name: "Search services", exact: true }).fill("deeps");
+      const card = dialog.getByRole("group", { name: "API key", exact: true }).getByRole("button", { name: "DeepSeek", exact: true });
+      assertEq(await dialog.locator(".setPictureChoice").count(), 1, "the search leaves DeepSeek's card alone");
+      await card.click();
+      assertEq(await card.getAttribute("aria-pressed"), "true");
+      assertEq(await dialog.getByRole("group", { name: "Plan", exact: true }).count(), 0, "one plan: no Plan to choose");
       // A preset's endpoint is fixed: no Base URL field to fill.
       assertEq(await dialog.getByRole("textbox", { name: /Base URL/ }).count(), 0);
       await dialog.locator('input[autocomplete="new-password"]').fill("sk-deepseek-e2e");
@@ -498,7 +548,7 @@ export async function settingsScenarios(env) {
     }
   });
 
-  await step("settings: a vendor with several plans offers them under Plan, and a subscription connects at its own endpoint", async () => {
+    await step("settings: a vendor with several plans offers them side by side under its card, and a subscription connects at its own endpoint", async () => {
     const { ctx, page } = await setup();
     const kimiCode = "https://api.kimi.com/coding/v1";
     try {
@@ -509,24 +559,26 @@ export async function settingsScenarios(env) {
       });
       await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "kimi-for-coding", latency_ms: 300 } }));
       await openSettings(page);
-      await nav(page, "Connections").click();
+      await nav(page, "Models").click();
       await page.getByRole("button", { name: "Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
-      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Other", exact: true }).click();
-      const pick = async (menu, option) => {
-        await dialog.getByRole("button", { name: menu, exact: true }).click();
-        await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: option, exact: true }).click();
-      };
-      // One vendor, one plan: no Plan menu.
-      assertEq(await dialog.getByRole("button", { name: "Plan", exact: true }).count(), 0);
-      // Qwen's coding plan carries its terms note.
-      await pick("Service", "Qwen");
-      assert((await dialog.getByRole("button", { name: "Plan", exact: true }).innerText()).includes("API key"), "a vendor opens on its first plan");
-      await pick("Plan", "Coding plan subscription");
+      const keys = dialog.getByRole("group", { name: "API key", exact: true });
+      const plans = dialog.getByRole("group", { name: "Sign in or subscription", exact: true });
+      const plan = dialog.getByRole("group", { name: "Plan", exact: true });
+      const pressed = async () => (await plan.getByRole("button", { pressed: true }).allInnerTexts()).join();
+      // Qwen's API key card: the international and China endpoints side by side, the first chosen.
+      await keys.getByRole("button", { name: "Qwen", exact: true }).click();
+      assertEq((await plan.getByRole("button").allInnerTexts()).join(), "API key,API key (China)");
+      assertEq(await pressed(), "API key", "a vendor opens on its first plan");
+      await plan.getByRole("button", { name: "API key (China)", exact: true }).click();
+      assertEq(await pressed(), "API key (China)");
+      // Its coding plan is a card of the subscriptions, with its terms note.
+      await plans.getByRole("button", { name: "Qwen Coding Plan", exact: true }).click();
+      assertEq(await pressed(), "Coding plan subscription");
       await dialog.getByText(/only inside coding tools such as Qwen Code/).waitFor();
-      // Kimi's subscription: its own endpoint and key page, no Base URL to fill.
-      await pick("Service", "Kimi");
-      await pick("Plan", "Coding plan subscription");
+      // Kimi's subscription: one plan, its own endpoint and key page, no Base URL to fill.
+      await plans.getByRole("button", { name: "Kimi Code", exact: true }).click();
+      assertEq(await plan.count(), 0, "one plan: nothing to choose");
       assertEq(await dialog.getByText(/only inside coding tools/).count(), 0);
       assertEq(await dialog.getByRole("textbox", { name: /Base URL/ }).count(), 0);
       await dialog.getByRole("link", { name: "Get a key at www.kimi.com/code/console" }).waitFor();
@@ -538,12 +590,13 @@ export async function settingsScenarios(env) {
       await until(() => dialog.count().then((n) => n === 0));
       const saved = page.locator(".aiProvRow").filter({ hasText: "sk-kimi-code-e2e".slice(-4) });
       await saved.locator(".aiProvName").filter({ hasText: "Kimi Code" }).waitFor();
-      // Editing it opens on the same vendor and plan.
+      assert((await saved.locator(".aiProvName").innerText()).includes("Subscription"), "its card says how it is paid for");
+      // Editing it opens on the same card.
       await saved.getByRole("button", { name: "Manage", exact: true }).click();
       const edit = page.getByRole("dialog", { name: "Edit key", exact: true });
       await edit.waitFor();
-      assert((await edit.getByRole("button", { name: "Service", exact: true }).innerText()).includes("Kimi"), "the vendor");
-      assert((await edit.getByRole("button", { name: "Plan", exact: true }).innerText()).includes("Coding plan subscription"), "the plan");
+      assertEq(await edit.getByRole("group", { name: "Sign in or subscription", exact: true }).getByRole("button", { name: "Kimi Code", exact: true })
+        .getAttribute("aria-pressed"), "true", "the vendor's plan");
       await edit.getByRole("button", { name: "Cancel", exact: true }).click();
       await until(() => edit.count().then((n) => n === 0));
       assertNoProblems(page);
@@ -563,7 +616,7 @@ export async function settingsScenarios(env) {
       let probe = { ok: false, auth: true, kind: "auth", model: "test-model-a", error: "upstream 401: Incorrect API key provided" };
       await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: probe }));
       await openSettings(page);
-      await nav(page, "Connections").click();
+      await nav(page, "Models").click();
       const conn = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Test connection" });
       await conn.getByRole("button", { name: "Test", exact: true }).click();
       const result = conn.locator(`[title="${probe.error}"]`);
@@ -606,7 +659,7 @@ export async function settingsScenarios(env) {
           tools: { ok: false, reason: "answered in text instead of calling the check tool: “ok”", at: "2026-11-06T09:30:00.000000Z" } } });
       });
       await openSettings(page);
-      await nav(page, "Connections").click();
+      await nav(page, "Models").click();
       const conn = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Test connection" });
       const tag = conn.getByRole("button", { name: "test-model-a", exact: true });
       await tag.waitFor();
@@ -648,7 +701,7 @@ export async function settingsScenarios(env) {
       await page.route("**/api/ai/oauth/chatgpt/complete", async (route) => {
         completed = route.request().postDataJSON();
         const info = await user.api("/api/ai/settings");
-        info.providers.push({ id: "oauth-test", protocol: "chatgpt", name: "Test sign-in", models: "gpt-test", oauth_connected: true });
+        info.providers.push({ id: "oauth-test", protocol: "chatgpt", name: "Test sign-in", models: "gpt-test", oauth_connected: true, quota: true });
         await route.fulfill({ json: info });
       });
       let catalogCalls = 0;
@@ -657,10 +710,10 @@ export async function settingsScenarios(env) {
         await route.fulfill({ json: { models: ["gpt-test", "gpt-new-model"] } });
       });
       await openSettings(page);
-      await nav(page, "Connections").click();
+      await nav(page, "Models").click();
       await page.getByRole("button", { name: "Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
-      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "ChatGPT", exact: true }).click();
+      await dialog.getByRole("group", { name: "Sign in or subscription", exact: true }).getByRole("button", { name: "ChatGPT", exact: true }).click();
       await dialog.getByRole("button", { name: "Open ChatGPT sign-in", exact: true }).click();
       await until(() => page.evaluate(() => !!window.testSignInUrl));
       assertEq(started?.device, true, "a device code is asked for");
@@ -680,8 +733,9 @@ export async function settingsScenarios(env) {
       await edit.getByRole("button", { name: "2 usable" }).waitFor();
       assertEq(completed?.callback, address, "the pasted address is redeemed");
       assertEq(catalogCalls, 1);
-      await edit.getByRole("combobox", { name: "Add a model" }).click();
-      await page.getByRole("option", { name: "gpt-new-model", exact: true }).waitFor();
+      const listed = edit.getByRole("group", { name: "Available models", exact: true });
+      assertEq(await listed.getByRole("checkbox", { name: "gpt-test", exact: true }).isChecked(), true, "the entry's model ticked");
+      assertEq(await listed.getByRole("checkbox", { name: "gpt-new-model", exact: true }).isChecked(), false, "the account's other model offered");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -1577,9 +1631,9 @@ export async function settingsScenarios(env) {
   });
 
   // Settings → AI → Agents leads the AI group (SettingsDialog.jsx AI_NAV):
-  // an admin's rail of nineteen panes fits a full-height dialog (a 900 px
-  // window: the dialog's 800 px cap), and a shorter window scrolls the
-  // groups alone (.settingsNavList), the account card and Help in view.
+  // an admin's twenty panes fit a full-height dialog (a 900 px window: the
+  // dialog's 800 px cap), and a shorter window scrolls the groups alone
+  // (.settingsNavList), the account card and Help in view.
   await step("settings: an admin's rail leads the AI group with Agents, fits a full-height dialog, and on a short window scrolls its groups alone", async () => {
     await server.manage("set-admin", "settings-user", "on");
     try {
@@ -1589,7 +1643,7 @@ export async function settingsScenarios(env) {
           await openSettings(page);
           const rail = page.getByRole("navigation", { name: "Settings categories" });
           const panes = await rail.locator(".settingsNavBtn").allInnerTexts();
-          assertEq(panes.slice(panes.indexOf("Agents"), panes.indexOf("Agents") + 2).join(" › "), "Agents › Connections", "Agents first in the AI group");
+          assertEq(panes.slice(panes.indexOf("Agents"), panes.indexOf("Agents") + 3).join(" › "), "Agents › Models › Usage", "Agents first in the AI group");
           const fit = await rail.evaluate((nav) => {
             const list = nav.querySelector(".settingsNavList");
             const help = nav.querySelector(".settingsNavBottom").getBoundingClientRect();
@@ -1597,7 +1651,7 @@ export async function settingsScenarios(env) {
               helpIn: help.bottom <= nav.getBoundingClientRect().bottom + 1 };
           });
           assert(fit.railOver <= 1 && fit.helpIn, `the rail itself never scrolls and Help stays in view (${JSON.stringify(fit)})`);
-          if (height === 900) assert(fit.over <= 1, `nineteen panes fit the full-height rail (${fit.over}px over)`);
+          if (height === 900) assert(fit.over <= 1, `twenty panes fit the full-height rail (${fit.over}px over)`);
           else assert(fit.over > 1, "a short window scrolls the groups");
           await nav(page, "Agents").click();
           await row(page, "Gamma AI").waitFor();
@@ -2524,19 +2578,17 @@ export async function settingsScenarios(env) {
       await search(page, "custom prompts", "Prompts");
       await page.getByRole("button", { name: /Chat system prompt/ }).click();
       assertEq(await page.locator(".promptTextarea").first().inputValue(), "Saved test prompt");
-      await nav(page, "Connections").click();
+      await nav(page, "Models").click();
       await page.getByRole("button", { name: "Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
-      const services = dialog.getByRole("group", { name: "AI service" });
-      await services.getByRole("button", { name: "Other", exact: true }).click();
-      await dialog.getByRole("button", { name: "Service", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Custom endpoint", exact: true }).click();
+      await dialog.getByRole("group", { name: "On your computer or network", exact: true })
+        .getByRole("button", { name: "Custom endpoint", exact: true }).click();
       await dialog.getByRole("button", { name: "API protocol", exact: true }).waitFor();
       assertEq(await dialog.getByRole("link", { name: /^Get a key at/ }).count(), 0, "a custom endpoint has no key link");
       await dialog.getByRole("textbox", { name: /Base URL/ }).fill("https://example.invalid");
-      await services.getByRole("button", { name: "OpenAI API", exact: true }).click();
+      await dialog.getByRole("group", { name: "API key", exact: true }).getByRole("button", { name: "OpenAI API", exact: true }).click();
       assertEq(await dialog.getByRole("textbox", { name: /Base URL/ }).count(), 0);
-      await dialog.getByText("More options — name, test model", { exact: true }).click();
+      await dialog.getByText("More options — name, test model, billing", { exact: true }).click();
       await dialog.getByRole("textbox", { name: /Name/ }).fill("Unsaved connection");
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
       await dialog.getByRole("button", { name: "Keep editing", exact: true }).click();
@@ -2549,21 +2601,66 @@ export async function settingsScenarios(env) {
   });
 
   // Recording a call is test_ai_usage.py (the suite makes no AI calls): here the empty state.
-  await step("settings: token usage section shows an account with no AI calls, and Reset is off", async () => {
+  await step("settings: the Usage pane shows an account with no AI calls: no spend, empty bars, and Reset is off", async () => {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await search(page, "token", "Token usage");
+      await search(page, "spend", "Usage");
       const chart = page.locator(".settingsPane .usageChart");
       await chart.waitFor();
-      assertEq(await chart.locator(".usageChartHeadline strong").innerText(), "0");
-      assert((await chart.locator(".usageChartTotals").innerText()).includes("0 calls"));
+      const tile = (label) => page.locator(".settingsPane .setStat").filter({ has: page.locator(".setStatLabel", { hasText: new RegExp(`^${label}$`) }) });
+      assertEq(await tile("Est. API spend").locator(".setStatNum").innerText(), "—", "nothing priced is no spend, never $0");
+      assertEq(await tile("Tokens").locator(".setStatNum").innerText(), "0");
+      assert((await tile("Tokens").innerText()).includes("0 calls"));
       assertEq(await chart.getByRole("button", { name: "Reset", exact: true }).isDisabled(), true);
       const usage = await user.api("/api/ai/usage");
       assertEq(usage.windows.all.calls, 0);
       assertEq((await user.api("/api/ai/usage", { method: "DELETE" })).deleted, 0);
       assertEq(await chart.locator('.usageChartBar[data-value="0"]').count(), 30, "every daily bar is empty");
       assertEq(await chart.locator(".usageChartDetail span").innerText(), "No AI calls in this period");
+      assertEq(await page.getByRole("table", { name: "Usage by model" }).count(), 0, "no table of nothing");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // What the calls cost (gamma/ai_usage.py cost_of, summary; its arithmetic
+  // is test_ai_usage.py's): only calls paid per token are in dollars, a
+  // subscription's say so, and a pay-per-token call with no public price is
+  // counted, never $0. The answer is faked: no call here has a price.
+  await step("settings: Usage estimates the spend of priced pay-per-token calls, says Subscription for a sign-in's, and counts a call without a price", async () => {
+    const counts = (extra = {}) => ({ calls: 0, input: 0, output: 0, cache_read: 0, cache_write: 0, cost: 0, priced_calls: 0, unpriced_calls: 0, ...extra });
+    const priced = counts({ calls: 2, input: 30000, output: 2000, cost: 0.123, priced_calls: 2 });
+    const unpriced = counts({ calls: 1, input: 4000, output: 500, unpriced_calls: 1 });
+    const signIn = counts({ calls: 3, input: 50000, output: 4000 });
+    const split = (...parts) => parts.reduce((sum, part) => Object.fromEntries(Object.keys(sum).map((k) => [k, sum[k] + part[k]])));
+    const api = split(priced, unpriced);
+    const chat = { ...split(api, signIn), billing: {
+      api: { calls: 3, input: 34000, output: 2500, cache_read: 0, cache_write: 0, cost: 0.123 },
+      subscription: { calls: 3, input: 50000, output: 4000, cache_read: 0, cache_write: 0, cost: 0 } } };
+    const { ctx, page } = await setup(undefined, async (context) => {
+      await context.route((url) => url.pathname === "/api/ai/usage", async (route) => {
+        const data = await (await route.fetch()).json();
+        await route.fulfill({ json: { ...data, totals: chat, kinds: { chat }, models: [
+          { provider_id: "signinAA", provider_name: "ChatGPT", model: "gpt-e2e", ...signIn, billing: "subscription" },
+          { provider_id: "workkeyA", provider_name: "Work key", model: "claude-e2e", ...priced, billing: "api" },
+          { provider_id: "workkeyA", provider_name: "Work key", model: "mystery-e2e", ...unpriced, billing: "api" },
+        ] } });
+      });
+    });
+    try {
+      await openSettings(page);
+      await nav(page, "Usage").click();
+      const tile = (label) => page.locator(".settingsPane .setStat").filter({ has: page.locator(".setStatLabel", { hasText: new RegExp(`^${label}$`) }) });
+      await tile("Est. API spend").waitFor();
+      assertEq(await tile("Est. API spend").locator(".setStatNum").innerText(), "$0.123", "the priced calls' estimate");
+      assert((await tile("Est. API spend").innerText()).includes("1 call without a price"), "the unpriced call counted");
+      const plan = await tile("Subscriptions").innerText();
+      assert(plan.includes("54k tokens") && plan.includes("3 calls") && !plan.includes("$"), `the sign-in's tokens, no dollars: ${plan}`);
+      const table = page.getByRole("table", { name: "Usage by model" });
+      const costOf = async (model) => (await table.getByRole("row").filter({ hasText: model }).getByRole("cell").last().innerText()).trim();
+      assertEq(await costOf("claude-e2e"), "$0.123");
+      assertEq(await costOf("gpt-e2e"), "Subscription", "a sign-in's calls are its plan's, never dollars");
+      assertEq(await costOf("mystery-e2e"), "—", "no public price: unknown, never $0");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -2572,16 +2669,23 @@ export async function settingsScenarios(env) {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await nav(page, "Connections").click();
-      await row(page, "Default chat model").waitFor();
-      await row(page, "Default chat model").getByRole("button").first().click();
-      await page.getByText("test-model-b", { exact: true }).last().click();
+      await nav(page, "Models").click();
+      // The chat's model is the account's: Models › Chat and the composer's
+      // chip set the same one.
+      const chatModel = () => row(page, "Chat").getByRole("button", { name: "Chat", exact: true });
+      await chatModel().click();
+      await page.getByRole("listbox", { name: "Chat", exact: true }).getByRole("option", { name: /^test-model-b/ }).click();
+      await until(async () => (await chatModel().innerText()) === "test-model-b", { what: "the row on the pick" });
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
-      // The model (with its reasoning effort and speed) is the composer's chip.
+      // The model (with its reasoning effort and speed) is the composer's chip:
+      // the model in use and the favorites, then every connection's under All models….
       const modelChip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
       assert((await modelChip.innerText()).includes("test-model-b"));
       await modelChip.click();
-      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "test-model-a", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitem", { name: "All models…", exact: true }).click();
+      await page.getByRole("listbox", { name: "All models", exact: true }).getByRole("option", { name: /^test-model-a/ }).click();
+      await until(async () => (await modelChip.innerText()).includes("test-model-a"), { what: "the chip on the pick" });
+      await until(async () => (await user.api("/api/ai/models")).roles.chat.pick.endsWith(":test-model-a"), { what: "the account's chat model" });
       await page.locator('[title^="Chat settings"]').click();
       const popover = page.locator(".chatSettingsPop");
       await popover.locator('input[type="number"]').fill("42000");
@@ -2589,8 +2693,8 @@ export async function settingsScenarios(env) {
       await popover.getByRole("checkbox", { name: "Tools", exact: true }).uncheck();
       await page.locator('[title^="Chat settings"]').click();
       await openSettings(page);
-      await nav(page, "Connections").click();
-      assert((await row(page, "Default chat model").innerText()).includes("test-model-a"));
+      await nav(page, "Models").click();
+      assertEq(await chatModel().innerText(), "test-model-a", "the chip's pick is the row's");
       await nav(page, "Tool usage").click();
       assertEq(await page.getByRole("checkbox", { name: "Assistant tools" }).isChecked(), false);
       await nav(page, "Chat").click();
@@ -2624,6 +2728,91 @@ export async function settingsScenarios(env) {
       assertEq(await page.getByRole("button", { name: "Rename pages — Folder chat", exact: true }).innerText(), "Allow");
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  // A task's model on a connection that goes (docs/dev/ai.md "Models for
+  // each task"): the confirm says what the task will use instead. The pick
+  // stays and the task runs on the chat model meanwhile: its row is red
+  // with Choose…, and a notice (gamma/notices.py, ai-model-metadata) dots
+  // the account button and leads to Models. A model chosen in the row ends it.
+  await step("settings: a task's model on a removed connection: the confirm names the task, its row warns with Choose…, a notice leads there, and a choice clears it", async () => {
+    const own = async () => (await user.api("/api/ai/settings")).providers;
+    const ownId = (await own()).find((p) => p.name === "Test connection").id;
+    await user.api("/api/ai/models/roles", { method: "PUT", body: { chat: `${ownId}:test-model-a`, metadata: "" } });
+    await user.api("/api/ai/providers", { method: "POST", body: {
+      protocol: "openai", name: "Second connection", api_key: "test-second-only", base_url: server.base, models: "second-model" } });
+    const secondId = (await own()).find((p) => p.name === "Second connection").id;
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Models").click();
+      const metadata = row(page, "Metadata & citations");
+      const menu = () => metadata.getByRole("button", { name: "Metadata & citations", exact: true });
+      const choices = () => page.getByRole("listbox", { name: "Metadata & citations", exact: true });
+      const hint = () => metadata.locator(".settingDesc").innerText();
+      await menu().click();
+      await choices().getByRole("group", { name: /^Second connection/ }).getByRole("option", { name: /^second-model/ }).click();
+      await until(async () => (await user.api("/api/ai/models")).roles.metadata.pick === `${secondId}:second-model`,
+        { what: "the task on the second connection" });
+      await until(async () => (await hint()) === "Second connection · Pay per token", { what: "the row names the connection" });
+      // Removing the connection says what the task will use instead.
+      const card = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Second connection" });
+      await card.getByRole("button", { name: "Remove connection", exact: true }).click();
+      const confirm = page.locator(".confirmModal");
+      assertEq(await confirm.locator(".confirmMessage").innerText(),
+        'Remove the "Second connection" connection? This cannot be undone. Metadata & citations will use test-model-a (Test connection) instead.');
+      await confirm.getByRole("button", { name: "Remove", exact: true }).click();
+      await until(async () => (await card.count()) === 0, { what: "the connection gone" });
+      const warned = async () => {
+        await until(async () => (await menu().innerText()) === "Choose…", { what: "the row's button asks for another model" });
+        assertEq(await hint(), "second-model (a removed connection) is no longer available. Using test-model-a (Test connection) instead.");
+        const [color, danger] = await metadata.locator(".settingDesc").evaluate((el) => {
+          const probe = document.createElement("span");
+          probe.style.color = "var(--danger)";
+          el.append(probe);
+          const colors = [getComputedStyle(el).color, getComputedStyle(probe).color];
+          probe.remove();
+          return colors;
+        });
+        assertEq(color, danger, "the warning in red");
+      };
+      await warned();
+      assertEq((await user.api("/api/ai/models")).roles.metadata.state, "missing", "the pick kept, no longer offered");
+      // The notice: the account button's dot, the menu's row, and Settings… on Models.
+      assertEq((await user.api("/api/notices")).notices.map((n) => n.id).join(), "ai-model-metadata", "the metadata model's notice");
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "detached" });
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      const account = page.getByRole("button", { name: "Account & settings", exact: true });
+      await account.locator(".noticeDot").waitFor();
+      assertEq(await account.locator(".noticeDot").getAttribute("data-tone"), "warn");
+      await account.click();
+      const notices = page.getByTestId("account-notices");
+      await notices.waitFor();
+      assert((await notices.textContent()).includes("The metadata model second-model is no longer available; the chat model is used instead."),
+        await notices.textContent());
+      await notices.getByRole("menuitem", { name: /Choose model/ }).waitFor();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      assertEq(await nav(page, "Models").getAttribute("aria-current"), "page", "Settings… opens Models");
+      await warned();
+      // A model chosen in the row ends the warning.
+      await menu().click();
+      await choices().getByRole("option", { name: /^test-model-b/ }).click();
+      await until(async () => (await menu().innerText()) === "test-model-b", { what: "the row on the new model" });
+      assertEq((await metadata.getAttribute("class")).includes("aiTaskMissing"), false, "no longer red");
+      assertEq(await hint(), "Test connection · Pay per token");
+      assertEq(JSON.stringify((await user.api("/api/ai/models")).roles.metadata),
+        JSON.stringify({ pick: `${ownId}:test-model-b`, model: `${ownId}:test-model-b`, state: "ok" }));
+      assertEq((await user.api("/api/notices")).notices.length, 0, "nothing left to tell");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/ai/models/roles", { method: "PUT", body: { chat: "", metadata: "" } });
+      for (const p of (await own()).filter((p) => p.name === "Second connection")) {
+        await user.api(`/api/ai/providers/${p.id}`, { method: "DELETE" });
+      }
+    }
   });
 
   await step("settings: tool permissions compare chat types, preserve choices, and fit narrow screens", async () => {
@@ -2778,7 +2967,7 @@ export async function settingsScenarios(env) {
     const { ctx, page } = await setup(undefined, async (c) => {
       await c.route("**/api/ai/models*", async (route) => {
         await route.fulfill({ json: connected
-          ? { ...FAKE_AI_MODELS, default: "x:claude-e2e", models: [{ id: "x:claude-e2e", provider: "x", provider_name: "Anthropic", model: "claude-e2e" }] }
+          ? aiModelsAnswer([{ id: "x:claude-e2e", provider: "x", provider_name: "Anthropic", model: "claude-e2e", billing: "api" }])
           : { enabled: false, models: [], default: "", efforts: ["low", "medium", "high"] } });
         modelsAnswered = true;
       });
@@ -2835,14 +3024,14 @@ export async function settingsScenarios(env) {
           for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1 && n.matches(".subDialog")) window.__subDialogs++;
         }).observe(document.querySelector(".settingsModal"), { childList: true, subtree: true });
       });
-      await nav(page, "Connections").click();
+      await nav(page, "Models").click();
       await page.locator(".settingsPane").getByText("Test connection").first().waitFor();
       assertEq(await page.evaluate(() => window.__subDialogs), 0, "no connect dialog was drawn on the way");
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await settings.waitFor({ state: "detached" });
       await anthropic.click();
       await dialog.waitFor();
-      assertEq(await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Anthropic", exact: true }).getAttribute("aria-pressed"), "true", "the dialog is on the tile's service");
+      assertEq(await dialog.getByRole("group", { name: "API key", exact: true }).getByRole("button", { name: "Anthropic", exact: true }).getAttribute("aria-pressed"), "true", "the dialog is on the tile's service");
       await dialog.locator('input[autocomplete="new-password"]').fill("sk-ant-e2e-key-4242");
       await dialog.getByText("Key works · 2 models available", { exact: true }).waitFor();
       await dialog.getByRole("button", { name: "Connect", exact: true }).click();
@@ -3313,9 +3502,8 @@ export async function settingsScenarios(env) {
       await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "lab-model", latency_ms: 300 } }));
       const dialog = page.getByRole("dialog", { name: "Connect a shared AI service", exact: true });
       // A key or a ChatGPT sign-in (the next step connects one).
-      const services = dialog.getByRole("group", { name: "AI service" });
-      await services.getByRole("button", { name: "ChatGPT", exact: true }).waitFor();
-      await services.getByRole("button", { name: "OpenAI API", exact: true }).click();
+      await dialog.getByRole("group", { name: "Sign in or subscription", exact: true }).getByRole("button", { name: "ChatGPT", exact: true }).waitFor();
+      await dialog.getByRole("group", { name: "API key", exact: true }).getByRole("button", { name: "OpenAI API", exact: true }).click();
       await dialog.locator('input[autocomplete="new-password"]').fill("sk-shared-e2e-key-7777");
       await dialog.getByRole("button", { name: "2 usable" }).waitFor();
       await dialog.getByRole("button", { name: "Remove lab-model", exact: true }).waitFor();
@@ -3339,15 +3527,21 @@ export async function settingsScenarios(env) {
       const metered = (await member.api("/api/ai/usage")).allowance;
       assertEq(JSON.stringify(metered), JSON.stringify({ limit: 50000, used: 0, exhausted: false }), "the member's allowance");
 
-      // Connections: a read-only row with the tag, and its model in the pickers.
-      await nav(page, "Connections").click();
+      // Models: a read-only connection with the tag, and its models in every
+      // task's menu, under the connection.
+      await nav(page, "Models").click();
       const shared = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Shared by this server" });
       await shared.waitFor();
       assertEq(await shared.getByRole("button").count(), 0, "no edit or delete on a shared row");
-      await shared.getByRole("radio").check();
-      await row(page, "Default chat model").getByRole("button").click();
-      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "lab-model", exact: true }).click();
-      // Token usage says what is left of the allowance.
+      const chatModel = row(page, "Chat").getByRole("button", { name: "Chat", exact: true });
+      await chatModel.click();
+      const group = page.getByRole("listbox", { name: "Chat", exact: true }).getByRole("group").filter({ hasText: "Shared by this server" });
+      assertEq((await group.locator(".modelMenuName").allInnerTexts()).join(), "lab-model", "the shared connection's model, the one picked");
+      await group.getByRole("option", { name: /^lab-model/ }).click();
+      await until(async () => (await chatModel.innerText()) === "lab-model", { what: "the chat on the shared model" });
+      assert((await user.api("/api/ai/models")).roles.chat.pick.startsWith("server:"), "the shared entry's model");
+      // Usage says what is left of the allowance.
+      await nav(page, "Usage").click();
       await row(page, "Shared allowance").getByText("0 of 50k tokens in the last 24 h", { exact: true }).waitFor();
 
       // Another account gets the models, never the key hint.
@@ -3362,6 +3556,7 @@ export async function settingsScenarios(env) {
         await user.api(`/api/admin/ai-providers/${encodeURIComponent(p.id)}`, { method: "DELETE" });
       }
       await user.api("/api/admin/ai-providers", { method: "PUT", body: { allowance: { accounts: 0, guests: 0 } } });
+      await user.api("/api/ai/models/roles", { method: "PUT", body: { chat: "" } });
     }
   });
 
@@ -3436,7 +3631,7 @@ export async function settingsScenarios(env) {
         completed = route.request().postDataJSON();
         const info = await user.api("/api/admin/ai-providers");
         info.providers.push({ id: "server:oauth-e2e", protocol: "chatgpt", name: "Lab ChatGPT", label: "Lab ChatGPT",
-          models: "gpt-lab", oauth_connected: true, account: "lab@example.com", shared: true });
+          models: "gpt-lab", oauth_connected: true, account: "lab@example.com", shared: true, quota: true });
         await route.fulfill({ json: info });
       });
       await page.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["gpt-lab", "gpt-lab-mini"] } }));
@@ -3444,7 +3639,7 @@ export async function settingsScenarios(env) {
       await nav(page, "Server").click();
       await row(page, "Shared AI provider").getByRole("button", { name: "Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Connect a shared AI service", exact: true });
-      await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "ChatGPT", exact: true }).click();
+      await dialog.getByRole("group", { name: "Sign in or subscription", exact: true }).getByRole("button", { name: "ChatGPT", exact: true }).click();
       await dialog.getByRole("button", { name: "Open ChatGPT sign-in", exact: true }).click();
       await until(() => page.evaluate(() => !!window.testSignInUrl), { what: "the sign-in page opened" });
       await dialog.getByText("Did not connect? Paste the address instead", { exact: true }).waitFor();

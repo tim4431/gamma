@@ -49,12 +49,16 @@ export const PANE_READS = {
   agents: ({ signedIn, desktop }) => [signedIn && "/computers", signedIn && desktop && "/computer-links",
     signedIn && desktop && { path: "/local-agents/people", later: true }],
   translation: ({ lang }) => ["/translate/engines", "/translations/stats", termsOf(lang)],
+  // AI → Usage opens on the last 30 days of every task.
+  usage: () => [usageOf("month")],
   tools: ({ admin }) => ["/ai/search-services", admin && "/admin/settings"],
   maintenance: () => ["/quota", "/metadata/status"],
 };
 export const backupsOf = (id) => `/workspaces/${encodeURIComponent(id)}/backups`;
 // The workspace's glossary in one target language.
 export const termsOf = (lang) => `/translate/terms?lang=${encodeURIComponent(lang || "zh-CN")}`;
+// The account's AI usage over a period, of one task ("" for every task).
+export const usageOf = (period, kind = "") => `/ai/usage?${new URLSearchParams({ period, ...(kind ? { kind } : {}) })}`;
 
 // A pane's reads as [{path, then, later}].
 function readsOf(pane, who) {

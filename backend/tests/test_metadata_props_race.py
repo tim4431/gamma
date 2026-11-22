@@ -104,7 +104,7 @@ def test_label_set_during_cite_survives(guest, monkeypatch):
                      properties={"meta": {"title": "T"}, "bibtex": "@article{t}"})
     cited = make_label(guest, "cited")
     monkeypatch.setattr(metadata, "require_ai_runtime", lambda user: {"enabled": True})
-    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, model: "m")
+    monkeypatch.setattr(metadata, "_resolve_model", lambda rt, model, role="chat": "m")
 
     def fake_call_ai(messages, system, model, rt, **kw):
         _label(guest_name(), page["id"], cited)
