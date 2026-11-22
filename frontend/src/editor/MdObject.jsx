@@ -111,6 +111,20 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
   const ref = useRef(null);
   const [selected, setSelected] = useState(false);
   const [menu, setMenu] = useState(null); // {x, y, picture}
+  // A press on text inside the frame — a table's cells, a field (a cell's,
+  // a caption's) — selects that text: the frame is no drag source until
+  // the press ends, or the browser would drag the whole object instead.
+  const [textPress, setTextPress] = useState(false);
+  useEffect(() => {
+    if (!textPress) return undefined;
+    const end = () => setTextPress(false);
+    document.addEventListener("pointerup", end, true);
+    document.addEventListener("pointercancel", end, true);
+    return () => {
+      document.removeEventListener("pointerup", end, true);
+      document.removeEventListener("pointercancel", end, true);
+    };
+  }, [textPress]);
   const active = !!onAction;
   const act = (action, e, picture) => { setMenu(null); onAction?.(kind, idx, action, e, picture); };
 
@@ -157,7 +171,8 @@ export function MdObject({ as: Tag = "div", kind, idx, editable = true, onAction
       // The guide's object hint points at the selected object, and goes
       // with the selection.
       data-guide={selected ? "notes.object" : undefined}
-      draggable={editable ? "true" : undefined}
+      draggable={editable && !textPress ? "true" : undefined}
+      onPointerDownCapture={(e) => { if (isTextField(e.target) || e.target.closest?.("td, th")) setTextPress(true); }}
       // The block row opens its raw editor on mousedown. A press on the
       // object's own body (the picture, the table, the diagram) selects it
       // instead; one on the frame's margin still reaches the row, so

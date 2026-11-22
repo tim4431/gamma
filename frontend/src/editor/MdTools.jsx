@@ -10,7 +10,7 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { parseTable, scanImages, scanTables, serializeTable } from "./mdScan";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { ObjectMenuButton, useObjectMenu } from "./MdObject";
-import { doublePress } from "../shared/ui/press.js";
+import { doublePress, DRAG_MIN } from "../shared/ui/press.js";
 import { Lightbox } from "../shared/ui/Lightbox";
 import { ResizeGrips, useDragResize } from "../shared/ui/ResizeGrip";
 import { Segmented } from "../settings/SettingsKit";
@@ -275,8 +275,9 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
 // the Notion-style controls — "+" strips on the right/bottom edges, small
 // handles above the hovered or touched column / left of its row opening a menu
 // (insert, align, delete), and click-a-cell in-place editing (Tab/Shift-Tab
-// move between cells, Enter commits, Esc cancels; every commit re-serializes
-// the table pretty-printed). Handle positions are measured from the live DOM
+// and the arrow keys move between cells, Enter commits, Esc cancels; every
+// commit re-serializes the table pretty-printed). Handle positions are
+// measured from the live DOM
 // at hover time, so the source mapping stays purely index-based. `model` is
 // the parsed source table (cells stay raw markdown, not rendered text).
 //
@@ -285,6 +286,9 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
 // checkboxes) — so a Tab-move records where to resume in this module-level
 // map, keyed by block id + table index, and the mount effect reopens there.
 const _tableEditSession = new Map(); // editKey → {row, col}
+// The block editor's table widget hands a press on one of its cells here as
+// the editor closes, so the table rendered in its place opens on that cell.
+export function openTableCell(editKey, cell) { _tableEditSession.set(editKey, cell); }
 
 // Blocks that just got a table from /table or a paste, and where in the
 // block it went: when that table first renders as an editable one, the guide
@@ -361,6 +365,29 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
     const p = ce.row * nCols + ce.col + (back ? -1 : 1);
     return p < 0 || p >= nCells ? null : { row: Math.floor(p / nCols), col: p % nCols };
   };
+  // An arrow key's cell, as in a spreadsheet: ↑ / ↓ step a row (the field
+  // is one line, they have nothing else to do), ← / → a column once the
+  // caret is at that end of the text or the whole text is selected, as a
+  // cell opens. None past the table's edge or with a modifier, which keeps
+  // the field's own (Shift selects, Ctrl / Alt / Cmd jump).
+  const arrowCell = (e, ce) => {
+    if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return null;
+    const { selectionStart: a, selectionEnd: b, value } = e.currentTarget;
+    const all = a === 0 && b === value.length;
+    const step = {
+      ArrowUp: [-1, 0], ArrowDown: [1, 0],
+      ArrowLeft: all || b === 0 ? [0, -1] : null,
+      ArrowRight: all || a === value.length ? [0, 1] : null,
+    }[e.key];
+    if (!step) return null;
+    const row = ce.row + step[0], col = ce.col + step[1];
+    const nRows = (model?.body.length || 0) + 1, nCols = model?.header.length || 1;
+    return row >= 0 && row < nRows && col >= 0 && col < nCols ? { row, col } : null;
+  };
+  // A cell reached without a rewrite keeps the same field: select its text
+  // as a newly mounted one does (onFocus), so every cell opens alike.
+  const cellInput = useRef(null);
+  useEffect(() => { cellInput.current?.select(); }, [cellEdit?.row, cellEdit?.col]);
   // Commit the open cell; `next` = cell to reopen after the rewrite (Tab).
   const commitCell = (next) => {
     const ce = cellEdit;
@@ -389,20 +416,36 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The block row starts RAW editing on mousedown — intercept cell presses
-  // there (this wrapper is deeper, its mousedown bubbles first) so a table
-  // click edits the cell in place instead of dropping into markdown source.
-  function onCellMouseDown(e) {
-    if (!onEdit || !model || e.button !== 0) return;
+  // The cell a press or click on the table's text is on, or null.
+  const cellAt = (e) => {
+    if (!onEdit || !model || e.button !== 0) return null;
     const cell = e.target.closest?.("td,th");
-    if (!cell || !wrapRef.current?.contains(cell)) return;
-    if (e.target.closest("button, input, a")) return;
+    if (!cell || !wrapRef.current?.contains(cell) || e.target.closest("button, input, a")) return null;
+    return { row: cell.closest("tr").rowIndex, col: cell.cellIndex };
+  };
+  // The block row starts RAW editing on mousedown — a press on a cell stops
+  // there (this wrapper is deeper, its mousedown bubbles first), so a drag
+  // over the table's text selects it like any text, and a click (a press
+  // that did not move) edits the cell in place instead of dropping into the
+  // markdown source. With a cell open, a press on another moves the field
+  // there at once: a commit's rewrite remounts the table, and the click
+  // would land on the table it replaced.
+  const pressAt = useRef(null); // {x, y} of the press on a cell the click ends
+  function onCellMouseDown(e) {
+    const pos = cellAt(e);
+    pressAt.current = pos ? { x: e.clientX, y: e.clientY } : null;
+    if (!pos) return;
     e.stopPropagation();
+    if (!cellEdit) return;
     e.preventDefault();
-    const tr = cell.closest("tr");
-    const pos = { row: tr.rowIndex, col: cell.cellIndex };
-    if (cellEdit) commitCell(pos); // switch cells: commit, then reopen there
-    else openCell(pos.row, pos.col);
+    commitCell(pos);
+  }
+  function onCellClick(e) {
+    const pos = cellAt(e), at = pressAt.current;
+    pressAt.current = null;
+    if (!pos || !at || cellEdit || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (Math.hypot(e.clientX - at.x, e.clientY - at.y) >= DRAG_MIN) return; // a drag: it selected text
+    openCell(pos.row, pos.col);
   }
   const counts = () => {
     const table = wrapRef.current?.querySelector("table");
@@ -452,7 +495,7 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   function handleDragMove(e) {
     const d = dragRef.current;
     if (!d) return;
-    if (!d.moved && Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) <= 4) return;
+    if (!d.moved && Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) < DRAG_MIN) return;
     d.moved = true;
     const wrap = wrapRef.current;
     const table = wrap?.querySelector("table");
@@ -520,12 +563,14 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
       onPointerOver={onOver}
       onMouseLeave={() => setHover(null)}
       onMouseDown={onCellMouseDown}
+      onClick={onCellClick}
     >
       <div className="mdTableScroll">
         <table>{children}</table>
       </div>
       {cellEdit ? (
         <input
+          ref={cellInput}
           className="mdTableCellInput"
           style={{
             left: cellEdit.rect.left, top: cellEdit.rect.top,
@@ -543,6 +588,10 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
             if (e.key === "Enter") { e.preventDefault(); commitCell(null); }
             else if (e.key === "Escape") { e.preventDefault(); _tableEditSession.delete(editKey); setCellEdit(null); }
             else if (e.key === "Tab") { e.preventDefault(); commitCell(nextCell(cellEdit, e.shiftKey)); }
+            else {
+              const next = arrowCell(e, cellEdit);
+              if (next) { e.preventDefault(); commitCell(next); }
+            }
           }}
           // Window-level blur (Alt+Tab) keeps the cell session; the browser
           // refocuses the input when the app returns.
