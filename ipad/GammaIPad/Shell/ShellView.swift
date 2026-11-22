@@ -117,6 +117,10 @@ final class ShellController: UIViewController {
         capture.onAbandon = { [weak self] pointerId in self?.abandon(pointerId: pointerId) }
         capture.onHold = { [weak self] pointerId, samples in self?.hold(pointerId: pointerId, samples: samples) }
         capture.onDrop = { [weak self] in self?.live.cancel() }
+        capture.onTouch = { [weak self] phase, touch in
+            guard let self else { return }
+            TouchReport.note(phase, touch, page: self.shell.webView, capture: self.capture.summary)
+        }
         gestures.onGesture = { [weak self] message in
             guard let self else { return }
             Task { await self.shell.bridge.send(message) }
@@ -315,7 +319,17 @@ final class ShellController: UIViewController {
     }
 
     @objc private func reloadPage() {
+        writeTouchReport()
         shell.reload()
+    }
+
+    /// The touch report (TouchReport) before each reload, the one a page
+    /// gone deaf to taps gets: beside the local server's log, from the
+    /// window down, so the system's own recognizers are in it too.
+    private func writeTouchReport() {
+        let lines = TouchReport.report(root: view.window ?? view, capture: capture.summary, at: Date())
+        let file = model.local.logFile.deletingLastPathComponent().appendingPathComponent("touch-report.log")
+        try? TouchReport.append(lines, to: file)
     }
 
     // --- the chrome's calls (Chrome) ----------------------------------------------------

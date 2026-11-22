@@ -160,7 +160,7 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 - **Live rendering**: the block you are on stays raw; everything else renders. Headings, lists, to-dos, callouts, tables, code, images, links.
 - **Math**: `$…$` and `$$…$$` render with KaTeX, with a live preview while you type and Tab hopping between `{}` arguments. Math pasted as `\( … \)` and `\[ … \]`, the way ChatGPT and LaTeX write it, turns into `$…$` and `$$…$$` as it goes in; **Paste as → As copied** keeps it as it was. An escaped bracket such as `\[1\]` stays a bracket.
 - **Pictures**: paste or drag an image in; drag its grip to resize. Double-click a picture, or press the zoom button in a picture's or a diagram's toolbar, to see it full size; in a chat reply a click on a diagram does the same. Right-click a picture or a diagram and choose **Copy image** to paste it elsewhere; this needs HTTPS or localhost.
-- **Tables** are edited in place; a table from Excel pastes as markdown.
+- **Tables** are edited in place: click a cell to type in it, also while the note around the table is open for typing, and drag over a table with the mouse to select its text. A table from Excel pastes as markdown.
 - **"/" menu**: type `/` for headings, callouts, code, colors, a notebook sheet, a new page.
 - **Quotes and callouts** keep going over several lines: Shift+Enter carries the `>` (and a list inside it) to the next line, and **Ctrl+Shift+.** quotes or unquotes the selected lines. `/callout` on a quote's first line turns it into a callout; on a line inside one it starts a box inside it.
 - **Pasting keeps the structure**: pasted lines land at the level of the line you paste onto, in its quote or beside its list item, and a pasted list keeps its sub-items. The **Paste as** menu offers **Nested** (one level in) and **As copied**. The `/` line commands (headings, lists, to-dos, quote, callout) keep a line's quote and indentation.
@@ -799,6 +799,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Tab / Shift+Tab | Indent / outdent a note; accept a filter chip; hop `{}` arguments or table cells |
 | ↑ / ↓ | On a note's first / last line: move into the note above / below |
 | ← / → | At the text's edge: collapse / expand the note's children |
+| ↑ / ↓ / ← / → | In a table cell: the cell above / below; left / right once the caret is at that end of its text |
 | Ctrl+Shift+K | Delete the line (children stay) |
 | Backspace | On an empty note: delete it |
 | Drag across notes · Shift+click · Alt+Shift+click · Esc | Select whole notes: from the note the drag starts in (from the blank beside them, a box) · from the note you are on to the one clicked · one more or one less · the note you are writing in |

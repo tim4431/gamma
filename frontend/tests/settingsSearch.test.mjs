@@ -146,14 +146,13 @@ test("under any other host the pen section is a stylus's: its buttons, no Apple 
   assert.deepEqual(found("button", { ...ANDROID, pencil: false }), [], "no gestures forwarded, no section");
 });
 
-test("Delete Gamma Cloud account is the apps' alone, under any native host; the privacy policy is everyone's", () => {
+test("deleting a Gamma Cloud account is found at the Gamma Cloud row, whose Visit console leads there; the privacy policy is everyone's", () => {
   const all = Object.keys(PANE_FILES);
   const found = (query, host) => searchSettings(query, all, { host: hostCaps(host) }).map((r) => `${r.pane}/${r.label}`);
-  for (const host of [IPAD, ANDROID, { platform: "android" }]) {
-    assert.ok(found("delete account", host).includes("account/Delete Gamma Cloud account"), host.platform);
-    assert.ok(found("cloud", host).includes("account/Delete Gamma Cloud account"), host.platform);
+  for (const host of [null, IPAD, ANDROID]) {
+    assert.ok(found("delete cloud account", host).includes("account/Gamma Cloud"), host?.platform || "no host");
+    assert.ok(found("console", host).includes("account/Gamma Cloud"), host?.platform || "no host");
   }
-  assert.ok(!found("delete account", null).includes("account/Delete Gamma Cloud account"), "a browser has Open account, not the row");
   for (const host of [null, IPAD, ANDROID]) {
     assert.deepEqual(found("privacy", host).slice(0, 1), ["diagnostics/Privacy policy"], host?.platform || "no host");
   }

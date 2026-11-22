@@ -569,26 +569,32 @@ def plan_page(account: dict, summary: dict, checkout: str = "", returned: str = 
 
 def overview_alert(summary: dict) -> str:
     """The strip the Overview shows while the plan needs the person: a
-    failed payment, a paused or ended subscription, a read-only server."""
+    failed payment, a paused or ended subscription, a read-only server.
+    In a native app's browser (``pages.in_app``) it says so without its
+    button to the Plan page."""
     sub, hosted = summary["subscription"], summary["hosted"]
     state = plan_state(summary)
+    to_plan = "" if pages.in_app() else TO_PLAN
     if state == "past_due":
-        return _past_due(sub, TO_PLAN)
+        return _past_due(sub, to_plan)
     if state == "paused":
-        return _paused(sub, TO_PLAN)
+        return _paused(sub, to_plan)
     if hosted and hosted.get("state") in ("read_only", "stopped"):
         gone = f" It is deleted on {pages._date(hosted['deletes_at'])}." if hosted.get("deletes_at") else ""
         return _strip(f"<b>Your server is {'stopped' if hosted['state'] == 'stopped' else 'read-only'}</b> "
-                      f"because its plan ended.{gone}", TO_PLAN, bad=True)
+                      f"because its plan ended.{gone}", to_plan, bad=True)
     return ""
 
 
 def overview_plan(account: dict, summary: dict) -> str:
     """The Overview's plan card: the plan, how it renews or ends, the
-    hosted server's address and storage, and the way to the Plan page."""
+    hosted server's address and storage, and the way to the Plan page,
+    which a native app's browser (``pages.in_app``) is not shown, nor the
+    offer of a plan or of self-hosting."""
     plan, sub, hosted = summary["plan"], summary["subscription"], summary["hosted"]
+    app = pages.in_app()
     if plan == "free":
-        text = "The desktop app is your library. A paid plan adds one that is always on."
+        text = "The desktop app is your library." + ("" if app else " A paid plan adds one that is always on.")
     elif summary["plan_source"] == "granted":
         text = "Granted by the Gamma Cloud operator; there is nothing to pay."
     elif sub:
@@ -596,7 +602,7 @@ def overview_plan(account: dict, summary: dict) -> str:
     else:
         text = ""
     if plan == "free" and sub and sub["status"] in ("canceled", "incomplete_expired"):
-        text = f"Your {pages.esc(sub['plan'].capitalize())} plan ended. Resume it to open your library again."
+        text = f"Your {pages.esc(sub['plan'].capitalize())} plan ended." + ("" if app else " Resume it to open your library again.")
     rows = ""
     if _shared(plan) and summary["shared_url"]:
         url = summary["shared_url"]
@@ -611,9 +617,10 @@ def overview_plan(account: dict, summary: dict) -> str:
     return (f"<section class=section><h2>Plan{' ' + _state_pill(hosted) if hosted and rows else ''}</h2><div class=body>"
             f"<div class=planname>{pages.esc(plan)}</div><p class=plantext>{text}</p>"
             + (f"<dl class='kv gap'>{rows}</dl>" if rows else "")
-            + "<div class=actions><a class='btn btn--primary btn--sm' href='/plan'>Plan and billing</a>"
-            + ("" if plan != "free" else f"<a class='btn btn--sm' href='{pages.SITE}/#selfhost'>Self-host instead</a>")
-            + "</div></div></section>")
+            + ("" if app else "<div class=actions><a class='btn btn--primary btn--sm' href='/plan'>Plan and billing</a>"
+               + ("" if plan != "free" else f"<a class='btn btn--sm' href='{pages.SITE}/#selfhost'>Self-host instead</a>")
+               + "</div>")
+            + "</div></section>")
 
 
 # --- the Admin page's Billing tab ---------------------------------------------

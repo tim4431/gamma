@@ -207,7 +207,12 @@ export const OBJECT_DRAG_TYPE = "application/x-gamma-object";
 // drag source — ctx.objectDrag (BlockRow's object action) publishes it for
 // App's block drop handlers, so a picture or table can be dragged to another
 // block while its own block is being edited. The mousedown is left to the
-// browser: preventing it would cancel the native drag.
+// browser: preventing it would cancel the native drag. A click on a table's
+// cell, where the editor's owner edits cells (ctx.tableCell, a note row's),
+// is a click away from the editor onto that cell: the owner is told which,
+// and the editor blurs, so the rendered table opens the cell's field, where
+// a drag selects the table's text. (Here a drag moves the table: the editor
+// keeps no selection inside a widget, it draws its own.)
 function objectWidget(view, el, { kind, idx, length, ctx }) {
   el.dataset.kind = kind;
   el.dataset.idx = idx;
@@ -215,6 +220,12 @@ function objectWidget(view, el, { kind, idx, length, ctx }) {
   el.addEventListener("click", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
+    const cell = kind === "table" && ctx.tableCell ? e.target.closest?.("td, th") : null;
+    if (cell) {
+      ctx.tableCell(idx, { row: cell.closest("tr").rowIndex, col: cell.cellIndex });
+      view.contentDOM.blur();
+      return;
+    }
     const pos = view.posAtDOM(el);
     view.dispatch({ selection: { anchor: pos + length } });
     view.focus();
@@ -278,7 +289,8 @@ class ImageWidget extends WidgetType {
 // object rules as the picture: it stays a table while the caret steps past
 // it, a right-click or a held finger shows the source, and it can be dragged
 // to another block.
-// Cells are edited in the rendered view, never as raw text (mdTools).
+// Cells are edited in the rendered view, never as raw text (mdTools): in a
+// note row a click on one closes the editor onto it (objectWidget).
 class TableWidget extends WidgetType {
   constructor(source, idx, ctx) {
     super();
@@ -324,7 +336,7 @@ class TableWidget extends WidgetType {
 // it expands it) — except the objects (pictures, tables), which only a
 // selection reaching inside expands. ctx is read lazily: `labels` so freshly
 // resolved ref labels show up on the next rebuild, `objectDrag` the row's
-// drag hook for the object widgets.
+// drag hook for the object widgets, `tableCell` its hook for a cell click.
 function buildInlineDecos(state, ctx) {
   const text = state.doc.toString();
   const sel = state.selection.main;
@@ -1031,17 +1043,18 @@ const noteCopy = (view) => sourceCopied(copiedText(view.state),
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   value, onChange, onSelect, onKeyDown, onBlur, onPaste, onUndo, ownHistory = false, ariaLabel,
   placeholder, autoFocus, clickPos, pinScroll = false, dataBlockId, className, refLabels, mentions, remoteCursors,
-  onObjectDrag, onObjectDragOver, onObjectDrop,
+  onObjectDrag, onObjectDragOver, onObjectDrop, onTableCell,
 }, forwardedRef) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const cbRef = useRef({});
   cbRef.current = { onChange, onSelect, onKeyDown, onBlur, onPaste, onUndo, onObjectDragOver, onObjectDrop };
   // What the decoration pass reads lazily (see buildInlineDecos).
-  const decoCtx = useRef({ labels: refLabels, mentions, objectDrag: onObjectDrag }).current;
+  const decoCtx = useRef({ labels: refLabels, mentions, objectDrag: onObjectDrag, tableCell: onTableCell }).current;
   decoCtx.labels = refLabels;
   decoCtx.mentions = mentions;
   decoCtx.objectDrag = onObjectDrag;
+  decoCtx.tableCell = onTableCell;
   const chipCompartment = useRef(new Compartment()).current;
   // An own history in a compartment, so that a text replaced from outside
   // starts it afresh (see the sync below).

@@ -16,6 +16,7 @@ export const HOLD_MS = 500;
 export const HOLD_SLOP = 10;    // px a finger may wander and still be holding
 export const DOUBLE_MS = 400;   // between the two releases
 export const DOUBLE_SLOP = 30;  // px between them
+export const DRAG_MIN = 4;      // px a mouse goes before its press is a drag, not a click
 const ECHO_MS = 800;     // the browser's own event for a gesture already answered
 const LIFT_CLICK_MS = 300; // the click a lifted finger sends: a task of its own, a few frames on a busy page
 
