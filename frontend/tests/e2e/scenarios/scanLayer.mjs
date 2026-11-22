@@ -796,7 +796,8 @@ async function recognitionSteps({ server, browser, alice, step, until, assert, a
       const up = await alice.upload("/api/uploads", bare.bytes, "picture-scan.pdf", "application/pdf");
       const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Picture scan", source_url: up.source_url } });
       await page.goto(`${server.base}/?page=${created.id}&ws=${alice.ws}`);
-      await page.locator('.pdfPageWrap[data-page="1"] canvas').first().waitFor();
+      // the canvas on screen: once the page is painted, the first in the DOM is its hidden twin (pdf/pageRaster.js `pair`)
+      await page.locator('.pdfPageWrap[data-page="1"] .pdfPageCanvas > canvas:not(.pdfDetailCanvas):not([data-spare])').waitFor();
       await documentMenu();
       // offered once the viewer read the page and found no text on it
       await recognizeRow().waitFor({ timeout: 15000 });
