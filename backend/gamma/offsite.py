@@ -327,15 +327,8 @@ def test(fields: dict | None = None) -> dict:
     ``save`` would (ignored while the environment sets the bucket).
     ``{ok: True, message: "<bucket>: <n> objects under <prefix>"}``, or
     ``{ok: False, message: <why>}``."""
-    conf = settings()
-    if fields and not conf["from_env"]:
-        try:
-            conf = {**conf, **_checked(conf, fields)}
-        except ValueError as e:
-            return {"ok": False, "message": str(e)}
-    if not conf["bucket"]:
-        return {"ok": False, "message": "No bucket is set."}
     try:
+        conf = _tried(fields)
         bucket = s3.Client.from_settings(conf, attempts=1)
         count, more = bucket.check()
     except s3.S3ConfigError as e:
@@ -343,6 +336,31 @@ def test(fields: dict | None = None) -> dict:
     held = f"{count} or more objects" if more else f"{count} object{'' if count == 1 else 's'}"
     return {"ok": True, "message": f"{conf['bucket']}: {held} " +
             (f"under {bucket.prefix}" if bucket.prefix else "in the bucket")}
+
+
+def _tried(fields: dict | None) -> dict:
+    """The settings a test or a browse tries: ``fields``, unsaved, laid
+    over the saved ones as ``save`` would (ignored while the environment
+    sets the bucket). S3ConfigError with the reason when one is wrong or no
+    bucket is set."""
+    conf = settings()
+    if fields and not conf["from_env"]:
+        try:
+            conf = {**conf, **_checked(conf, fields)}
+        except ValueError as e:
+            raise s3.S3ConfigError(str(e)) from None
+    if not conf["bucket"]:
+        raise s3.S3ConfigError("No bucket is set.")
+    return conf
+
+
+def browse(fields: dict | None, path: str) -> dict:
+    """The folder browser's listing of the folder ``path`` from the
+    bucket's top, whatever the prefix, which it is there to choose
+    (``s3.Client.browse``), tried once with the settings ``_tried`` gives.
+    S3ConfigError with the reason when they name no bucket that can work,
+    ValueError for a path that cannot be a folder."""
+    return s3.Client.from_settings({**_tried(fields), "prefix": ""}, attempts=1).browse(path)
 
 
 # --- naming --------------------------------------------------------------------------

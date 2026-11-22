@@ -986,8 +986,13 @@ Library:
   editor: the bucket, the endpoint (empty for AWS S3), the region, the
   access key ID, the write-only secret key (the box reads "secret set —
   type to replace" while one is stored, and a secret is sent only when
-  typed) and the prefix, then Test connection, which tries the dialog's
-  values, saved or not, and answers beside its button. Save (or Enter)
+  typed) and the prefix, with Browse… beside it (once a bucket is typed),
+  which opens "Choose the prefix": the folder browser over the bucket's
+  folders from its top, listed with the dialog's values, saved or not
+  (`POST /api/admin/offsite/browse`), its New folder drawn until a copy is
+  saved under it, and Choose filling the field. Then Test connection,
+  which tries the dialog's values, saved or not, and answers beside its
+  button. Save (or Enter)
   closes the dialog once the server takes the values and shows its refusal
   in the dialog otherwise. Closing the dialog with unsaved edits asks
   first.
@@ -1050,8 +1055,14 @@ Library:
   "Waiting for Google…" while it polls; a yes closes it ("Google Drive
   connected."), and a no or an expired code shows why with Get a new
   code. A connection waiting for its code reads "Waiting for the code"
-  with Enter the code…. Edit… changes the
-  folder (new copies go there) and holds Disconnect…, which asks first.
+  with Enter the code…. Edit… chooses the folder new copies go to in the
+  folder browser over My Drive ("Folders in My Drive": the folders and
+  files Gamma made there, the folder in use chosen and open, `GET
+  /api/admin/gdrive/browse`; New folder makes one at once in the folder
+  chosen, `POST /api/admin/gdrive/folders`, Save waiting while it is
+  made). The folder is a path from My Drive's top, shown "Backups › Gamma"
+  in the row, the task's toggle and Test's answer; My Drive itself cannot
+  be it, so Save waits while it is chosen, its footnote saying why. The dialog holds Disconnect…, which asks first.
   A connection that cannot be used shows why under the rows, with
   Connect again…. A task's editor
   then has *Copy to Google Drive* (on for a new task while Drive is
@@ -1061,7 +1072,7 @@ Library:
   the bucket", "only in Google Drive" on a copy only Drive holds, whose
   Download, Restore and Delete work on Drive's copy. `GET/PUT/DELETE
   /api/admin/gdrive`, `PUT/DELETE …/client`, `POST …/connect`, `…/poll`,
-  `…/test`, `DELETE …/connect`; how it works:
+  `…/test`, `DELETE …/connect`, `GET …/browse`, `POST …/folders`; how it works:
   [debugging.md](debugging.md#google-drive).
 - **Maintenance** (the pane's head says Library maintenance): workspace
   storage, rebuilding the search indexes (the notes index and the

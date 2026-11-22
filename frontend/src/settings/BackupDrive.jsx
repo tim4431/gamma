@@ -12,15 +12,20 @@
 // page, and while it is open polls the server
 // (POST /api/admin/gdrive/poll, at the interval Google gave) until Google
 // says yes, no, or the code expires; closing it stops waiting (DELETE
-// /api/admin/gdrive/connect). Edit… changes the folder (PUT) or disconnects
-// (DELETE /api/admin/gdrive, which revokes the access at Google; the copies
-// stay in Drive). GET /api/admin/gdrive is the section's read
-// (gamma/gdrive_account.py `status`). docs/dev/settings.md.
+// /api/admin/gdrive/connect). Edit… changes the folder (PUT), chosen in a
+// folder browser over My Drive (explorer/FolderBrowser.jsx: GET
+// /api/admin/gdrive/browse, New folder POST /api/admin/gdrive/folders),
+// which shows only what Gamma made there, or disconnects (DELETE
+// /api/admin/gdrive, which revokes the access at Google; the copies stay in
+// Drive). The folder is a path of names from My Drive's top
+// ("Backups/Gamma"), shown "Backups › Gamma". GET /api/admin/gdrive is the
+// section's read (gamma/gdrive_account.py `status`). docs/dev/settings.md.
 import React from "react";
 import { API, apiJson, copyText } from "../shared/lib/utils";
 import { CopyField, DialogButtons, Field, FormNotice, Row, Section, SubDialog, TestResult } from "./SettingsKit";
 import { useSettingsRead } from "./settingsReads.js";
-import { CloudIcon, CloudOffIcon, ExternalLinkIcon, XIcon } from "../shared/ui/Icons";
+import { CloudIcon, CloudOffIcon, ExternalLinkIcon, HardDriveIcon, XIcon } from "../shared/ui/Icons";
+import FolderBrowser from "../explorer/FolderBrowser.jsx";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t } from "../shared/i18n/i18n.js";
 
@@ -29,11 +34,14 @@ const ENDPOINT = `${API}${DRIVE_READ}`;
 const DEFAULT_FOLDER = "Gamma backups";
 const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
 
+// The folder's path as the pane shows it: "Backups › Gamma".
+const folderLabel = (folder) => folder.split("/").join(" › ");
+
 // Where the copies go: "someone@gmail.com › Gamma backups", "" while no
 // connection can be used.
 export function driveWhere(status) {
   if (!status?.connected || status.problem) return "";
-  return `${status.email || t("Google Drive")} › ${status.folder}`;
+  return `${status.email || t("Google Drive")} › ${folderLabel(status.folder)}`;
 }
 
 // Signing in on Google's page, where Gamma is opened on its own computer
@@ -181,24 +189,30 @@ function ConnectDialog(props) {
   return props.status.browser && !props.status.pending ? <PageDialog {...props} /> : <CodeDialog {...props} />;
 }
 
-// The folder new copies go to, and Disconnect.
+// The folder new copies go to, chosen in My Drive, and Disconnect.
 function EditDialog({ status, confirm, onStatus, onClose }) {
   const [folder, setFolder] = React.useState(status.folder);
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [making, setMaking] = React.useState(false); // a new folder on its way: Save waits for it
+  const [source] = React.useState(() => ({
+    name: t("My Drive"), icon: HardDriveIcon,
+    list: (path) => apiJson(`${ENDPOINT}/browse?${new URLSearchParams({ path })}`),
+    create: async (path) => (await apiJson(`${ENDPOINT}/folders`, json("POST", { path }))).path,
+  }));
 
   async function save(event) {
     event.preventDefault();
     if (busy) return;
     setBusy(true); setError("");
-    try { onStatus(await apiJson(ENDPOINT, json("PUT", { folder: folder.trim() }))); onClose(); }
+    try { onStatus(await apiJson(ENDPOINT, json("PUT", { folder }))); onClose(); }
     catch (err) { setError(err.message); setBusy(false); }
   }
   function disconnect() {
     confirm({
       title: T("Disconnect Google Drive"),
       message: t("Disconnect {email}? Backup tasks stop copying there, and Gamma's access is revoked at Google. The copies already in “{folder}” stay in Drive.",
-        { email: status.email || t("this Google account"), folder: status.folder }),
+        { email: status.email || t("this Google account"), folder: folderLabel(status.folder) }),
       confirmLabel: t("Disconnect"), danger: true,
       onConfirm: async () => {
         try { onStatus(await apiJson(ENDPOINT, json("DELETE"))); onClose(); }
@@ -207,17 +221,17 @@ function EditDialog({ status, confirm, onStatus, onClose }) {
     });
   }
   return (
-    <SubDialog title={t("Edit Google Drive")} onClose={onClose} draft={folder}>
+    <SubDialog title={t("Edit Google Drive")} onClose={onClose} draft={folder} className="folderBrowserDialog">
       <form className="settingsForm" noValidate onSubmit={save}>
-        <Field label={t("Folder")} hint={t("New copies go here; the copies already in the old folder stay there.")}>
-          <input className="aiKeyInput" aria-label={t("Folder")} value={folder} maxLength={120} spellCheck={false}
-            onChange={(event) => setFolder(event.target.value)} />
+        <Field group label={t("Folder")}
+          hint={t("New copies go here; the copies already in the old folder stay there. Gamma sees only the folders it made in your Drive.")}>
+          <FolderBrowser source={source} value={folder} onChange={setFolder} onBusy={setMaking} label={t("Folders in My Drive")} />
         </Field>
         {error ? <FormNotice>{error}</FormNotice> : null}
-        <DialogButtons>
+        <DialogButtons footnote={folder ? null : t("Choose a folder in My Drive: copies cannot go in My Drive itself.")}>
           <button type="button" className="uiBtn danger" onClick={disconnect}>{t("Disconnect…")}</button>
           <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="uiBtn primary" disabled={busy || !folder.trim()}>
+          <button type="submit" className="uiBtn primary" disabled={busy || making || !folder}>
             <MorphText>{busy ? t("Saving…") : t("Save")}</MorphText>
           </button>
         </DialogButtons>
@@ -261,7 +275,7 @@ export function BackupDrive({ setStatus, confirm }) {
     </Row>;
   } else {
     row = <Row icon={CloudIcon} label={status.email || t("Google Drive")}
-      hint={where ? t("{folder} · backup tasks can copy their snapshots here", { folder: status.folder }) : status.folder}>
+      hint={where ? t("{folder} · backup tasks can copy their snapshots here", { folder: folderLabel(status.folder) }) : folderLabel(status.folder)}>
       <span className="setRowControls">
         <TestResult test={test} />
         {where ? <button className="uiBtn sm" disabled={!!test?.busy} onClick={runTest}>{t("Test")}</button>

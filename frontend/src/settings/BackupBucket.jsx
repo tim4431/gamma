@@ -10,10 +10,14 @@
 // `from_env`), the summary is read-only, its Test tries the environment's
 // bucket, and the environment's own rounds (whole databases and files,
 // gamma/offsite.py) show their status with Copy now (POST
-// /api/admin/offsite/run). docs/dev/settings.md.
+// /api/admin/offsite/run). The prefix's Browse… chooses it among the
+// bucket's folders (explorer/FolderBrowser.jsx), listed with the dialog's
+// settings, saved or not (POST /api/admin/offsite/browse).
+// docs/dev/settings.md.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { DialogButtons, Empty, Field, FormNotice, PasswordInput, Row, Section, SubDialog, TestResult } from "./SettingsKit";
+import { FolderBrowserDialog } from "../explorer/FolderBrowser.jsx";
 import { fmtWhen } from "./SettingsBackups";
 import { useSettingsRead } from "./settingsReads.js";
 import { offsiteProgressText } from "./offsiteRound.js";
@@ -51,6 +55,16 @@ export function bucketWhere(settings) {
   return `${at}${bucket}${prefix ? `/${prefix}` : ""}`;
 }
 
+// The prefix as the server keeps it: no / at either end.
+const prefixPath = (prefix) => prefix.trim().replace(/^\/+|\/+$/g, "");
+
+// The bucket as the folder browser reads it, from its top, with the
+// dialog's settings (`fields`, payload's): its prefix left out, which is
+// what the browser chooses.
+function bucketSource({ prefix: _prefix, ...fields }) {
+  return { name: fields.bucket, icon: CloudIcon, list: (path) => apiJson(`${ENDPOINT}/browse`, json("POST", { ...fields, path })) };
+}
+
 // One listing of the bucket: `body` the unsaved fields, null the settings in
 // force (the environment's). Never throws: {ok, message}.
 async function tryBucket(body) {
@@ -84,6 +98,7 @@ function BucketDialog({ settings, onClose, onSaved }) {
   const [test, setTest] = React.useState(null); // {busy} | {ok, message}
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [browsing, setBrowsing] = React.useState(null); // the folder browser's source while it is open
   // A test result is about the values it tested.
   const set = (key) => (value) => { setDraft((d) => ({ ...d, [key]: value })); setTest(null); };
   const text = (key, label) => ({
@@ -104,7 +119,7 @@ function BucketDialog({ settings, onClose, onSaved }) {
     setTest(await tryBucket(payload(draft)));
   }
 
-  return (
+  return <>
     <SubDialog title={first ? t("Set up a bucket") : t("Edit the bucket")} onClose={onClose} draft={draft}>
       {/* noValidate: the server says what is wrong with an endpoint, in its words. */}
       <form className="settingsForm" noValidate onSubmit={save}>
@@ -124,8 +139,13 @@ function BucketDialog({ settings, onClose, onSaved }) {
           <PasswordInput {...text("secret_key", t("Secret key"))} autoComplete="new-password"
             placeholder={settings.secret_set ? t("secret set — type to replace") : undefined} />
         </Field>
-        <Field label={t("Prefix")} hint={t("Put before every name, so the bucket can hold other things")}>
-          <input className="aiKeyInput" placeholder="gamma" {...text("prefix", t("Prefix"))} />
+        <Field group label={t("Prefix")} hint={t("Put before every name, so the bucket can hold other things")}>
+          <span className="setFieldWithButton">
+            <input className="aiKeyInput" placeholder="gamma" {...text("prefix", t("Prefix"))} />
+            <button type="button" className="uiBtn sm" disabled={!draft.bucket.trim()}
+              title={t("Choose the prefix among the bucket's folders, reached with the settings above")}
+              onClick={() => setBrowsing(bucketSource(payload(draft)))}>{t("Browse…")}</button>
+          </span>
         </Field>
         <p className="settingsPaneHint">{t("The bucket has no schedule of its own: turn on “Copy to the bucket” in a backup task to send it that task’s snapshots.")}</p>
         <div className="reportModalBtns settingsAlignStart">
@@ -140,7 +160,13 @@ function BucketDialog({ settings, onClose, onSaved }) {
         </DialogButtons>
       </form>
     </SubDialog>
-  );
+    {/* beside the dialog, not in it: a press in it is no press in this one */}
+    {browsing ? (
+      <FolderBrowserDialog title={t("Choose the prefix")} source={browsing} value={prefixPath(draft.prefix)}
+        hint={t("Copies go under the folder you choose. A bucket makes a folder with the first copy saved in it.")}
+        onChoose={(path) => { set("prefix")(path); setBrowsing(null); }} onClose={() => setBrowsing(null)} />
+    ) : null}
+  </>;
 }
 
 // The settings and the rounds' status are the Backups pane's read

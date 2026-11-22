@@ -31,12 +31,14 @@ Connecting takes one of two ways (gamma/gdrive.py):
   the background: a code nobody enters just expires. Once Google says yes, the account's address is
 read and the connection saved in users.db (``settings`` key ``gdrive``):
 the refresh token, encrypted with the data directory's key as the bucket's
-secret key is, the address and name, the folder's name, when, and the
+secret key is, the address and name, the folder's path, when, and the
 client ID it was made through.
 
 ``disconnect`` revokes the token at Google and forgets it; the copies stay
 in Drive. ``set_folder`` changes the folder new copies go to (the old one
-stays where it is).
+stays where it is), a path of folder names from My Drive's top
+(``check_folder``); ``browse`` and ``make_folder`` are the folder
+browser's, from My Drive's top.
 """
 
 import base64
@@ -50,6 +52,7 @@ import time
 from cryptography.fernet import InvalidToken
 
 from . import config, gdrive
+from .backup_store import check_key
 from .logbuf import log
 from .publisher_sessions import seal, unseal
 from .server_settings import _peek_raw, _set_raw
@@ -58,7 +61,8 @@ SETTINGS_KEY = "gdrive"          # the connection
 CLIENT_KEY = "gdrive_client"     # a client of the server's own for the code (manage.py gdrive-client)
 DESKTOP_KEY = "gdrive_desktop_client"  # ... and for Google's page (gdrive-client --desktop)
 DEFAULT_FOLDER = "Gamma backups"
-FOLDER_MAX = 120
+FOLDER_MAX = 120                 # a folder's name
+FOLDER_DEPTH = 16                # the names in its path: a walk asks Google once a name
 CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
 CLIENT_FIELD_MAX = 200
 NO_CLIENT = ("This build of Gamma has no Google app to sign in to Drive with: an admin can give the server one "
@@ -81,16 +85,22 @@ def _iso(at: float) -> str:
 
 
 def check_folder(folder) -> str:
-    """The folder's name, trimmed: one name, no ``/``, at most FOLDER_MAX
-    characters. ValueError otherwise."""
+    """The folder's path from My Drive's top: its names joined by ``/``,
+    each trimmed (an empty one dropped), at most FOLDER_MAX characters and
+    a key's segment (``backup_store.check_key``), at most FOLDER_DEPTH of
+    them, one at least: never My Drive itself. ValueError otherwise."""
     if not isinstance(folder, str):
         raise ValueError("The folder must be text.")
-    folder = " ".join(folder.split())
-    if not folder:
-        raise ValueError("Name the folder in Google Drive.")
-    if len(folder) > FOLDER_MAX or "/" in folder or "\\" in folder or any(ord(c) < 32 for c in folder):
-        raise ValueError(f"The folder must be one name of at most {FOLDER_MAX} characters, without / or \\.")
-    return folder
+    names = [name for name in (" ".join(part.split()) for part in folder.split("/")) if name]
+    if not names:
+        raise ValueError("Choose a folder in Google Drive.")
+    try:
+        if len(names) > FOLDER_DEPTH or any(len(name) > FOLDER_MAX for name in names):
+            raise ValueError
+        return check_key("/".join(names))
+    except ValueError:
+        raise ValueError(f"Each folder's name must be at most {FOLDER_MAX} characters, not . or .., without \\ "
+                         f"or control characters, at most {FOLDER_DEPTH} folders deep.") from None
 
 
 def _read(key: str) -> dict:
@@ -239,14 +249,34 @@ def ready() -> bool:
     return not _problem(_saved())
 
 
-def client(**kwargs) -> gdrive.Client:
-    """A client for the saved connection's folder. DriveConfigError when
-    there is none that can be used."""
+def client(folder: str | None = None, **kwargs) -> gdrive.Client:
+    """A client for the saved connection's folder, or for ``folder`` ("" My
+    Drive itself). DriveConfigError when there is none that can be used."""
     conn = _saved()
     problem = _problem(conn)
     if problem:
         raise gdrive.DriveConfigError(problem)
-    return gdrive.Client(_client_of(conn), conn["refresh_token"], conn.get("folder") or DEFAULT_FOLDER, **kwargs)
+    if folder is None:
+        folder = conn.get("folder") or DEFAULT_FOLDER
+    return gdrive.Client(_client_of(conn), conn["refresh_token"], folder, **kwargs)
+
+
+def browse(path: str) -> dict:
+    """The folder browser's listing of the folder ``path`` from My Drive's
+    top ("" My Drive itself), tried as a call the pane waits on
+    (``gdrive.Client.browse``). ValueError for a path that cannot be a
+    folder, DriveConfigError with nothing to use, DriveError when Google
+    refuses."""
+    return client("", attempts=gdrive.INTERACTIVE_ATTEMPTS).browse(check_folder(path) if path else "")
+
+
+def make_folder(path: str) -> dict:
+    """Make the folder ``path`` from My Drive's top (the folder browser's
+    New folder): ``{path}``, the path as made (``check_folder``). Errors as
+    ``browse``'s."""
+    path = check_folder(path)
+    client("", attempts=gdrive.INTERACTIVE_ATTEMPTS).make_folder(path)
+    return {"path": path}
 
 
 def status() -> dict:
@@ -462,4 +492,4 @@ def test() -> dict:
         who = {"email": "", "used": 0, "limit": 0}
     held = f"{count} or more items" if more else f"{count} item{'' if count == 1 else 's'}"
     room = f", {who['used'] / 1e9:.1f} of {who['limit'] / 1e9:.0f} GB used" if who["limit"] else ""
-    return {"ok": True, "message": f"{who['email'] or 'Google Drive'}: {held} in {drive.folder}{room}"}
+    return {"ok": True, "message": f"{who['email'] or 'Google Drive'}: {held} in {gdrive.label(drive.folder)}{room}"}

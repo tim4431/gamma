@@ -1,8 +1,9 @@
 // One row of a tree of folders and files (docs/dev/ui-design.md "Trees"):
-// the Files window (FileTree.jsx) and a synced folder's folder view
-// (FolderTree.jsx) draw every row with it. A folder's or a file's row:
-// indent guides down to its level, a chevron for a folder, its icon, its
-// name, what follows the name, and the "⋯". A "more" row is a button
+// the Files window (FileTree.jsx), a synced folder's folder view
+// (FolderTree.jsx) and the folder browser (FolderBrowser.jsx) draw every
+// row with it. A folder's or a file's row: indent guides down to its
+// level, a chevron for a folder, its icon, its name, what follows the
+// name, and the "⋯" where the row has a menu. A "more" row is a button
 // ("Show {n} more files", "Loading…" in its MorphText while it reads), a
 // "note" row a muted line (Reading…, a .loadingHint that fades in late, so
 // a quick read never flashes it; Could not read this folder. with Try
@@ -20,7 +21,7 @@ import "./tree.css";
 // folder's SyncedFolderIcon; a library folder's FolderIcon, a library
 // page's FileGlyph), `name` in place of its name (a rename's field),
 // `after` what follows the name (a count, the folder view's columns),
-// `menu` the "⋯"'s opener; `props` the row element's own (its press, its
+// `menu` the "⋯"'s opener (none: no "⋯"); `props` the row element's own (its press, its
 // menu gesture, a drag, a drop, a motion key).
 export default function TreeRow({ row, rowRef, tabbable, active, onActive, selected = false, onPress, icon, name, after, menu,
   className = "", ...props }) {
@@ -56,7 +57,7 @@ export default function TreeRow({ row, rowRef, tabbable, active, onActive, selec
       {icon || <FileIcon path={row.path} format={row.format} dir={folder} root={row.root} size={16} />}
       {name || <span className="fileTreeName">{row.name}</span>}
       {after}
-      <MenuButton className="fileTreeMenu" open={menu} tabIndex={-1} />
+      {menu ? <MenuButton className="fileTreeMenu" open={menu} tabIndex={-1} /> : null}
     </div>
   );
 }

@@ -10,7 +10,8 @@ keeps whole files under the bucket's prefix: ``put_object`` (a
 local file, streamed up by boto3's managed transfer, in parts past 8 MB),
 ``get_object`` (down into a local file, written whole), ``put_bytes`` and
 ``get_bytes`` (a small object in one request), ``list_objects``
-(``(key, size, mtime)`` under a prefix) and ``delete_object``. ``check``
+(``(key, size, mtime)`` under a prefix), ``delete_object``, and
+``browse`` (a folder's listing, its keys split at ``/``). ``check``
 lists the prefix once and says why a bucket cannot work. Keys are relative
 to the prefix and checked by ``backup_store.check_key``. A call the bucket
 refuses, or cannot be reached for, raises ``S3Error``, a ``StoreError``;
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from datetime import timezone
 from pathlib import Path
 
 from . import net_proxy
@@ -114,13 +116,12 @@ class Client:
         return err in ("404", "NoSuchKey", "NotFound") or \
             e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404
 
-    def check(self) -> tuple[int, bool]:
-        """One listing under the prefix (the copies list, so the key must be
-        allowed to): how many objects it found, up to LIST_PAGE, and whether
-        there are more. S3ConfigError with the reason when the bucket cannot
-        be used."""
+    def _listed(self, **params) -> dict:
+        """One page of ListObjectsV2 under ``params``. S3ConfigError with
+        the reason when the bucket cannot be used: none of that name, keys
+        it refuses, an endpoint out of reach."""
         try:
-            page = self.client.list_objects_v2(Bucket=self.bucket, Prefix=self.prefix, MaxKeys=LIST_PAGE)
+            return self.client.list_objects_v2(Bucket=self.bucket, MaxKeys=LIST_PAGE, **params)
         except self._client_error as e:
             code = e.response.get("Error", {}).get("Code", "")
             status = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
@@ -133,7 +134,32 @@ class Client:
             raise S3ConfigError(f"{self.where} answered {code or status}: {e}") from e
         except self._boto_error as e:
             raise S3ConfigError(f"cannot reach {self.where}: {e}") from e
+
+    def check(self) -> tuple[int, bool]:
+        """One listing under the prefix (the copies list, so the key must be
+        allowed to): how many objects it found, up to LIST_PAGE, and whether
+        there are more. S3ConfigError with the reason when the bucket cannot
+        be used."""
+        page = self._listed(Prefix=self.prefix)
         return int(page.get("KeyCount", len(page.get("Contents", ())))), bool(page.get("IsTruncated"))
+
+    def browse(self, path: str) -> dict:
+        """What the folder ``path`` (a key's segments under the prefix; ""
+        the prefix itself) holds right in it, for the pane's folder browser:
+        ``{folders: [{name, modified: ""}], files: [{name, size, modified}],
+        more}``, one listing split at ``/``: the names under it up to the
+        next ``/`` are its folders, the objects right in it its files;
+        ``more`` when the page was cut. A bucket has no folders of its own:
+        one is there while a key is under it, and holds nothing before.
+        S3ConfigError, as ``check``, when the bucket cannot be used."""
+        full = self.prefix + (check_key(path) + "/" if path else "")
+        page = self._listed(Prefix=full, Delimiter="/")
+        folders = [{"name": name, "modified": ""} for p in page.get("CommonPrefixes", ())
+                   if (name := p["Prefix"][len(full):-1])]  # "a//b" has a folder of no name, which no key can name
+        files = [{"name": o["Key"][len(full):], "size": o["Size"],
+                  "modified": o["LastModified"].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+                 for o in page.get("Contents", ()) if o["Key"] != full]  # a console's empty "folder/" object
+        return {"folders": folders, "files": files, "more": bool(page.get("IsTruncated"))}
 
     def put_object(self, key: str, path: Path, tick=None) -> None:
         """Store the local file at ``path`` as ``key``, streamed; an object
