@@ -969,7 +969,7 @@ positions must come from pdf.js, which renders the page.
 ### Link previews (`links.py`)
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/link-preview?url=` | webpage title for the frontend's link chips (`{url, host, title}`); fetch goes through the SSRF guard, results cached in-process (TTL 24 h) |
+| GET | `/link-preview?url=` | a web page's title and author for the frontend's link chips and cards (`{url, host, title, author}`, null when unknown): an oEmbed endpoint for YouTube, X, Reddit, TikTok, Vimeo and Spotify, else the page's head, in the request's `Accept-Language` (gamma/link_preview.py, [mentions.md](mentions.md#the-link-card)); fetches go through the SSRF guard, results cached in-process (24 h, a miss 15 min) |
 
 ### Browser extension (`clip.py`) — see [extension.md](extension.md)
 | Method | Path | Purpose |

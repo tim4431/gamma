@@ -1747,6 +1747,63 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
+  // A note's web links stay chips in its editor (docs/dev/mentions.md "The
+  // link card"): the site's title for a bare address, a Markdown link's
+  // words; a press shows the card without the address, and only a link being
+  // typed, or one the caret steps into, shows as source.
+  await step("notes: web links stay chips while their note is edited; a press shows the card, typing or stepping in shows the source", async () => {
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Web chips source" } });
+    const video = "https://example.org/video/1";
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "wcblock", parent: src.id, position: "a0", content: `trip ${video} and [the guide](https://example.org/guide) end` }] } });
+    const p2 = await openPage(ctx);
+    await p2.route("https://icons.duckduckgo.com/**", (route) => route.fulfill({ status: 404, body: "" }));
+    await p2.route("**/api/link-preview?**", (route) => {
+      const url = new URL(route.request().url()).searchParams.get("url");
+      route.fulfill({ json: url === video ? { url, host: "example.org", title: "Video One", author: "Uploader" }
+        : { url, host: "example.org", title: null, author: null } });
+    });
+    await p2.goto(`${server.base}/?ws=${second.id}&page=${src.id}`);
+    const content = async () => (await tree(alice2, src.id))[0]?.content;
+    const chips = p2.locator(".blockEditorCm .cmLinkChip .linkChipText");
+    const source = () => p2.locator(".blockEditorCm .cm-content").innerText();
+    try {
+      await until(async () => same(await row(p2, "end").locator(".linkChip").allInnerTexts(), ["Video One", "the guide"]),
+        { what: "the rendered chips show the site's title and the link's words" });
+      await editRow(p2, "end");
+      assert(same(await chips.allInnerTexts(), ["Video One", "the guide"]), "the editor shows the same chips");
+      assert(!(await source()).includes("example.org"), "and no address");
+
+      await chips.first().click();
+      const card = p2.locator(".linkCard");
+      await card.waitFor();
+      assertEq(await card.locator(".citePreviewTitle").innerText(), "Video One", "a press shows the link's card");
+      assertEq(await card.locator(".citePreviewPage").innerText(), "Uploader · example.org/video/1", "with its author");
+      assert(!(await source()).includes(video), "the chip stays a chip");
+      await p2.keyboard.press("Escape");
+      await card.waitFor({ state: "detached" });
+      await p2.locator(".blockEditorCm").waitFor();
+
+      await p2.keyboard.press("End");
+      await p2.keyboard.type(" https://example.org/new");
+      assert((await source()).includes("https://example.org/new"), "an address being typed shows as typed");
+      await p2.keyboard.type(" ");
+      await until(async () => same(await chips.allInnerTexts(), ["Video One", "the guide", "example.org"]),
+        { what: "the caret off it, it is a chip" });
+      await p2.keyboard.press("ArrowLeft");
+      assertEq(await chips.count(), 3, "a caret at a chip's edge keeps it");
+      await p2.keyboard.press("ArrowLeft");
+      await until(async () => (await source()).includes("https://example.org/new"), { what: "a caret inside shows its source" });
+      await card.waitFor();
+      await closeEditor(p2);
+      await until(async () => (await content())?.trimEnd() === `trip ${video} and [the guide](https://example.org/guide) end https://example.org/new`,
+        { what: "the typed address saved" });
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
   // Notion's /page: a new page inside this one (a sub-page, with no folders
   // of its own: it is filed where its top is), linked where the command was
   // typed and opened with its title ready.

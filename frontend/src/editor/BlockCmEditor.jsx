@@ -26,7 +26,12 @@ import { NO_MENTIONS, mentionChip, mentionChipClass, proseMentions } from "./men
 import { CHIP_RE, refTargetTitle, refWords } from "./refLabels.js";
 import { applyLinkChange, linkMarkdown, linkSpanAt, linkSpans, pastedLink, spanWords, tablePipe } from "./linkEdit.js";
 import { setLinkCardHost } from "./linkCardHost.js";
-import { LinkCardContext, LinkCardSurface, describeLink, useSiteTitle } from "../shared/ui/LinkCard.jsx";
+import {
+  LinkCardContext, LinkCardSurface, bareLinkText, describeLink, loadSitePreview, siteIconUrl, sitePreview,
+  useSitePreview, webLinkLabel,
+} from "../shared/ui/LinkCard.jsx";
+import { parseGammaLink } from "../shared/model/gammaLinks.js";
+import { plainSnippet } from "../search/snippets.js";
 import { pasteMath } from "./pasteMath.js";
 import { copiedText, isSourceCopy, sourceCopied } from "./sourceCopy.js";
 import { assetUrl } from "../shared/lib/utils";
@@ -87,6 +92,79 @@ class RefChipWidget extends WidgetType {
     });
     return span;
   }
+}
+
+// A web link as the rendered view's chip (BlockTree.jsx LinkChip): the
+// site's icon, or the link icon for a link into this library (`own`), and
+// its label; a bare address's (`fetches`) becomes its page's title once
+// /api/link-preview answers (LinkCard.jsx loadSitePreview). The address is
+// its hover title. A press shows its link card without opening the source
+// (ctx.pressLink); with Ctrl or Cmd it opens the link.
+const LINK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+class LinkChipWidget extends WidgetType {
+  constructor(href, words, label, { own = false, fetches = false }, ctx) {
+    super();
+    this.href = href;
+    this.words = words;
+    this.label = label;
+    this.own = own;
+    this.fetches = fetches;
+    this.ctx = ctx;
+  }
+  eq(other) {
+    return other.href === this.href && other.label === this.label && other.own === this.own && other.fetches === this.fetches;
+  }
+  toDOM(view) {
+    const chip = document.createElement("span");
+    chip.className = "linkChip cmLinkChip";
+    chip.title = this.href;
+    const icon = this.own ? "" : siteIconUrl(this.href);
+    if (icon) {
+      const img = document.createElement("img");
+      img.className = "linkChipIcon";
+      img.src = icon;
+      img.alt = "";
+      img.addEventListener("error", () => img.replaceWith(document.createRange().createContextualFragment(LINK_SVG)));
+      chip.appendChild(img);
+    } else chip.insertAdjacentHTML("beforeend", LINK_SVG);
+    const text = document.createElement("span");
+    text.className = "linkChipText";
+    text.textContent = this.label;
+    chip.appendChild(text);
+    if (this.fetches) {
+      loadSitePreview(this.href).then((p) => {
+        if (!p.title) return;
+        text.textContent = webLinkLabel(this.href, this.words, p.title).label;
+        view.requestMeasure();
+      });
+    }
+    chip.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      if (e.button !== 0) return;
+      if (e.ctrlKey || e.metaKey) {
+        window.open(new URL(this.href, window.location.origin).href, "_blank", "noopener,noreferrer");
+        return;
+      }
+      this.ctx.pressLink?.(view, view.posAtDOM(chip));
+    });
+    return chip;
+  }
+}
+
+// The chip of a web link span (linkEdit.js linkSpans): its words (a
+// Markdown link's, as plain text), else what it points to — a link into
+// this library its card's title, any other the rendered chip's label.
+function linkChip(span, ctx) {
+  const words = span.kind === "md" ? plainSnippet(spanWords(span)) : "";
+  const gl = parseGammaLink(span.href, window.location.origin);
+  if (gl && !gl.foreign) {
+    const label = bareLinkText(words)
+      ? describeLink({ kind: "url", href: span.href, label: "" }, { labels: ctx.labels, ctx: ctx.linkCtx }).title : words;
+    return new LinkChipWidget(span.href, words, label, { own: true }, ctx);
+  }
+  const known = sitePreview(span.href);
+  const { label, fetches } = webLinkLabel(span.href, words, known?.title);
+  return new LinkChipWidget(span.href, words, label, { fetches: fetches && !known }, ctx);
 }
 
 // An @ mention (MentionMenu.jsx mentionChip: the rendered view's chip); a
@@ -334,10 +412,12 @@ class TableWidget extends WidgetType {
 // formatted with their delimiters hidden. Any construct the selection
 // touches stays raw source (boundaries inclusive, so stepping the caret onto
 // it expands it) — except the objects (pictures, tables), which only a
-// selection reaching inside expands. ctx is read lazily: `labels` so freshly
-// resolved ref labels show up on the next rebuild, `objectDrag` the row's
-// drag hook for the object widgets, `tableCell` its hook for a cell click.
-function buildInlineDecos(state, ctx) {
+// selection reaching inside expands, and the web links (their chips: see
+// below). ctx is read lazily: `labels` so freshly resolved ref labels show
+// up on the next rebuild, `objectDrag` the row's drag hook for the object
+// widgets, `tableCell` its hook for a cell click, `linkCtx` the link cards'
+// context and `pressLink` a link chip's press.
+function buildInlineDecos(state, ctx, typingAt = null) {
   const text = state.doc.toString();
   const sel = state.selection.main;
   const ranges = [];
@@ -523,6 +603,12 @@ function buildInlineDecos(state, ctx) {
     }
   }
 
+  // The links (linkEdit.js linkSpans, the card's own reading: a Markdown
+  // link, a bare or <…> address; its page links are the chips above),
+  // found before the marks so that a "_" or "*" of an address never reads
+  // as emphasis, while a mark around a whole link still does.
+  const links = linkSpans(text).filter((s) => s.kind !== "ref" && !overlapsClaimed(s.from, s.to));
+
   // Inline marks (table in mdMarks.js, shared with the formatting commands:
   // **bold** and the rest, <u>underline</u> and the colored runs the color
   // row and the "/" colors write): delimiters and tags hidden, the inner text
@@ -532,30 +618,32 @@ function buildInlineDecos(state, ctx) {
   for (const s of scanMarks(text, claimed)) {
     const inner = s.from + s.openLen, outer = s.to - s.closeLen;
     if (touched(s.from, s.to) || outer <= inner) continue;
+    if (links.some((l) => l.from < s.to && s.from < l.to && !(inner <= l.from && l.to <= outer))) continue;
     ranges.push(Decoration.replace({}).range(s.from, inner));
     ranges.push(Decoration.mark({ class: s.cls, ...(s.style ? { attributes: { style: s.style } } : {}) }).range(inner, outer));
     ranges.push(Decoration.replace({}).range(outer, s.to));
   }
 
-  // [text](url): show just the text, link-styled.
-  for (const m of text.matchAll(/\[([^\]\n]+)\]\(([^)\n]+)\)/g)) {
-    const from = m.index, to = m.index + m[0].length;
-    if (text[from - 1] === "!" || text[from + 1] === "[") continue;
-    if (overlapsClaimed(from, to)) continue;
-    claimed.push([from, to]);
-    if (touched(from, to)) continue;
-    ranges.push(Decoration.replace({}).range(from, from + 1));
-    ranges.push(Decoration.mark({ class: "cmLinkText" }).range(from + 1, from + 1 + m[1].length));
-    ranges.push(Decoration.replace({}).range(from + 1 + m[1].length, to));
-  }
-
-  // Bare URLs: just link-styled (never hidden — the rendered view shows the
-  // title chip). Claimed so emphasis regexes can't chew on URL punctuation.
-  for (const m of text.matchAll(/https?:\/\/[^\s<>()"\]]+/g)) {
-    const from = m.index, to = m.index + m[0].length;
-    if (overlapsClaimed(from, to)) continue;
-    claimed.push([from, to]);
-    ranges.push(Decoration.mark({ class: "cmLinkText" }).range(from, to));
+  // A web link is the rendered view's chip (linkChip) unless an end of the
+  // selection stands inside it or it is being typed (`typingAt`, its start:
+  // typedLink), so a note opens with its links as they read, and a caret at
+  // a chip's edge keeps it. Shown as source, a bare address is link-styled.
+  // Any other Markdown link (a file, a path) shows its words, link-styled,
+  // until the selection touches it.
+  const endsIn = (from, to) => (sel.from > from && sel.from < to) || (sel.to > from && sel.to < to);
+  for (const l of links) {
+    claimed.push([l.from, l.to]);
+    if (/^https?:\/\//i.test(l.href)) {
+      if (!endsIn(l.from, l.to) && typingAt !== l.from) {
+        ranges.push(Decoration.replace({ widget: linkChip(l, ctx) }).range(l.from, l.to));
+      } else if (l.kind === "bare") ranges.push(Decoration.mark({ class: "cmLinkText" }).range(l.from, l.to));
+      continue;
+    }
+    if (l.kind !== "md" || !l.label || touched(l.from, l.to)) continue;
+    const words = l.from + 1 + l.label.length;
+    ranges.push(Decoration.replace({}).range(l.from, l.from + 1));
+    ranges.push(Decoration.mark({ class: "cmLinkText" }).range(l.from + 1, words));
+    ranges.push(Decoration.replace({}).range(words, l.to));
   }
 
   // Line constructs: headings, quotes/callouts, task and bullet markers,
@@ -618,7 +706,8 @@ function buildInlineDecos(state, ctx) {
       }
       return;
     }
-    const bullet = /^(\s*)[-*+] (?!\[)\S/.exec(text);
+    // (Not a task marker being typed, "- [ ]": a link's "[words](…)" is text.)
+    const bullet = /^(\s*)[-*+] (?!\[[ xX]\])\S/.exec(text);
     if (bullet) {
       const bFrom = at + bullet[1].length;
       if (!inside(bFrom, bFrom + 2) && !overlapsClaimed(bFrom, bFrom + 1)) {
@@ -676,16 +765,33 @@ function buildInlineDecos(state, ctx) {
   return Decoration.set(ranges, true);
 }
 
+// The start of the web link being typed, or null: one the person typed or
+// deleted in, the caret at it or in it after, stays source while the caret
+// stays on it (a link written by the card, pasted or there when the note
+// opened is its chip from the start).
+function typedLink(prev, tr) {
+  const sel = tr.state.selection.main;
+  const typed = tr.isUserEvent("input.type") || tr.isUserEvent("delete");
+  if (!sel.empty || (!typed && prev == null)) return null;
+  const span = linkSpanAt(tr.state.doc.toString(), sel.head);
+  if (!span || span.kind === "ref") return null;
+  return typed || tr.changes.mapPos(prev) === span.from ? span.from : null;
+}
+
 // A StateField, not a ViewPlugin: replace decorations that hide line breaks
 // (multi-line $$math$$, ``` fences) are only allowed from state-level
 // decoration sources — a plugin throws "Decorations that replace line breaks
-// may not be specified via plugins".
+// may not be specified via plugins". It keeps the link being typed beside
+// the decorations ({deco, typing}).
 function inlineRenderField(ctx) {
   return StateField.define({
-    create: (state) => buildInlineDecos(state, ctx),
-    update: (deco, tr) =>
-      tr.docChanged || tr.selection ? buildInlineDecos(tr.state, ctx) : deco,
-    provide: (f) => EditorView.decorations.from(f),
+    create: (state) => ({ deco: buildInlineDecos(state, ctx), typing: null }),
+    update: (value, tr) => {
+      if (!tr.docChanged && !tr.selection) return value;
+      const typing = typedLink(value.typing, tr);
+      return { deco: buildInlineDecos(tr.state, ctx, typing), typing };
+    },
+    provide: (f) => EditorView.decorations.from(f, (value) => value.deco),
   });
 }
 
@@ -996,10 +1102,10 @@ function EditorLinkCard({ view, card, labels, blockId, onEditing, onClose }) {
   const ctx = useContext(LinkCardContext);
   const { span } = card;
   const href = span.kind === "md" || span.kind === "bare" ? span.href : "";
-  const siteTitle = useSiteTitle(href, !!href);
+  const site = useSitePreview(href, !!href);
   const info = span.kind === "new" ? { title: "", target: null }
     : describeLink(span.kind === "ref" ? { kind: "ref", id: span.id, words: span.words } : { kind: "url", href, label: spanWords(span) },
-      { labels, ctx, siteTitle });
+      { labels, ctx, site });
   const write = (change) => {
     const doc = view.state.doc.toString();
     let at = span;
@@ -1055,17 +1161,29 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   decoCtx.mentions = mentions;
   decoCtx.objectDrag = onObjectDrag;
   decoCtx.tableCell = onTableCell;
+  decoCtx.linkCtx = useContext(LinkCardContext);
   const chipCompartment = useRef(new Compartment()).current;
   // An own history in a compartment, so that a text replaced from outside
   // starts it afresh (see the sync below).
   const historyCompartment = useRef(new Compartment()).current;
   const ownHistoryRef = useRef(ownHistory);
   // The link card ({span, editing}: EditorLinkCard). It shows while the
-  // caret, put there by a press or a key, stands inside a link; typing hides
-  // it. Its form (Ctrl+K, a Link button, its ✎) holds it until it closes.
+  // caret, put there by a press or a key, stands inside a link, and after a
+  // press on a link's chip, until the caret moves; typing hides it. Its form
+  // (Ctrl+K, a Link button, its ✎) holds it until it closes.
   const [linkCard, setLinkCard] = useState(null);
   const linkCardRef = useRef(null);
   linkCardRef.current = linkCard;
+  // A press on a link chip (LinkChipWidget): the caret after the link, and
+  // its card, pinned.
+  decoCtx.pressLink = (view, from) => {
+    const doc = view.state.doc.toString();
+    const span = linkSpans(doc).find((s) => s.from === from);
+    if (!span) return;
+    view.focus();
+    view.dispatch({ selection: { anchor: span.to } });
+    setLinkCard({ span: { ...span, text: doc.slice(span.from, span.to) }, editing: null });
+  };
   const linkCardUpdate = useRef(null);
   linkCardUpdate.current = (u) => {
     const cur = linkCardRef.current;
