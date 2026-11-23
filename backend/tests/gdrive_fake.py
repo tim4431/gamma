@@ -3,16 +3,17 @@ flow, tokens and revocation, and the Drive API v3 as gamma/gdrive.py uses
 it (about, files listed by query, folders made, resumable uploads and
 updates, downloads, deletes), with Google's refusals.
 
-``FakeGoogle.install(monkeypatch)`` points gamma at it in-process (the
-test gives gamma the app it knows, ``CLIENT_ID`` and ``CLIENT_SECRET``):
-``gdrive._request`` to ``request``, the pauses to ``sleeps`` (instant; the pauses asked are kept). A test drives
+``FakeGoogle.install(monkeypatch)`` points gamma at it in-process
+(tests/cloud_fake.py: the clouds' transport routed here by address, the
+pauses kept in ``sleeps`` rather than waited; the test gives gamma the app
+it knows, ``CLIENT_ID`` and ``CLIENT_SECRET``). A test drives
 the device flow with ``approve``, ``deny`` and ``expire``; ``revoke_all``
 makes every refresh token invalid (the person removed the app);
 ``expire_access`` makes the next call's access token answer 401.
 ``fail_next(match, status, times)`` answers the next requests whose
 ``METHOD path`` contains ``match`` with ``status`` (0: no answer at all);
 ``quota`` caps the bytes the account may hold. ``calls`` lists every
-request as ``"METHOD path"``. ``serve()`` answers the same over HTTP for
+request as ``"METHOD path"``. Served (``cloud_fake.serve``) it answers the same for
 the browser e2e, with ``POST /_fake/approve`` (``deny``, ``expire``) and
 ``GET /_fake/state`` (``{files: {path: size}, revoked}``) for the
 scenario's side: ``python -I backend/tests/gdrive_fake.py --port 0``
@@ -42,12 +43,17 @@ import base64
 import hashlib
 import itertools
 import json
+import os
 import re
+import sys
 import time
 import urllib.parse
-from dataclasses import dataclass, field
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Lock, Thread
+from threading import Lock
+
+if __name__ == "__main__":  # run on its own (the browser e2e, ``python -I``): its neighbours are not on the path
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cloud_fake  # noqa: E402
+from cloud_fake import Dropped, Reply  # noqa: E402
 
 CLIENT_ID, CLIENT_SECRET = "fake-client.apps.googleusercontent.com", "GOCSPX-fake"
 DESKTOP_ID, DESKTOP_SECRET = "fake-desktop.apps.googleusercontent.com", "GOCSPX-desktop"
@@ -55,17 +61,6 @@ SECRETS = {CLIENT_ID: CLIENT_SECRET, DESKTOP_ID: DESKTOP_SECRET}
 SCOPE = "https://www.googleapis.com/auth/drive.file"   # gdrive.SCOPE
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 FOLDER = "application/vnd.google-apps.folder"
-
-
-@dataclass
-class Reply:
-    status: int
-    headers: dict = field(default_factory=dict)
-    body: bytes = b""
-
-
-class Dropped(Exception):
-    """A request the fake answers with nothing (``fail_next(..., 0)``)."""
 
 
 class FakeGoogle:
@@ -91,15 +86,10 @@ class FakeGoogle:
     # --- the test's levers -------------------------------------------------
 
     def install(self, monkeypatch):
-        from gamma import gdrive
-
         monkeypatch.setenv("GAMMA_GOOGLE_OAUTH_BASE", self.base)
         monkeypatch.setenv("GAMMA_GOOGLE_API_BASE", self.base)
         monkeypatch.setenv("GAMMA_GOOGLE_ACCOUNTS_BASE", self.base)
-        monkeypatch.setattr(gdrive, "_request", self.request)
-        monkeypatch.setattr(gdrive, "_sleep", self.sleeps.append)
-        monkeypatch.setattr(gdrive, "_tokens", {})
-        return self
+        return cloud_fake.install(monkeypatch, self)
 
     def _device(self, state):
         for device in self.devices.values():
@@ -164,20 +154,6 @@ class FakeGoogle:
         self.files[file_id]["trashed"] = True
 
     # --- the transport ------------------------------------------------------
-
-    def request(self, method, url, headers, body=None, timeout=None, sink=None):
-        """``gdrive._request`` in-process: the answer as gdrive's Response, a
-        2xx body streamed into ``sink``."""
-        from gamma import gdrive
-
-        try:
-            reply = self.handle(method, url, headers, body)
-        except Dropped:
-            raise gdrive.DriveUnreachable("Google could not be reached: fake") from None
-        if sink is not None and 200 <= reply.status < 300:
-            sink.write(reply.body)
-            return gdrive.Response(reply.status, reply.headers, b"")
-        return gdrive.Response(reply.status, reply.headers, reply.body)
 
     def handle(self, method, url, headers, body=None):
         """One request, routed by its path; Dropped for one to leave
@@ -420,49 +396,13 @@ class FakeGoogle:
             f = self.files[fid]
         return self._json(200, {"id": f["id"], "size": str(len(f["data"]))})
 
-    # --- over HTTP (the browser e2e) ----------------------------------------------
-
-    def serve(self, port: int = 0):
-        """Answer over HTTP on 127.0.0.1, in a daemon thread: ``(httpd,
-        base)``, ``base`` now the fake's own. Stop it with
-        ``httpd.shutdown()``."""
-        fake = self
-
-        class Handler(BaseHTTPRequestHandler):
-            protocol_version = "HTTP/1.1"
-
-            def _any(self):
-                length = int(self.headers.get("Content-Length") or 0)
-                body = self.rfile.read(length) if length else b""
-                try:
-                    reply = fake.handle(self.command, fake.base + self.path, dict(self.headers.items()), body)
-                except Dropped:
-                    self.close_connection = True
-                    return
-                self.send_response(reply.status)
-                for name, value in reply.headers.items():
-                    self.send_header(name, value)
-                self.send_header("Content-Length", str(len(reply.body)))
-                self.end_headers()
-                self.wfile.write(reply.body)
-
-            do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _any
-
-            def log_message(self, *args):
-                pass
-
-        httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-        self.base = f"http://127.0.0.1:{httpd.server_port}"
-        Thread(target=httpd.serve_forever, daemon=True).start()
-        return httpd, self.base
-
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="Serve a fake Google: OAuth's device flow and the Drive API.")
     parser.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (0 = any free one)")
     parser.add_argument("--interval", type=int, default=2, help="the polling interval its device codes ask for")
     args = parser.parse_args(argv)
-    httpd, base = FakeGoogle(interval=args.interval).serve(args.port)
+    httpd, base = cloud_fake.serve(FakeGoogle(interval=args.interval), args.port)
     print(f"GOOGLE {base}", flush=True)
     try:
         while True:

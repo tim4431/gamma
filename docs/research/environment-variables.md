@@ -17,7 +17,8 @@ Settings, except what the public demo, the account server (and its fleet)
 and the share host set for themselves, which are the unattended services
 the rule allows. Moved: Google Drive's OAuth client (now Gamma's own,
 shipped with the code, so connecting Drive is signing in;
-[google-drive-backup.md](google-drive-backup.md)) and the Zotero app
+[google-drive-backup.md](google-drive-backup.md); OneDrive's the same,
+[onedrive-icloud-backup.md](onedrive-icloud-backup.md)) and the Zotero app
 (Settings → Server → Zotero sign-in, each server's admin registering
 their own); and the feature settings below ("Moved into
 Settings"), now server options (`gamma/server_options.py`, one users.db
@@ -97,7 +98,8 @@ dir, static dir, port and first admin.
 
 ## Test and developer hooks
 
-`GAMMA_GOOGLE_OAUTH_BASE`, `GAMMA_GOOGLE_API_BASE`, `GAMMA_ZOTERO_API_BASE`,
+`GAMMA_GOOGLE_OAUTH_BASE`, `GAMMA_GOOGLE_API_BASE`, `GAMMA_MICROSOFT_LOGIN_BASE`,
+`GAMMA_MICROSOFT_GRAPH_BASE`, `GAMMA_ZOTERO_API_BASE`,
 `GAMMA_ZOTERO_STREAM_URL`, `GAMMA_ZOTERO_WEB_BASE` (stand-ins for the real
 services), `GAMMA_LOCAL_AGENTS` (computer agents forced on or off),
 `GAMMA_SYNC_INTERVAL` (0 stops the sync loops), `GAMMA_OCR_ENGINE`

@@ -1,20 +1,21 @@
-"""The backup tasks' snapshots copied off this server, to the bucket or to
-Google Drive (docs/dev/debugging.md "Snapshots and copies in a bucket",
-"Google Drive").
+"""The backup tasks' snapshots copied off this server, to a bucket or a
+cloud (docs/dev/debugging.md "Snapshots and copies in a bucket", "Cloud
+destinations").
 
 ``DESTINATIONS`` names the stores a task may copy to, each with what a
 message calls it, why nothing can go there while it is not set up, whether
 it is and its client: ``bucket``, the S3-compatible bucket (gamma/s3.py,
-its settings gamma/offsite.py), and ``drive``, the server's Google Drive
-connection (gamma/gdrive.py, gamma/gdrive_account.py). Both clients are
-backup stores (gamma/backup_store.py ``Store``), so everything below works
-on either alike; a store is named by its key in ``DESTINATIONS``.
+its settings gamma/offsite.py), and ``drive`` and ``onedrive``, the
+server's Google Drive and OneDrive connections (gamma/gdrive.py,
+gamma/onedrive.py, kept by gamma/cloud_account.py). Every client is a
+backup store (gamma/backup_store.py ``Store``), so everything
+below works on any alike; a store is named by its key in ``DESTINATIONS``.
 
-A backup task with ``bucket`` or ``drive`` on (gamma/backup_schedule.py),
-or both, uploads each snapshot it takes, whole, to
-``snapshots/<ws>/<name>.zip`` of that store (under the bucket's prefix, or
-the Drive folder): the snapshot's own name, so a copy and the snapshot it
-came from match. Beside the copies, ``snapshots/<ws>/workspace.json``
+A backup task with one or more of them on (gamma/backup_schedule.py)
+uploads each snapshot it takes, whole, to ``snapshots/<ws>/<name>.zip`` of
+each store (under the bucket's prefix, or the cloud's folder): the
+snapshot's own name, so a copy and the snapshot it came from
+match. Beside the copies, ``snapshots/<ws>/workspace.json``
 (``{id, name, kind}``) names the workspace, so a server that does not have
 it (a new one after a lost disk) can still say whose copies they are. The
 task's retention then prunes its copies in each store as it prunes its
@@ -35,7 +36,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Callable
 
-from . import gdrive_account, offsite, s3, workspaces, ws_backup
+from . import cloud_account, offsite, s3, workspaces, ws_backup
 from .backup_store import Store
 from .db import safe_ws_id
 
@@ -65,8 +66,8 @@ def _bucket_client(**kwargs) -> s3.Client:
 DESTINATIONS = {
     "bucket": Destination("the bucket", "No bucket is set up. An admin sets one up in Settings → Backups.",
                           lambda: bool(offsite.settings()["bucket"]), _bucket_client),
-    "drive": Destination("Google Drive", "Google Drive is not connected. An admin connects it in Settings → Backups.",
-                         gdrive_account.ready, gdrive_account.client),
+    **{key: Destination(cloud.name, f"{cloud.name} is not connected. An admin connects it in Settings → Backups.",
+                        cloud.ready, cloud.client) for key, cloud in cloud_account.ACCOUNTS.items()},
 }
 STORES = tuple(DESTINATIONS)
 

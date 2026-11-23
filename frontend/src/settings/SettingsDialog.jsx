@@ -1485,7 +1485,7 @@ export default function SettingsDialog({
                   onAccount={() => navigate("account", t("Zotero"))} /> : null}
                 {pane === "backups" && backups ? <WorkspaceBackups value={backups} /> : null}
                 {pane === "server" ? <ServerSettings value={server}
-                  onBucket={available("backups") ? () => navigate("backups", t("Bucket")) : null} /> : null}
+                  onBucket={available("backups") ? () => navigate("backups", t("Backup destinations")) : null} /> : null}
                 {pane === "proxy" ? <ProxySettings setStatus={server.setStatus} /> : null}
                 {pane === "diagnostics" ? <AdvancedSettings value={diagnostics} tours={papers} /> : null}
               </>}

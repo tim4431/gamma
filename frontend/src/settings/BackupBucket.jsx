@@ -1,9 +1,10 @@
-// Settings → Backups › Bucket (admins only): an S3-compatible bucket (AWS
-// S3, Cloudflare R2, MinIO, …) that backup tasks copy their snapshots to
-// (BackupTasks.jsx, "Copy to the bucket"). The bucket has no schedule of its
-// own: it holds what the tasks send it, and Saved snapshots lists what it
-// holds (SettingsBackups.jsx). The section is the bucket's summary with Set
-// up… / Edit…, which opens the editor dialog. GET/PUT /api/admin/offsite (the
+// Settings → Backups › Backup destinations › Bucket (admins only): an
+// S3-compatible bucket (AWS S3, Cloudflare R2, MinIO, …) that backup tasks
+// copy their snapshots to (BackupTasks.jsx, "Copy off this server"). The
+// bucket has no schedule of its own: it holds what the tasks send it, and
+// Saved snapshots lists what it holds (SettingsBackups.jsx). Its row is the
+// bucket's summary with Set up… / Edit…, which opens the editor dialog
+// (BackupDestinations.jsx lists it with the other stores). GET/PUT /api/admin/offsite (the
 // secret is write-only: `secret_set` says one is stored, and a PUT without
 // `secret_key` keeps it), POST /api/admin/offsite/test with the unsaved
 // fields. When the server's environment sets the bucket (GAMMA_S3_BUCKET,
@@ -16,16 +17,17 @@
 // docs/dev/settings.md.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { DialogButtons, Empty, Field, FormNotice, PasswordInput, Row, Section, SubDialog, TestResult } from "./SettingsKit";
+import { DialogButtons, Field, FormNotice, PasswordInput, Row, SubDialog, TestResult } from "./SettingsKit";
 import { FolderBrowserDialog } from "../explorer/FolderBrowser.jsx";
 import { fmtWhen } from "./SettingsBackups";
 import { useSettingsRead } from "./settingsReads.js";
 import { offsiteProgressText } from "./offsiteRound.js";
-import { CloudIcon, RefreshIcon } from "../shared/ui/Icons";
+import { STORE, bucketWhere } from "./backupStores.js";
+import { CloudIcon, DatabaseIcon, RefreshIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 
-export const BUCKET_READ = "/admin/offsite";
+const BUCKET_READ = STORE.bucket.read;
 const ENDPOINT = `${API}${BUCKET_READ}`;
 const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
 
@@ -43,16 +45,6 @@ function payload(draft) {
   for (const key of ["bucket", "endpoint", "region", "access_key", "prefix"]) out[key] = rest[key].trim();
   if (secret) out.secret_key = secret;
   return out;
-}
-
-// Where the bucket is: "s3://gamma-backups/prefix", the endpoint's host in
-// place of s3:// for R2, MinIO and the like. "" without a bucket.
-export function bucketWhere(settings) {
-  const { bucket, endpoint, prefix } = settings || {};
-  if (!bucket) return "";
-  let at = "s3://";
-  if (endpoint) { try { at = `${new URL(endpoint).host}/`; } catch { at = `${endpoint}/`; } }
-  return `${at}${bucket}${prefix ? `/${prefix}` : ""}`;
 }
 
 // The prefix as the server keeps it: no / at either end.
@@ -147,7 +139,7 @@ function BucketDialog({ settings, onClose, onSaved }) {
               onClick={() => setBrowsing(bucketSource(payload(draft)))}>{t("Browse…")}</button>
           </span>
         </Field>
-        <p className="settingsPaneHint">{t("The bucket has no schedule of its own: turn on “Copy to the bucket” in a backup task to send it that task’s snapshots.")}</p>
+        <p className="settingsPaneHint">{t("The bucket has no schedule of its own: choose it under “Copy off this server” in a backup task to send it that task’s snapshots.")}</p>
         <div className="reportModalBtns settingsAlignStart">
           <button type="button" className="uiBtn sm" disabled={!!test?.busy}
             title={t("Reach the bucket with the settings above, saved or not")} onClick={runTest}>{t("Test connection")}</button>
@@ -172,7 +164,7 @@ function BucketDialog({ settings, onClose, onSaved }) {
 // The settings and the rounds' status are the Backups pane's read
 // (settingsReads.js). While an environment's round runs it is read again
 // every few seconds, else twice a minute.
-export function BackupBucket({ setStatus }) {
+export function BucketRow({ setStatus }) {
   const [running, setRunning] = React.useState(false);
   const offsite = useSettingsRead(BUCKET_READ, { poll: running ? 3000 : 30000 });
   const saved = offsite.data; // GET's {settings, from_env, status}
@@ -213,14 +205,10 @@ export function BackupBucket({ setStatus }) {
   // beside the button, as the dialog's does.
   const summaryHint = !saved ? null : managed
     ? t("{where} · set by {name}", { where: bucketWhere(settings), name: "GAMMA_S3_BUCKET" })
-    : settings.bucket ? t("{where} · backup tasks can copy their snapshots here", { where: bucketWhere(settings) })
-      : t("AWS S3, Cloudflare R2, MinIO or another S3-compatible store, for backup tasks to copy their snapshots to");
+    : settings.bucket ? bucketWhere(settings) : t("AWS S3, Cloudflare R2, MinIO or another S3-compatible store");
   return <>
-    {/* An admin's section in a pane every account has: tagged so, as the
-        rail's Administration caption is. */}
-    <Section title={t("Bucket")} tag={<span className="uiTag admin">{t("admin")}</span>}>
-      {!saved ? errorLine || <Empty icon={CloudIcon} loading>{t("Loading…")}</Empty> : <>
-        <Row icon={CloudIcon} label={settings.bucket || t("No bucket yet")} hint={summaryHint}
+      {!saved ? errorLine || <Row icon={DatabaseIcon} label={STORE.bucket.title()} hint={t("Loading…")} /> : <>
+        <Row icon={DatabaseIcon} label={STORE.bucket.title()} hint={summaryHint}
           title={managed ? t("Set by {name} in the server's environment", { name: "GAMMA_S3_BUCKET" }) : undefined}>
           {managed ? (
             <span className="setRowControls">
@@ -229,7 +217,7 @@ export function BackupBucket({ setStatus }) {
             </span>
           ) : <button className="uiBtn sm" onClick={() => { setError(""); setEditing(true); }}><MorphText>{settings.bucket ? t("Edit…") : t("Set up…")}</MorphText></button>}
         </Row>
-        {managed && (round?.enabled || round?.last_round_at) ? <>
+        {managed && (round?.enabled || round?.last_round_at) ? <div className="setSubRows">
           <Row icon={RefreshIcon} label={t("Off-site rounds")} hint={roundHint(round)}
             title={t("Set by the server's environment: every database and uploaded file, copied each round.")}>
             <button className="uiBtn sm" disabled={running || starting || !round.enabled} onClick={copyNow}>
@@ -237,10 +225,9 @@ export function BackupBucket({ setStatus }) {
             </button>
           </Row>
           {round.error ? <FormNotice>{round.error}</FormNotice> : null}
-        </> : null}
+        </div> : null}
         {errorLine}
       </>}
-    </Section>
     {editing ? (
       <BucketDialog settings={settings} onClose={() => setEditing(false)}
         onSaved={(value) => { offsite.set(value); setEditing(false); setStatus?.(t("Bucket saved.")); }} />

@@ -14,7 +14,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, done reminders | `users.db` `reminders_done`, a row per dismissed reminder (its key, the workspace it was last found in, when), written by `POST /api/reminders/done` and kept while the reminder exists ([mentions.md](mentions.md) "Reminders"); no pref, as there may be thousands (the `reminders-done` prefs key held them before migration step 39) | which of the account's reminders it has dismissed, in every browser |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)), and the account's own skills under the reserved `skills` key (`/api/ai/skills*`, never synced to Gamma Cloud, [skills.md](skills.md#storage)), and the model each task uses under the reserved `ai-models` key (`/api/ai/models`, written by `/api/ai/models/roles` and `/import`, never synced to Gamma Cloud, [ai.md](ai.md#models-for-each-task)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / Tavily / SearXNG / OpenAlex settings, the account's skills, the chat, metadata, translation and handwriting models and the favorite models |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the server options (the `options` key, `gamma/server_options.py`, among them the text recognition's `ocr`, `ocr_auto` and `ocr_workers`), the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), the Google Drive connection (the `gdrive` key via `/api/admin/gdrive`, its refresh token encrypted the same way), the network proxy (the `proxy` key via `/api/admin/proxy`, its password encrypted the same way, [network_proxy.md](network_proxy.md)), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the server options (the `options` key, `gamma/server_options.py`, among them the text recognition's `ocr`, `ocr_auto` and `ocr_workers`), the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), the cloud connections (the `gdrive` and `onedrive` keys via `/api/admin/clouds/<store>`, their refresh tokens encrypted the same way), the network proxy (the `proxy` key via `/api/admin/proxy`, its password encrypted the same way, [network_proxy.md](network_proxy.md)), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
 
 Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
 if the value needs validation) plus a control in the matching settings pane;
@@ -959,51 +959,115 @@ Library:
   Duplicate task / Delete task `ActionMenu` (`PlayIcon`, `PencilIcon`,
   `DuplicateIcon`, and Delete task a `danger` row), a failed read or a
   task's failed run a `FormNotice` under the table, the read's with Try
-  again), then for admins the
-  **Bucket** ([BackupBucket.jsx](../../frontend/src/settings/BackupBucket.jsx),
-  tagged `admin` in its title as the rail's Administration caption is),
-  then **Saved snapshots**, with Back up all on its rule, and the server-kept
-  snapshots per workspace (per workspace: back up now on its rule,
-  download, restore, delete; an `Empty` with `DatabaseIcon` before the
-  first, a `FormNotice` with Try again when its list can't be read). A row tags a task's snapshot "Automatic" and
-  the one a replace restore keeps "Before restore", and says when files were
+  again), then for admins **Backup destinations**
+  ([BackupDestinations.jsx](../../frontend/src/settings/BackupDestinations.jsx),
+  tagged `admin` in its title as the rail's Administration caption is)
+  and **Cloud copies**, then **Saved snapshots**, with Back up all on its
+  rule, and the server-kept snapshots per workspace (per workspace: back
+  up now on its rule, download, restore, delete; an `Empty` with
+  `DatabaseIcon` before the first, a `FormNotice` with Try again when its
+  list can't be read). A row tags a task's snapshot "Automatic" and the
+  one a replace restore keeps "Before restore", and says when files were
   missing or a database copy failed its check. Its delete, which cannot be
   undone, is a `uiBtn sm iconSq danger` named for what it deletes ("Delete
   the snapshot from Sep 23, 3:00 AM PDT", the date as the row shows it;
-  "Delete the bucket's copy from …" for a copy only the bucket holds).
-  The Bucket is an S3-compatible bucket that backup tasks copy their
-  snapshots to, a backup target only: Gamma keeps running on its local
-  files. It has no schedule of its own, no switch and no count of copies:
-  a task's editor has a *Copy to the bucket* toggle (an admin's tasks,
-  while a bucket is set up; on for a new task then), whose hint names the
-  bucket and says the task's retention applies there too, and the task's
-  row says "copies to the bucket" and its Last run "in the bucket". The
-  section is one row, named after the bucket ("No bucket yet" before one
-  is saved), reading "s3://gamma-backups/prefix · backup tasks can copy
-  their snapshots here", with the endpoint's host in place of `s3://` for
-  R2 or MinIO. Its Set up… or Edit… button opens the editor `SubDialog`
-  ("Set up a bucket" / "Edit the bucket"), laid out like the shared AI key
-  editor: the bucket, the endpoint (empty for AWS S3), the region, the
-  access key ID, the write-only secret key (the box reads "secret set —
-  type to replace" while one is stored, and a secret is sent only when
-  typed) and the prefix, with Browse… beside it (once a bucket is typed),
-  which opens "Choose the prefix": the folder browser over the bucket's
-  folders from its top, listed with the dialog's values, saved or not
-  (`POST /api/admin/offsite/browse`), its New folder drawn until a copy is
-  saved under it, and Choose filling the field. Then Test connection,
+  "Delete the copy in the bucket from …" for a copy only a store holds).
+  Backup destinations are the places off this server that backup tasks
+  copy their snapshots to, backup targets only: Gamma keeps running on its
+  local files. Under the hint "Places off this server that backup tasks
+  can copy their snapshots to. Set up one or more, then choose them in a
+  task." it lists one row per store, in one order
+  ([backupStores.js](../../frontend/src/settings/backupStores.js) `STORES`,
+  which also holds every sentence the pane says of a store, written once
+  with its name in it): **Google Drive** and **OneDrive**
+  ([BackupCloud.jsx](../../frontend/src/settings/BackupCloud.jsx)) and the
+  **Bucket** ([BackupBucket.jsx](../../frontend/src/settings/BackupBucket.jsx)).
+  Each row is labelled with the store and its hint says where the copies
+  go once it is set up ("someone@gmail.com › Gamma backups",
+  "s3://gamma-backups/prefix"), else what it is ("A folder of a Google
+  account's Drive", "AWS S3, Cloudflare R2, MinIO or another S3-compatible
+  store"); its buttons are Connect… or Set
+  up… before, Test (answered beside it, `TestResult`) and Edit… after, all
+  `uiBtn sm`. None has a schedule, a switch or a count of copies of its
+  own: a task's editor has **Copy off this server**, a row of chips
+  (`ToggleGroup`), one per destination set up (and one the task still
+  copies to that is no longer set up, whose hint then says so), each on for
+  a new task and naming where on hover; its hint says the task's retention
+  applies there too, or, with none chosen, that snapshots stay on the
+  server. The task's row says "copies to Google Drive · copies to
+  OneDrive" and its Last run "in Google Drive · in OneDrive".
+  Nothing shows while no destination is set up.
+  The clouds' rows (Google Drive and OneDrive alike; what differs between
+  them is `CLOUDS` there: the company, the folder browser's top, the
+  dialog's lead and the folder's hint): nothing is set up first, since
+  connecting is signing in with Gamma's own app. A row reads its idle hint
+  with Connect…, or "Waiting for the code" with Enter the code… while a
+  code waits, or *Not available* (`CloudOffIcon`) in a build without the
+  app; once connected the account and the folder (`CloudCheckIcon`) with
+  Test (the folder's item count and the account's storage) and Edit…. A
+  connection that cannot be used shows why under the row, with Connect
+  again…. Where Gamma is opened on its own computer (the desktop app; the
+  read's `browser`), Connect… opens "Connect Google Drive" ("Connect
+  OneDrive") with Continue with Google (Microsoft), a link drawn as the
+  dialog's button to the service's page; once the person allows there, the
+  dialog sees the connection and closes, and the tab the service sent back
+  says "Google Drive is connected". Anywhere else Connect… opens the same
+  dialog and asks the service for a code at once: the code in a copy box,
+  "Copy the code and open Google" (a link drawn as the dialog's button: it
+  copies the code and opens the page), two steps (enter the code; choose
+  the account and allow), and "Waiting for Google…" while it polls; a yes
+  closes it ("Google Drive connected."), and a no or an expired code shows
+  why with Get a new code. Edit… ("Edit Google Drive") chooses the folder
+  new copies go to in the folder browser over the cloud ("Folders in My
+  Drive", "Folders in OneDrive": the folder in use chosen and open, `GET
+  /api/admin/clouds/<store>/browse`; New folder makes one at once in the
+  folder chosen, `POST …/folders`, Save waiting while it is made); Google
+  Drive's lists only what Gamma made there, OneDrive's every folder. The
+  folder is a path from the top, shown "Backups › Gamma" in the row, the
+  chip's title and Test's answer; the top itself cannot be it, so Save waits
+  while it is chosen, its footnote saying why. The dialog holds
+  Disconnect…, which asks first; its question says Gamma's access is
+  revoked at Google, or, for Microsoft, which has no way to, that Gamma
+  forgets it and the person removes it from the account's apps.
+  The bucket's row is named after the store; Set up… or Edit… opens the
+  editor `SubDialog` ("Set up a bucket" / "Edit the bucket"), laid out like
+  the shared AI key editor: the bucket, the endpoint (empty for AWS S3),
+  the region, the access key ID, the write-only secret key (the box reads
+  "secret set — type to replace" while one is stored, and a secret is sent
+  only when typed) and the prefix, with Browse… beside it (once a bucket is
+  typed), which opens "Choose the prefix": the folder browser over the
+  bucket's folders from its top, listed with the dialog's values, saved or
+  not (`POST /api/admin/offsite/browse`), its New folder drawn until a copy
+  is saved under it, and Choose filling the field. Then Test connection,
   which tries the dialog's values, saved or not, and answers beside its
-  button. Save (or Enter)
-  closes the dialog once the server takes the values and shows its refusal
-  in the dialog otherwise. Closing the dialog with unsaved edits asks
-  first.
-  What the bucket holds shows with the snapshots (`GET
-  /api/admin/offsite/snapshots`, read again after a task's run): a
-  snapshot also in the bucket is tagged "in the bucket", and a copy only
-  the bucket holds is a row of its own with a cloud icon, "only in the
-  bucket", and Download (a `bucket-download` job, saved when it ends),
-  Restore (Replace… / Merge… / As a new workspace…, a `bucket-restore`
-  job) and Delete (from the bucket). Below Google Drive, admins with a
-  store set up get **Cloud copies**
+  button. Save (or Enter) closes the dialog once the server takes the
+  values and shows its refusal in the dialog otherwise. Closing the dialog
+  with unsaved edits asks first.
+  With `GAMMA_S3_BUCKET` set, the environment supplies every field: the
+  row's hint says where the bucket is and what sets it
+  ("127.0.0.1:1/gamma-env · set by GAMMA_S3_BUCKET", the sentence "Set by
+  GAMMA_S3_BUCKET in the server's environment" its hover title), and its one
+  button is Test, which tries the environment's bucket and answers beside
+  it as the dialog's Test connection does (`TestResult`). The environment's
+  off-site rounds then show under it (`setSubRows`) while on or once one
+  ran: Off-site rounds reads "every 1 h · 7 kept · last round … · 12
+  databases · 340 uploads · 0 failed · next round …" (or "no round yet",
+  with the round's error under it) beside Copy now, which is disabled while
+  a round runs. A running round leads it with how far it is ("copying now…
+  · databases 3 / 12", then "files 120 / 3,400 · 1.2 GB / 8.0 GB",
+  [offsiteRound.js](../../frontend/src/settings/offsiteRound.js)), read
+  every 3 s while it runs. `GET/PUT /api/admin/offsite`, `POST
+  /api/admin/offsite/test` and `…/run`; the copies and the rounds
+  themselves: [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket).
+  What the stores hold shows with the snapshots (`GET
+  /api/admin/offsite/snapshots`, `?store=<store>` for all but the bucket,
+  read again after a task's run; `useStores` in BackupDestinations.jsx
+  reads every store's state and listing for the pane): a snapshot also in
+  a store is tagged "in the bucket", "in Google Drive", and a copy only a
+  store holds is a row of its own with a cloud icon, "only in OneDrive",
+  and Download (a `bucket-download` job, saved when it ends), Restore
+  (Replace… / Merge… / As a new workspace…, a `bucket-restore` job) and
+  Delete (from that store). Admins with a store set up get **Cloud copies**
   ([CloudCopies.jsx](../../frontend/src/settings/CloudCopies.jsx)): a row
   per store ("s3://… · 12 copies · 4 workspaces · 1.2 GB", Browse…), and
   when some are only in the cloud, "2 workspaces are only in the cloud"
@@ -1012,68 +1076,14 @@ Library:
   "Restore workspaces from the cloud", every one checked, and Restore 2
   workspaces starts one `copies-restore` job, whose progress shows in the
   section and whose end says what came back. Browse… opens "Cloud copies":
-  All / Bucket / Google Drive, Find a workspace, Refresh, then each
+  All and a button per store set up, Find a workspace, Refresh, then each
   workspace's copies under its name, tagged "on this server", "not on this
   server" or "another account's", each row the same as above with its
   store named; a workspace's "3 copies…" opens it on that workspace
-  alone.
-  With `GAMMA_S3_BUCKET` set, the environment supplies every field: the
-  summary's hint says where the bucket is and what sets it
-  ("127.0.0.1:1/gamma-env · set by GAMMA_S3_BUCKET", the sentence "Set by
-  GAMMA_S3_BUCKET in the server's environment" its hover title), and its one
-  button is Test, which tries the environment's bucket and answers beside
-  it as the dialog's Test connection does (`TestResult`). The environment's off-site rounds then
-  show under it while on or once one ran: Off-site rounds reads "every 1 h
-  · 7 kept · last round … · 12 databases · 340 uploads · 0 failed · next
-  round …" (or "no round yet", with the round's error under it) beside
-  Copy now, which is disabled while a round runs. A running round leads it
-  with how far it is ("copying now… · databases 3 / 12", then "files 120 /
-  3,400 · 1.2 GB / 8.0 GB",
-  [offsiteRound.js](../../frontend/src/settings/offsiteRound.js)), read
-  every 3 s while it runs. `GET/PUT /api/admin/offsite`, `POST
-  /api/admin/offsite/test` and `…/run`; the copies and the rounds
-  themselves: [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket).
-  Below it, admins get **Google Drive**
-  ([BackupDrive.jsx](../../frontend/src/settings/BackupDrive.jsx); what
-  the pane says of either store is
-  [backupStores.js](../../frontend/src/settings/backupStores.js)): a
-  folder in a Google account's My Drive that tasks may copy their
-  snapshots to as well, beside the bucket or instead. Nothing is set up
-  first: connecting is signing in to Google with Gamma's own app. Its row
-  reads "Not connected" with Connect…, or the account's address with "Gamma
-  backups · backup tasks can copy their snapshots here", Test (the folder's
-  item count and the account's storage, answered beside it) and Edit….
-  Where Gamma is opened on its own computer (the desktop app; the read's
-  `browser`), Connect… opens "Connect Google Drive" with Continue with
-  Google, a link drawn as the dialog's button to Google's page; once the
-  person allows there, the dialog sees the connection and closes, and
-  the tab Google sent back says "Google Drive is connected". Anywhere
-  else Connect… opens "Connect Google Drive" and asks Google for a code at
-  once: the code in a copy box, "Copy the code and open Google" (a link
-  drawn as the dialog's button: it copies the code and opens Google's
-  page), two steps (enter the code; choose the account and allow), and
-  "Waiting for Google…" while it polls; a yes closes it ("Google Drive
-  connected."), and a no or an expired code shows why with Get a new
-  code. A connection waiting for its code reads "Waiting for the code"
-  with Enter the code…. Edit… chooses the folder new copies go to in the
-  folder browser over My Drive ("Folders in My Drive": the folders and
-  files Gamma made there, the folder in use chosen and open, `GET
-  /api/admin/gdrive/browse`; New folder makes one at once in the folder
-  chosen, `POST /api/admin/gdrive/folders`, Save waiting while it is
-  made). The folder is a path from My Drive's top, shown "Backups › Gamma"
-  in the row, the task's toggle and Test's answer; My Drive itself cannot
-  be it, so Save waits while it is chosen, its footnote saying why. The dialog holds Disconnect…, which asks first.
-  A connection that cannot be used shows why under the rows, with
-  Connect again…. A task's editor
-  then has *Copy to Google Drive* (on for a new task while Drive is
-  connected), its row "copies to Google Drive" and its Last run "in Google
-  Drive". The listing takes Drive's copies too (`GET
-  /api/admin/offsite/snapshots?store=drive`): "in Google Drive" beside "in
-  the bucket", "only in Google Drive" on a copy only Drive holds, whose
-  Download, Restore and Delete work on Drive's copy. `GET/PUT/DELETE
-  /api/admin/gdrive`, `PUT/DELETE …/client`, `POST …/connect`, `…/poll`,
-  `…/test`, `DELETE …/connect`, `GET …/browse`, `POST …/folders`; how it works:
-  [debugging.md](debugging.md#google-drive).
+  alone. `GET/PUT/DELETE /api/admin/clouds/<store>`, `POST …/authorize`,
+  `…/connect`, `…/poll`, `…/test`, `…/folders`, `DELETE …/connect`, `GET
+  …/browse`, `…/callback`; how they work:
+  [debugging.md](debugging.md#cloud-destinations).
 - **Maintenance** (the pane's head says Library maintenance): workspace
   storage, rebuilding the search indexes (the notes index and the
   document text index of every PDF and text file) and the per-paper
@@ -1119,8 +1129,9 @@ Administration (admins only):
   a `db-check` job, [tasks.md](tasks.md), the damaged ones listed under
   the row), server backups (their delete a `danger` button named for the
   snapshot's date, and last an **Off-site copies** row: these snapshots
-  stay on this disk, and *Open Bucket* jumps to Backups › Bucket, where a
-  bucket keeps copies elsewhere) and the log with its
+  stay on this disk, and *Open Backup destinations* jumps to Backups ›
+  Backup destinations, where a cloud or a bucket keeps copies
+  elsewhere) and the log with its
   level filter ([user_db.md](user_db.md)).
 - **Network proxy** (pane id `proxy`,
   [SettingsProxy.jsx](../../frontend/src/settings/SettingsProxy.jsx)): how
@@ -1333,7 +1344,7 @@ hint (the row's own words) and English synonyms. A setting one level down
 pane itself that the jump focuses. Every query word must appear in the
 label, synonyms, hint or section. Entries whose label holds them all come
 first; inaccessible management pages are filtered out, and so is an
-admin-only section of a pane everyone has (Backups › Bucket,
+admin-only section of a pane everyone has (Backups › Backup destinations,
 marked `admin()` in the catalog) unless the Server pane is offered. So is
 a setting only a native host shows (Handwriting › the pen section,
 Apple Pencil or Stylus, marked `hostOnly(flags, entry)`, a flag or a
@@ -1842,7 +1853,7 @@ same subject. Put consequences in the visible hint; supplementary `title`
 text appears on hover, without a Details toggle. A hint is a line, not a
 paragraph: past a dozen words the rest goes to the `title`.
 `Section`'s `tag` puts a `uiTag` after its title, which stays the section's
-name for search and jumps (Backups › Bucket's `admin` tag, a far
+name for search and jumps (Backups › Backup destinations' `admin` tag, a far
 computer's *Connected* or *Offline since …*). Rows that belong to the row
 above them (an agent's own rows, under its switch) sit in `.setSubRows`,
 indented by the icon's column, layout only. A list's Add is its section's
@@ -1897,15 +1908,20 @@ Integrations), an admin's rail with a computer of the account's shown to
 the server (`/api/computers` faked: Local agents first in the AI group,
 listing it, twenty panes fitting a 900 px window, a 640 px one scrolling
 the groups alone), and
-Backups › Bucket: an admin's alone, tagged so, reached from Server backups'
-Off-site copies, set up in its dialog (an endpoint
+Backups › Backup destinations: an admin's alone, tagged so, a row per
+destination, found by the search, reached from Server backups' Off-site
+copies; the bucket set up in its
+dialog (an endpoint
 pasted with the bucket's name on it taken off) and read back there with
 its write-only secret, the unsaved-edit question on Cancel, Test against a
 stand-in bucket on loopback, a backup task that copies its snapshots
 there, the snapshots tagged "in the bucket", a copy only the bucket holds
 restored in place, another workspace's restored as a new one, a copy
 deleted from the bucket by its red, named delete, and the read-only summary of a second server
-started with `GAMMA_S3_BUCKET`; and Administration › Network proxy: no pane or search
+started with `GAMMA_S3_BUCKET`; Google Drive connected with a code and on
+Google's page, OneDrive on Microsoft's page (back at `localhost`) and a
+task copying to it, its copy listed by Cloud copies; and
+Administration › Network proxy: no pane or search
 match for a member, an admin's search landing on it, an `https://` proxy
 refused with nothing saved and the refusal gone once the address is
 corrected, a Test of the unreachable proxy

@@ -1,7 +1,7 @@
 // The folder browser (docs/dev/ui-design.md "Trees"): a store's folders as
-// a tree, to choose one. Settings → Backups chooses with it the folder of
-// Google Drive copies go to (BackupDrive.jsx, in its Edit dialog) and the
-// bucket's prefix (BackupBucket.jsx, Browse… beside the field, in
+// a tree, to choose one. Settings → Backups chooses with it the folder a
+// cloud's copies go to (BackupCloud.jsx, in its Edit dialog: Google Drive,
+// OneDrive) and the bucket's prefix (BackupBucket.jsx, Browse… beside the field, in
 // FolderBrowserDialog); any place that lists folders a level at a time can
 // hand it a `source`. Above the tree, the folder chosen as crumbs, New
 // folder and Refresh; the tree is TreeRow's rows with useTree's keys, the

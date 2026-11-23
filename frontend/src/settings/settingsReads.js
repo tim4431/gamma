@@ -37,8 +37,10 @@ export const PANE_READS = {
     "/admin/reports", { path: "/admin/invitations", later: true }],
   workspaces: ({ signedIn }) => ["/workspaces/mine", signedIn && LINK_BASES.mirror, signedIn && LINK_BASES.zotero, { path: "/accounts", later: true },
     { path: "/server-config", later: true }],
+  // Backups: the workspaces, then each one's snapshots; the tasks; for an
+  // admin, every backup destination's state (backupStores.js STORE `read`).
   backups: ({ admin }) => [{ path: "/workspaces/mine", then: (d) => (d?.workspaces || []).map((w) => backupsOf(w.id)) },
-    "/backup-tasks", admin && "/admin/offsite", admin && "/admin/gdrive"],
+    "/backup-tasks", ...(admin ? ["/admin/clouds/drive", "/admin/clouds/onedrive", "/admin/offsite"] : [])],
   server: () => ["/admin/server-info", "/admin/settings", "/admin/zotero-app", "/admin/ai-providers",
     "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
   proxy: () => ["/admin/proxy"],

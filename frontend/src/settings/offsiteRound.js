@@ -1,4 +1,4 @@
-// What Settings → Backups › Bucket says of an environment's off-site round
+// What Settings → Backups › Backup destinations › Bucket says of an environment's off-site round
 // while it runs (BackupBucket.jsx): the status's `progress` from GET /api/admin/offsite,
 // the databases looked at, then the files sent and their bytes, which the
 // first round, sending every file, needs most (gamma/offsite.py `_phase`).

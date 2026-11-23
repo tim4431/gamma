@@ -1955,8 +1955,8 @@ directory whatever the library's view, and the folder browser
   its rows `folderBrowser.js` `browserRows`) chooses a folder of anything
   listed a level at a time, handed in as a `source` ({name, icon, list,
   create?}, the listing gamma/backup_store.py's `listing`): Settings →
-  Backups uses it for the Google Drive folder (in the Edit dialog) and the
-  bucket's prefix (`FolderBrowserDialog`, from Browse… beside the field,
+  Backups uses it for a cloud's folder (Google Drive's or OneDrive's, in
+  its Edit dialog) and the bucket's prefix (`FolderBrowserDialog`, from Browse… beside the field,
   [settings.md](settings.md)). A bar over a framed tree: the folder chosen
   as `crumbBtn` crumbs from the top in a `nav` (each choosing its folder),
   New folder and Refresh (`ctlBtn`). A press on a folder chooses and opens
