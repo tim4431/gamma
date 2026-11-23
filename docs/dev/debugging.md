@@ -150,10 +150,13 @@ needs nothing beyond `requirements.txt`: the `tesserocr` wheel carries
 Tesseract and Leptonica, and the models are in `backend/tessdata`. The
 wheels exist for Linux (amd64, arm64), Windows and macOS 15 or later. On
 an older macOS the requirement's marker (`sys_platform != "darwin" or
-platform_release >= "24"`, Darwin 24 being macOS 15) skips tesserocr, so
+"24" <= platform_release`, Darwin 24 being macOS 15) skips tesserocr, so
 `pip install -r requirements.txt` still succeeds there and the server
-runs without the engine. The apps' server has none either
-(`requirements-mobile.txt` leaves it out). Where recognition is on and the
+runs without the engine. The release stays on the right: written
+`platform_release >= "24"`, pip 24.1 to 25.3 crash on Linux, whose kernel
+release is no version number (`7.0.0-1020-azure`), as the Docker build
+did. The apps' server has none either (`requirements-mobile.txt` leaves
+it out). Where recognition is on and the
 models are there, a server without the engine leaves the reading to the
 window that asks (tesseract.js, `ocr.where` `window` in
 `/api/server-config`); without the models it reports no `ocr` and offers

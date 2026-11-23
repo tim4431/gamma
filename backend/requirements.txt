@@ -24,7 +24,12 @@ truststore==0.10.5
 # before anyone asks. No iOS or Android wheel (requirements-mobile.txt
 # leaves it out), and the macOS wheels need macOS 15 (Darwin 24): on an
 # older macOS the marker skips it, since pip would try to build it and
-# fail. A server without it reads no text itself: the window that asks
-# reads the pages with tesseract.js from the models here (ocr_engine
-# capability "window").
-tesserocr==2.13.0; sys_platform != "darwin" or platform_release >= "24"
+# fail. The release goes on the right of the comparison: pip works out the
+# whole marker on every system, and pip 24.1 to 25.3 read the left side of
+# `platform_release >= "24"` as a version, so they crash on Linux, whose
+# kernel release is no version ("7.0.0-1020-azure" on GitHub's runners:
+# the Docker build). With the release on the right, one that is no version
+# is compared as text, which every pip does. A server without it reads no
+# text itself: the window that asks reads the pages with tesseract.js
+# from the models here (ocr_engine capability "window").
+tesserocr==2.13.0; sys_platform != "darwin" or "24" <= platform_release
