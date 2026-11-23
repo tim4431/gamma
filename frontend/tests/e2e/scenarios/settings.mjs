@@ -2355,6 +2355,12 @@ export async function settingsScenarios(env) {
       assertEq(await reset.count(), 0, "nothing to reset");
       assert(!await page.getByRole("checkbox", { name: "Let the proxy look up names", exact: true }).isChecked(), "the proxy looks up no names by default");
       const save = connection.getByRole("button", { name: "Save", exact: true });
+      // Saved once the rule has no button left: while the PUT is out, Save
+      // reads "Saving…", which `save` no longer matches.
+      const saveAndWait = async () => {
+        await save.click();
+        await connection.getByRole("button").waitFor({ state: "detached" });
+      };
       // An https:// proxy is refused in the server's words, and nothing is saved.
       await address.fill("https://127.0.0.1:1");
       await save.click();
@@ -2392,8 +2398,7 @@ export async function settingsScenarios(env) {
       await username.fill("e2e-proxy-user");
       await until(async () => (await lines.count()) === 0, { what: "an edit to clear the Test's lines" });
 
-      await save.click();
-      await save.waitFor({ state: "detached" });
+      await saveAndWait();
       const stored = await user.api("/api/admin/proxy");
       for (const [key, value] of Object.entries({ mode: "manual", server: "http://127.0.0.1:1", username: "e2e-proxy-user", password_set: true, proxy_dns: false })) {
         assertEq(stored[key], value, `the server stored ${key}`);
@@ -2427,8 +2432,7 @@ export async function settingsScenarios(env) {
       // typed under Manual stays stored for the next time.
       await mode("Use system settings").click();
       await address.waitFor({ state: "detached" });
-      await save.click();
-      await save.waitFor({ state: "detached" });
+      await saveAndWait();
       const back = await user.api("/api/admin/proxy");
       assertEq(back.mode, "system", "the system's settings again");
       assertEq(back.server, "http://127.0.0.1:1", "the manual proxy is kept");
