@@ -47,15 +47,42 @@ const FAILURES = [
     match: /ModuleNotFoundError|ImportError|No module named/i,
     summary: 'The server’s Python environment is missing a package.',
     hint: 'In a source checkout: install backend/requirements.txt into the virtualenv the server runs from (backend/venv, or the Python set in the launcher’s advanced settings).',
+    frozen: missingFile,
   },
 ];
 
+// The packaged app's frozen server (lib/sidecar.js) carries every module it
+// imports, so one it cannot import is a file missing from this copy, never a
+// package to install. Fixed by installing again, through whatever installed
+// this copy (`updates`, main.js appInfo). On Windows a file goes missing when
+// an antivirus quarantines it, an update is cut short, or the install folder
+// is deep enough that the file's path passes 260 characters, which the
+// installer cannot write and Windows cannot load without long paths turned
+// on. pydantic_core's extension sits 59 characters below `dir`, deeper than
+// any other native module the server needs to start, so a deep folder
+// loses it first.
+function missingFile({ dir, updates, platform = process.platform }) {
+  const summary = 'This copy of Gamma is missing one of its files.';
+  const antivirus = `If it comes back, check your antivirus’s quarantine for files from ${dir}`;
+  if (updates === 'mas') return { summary, hint: 'Download Gamma again from the App Store.' };
+  if (updates === 'store') {
+    return { summary, hint: `Repair Gamma in Windows Settings → Apps → Installed apps → Gamma PDF → Advanced options; your servers and libraries stay. ${antivirus}.` };
+  }
+  const again = 'Install Gamma again over this copy; your servers and libraries stay.';
+  if (platform !== 'win32') return { summary, hint: again };
+  return { summary, hint: `${again} ${antivirus}, and install Gamma into the folder its installer suggests: Windows cannot reach a file whose path is longer than 260 characters.` };
+}
+
 // reason: 'exit' (the process quit) or 'timeout' (it never answered /api/health).
-function diagnose(log, reason) {
+// `install`: the frozen server's folder and who installed it ({ dir, updates }),
+// absent for a dev run.
+function diagnose(log, reason, install) {
   const lines = String(log || '').split(/\r?\n/);
   for (const rule of FAILURES) {
     const line = lines.find((l) => rule.match.test(l));
-    if (line) return { summary: rule.summary, hint: rule.hint, action: rule.action || 'log', detail: line.trim() };
+    if (!line) continue;
+    const words = install && rule.frozen ? rule.frozen(install) : rule;
+    return { summary: words.summary, hint: words.hint, action: rule.action || 'log', detail: line.trim() };
   }
   if (reason === 'timeout') {
     return {
@@ -175,9 +202,9 @@ function diagnoseCert(error, host, cert, changed) {
 
 // An Error carrying what the launcher needs. The message stays readable on its
 // own, for the console and for anything that only has a string.
-function startupError(reason, logPath, from) {
+function startupError(reason, logPath, from, install) {
   const log = logTail(logPath, from);
-  const d = diagnose(log, reason);
+  const d = diagnose(log, reason, install);
   const err = new Error(`${d.summary} ${d.hint || ''}`.trim());
   err.startup = { ...d, log };
   return err;

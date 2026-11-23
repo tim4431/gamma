@@ -207,6 +207,8 @@ async function start(ws, settings, appInfo, { avoid = [] } = {}) {
   child.stdout.on('data', (d) => logStream.write(d));
   child.stderr.on('data', (d) => logStream.write(d));
 
+  // What a failure's wording needs of a frozen server (lib/startup.js).
+  const install = backend.mode === 'frozen' ? { dir: path.dirname(backend.exe), updates: appInfo?.updates } : undefined;
   let exited = false;
   starting.add(child);
   child.once('exit', (code) => {
@@ -218,7 +220,7 @@ async function start(ws, settings, appInfo, { avoid = [] } = {}) {
 
   const deadline = Date.now() + START_MS;
   while (Date.now() < deadline) {
-    if (exited) throw startupError('exit', logPath, logFrom);
+    if (exited) throw startupError('exit', logPath, logFrom, install);
     if (await healthy(url)) {
       // `access`: the folder grants it started with (lib/folderAccess.js).
       const entry = { child, port, url, logPath, access: appInfo?.access || 0 };
@@ -230,7 +232,7 @@ async function start(ws, settings, appInfo, { avoid = [] } = {}) {
   }
   starting.delete(child);
   killChild(child);
-  throw startupError('timeout', logPath, logFrom);
+  throw startupError('timeout', logPath, logFrom, install);
 }
 
 function killChild(child) {

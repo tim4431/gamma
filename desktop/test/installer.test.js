@@ -1,11 +1,14 @@
 // The NSIS installer's hooks (assets/installer.nsh): they put in the
-// generated File Explorer macros (assets/openwith.nsh), an update undoes
+// generated File Explorer macros (assets/openwith.nsh), the app fits
+// beneath the longest install folder the directory page accepts
+// (scripts/install-depth.cjs), an update undoes
 // nothing, and the uninstaller deletes Gamma's data only when the person
 // ticks its box, and then only Gamma's own folders (docs/architecture.md
 // "Shell state").
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const DESKTOP = path.resolve(__dirname, '..');
@@ -24,7 +27,7 @@ test('the hooks put in the generated macros, from the file beside this one', () 
   assert.strictEqual(path.basename(openwith.FILES.nsis), 'openwith.nsh');
   assert.strictEqual(path.dirname(path.join(DESKTOP, openwith.FILES.nsis)), path.join(DESKTOP, config.directories.buildResources));
   assert.ok(code(TEXT).includes('!include "${__FILEDIR__}\\openwith.nsh"'));
-  assert.deepStrictEqual(code(macroText('customPageAfterChangeDir')), ['!insertmacro gammaOpenWithPage']);
+  assert.deepStrictEqual(code(macroText('customPageAfterChangeDir')), ['!insertmacro gammaInstallFolderLimit', '!insertmacro gammaOpenWithPage']);
   assert.deepStrictEqual(code(macroText('customInstall')), ['!insertmacro gammaOpenWithInstall']);
   const generated = openwith.nsis();
   for (const m of ['gammaOpenWithPage', 'gammaOpenWithInstall', 'gammaOpenWithUnInstall']) assert.match(generated, new RegExp(`^!macro ${m}$`, 'm'));
@@ -33,6 +36,32 @@ test('the hooks put in the generated macros, from the file beside this one', () 
     assert.strictEqual(TEXT.match(new RegExp(`^!macro ${hook}$`, 'gm')).length, 1, hook);
     assert.doesNotMatch(generated, new RegExp(`^!macro ${hook}\\b`, 'm'));
   }
+});
+
+test('the app fits beneath the longest install folder the directory page accepts, or the build fails', () => {
+  const { PATH_MAX, instdirMax, checkInstallDepth } = require('../scripts/install-depth.cjs');
+  const max = instdirMax();
+  const room = PATH_MAX - max - 1;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gamma-depth-'));
+  try {
+    const deep = (n) => {
+      const rel = path.join('resources', 'x'.repeat(n - 'resources'.length - 1));
+      fs.mkdirSync(path.join(dir, 'resources'), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), '');
+      return rel;
+    };
+    const fits = deep(room);
+    assert.deepStrictEqual(checkInstallDepth(dir, max), { deepest: fits, room });
+    const over = deep(room + 1);
+    assert.throws(() => checkInstallDepth(dir, max), (e) => e.message.startsWith(`${over} is ${room + 1} characters deep`));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  // The check counts what electron-builder adds to a folder not naming the app, and lets an update and a silent install be.
+  const check = code(macroText('gammaInstallFolderLimit'));
+  assert.ok(check.includes('${StrContains} $1 "${APP_FILENAME}" $INSTDIR'));
+  assert.ok(check.includes('${If} $0 > ${GAMMA_INSTDIR_MAX}'));
+  assert.deepStrictEqual(check.slice(1, 5), ['Function .onVerifyInstDir', '${If} ${Silent}', '${OrIf} ${isUpdated}', 'Return']);
 });
 
 test('an update undoes nothing: the uninstall of the entries and of the data are both inside ${ifNot} ${isUpdated}', () => {
