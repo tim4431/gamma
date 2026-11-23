@@ -680,18 +680,18 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .blockEditorCm .cmImgWidget:hover img { box-shadow: 0 0 0 2px var(--accent-bg-light); }
 .blockEditorCm .cm-line.cmImgLine { text-align: center; }
 .blockEditorCm .cmImgWidget[draggable="true"] { cursor: grab; }
-/* The editor's table widget: the rendered table's look, read-only (cells are
-   edited in the rendered view); a click puts the caret after it, right-click
-   shows the source, and it drags like the picture. It sits where the
-   rendered table does: the object frame's 3px halo as padding, 6px under the
-   line above (3px here plus the padding; none on the first line) and the
-   14px the rendered table keeps under it for its + row. */
+/* The editor's table widget: the rendered view's table, drawn read-only in
+   this box (BlockCmEditor TableWidget; cells are edited in the rendered
+   view); a click puts the caret after it, right-click shows the source, and
+   it drags like the picture, so its cells are no text to select. It sits
+   where the rendered table does: the object frame's 3px halo as padding, 6px
+   under the line above (3px here plus the padding; none on the first line)
+   and the 14px the rendered table keeps under it for its + row; the frame
+   and the wrap inside lose their own halo and margins. */
 .blockEditorCm .cmTableWidget { display: inline-block; box-sizing: border-box; max-width: 100%; overflow-x: auto; padding: 3px; margin: 3px 0 14px; border-radius: var(--radius-sm); cursor: grab; vertical-align: top; }
 .blockEditorCm .cm-line:first-child .cmTableWidget { margin-top: 0; }
-.blockEditorCm .cmTableWidget table { border-collapse: collapse; font-size: 0.95em; }
-.blockEditorCm .cmTableWidget :is(th, td) { border: 1px solid var(--border); padding: 3px 8px; text-align: left; min-width: 36px; white-space: nowrap; cursor: auto; }
-.blockEditorCm .cmTableWidget :is(th, td):empty::after { content: "\00a0"; }
-.blockEditorCm .cmTableWidget th { background: var(--bg-block); font-weight: 600; }
+.blockEditorCm .cmTableWidget :is(.mdObject, .mdTableWrap) { margin: 0; padding: 0; }
+.blockEditorCm .cmTableWidget :is(th, td) { cursor: auto; -webkit-user-select: none; user-select: none; }
 .blockEditorCm .cmTableWidget:hover { box-shadow: 0 0 0 2px var(--accent-bg-light); }
 .blockEditorCm .cmHrLine {
   display: block;
@@ -1092,12 +1092,17 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .mdObject.mdObject-diagram.mdObjectSelected .diagramCard { border-color: transparent; }
 /* Dropping an object inside a block: the line in the gap it lands in. */
 .dropIndicatorInside { transform: translateY(-1px); border-radius: 1px; }
-/* The in-place cell editor: an input laid exactly over the clicked cell.
-   Tab/Shift-Tab move between cells, Enter commits, Esc cancels. */
+/* The in-place cell editor: a field laid over the clicked cell, as wide as
+   its column (MdTableWrap lends a narrow cell the room to its right), its
+   text wrapping and the field growing down over the rows below with it.
+   Tab/Shift-Tab and the arrows move between cells, Enter commits, Esc
+   cancels. */
 .mdTableCellInput {
   position: absolute;
   z-index: 5;
+  display: block;
   box-sizing: border-box;
+  margin: 0;
   padding: 2px 7px;
   font: inherit;
   font-size: 0.95em;
@@ -1106,6 +1111,10 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   border: 1.5px solid var(--accent);
   border-radius: var(--radius-xs);
   outline: none;
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  box-shadow: var(--shadow-1);
 }
 
 /* Images (MdImage): centred on their own row, Notion-style, with a hover

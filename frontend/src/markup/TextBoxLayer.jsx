@@ -23,7 +23,7 @@
 // Zotero and stays Gamma's.
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BlockCmEditor } from "../editor/BlockCmEditor";
-import { BlockMarkdown } from "../editor/BlockTree";
+import { BlockMarkdown, renderNoteTable } from "../editor/BlockTree";
 import { sourceOffsetAtPoint } from "../editor/clickToSource";
 import { pickerColors } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
@@ -295,7 +295,7 @@ const TextBox = React.memo(function TextBox({ block, width, height, readOnly, ar
       <div className="textBoxBody" style={{ color: box.color, background: box.bg || undefined }}>
         {editing ? (
           <BlockCmEditor ref={editorRef} autoFocus className="blockEditorCm textBoxEditor" value={block.content || ""}
-            clickPos={editing.at} pinScroll refLabels={NO_LABELS}
+            clickPos={editing.at} pinScroll refLabels={NO_LABELS} renderTable={renderNoteTable}
             onChange={(e) => actions.onBoxText(block.id, e.target.value)}
             onBlur={() => actions.onBoxLeave(block.id, false)}
             onKeyDown={(e) => {

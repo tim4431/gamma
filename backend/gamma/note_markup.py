@@ -118,7 +118,8 @@ def ref_parts(token: str) -> tuple[str, str | None]:
 
 # Image sizes. Gamma keeps an image's display width at the end of its alt,
 # as Obsidian does and the editor writes it: ``![alt|300](url)``
-# (``|300x200``: the height is ignored), ALT_SIZE_RE. Logseq writes it after
+# (``|300x200``: the height is ignored; ``\|300`` on a table's row, whose
+# cells a bare pipe would split: ``table_pipe``), ALT_SIZE_RE. Logseq writes it after
 # the image, ``![alt](url){:width 300}`` (WIDTH_SUFFIX). The Markdown and
 # Logseq imports and the Markdown exports rewrite that to the alt's size
 # (``obsidian_image_sizes``). Stored rows keep it: a paste, the API or a
@@ -128,7 +129,7 @@ def ref_parts(token: str) -> tuple[str, str | None]:
 # scoped Gamma export; gamma/normalize.py), leaving a newer copy's rows
 # as they were. So every reader of an image takes both, through
 # ``alt_and_width``. The editor's twin is mdMarks.js scanImageSyntax.
-ALT_SIZE_RE = re.compile(r"(.*?)\|(\d+)(?:x\d+)?", re.S)
+ALT_SIZE_RE = re.compile(r"(.*?)\\?\|(\d+)(?:x\d+)?", re.S)
 WIDTH_SUFFIX = r"\{:width\s+(?P<lw>\d+)\}"
 _SIZED_AFTER_RE = re.compile(
     r"!\[(?P<alt>[^\]\n]*)\]\((?P<src>[ \t]*" + LINK_TARGET + r"(?:[ \t][^)\n]*)?)\)" + WIDTH_SUFFIX)
@@ -153,7 +154,7 @@ def obsidian_image_sizes(md: str) -> str:
 
     def one(m):
         alt, width = alt_and_width(m.group("alt"), m.group("lw"))
-        return f"![{alt}|{width}]({m.group('src')})"
+        return f"![{alt}{table_pipe(m.string, m.start())}{width}]({m.group('src')})"
     return map_prose(md, lambda prose: _SIZED_AFTER_RE.sub(one, prose))
 
 
