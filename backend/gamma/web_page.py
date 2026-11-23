@@ -181,8 +181,16 @@ def _absolute(base: str, href: str) -> str:
         return ""
 
 
-def _head(text: str, url: str) -> tuple[str, str, dict]:
-    """``(title, base address, meta)`` from the text before ``<body>``."""
+class Head(NamedTuple):
+    title: str   # the <title>, else og:title
+    base: str    # what relative links resolve against
+    meta: dict   # site, description, author, published, modified, canonical, lang: the keys the page has
+    names: dict  # every meta tag's content by its name, property or itemprop (lowercased), the first of each
+
+
+def head(text: str, url: str) -> Head:
+    """The head of the text before ``<body>``: what a page's reader and a
+    link's preview (gamma/link_preview.py) know a page by."""
     head = text[:_HEAD_CHARS]
     body = _BODY_TAG.search(head)
     head = head[:body.start()] if body else head
@@ -217,7 +225,7 @@ def _head(text: str, url: str) -> tuple[str, str, dict]:
         meta["canonical"] = _absolute(base, meta["canonical"])
         if not meta["canonical"]:
             del meta["canonical"]
-    return title or names.get("og:title", ""), base, meta
+    return Head(title or names.get("og:title", ""), base, meta, names)
 
 
 # --- the tree --------------------------------------------------------------------
@@ -607,7 +615,7 @@ def read(raw: bytes, url: str, ctype: str = "") -> Page:
     text = decode(raw, ctype)
     if not _is_html(text, ctype):
         return Page("", text, "text", {}, [], len(text.strip()), [])
-    title, base, meta = _head(text, url)
+    title, base, meta, _ = head(text, url)
     parser = _PageParser()
     parser.feed(text)
     parser.close()

@@ -2585,6 +2585,12 @@ token can already download, and the import takes what it is given.
 ## The Export dialog
 
 The View menu's single "Export…" entry → `ExportDialog` in `transfers/ImportExport.jsx`.
+The page header's Export button (`.pageExportBtn`, before the trash
+button, a share's visitors' too) opens the same dialog for the open page.
+It shows while the account preference `pageExportButton` is on, the
+default (Settings → Toolbars › Page header); the View menu keeps its row
+either way, and a pane beside it while pages are side by side draws the
+button too, a press making that page live.
 Step one is a format card, in rows (`CATEGORIES`): This paper holds
 Annotated PDF and BibTeX (a folder's Papers row, its PDFs and its .bib),
 Notes PDF, Markdown and Notion, Handwriting apps Notability and GoodNotes,

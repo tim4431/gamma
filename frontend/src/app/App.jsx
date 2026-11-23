@@ -3434,7 +3434,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications, commentSendTo, setCommentSendTo,
-    topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, highlightPresets, setHighlightPresets,
+    topbar, setTopbar, viewerTools, setViewerTools, pageExportButton, setPageExportButton, highlighterColor, highlightPresets, setHighlightPresets,
     chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatFollowUpMode, setChatFollowUpMode, aiLoginCheck, setAiLoginCheck,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
@@ -10735,9 +10735,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const paneShared = useMemo(() => ({
     refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pages: pageBlocks,
     textScaleStyle: notesTextScale.style, darkPage: pdfDarkPage, hideEmbeddedAnnots: embAnnots === "hide", pageFlow: pdfFlow,
-    canWrite: !readOnly, labels: !shareMode,
+    canWrite: !readOnly, labels: !shareMode, exportButton: pageExportButton,
     onFetchRefs: (...a) => paneFnsRef.current.onFetchRefs(...a), onCacheRef: (...a) => paneFnsRef.current.onCacheRef(...a),
-  }), [refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pageBlocks, notesTextScale.style, pdfDarkPage, embAnnots, pdfFlow, readOnly, shareMode]);
+  }), [refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pageBlocks, notesTextScale.style, pdfDarkPage, embAnnots, pdfFlow, readOnly, shareMode, pageExportButton]);
 
   // A share link that can't open yet: sign in (signed-in / specific-people
   // shares), or explain why not. "signin" is the blocked page's own sign-in,
@@ -11654,7 +11654,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     ) : null}
                   </span>
                 ) : null}
-                {openRules.trash ? (
+                </>) : null}
+                {/* the View menu's Export… for this page, unless Settings → Toolbars › Page header turns it off */}
+                {pageExportButton ? (
+                  <button className="pageActionBtn pageExportBtn" aria-label={t("Export…")}
+                    title={t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
+                    onClick={() => { setOpenPopover(null); setExportFolder(null); setExportOpen(true); }}>
+                    <ExportIcon size={16} />
+                  </button>
+                ) : null}
+                {!shareMode && openRules.trash ? (
                   <button
                     className="pageActionBtn pageDeleteBtn"
                     title={readOnly ? t("You can only view this workspace") : t("Delete this page")}
@@ -11664,7 +11673,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <TrashIcon size={16} />
                   </button>
                 ) : null}
-                </>) : null}
               </div>
             ) : null}
             {focusedBlockId && collab.peers.length ? (
@@ -14955,6 +14963,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setTopbar,
           viewerTools,
           setViewerTools,
+          pageExportButton,
+          setPageExportButton,
           backlinksVisible,
           setBacklinksVisible,
           inboxSystemNotifications,

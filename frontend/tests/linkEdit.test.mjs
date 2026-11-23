@@ -13,7 +13,7 @@ test("every link of a note in order; none in code, math, an image or an embed", 
     + "![[a1]] `[[a2]] https://c.org` $[x](y)$ <https://w.org/a b> <https://w.org/ab>";
   assert.deepEqual(kinds(text), [
     ["ref", "[[a1]]"], ["ref", "[[a1|the plan]]"], ["md", "[paper](https://x.org/p)"], ["bare", "https://y.org/q"],
-    ["bare", "<https://w.org/ab>"],
+    ["bare", "https://w.org/a"], ["bare", "<https://w.org/ab>"],
   ]);
   const [, plan, md] = linkSpans(text);
   assert.equal(plan.words, "the plan");
@@ -23,6 +23,8 @@ test("every link of a note in order; none in code, math, an image or an embed", 
 test("a bare address ends as GFM ends it: a sentence's punctuation and an unopened ) left out", () => {
   assert.deepEqual(kinds("(see https://en.wikipedia.org/wiki/Foo_(bar)) and https://a.org/x?, ok"),
     [["bare", "https://en.wikipedia.org/wiki/Foo_(bar)"], ["bare", "https://a.org/x"]]);
+  assert.deepEqual(kinds("攻略：https://a.org/v and 1https://b.org but xhttps://c.org"),
+    [["bare", "https://a.org/v"], ["bare", "https://b.org"]], "after anything but a letter, as the rendered view links one");
   assert.deepEqual(kinds("[t](<https://a.org/a b>)"), [["md", "[t](<https://a.org/a b>)"]]);
   assert.equal(linkSpans("[t](<https://a.org/a b>)")[0].href, "https://a.org/a b");
 });

@@ -1368,6 +1368,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The editor's (BlockCmEditor LinkChipWidget): a press shows its card. */
+.cmLinkChip { cursor: pointer; }
 
 /* ![[id]] transclusion card in the rendered view. */
 .blockEmbedCard {

@@ -1209,6 +1209,13 @@ instead of fixing; the fix removes its entry.
   2026-11-14): one run ended with an uncaught file-system error (its stack
   lost) while the backend suite and the frontend tests ran beside it; 18
   runs since, under the same load, passed.
+- **test_mcp: a connection edits notes only where it may**
+  (`backend/tests/test_mcp.py:599`, this machine, 2026-11-22): one serial
+  full run (`-x`) stopped on it with an AssertionError whose message the
+  run's kept tail cut off. It passed alone, beside the test files that run
+  before it, and in a rerun of `test_mcp.py` and every file after it
+  (9,923 passed). Seen on a branch (link-edit) that changes no workspace,
+  token or MCP code.
 
 ### What a run leaves behind
 

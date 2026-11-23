@@ -46,7 +46,7 @@ import { documentFileUrl, documentViewerUrl, fileHash, isPdf, pageDocument } fro
 import { documentView, viewerOf } from "../documents/documentView.js";
 import DocumentPane from "../documents/DocumentPane.jsx";
 import { API, apiJson, assetUrl } from "../shared/lib/utils";
-import { InfoIcon, LabelIcon, MessageSquareIcon, NotebookIcon, PaperclipIcon, TrashIcon } from "../shared/ui/Icons";
+import { ExportIcon, InfoIcon, LabelIcon, MessageSquareIcon, NotebookIcon, PaperclipIcon, TrashIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 const PRESS_SLOP = 8;
@@ -91,7 +91,7 @@ export function notesPlaceOf(list) {
 
 // `shared`: what App lends every view, {refCache, onFetchRefs, onCacheRef,
 // libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pages,
-// textScaleStyle, darkPage, hideEmbeddedAnnots, canWrite, labels}.
+// textScaleStyle, darkPage, hideEmbeddedAnnots, canWrite, labels, exportButton}.
 export default function PagePane({ pageId, title, dock = false, overlay, scroll, startPage = 0, zoom: zoomIn = "page-width",
   pdfHidden = false, notebookView = false, notesPlace = null, shared, onScroll, onZoom, onNotesPlace, onActivate }) {
   const [page, setPage] = useState(() => {
@@ -422,8 +422,11 @@ function NotesView({ pageId, block, children_, title, dock, doc, hasSheets, note
                 <button type="button" className={`pageActionBtn ${doc ? "active" : ""}`} tabIndex={-1} onClick={() => press()}><PaperclipIcon size={16} /></button>
               ) : null}
               {isPdf(doc) || props.meta ? <button type="button" className="pageActionBtn" tabIndex={-1} onClick={() => press()}><InfoIcon size={16} /></button> : null}
-              <button type="button" className="pageActionBtn pageDeleteBtn" tabIndex={-1} disabled={!canWrite} onClick={() => press()}><TrashIcon size={16} /></button>
             </>) : null}
+            {shared?.exportButton ? <button type="button" className="pageActionBtn" tabIndex={-1} onClick={() => press()}><ExportIcon size={16} /></button> : null}
+            {shared?.labels ? (
+              <button type="button" className="pageActionBtn pageDeleteBtn" tabIndex={-1} disabled={!canWrite} onClick={() => press()}><TrashIcon size={16} /></button>
+            ) : null}
           </div>
         </div>
       </div>

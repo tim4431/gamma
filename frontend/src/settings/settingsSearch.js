@@ -51,6 +51,8 @@ const entries = [
     `topbar top bar header toolbar button show hide order reorder arrange drag move${item.places ? " pane split side by side" : ""} ${item.keywords}`)),
   ...VIEWER_TOOL_ITEMS.map((item) => e("toolbars", t(item.label), t("Viewer tools"), t(item.hint),
     `viewer tools strip side toolbar PDF notebook button show hide order reorder arrange drag move ${item.keywords}`)),
+  e("toolbars", t("Export button"), t("Page header"), t("A button beside the page's title that opens Export…"),
+    "export download page header title button show hide annotated PDF markdown"),
   e("diagnostics", t("Suggest tours"), t("Tours"), t("A short tour the first time a feature comes up."), "guide onboarding hints help"),
   e("reading", t("Imported annotations"), t("PDFs"), t("Annotations saved inside a PDF become highlights"), "hide strip keep remove originals highlights PDF"),
   e("reading", t("Page direction"), t("PDFs"), t("Pages one under another, or side by side"), "page direction horizontal vertical scroll scrolling across down side by side layout spread book flip PDF"),
