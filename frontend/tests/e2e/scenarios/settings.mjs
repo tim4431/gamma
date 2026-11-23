@@ -1309,6 +1309,46 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: the page header's Export button, before the trash can, exports the open page, and Toolbars › Page header turns it off and on", async () => {
+    const made = await user.api("/api/pages", { method: "POST", body: { title: "Header export" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: made.id, content: "a note to export" } });
+    const ctx = await user.context(browser);
+    try {
+      const page = await openPage(ctx, `${server.base}/?page=${made.id}&ws=${user.ws}`);
+      const button = page.locator(".pageActionCol .pageExportBtn");
+      await button.waitFor();
+      assert(await button.evaluate((el) => el.nextElementSibling?.classList.contains("pageDeleteBtn")), "Export stands right before the trash can");
+      await button.click();
+      // the page's dialog, not a folder's ("Export “folder”")
+      const dialog = page.getByRole("dialog", { name: "Export", exact: true });
+      await dialog.getByRole("button", { name: "Markdown", exact: true }).click();
+      await dialog.getByRole("button", { name: "Next", exact: true }).click();
+      const started = page.waitForRequest((r) => r.url().includes("/api/jobs/export") && r.method() === "POST");
+      const download = page.waitForEvent("download", { timeout: 15000 });
+      await dialog.getByRole("button", { name: "Export", exact: true }).click();
+      assert((await started).postData().includes(made.id), "the job exports the open page");
+      await download;
+      await dialog.getByRole("button", { name: "Done", exact: true }).click();
+      await dialog.waitFor({ state: "detached" });
+      const shown = () => user.api("/api/prefs/profile").then((r) => r.value?.pageExportButton);
+      const toggle = (on) => row(page, "Export button").getByRole("checkbox")[on ? "check" : "uncheck"]();
+      await openSettings(page);
+      await nav(page, "Toolbars").click();
+      await toggle(false);
+      await until(async () => (await shown()) === false, { what: "off, stored with the account" });
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await button.waitFor({ state: "detached" });
+      await page.locator(".pageActionCol .pageDeleteBtn").waitFor();
+      await openSettings(page);
+      await nav(page, "Toolbars").click();
+      await toggle(true);
+      await until(async () => (await shown()) === true, { what: "on again, stored" });
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await button.waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: a viewer tool hidden in Settings is a row of the strip's ⋯ menu, whose Customize… opens Viewer tools; the strip follows the order in the PDF and the notebook viewer", async () => {
     const up = await user.upload("/api/uploads", makePdf([["Viewer tools", "a page to read"]]), "tools.pdf", "application/pdf");
     const doc = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Viewer tools", source_url: up.source_url } });
