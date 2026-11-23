@@ -169,7 +169,7 @@ def zotero_stream_url() -> str:
     return (os.environ.get("GAMMA_ZOTERO_STREAM_URL", "").strip() or "wss://stream.zotero.org").rstrip("/")
 
 
-# Gamma's own Google OAuth clients for Drive backups (gamma/gdrive_account.py),
+# Gamma's own Google OAuth clients for Drive backups (gamma/cloud_account.py),
 # both of one registration, asking for drive.file alone, so connecting
 # Drive is signing in to Google and allowing it: a "TVs and Limited Input
 # devices" client for the code any server shows (the device flow), and a
@@ -177,7 +177,7 @@ def zotero_stream_url() -> str:
 # Gamma opened on its own computer (a loopback address). Google treats such
 # clients' secrets as public, as it does any installed app's
 # (docs/research/google-drive-backup.md). A server may use its own instead
-# (manage.py gdrive-client [--desktop]). Each secret is two literals so
+# (manage.py cloud-client drive [--desktop]). Each secret is two literals so
 # secret scanners, which take it for a leaked confidential one, pass it by.
 GOOGLE_DRIVE_CLIENT = (
     "229361230329-p8vn304cus6mn8vnhodfh7jslrvoe59d.apps.googleusercontent.com",
@@ -208,6 +208,33 @@ def google_api_base() -> str:
     https://www.googleapis.com unless the browser e2e points it at a
     stand-in."""
     return (os.environ.get("GAMMA_GOOGLE_API_BASE", "").strip() or "https://www.googleapis.com").rstrip("/")
+
+
+# Gamma's own Microsoft app for OneDrive backups (gamma/onedrive.py,
+# gamma/cloud_account.py): one public client of the Microsoft identity
+# platform, for personal and work or school accounts, with "Allow public
+# client flows" on (the code any server shows) and the redirect URI
+# http://localhost/api/admin/clouds/onedrive/callback under "Mobile and
+# desktop applications" (Microsoft's page, on the server's own computer;
+# the port is not matched), asking for Files.ReadWrite, User.Read and
+# offline_access. A public client has no secret. Registered as "Gamma PDF"
+# in the xwtim directory (docs/dev/debugging.md "OneDrive"). A server may
+# use its own instead (manage.py cloud-client onedrive <id>); a build with
+# none reads "Not available".
+ONEDRIVE_CLIENT_ID = "180e2624-e809-4621-b4c9-6271859dc18e"
+
+
+def microsoft_login_base() -> str:
+    """``GAMMA_MICROSOFT_LOGIN_BASE``: the Microsoft identity platform (device
+    codes, tokens, the sign-in page); https://login.microsoftonline.com
+    unless a test points it at a stand-in."""
+    return (os.environ.get("GAMMA_MICROSOFT_LOGIN_BASE", "").strip() or "https://login.microsoftonline.com").rstrip("/")
+
+
+def microsoft_graph_base() -> str:
+    """``GAMMA_MICROSOFT_GRAPH_BASE``: Microsoft Graph, OneDrive's API;
+    https://graph.microsoft.com unless a test points it at a stand-in."""
+    return (os.environ.get("GAMMA_MICROSOFT_GRAPH_BASE", "").strip() or "https://graph.microsoft.com").rstrip("/")
 
 
 def hosted() -> bool:

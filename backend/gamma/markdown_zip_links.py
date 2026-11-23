@@ -276,7 +276,7 @@ class Links:
             if bang and _split_ext(path)[1] in IMAGE_MEDIA_TYPES:
                 size = alias if _IMAGE_SIZE_RE.match(alias) else ""
                 alt = "" if size else alias
-                return f"![{alt}|{size}]({url})" if size else f"![{alt}]({url})"
+                return f"![{alt}{table_pipe(m.string, m.start())}{size}]({url})" if size else f"![{alt}]({url})"
             return f"[{alias or leaf}]({url})"
 
         if run.dialect.wikilinks(plan):

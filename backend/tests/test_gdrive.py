@@ -1,11 +1,13 @@
 """Google Drive as a backup destination (gamma/gdrive.py,
-gamma/gdrive_account.py, docs/dev/debugging.md "Google Drive") against an
-in-memory Google (tests/gdrive_fake.py): connecting through the device
-flow through Gamma's own Google app (or a server's own), the client's files (folders made as needed, a name replaced rather than
-doubled, chunked and resumed uploads, renewed tokens, Google's refusals), a
-backup task copying its snapshots there and pruning them, and the admin's
-routes: the connection, the copies' listing, download, restore and
-delete."""
+gamma/cloud_account.py, docs/dev/debugging.md "Google Drive") against an
+in-memory Google (tests/gdrive_fake.py), and through it what every cloud
+connection does alike: connecting through the device flow or the sign-in
+page with Gamma's own app (or a server's own), the client's files (folders
+made as needed, a name replaced rather than doubled, chunked and resumed
+uploads, renewed tokens, Google's refusals), a backup task copying its
+snapshots there and pruning them, and the admin's routes: the connection,
+the copies' listing, download, restore and delete; and the clouds'
+transport itself (gamma/cloud_http.py)."""
 
 import io
 import json
@@ -14,7 +16,10 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from conftest import account_of, fresh_client, login, make_page, make_user, workspace_of
-from gamma import backup_schedule as tasks, db, gdrive, gdrive_account, snapshot_copies, workspaces, ws_backup
+from gamma import backup_schedule as tasks, cloud_account, cloud_http, db, gdrive, snapshot_copies, workspaces, ws_backup
+from gamma.cloud_http import CloudConfigError, CloudError, CloudUnreachable
+from gamma.publisher_sessions import seal
+from gamma.server_settings import _set_raw
 from gamma.routers.backup_tasks import TaskInput
 from gdrive_fake import CLIENT_ID, CLIENT_SECRET, DESKTOP_ID, DESKTOP_SECRET, FakeGoogle
 
@@ -23,27 +28,28 @@ from gdrive_fake import CLIENT_ID, CLIENT_SECRET, DESKTOP_ID, DESKTOP_SECRET, Fa
 def google(client, monkeypatch):
     """The fake Google, Gamma's own app (its two clients) registered there."""
     fake = FakeGoogle().install(monkeypatch)
-    monkeypatch.setattr(gdrive_account, "_pending", None)
-    monkeypatch.setattr(gdrive_account, "_last_error", "")
-    monkeypatch.setattr(gdrive_account, "_browser", {})
-    monkeypatch.setattr(gdrive_account.config, "GOOGLE_DRIVE_CLIENT", (CLIENT_ID, CLIENT_SECRET))
-    monkeypatch.setattr(gdrive_account.config, "GOOGLE_DRIVE_DESKTOP_CLIENT", (DESKTOP_ID, DESKTOP_SECRET))
+    monkeypatch.setattr(cloud_account.config, "GOOGLE_DRIVE_CLIENT", (CLIENT_ID, CLIENT_SECRET))
+    monkeypatch.setattr(cloud_account.config, "GOOGLE_DRIVE_DESKTOP_CLIENT", (DESKTOP_ID, DESKTOP_SECRET))
     yield fake
     with db.connect_users_db() as conn:
         conn.execute("DELETE FROM settings WHERE key IN ('gdrive', 'gdrive_client', 'gdrive_desktop_client')")
         conn.commit()
 
 
+ACCOUNT = cloud_account.ACCOUNTS["drive"]
+DEFAULT_FOLDER = "Gamma backups"
+
+
 def _due():
     """The interval Google asked for has passed."""
-    gdrive_account._pending["next_poll_at"] = 0
+    ACCOUNT._pending["next_poll_at"] = 0
 
 
-def _connect(google, folder=gdrive_account.DEFAULT_FOLDER):
-    gdrive_account.start(folder)
+def _connect(google, folder=DEFAULT_FOLDER):
+    ACCOUNT.start(folder)
     google.approve()
     _due()
-    done = gdrive_account.poll()
+    done = ACCOUNT.poll()
     assert done["connected"] and not done["error"], done
     return done
 
@@ -52,57 +58,57 @@ def _connect(google, folder=gdrive_account.DEFAULT_FOLDER):
 def drive(client, google):
     """A connected Drive and its client."""
     _connect(google)
-    return gdrive_account.client()
+    return ACCOUNT.client()
 
 
 # --- connecting --------------------------------------------------------------------------
 
 def test_the_device_flow_connects_and_keeps_the_token_sealed(client, google):
-    assert gdrive_account.status()["connected"] is False
-    shown = gdrive_account.start("My backups")
+    assert ACCOUNT.status()["connected"] is False
+    shown = ACCOUNT.start("My backups")
     assert shown["pending"]["user_code"] == "ABCD-0001"
     assert shown["pending"]["verification_url"] == "https://www.google.com/device"
     asked = len(google.calls)
-    assert gdrive_account.poll()["pending"]  # before Google's interval: nothing asked
+    assert ACCOUNT.poll()["pending"]  # before Google's interval: nothing asked
     assert len(google.calls) == asked
     _due()
-    assert gdrive_account.poll()["pending"]  # asked: not entered yet
+    assert ACCOUNT.poll()["pending"]  # asked: not entered yet
     assert google.calls[-1] == "POST /token"
     google.approve()
     _due()
-    done = gdrive_account.poll()
+    done = ACCOUNT.poll()
     assert done["connected"] and done["pending"] is None and done["error"] == ""
     assert (done["email"], done["folder"], done["problem"]) == ("someone@gmail.com", "My backups", "")
     with db.connect_users_db() as conn:
         raw = conn.execute("SELECT value FROM settings WHERE key = 'gdrive'").fetchone()[0]
     token = next(t for t in google.refresh)
     assert token not in raw and json.loads(raw)["client_id"] == "fake-client.apps.googleusercontent.com"
-    assert gdrive_account.ready()
+    assert ACCOUNT.ready()
 
 
 def test_a_slow_down_waits_longer_and_a_refusal_or_expiry_ends_it(client, google):
-    gdrive_account.start()
+    ACCOUNT.start()
     google.fail_next("POST /token", 429)
     _due()
-    assert gdrive_account.poll()["pending"]["interval"] == 10  # Google's 5, and 5 more
+    assert ACCOUNT.poll()["pending"]["interval"] == 10  # Google's 5, and 5 more
     google.fail_next("POST /token", 0)  # no answer: the code stays
     _due()
-    assert gdrive_account.poll()["pending"]
+    assert ACCOUNT.poll()["pending"]
     google.deny()
     _due()
-    ended = gdrive_account.poll()
+    ended = ACCOUNT.poll()
     assert ended["pending"] is None and ended["connected"] is False
     assert ended["error"] == "Google Drive access was not allowed."
-    gdrive_account.start()
-    assert gdrive_account.status()["error"] == ""  # a new connection clears it
+    ACCOUNT.start()
+    assert ACCOUNT.status()["error"] == ""  # a new connection clears it
     google.expire()
     _due()
-    assert "expired" in gdrive_account.poll()["error"]
+    assert "expired" in ACCOUNT.poll()["error"]
     google.granted = "openid"  # the person unticked Drive on Google's page
-    gdrive_account.start()
+    ACCOUNT.start()
     google.approve()
     _due()
-    assert gdrive_account.poll()["error"] == "Google Drive access was not allowed."
+    assert ACCOUNT.poll()["error"] == "Google Drive access was not allowed."
 
 
 def test_reconnecting_and_disconnecting_revoke_the_old_token(client, google):
@@ -110,52 +116,53 @@ def test_reconnecting_and_disconnecting_revoke_the_old_token(client, google):
     first = next(t for t, ok in google.refresh.items() if ok)
     _connect(google, "Elsewhere")
     assert google.refresh[first] is False  # revoked
-    assert gdrive_account.status()["folder"] == "Elsewhere"
+    assert ACCOUNT.status()["folder"] == "Elsewhere"
     second = next(t for t, ok in google.refresh.items() if ok)
-    off = gdrive_account.disconnect()
+    off = ACCOUNT.disconnect()
     assert off["connected"] is False and google.refresh[second] is False
-    with pytest.raises(gdrive.DriveConfigError, match="not connected"):
-        gdrive_account.client()
+    with pytest.raises(CloudConfigError, match="not connected"):
+        ACCOUNT.client()
 
 
 def test_a_connection_through_another_client_or_none_cannot_be_used(client, google, monkeypatch):
     _connect(google)
     # a code answered just as the client changed: the connection names the old one
-    gdrive_account._set_raw(gdrive_account.CLIENT_KEY, json.dumps({
-        "client_id": "another.apps.googleusercontent.com", "client_secret": gdrive_account.seal("GOCSPX-o")}))
-    assert "another Google OAuth client" in gdrive_account.status()["problem"]
-    assert not gdrive_account.ready()
-    gdrive_account._set_raw(gdrive_account.CLIENT_KEY, "")
-    monkeypatch.setattr(gdrive_account.config, "GOOGLE_DRIVE_CLIENT", ("", ""))  # a build without Gamma's app
-    monkeypatch.setattr(gdrive_account.config, "GOOGLE_DRIVE_DESKTOP_CLIENT", ("", ""))
-    view = gdrive_account.status()
-    assert view["available"] is False and "no Google app" in view["problem"]
-    with pytest.raises(gdrive.DriveConfigError, match="no Google app"):
-        gdrive_account.start()
+    _set_raw("gdrive_client", json.dumps({
+        "client_id": "another.apps.googleusercontent.com", "client_secret": seal("GOCSPX-o")}))
+    assert "through another OAuth client" in ACCOUNT.status()["problem"]
+    assert not ACCOUNT.ready()
+    _set_raw("gdrive_client", "")
+    monkeypatch.setattr(cloud_account.config, "GOOGLE_DRIVE_CLIENT", ("", ""))  # a build without Gamma's app
+    monkeypatch.setattr(cloud_account.config, "GOOGLE_DRIVE_DESKTOP_CLIENT", ("", ""))
+    view = ACCOUNT.status()
+    assert view["available"] is False and "no app to sign in to Google Drive" in view["problem"]
+    with pytest.raises(CloudConfigError, match="no app to sign in"):
+        ACCOUNT.start()
 
 
 def test_a_server_may_use_a_google_app_of_its_own(client, google, capsys):
-    """Gamma's own app by default; one given with manage.py gdrive-client
-    in its place, its secret sealed; a change of app disconnects (revoking
-    the token); --remove goes back to Gamma's."""
+    """Gamma's own app by default; one given with manage.py cloud-client
+    drive in its place, its secret sealed; a change of app disconnects
+    (revoking the token); --remove goes back to Gamma's."""
     import manage
     _connect(google)  # through Gamma's app
     token = next(t for t, ok in google.refresh.items() if ok)
-    for bad in (["", "s"], ["123-abc", "s"], [CLIENT_ID, "a b"], [CLIENT_ID]):
+    for bad in (["drive", "", "s"], ["drive", "123-abc", "s"], ["drive", CLIENT_ID, "a b"], ["drive", CLIENT_ID],
+                ["dropbox", CLIENT_ID, "s"], []):
         with pytest.raises(SystemExit):
-            manage.gdrive_client(bad)
+            manage.cloud_client(bad)
     own = "own.apps.googleusercontent.com"
-    manage.gdrive_client([own, "GOCSPX-own"])
+    manage.cloud_client(["drive", own, "GOCSPX-own"])
     assert "this server's own app" in capsys.readouterr().out
-    assert gdrive_account.status()["connected"] is False and google.refresh[token] is False
+    assert ACCOUNT.status()["connected"] is False and google.refresh[token] is False
     with db.connect_users_db() as conn:
         assert "GOCSPX-own" not in conn.execute("SELECT value FROM settings WHERE key = 'gdrive_client'").fetchone()[0]
-    assert gdrive_account.oauth_client().id == own
-    with pytest.raises(gdrive.DriveConfigError, match="refused"):  # the stand-in Google does not know it
-        gdrive_account.start()
-    manage.gdrive_client(["--remove"])
-    assert gdrive_account.oauth_client().id == CLIENT_ID  # Gamma's again
-    assert gdrive_account.start()["pending"]
+    assert ACCOUNT.oauth_client().id == own
+    with pytest.raises(CloudConfigError, match="refused"):  # the stand-in Google does not know it
+        ACCOUNT.start()
+    manage.cloud_client(["drive", "--remove"])
+    assert ACCOUNT.oauth_client().id == CLIENT_ID  # Gamma's again
+    assert ACCOUNT.start()["pending"]
 
 
 def test_googles_page_signs_in_where_gamma_is_opened_on_its_own_computer(client, google):
@@ -176,33 +183,33 @@ def test_googles_page_signs_in_where_gamma_is_opened_on_its_own_computer(client,
         return fresh_client(base_url="http://127.0.0.1:9100").get(f"{back.path}?{back.query}")
 
     far, here = admin_at("http://nas.example:9001"), admin_at("http://127.0.0.1:9100")
-    assert far.get("/api/admin/gdrive").json()["browser"] is False
-    assert far.post("/api/admin/gdrive/authorize", json={}).status_code == 400
-    assert here.get("/api/admin/gdrive").json()["browser"] is True
-    url = here.post("/api/admin/gdrive/authorize", json={"folder": "From the page"}).json()["url"]
+    assert far.get("/api/admin/clouds/drive").json()["browser"] is False
+    assert far.post("/api/admin/clouds/drive/authorize", json={}).status_code == 400
+    assert here.get("/api/admin/clouds/drive").json()["browser"] is True
+    url = here.post("/api/admin/clouds/drive/authorize", json={"folder": "From the page"}).json()["url"]
     query = parse_qs(urlsplit(url).query)
     assert url.startswith(f"{google.base}/o/oauth2/v2/auth?") and query["client_id"] == [DESKTOP_ID]
-    assert query["redirect_uri"] == ["http://127.0.0.1:9100/api/admin/gdrive/callback"]
+    assert query["redirect_uri"] == ["http://127.0.0.1:9100/api/admin/clouds/drive/callback"]
     assert query["scope"] == [gdrive.SCOPE] and query["access_type"] == ["offline"]
     location = google.authorize(url)  # the person allows
     page = browser(location)
     assert page.status_code == 200 and "Google Drive is connected" in page.text
-    view = here.get("/api/admin/gdrive").json()
+    view = here.get("/api/admin/clouds/drive").json()
     assert view["connected"] and (view["email"], view["folder"], view["error"]) == ("someone@gmail.com", "From the page", "")
     google.expire_access()
-    assert gdrive_account.client().check() == (0, False)  # renewed through the "Desktop app" client
+    assert ACCOUNT.client().check() == (0, False)  # renewed through the "Desktop app" client
     assert "already used" in browser(location).text
     google.browser_deny = True
-    assert "not allowed" in browser(google.authorize(here.post("/api/admin/gdrive/authorize", json={}).json()["url"])).text
-    assert here.get("/api/admin/gdrive").json()["error"] == "Google Drive access was not allowed."
+    assert "not allowed" in browser(google.authorize(here.post("/api/admin/clouds/drive/authorize", json={}).json()["url"])).text
+    assert here.get("/api/admin/clouds/drive").json()["error"] == "Google Drive access was not allowed."
 
 
 def test_a_folder_is_a_path_of_names_from_the_top(client, google):
     for bad in ("", "   ", " / ", "a\\b", "a/../b", "a\x7fb", "x" * 121, "/".join("a" * 17)):
         with pytest.raises(ValueError):
-            gdrive_account.start(bad)
-    assert gdrive_account.check_folder("  Gamma   backups ") == "Gamma backups"
-    assert gdrive_account.check_folder("/ Backups //  Gamma / ") == "Backups/Gamma"
+            ACCOUNT.start(bad)
+    assert ACCOUNT.check_folder("  Gamma   backups ") == "Gamma backups"
+    assert ACCOUNT.check_folder("/ Backups //  Gamma / ") == "Backups/Gamma"
 
 
 # --- the client --------------------------------------------------------------------------
@@ -221,7 +228,7 @@ def test_files_live_in_folders_and_a_name_is_replaced_not_doubled(drive, google,
     folders = [f for f in google.files.values() if f["mimeType"] == gdrive.FOLDER_MIME]
     assert sorted(google.path(f["id"]) for f in folders) == [
         "Gamma backups", "Gamma backups/snapshots", "Gamma backups/snapshots/ws1", "Gamma backups/snapshots/ws2"]
-    listed = gdrive_account.client().list_objects("snapshots/")  # a new client finds the same folders
+    listed = ACCOUNT.client().list_objects("snapshots/")  # a new client finds the same folders
     assert [(k, s) for k, s, _ in listed] == [("snapshots/ws1/one.zip", 14), ("snapshots/ws1/workspace.json", 2),
                                               ("snapshots/ws2/two.zip", 1)]
     assert [k for k, *_ in drive.list_objects("snapshots/ws1/w")] == ["snapshots/ws1/workspace.json"]
@@ -246,7 +253,7 @@ def test_what_the_person_made_or_trashed_is_not_used(drive, google):
     ours = [f for f in google.files.values() if f["name"] == "Gamma backups" and f["mine"]]
     assert len(ours) == 1
     google.trash(ours[0]["id"])  # the person trashed the folder
-    fresh = gdrive_account.client()
+    fresh = ACCOUNT.client()
     assert fresh.list_objects("") == [] and fresh.check() == (0, False)
     fresh.put_bytes("a.txt", b"again")
     assert google.mine() == {"Gamma backups/a.txt": b"again"}
@@ -284,16 +291,16 @@ def test_tokens_are_renewed_and_refusals_say_why(drive, google, tmp_path):
     assert google.calls.count("POST /token") >= 2
     google.fail_next("GET /drive/v3/files", 429, times=2)
     assert drive.get_bytes("a.txt") == b"a"
-    google.fail_next("GET /drive/v3/files", 500, times=gdrive.ATTEMPTS)
-    with pytest.raises(gdrive.DriveError, match="500"):
+    google.fail_next("GET /drive/v3/files", 500, times=cloud_http.ATTEMPTS)
+    with pytest.raises(CloudError, match="500"):
         drive.get_bytes("a.txt")
     google.quota = 10
-    with pytest.raises(gdrive.DriveError, match="storage is full"):
+    with pytest.raises(CloudError, match="storage is full"):
         drive.put_bytes("b.txt", b"0123456789")
     google.quota = 0
     google.revoke_all()
-    with pytest.raises(gdrive.DriveConfigError, match="no longer honours"):
-        gdrive_account.client().get_bytes("a.txt")
+    with pytest.raises(CloudConfigError, match="no longer honours"):
+        ACCOUNT.client().get_bytes("a.txt")
 
 
 # --- backup tasks ------------------------------------------------------------------------
@@ -362,56 +369,56 @@ def test_the_connection_through_the_api(client, google):
     make_user("gd_boss", "gd-boss-pw", is_admin=1)
     make_user("gd_user", "gd-user-pw")
     boss, user = login("gd_boss", "gd-boss-pw"), login("gd_user", "gd-user-pw")
-    assert user.get("/api/admin/gdrive").status_code == 403
-    assert boss.get("/api/admin/gdrive").json()["available"] is True
-    assert boss.post("/api/admin/gdrive/connect", json={"folder": "a/../b"}).status_code == 400
-    shown = boss.post("/api/admin/gdrive/connect", json={}).json()
-    assert shown["pending"]["user_code"] and boss.get("/api/admin/gdrive").json()["pending"]
-    assert boss.delete("/api/admin/gdrive/connect").json()["pending"] is None
-    boss.post("/api/admin/gdrive/connect", json={"folder": "Server A"})
+    assert user.get("/api/admin/clouds/drive").status_code == 403
+    assert boss.get("/api/admin/clouds/drive").json()["available"] is True
+    assert boss.post("/api/admin/clouds/drive/connect", json={"folder": "a/../b"}).status_code == 400
+    shown = boss.post("/api/admin/clouds/drive/connect", json={}).json()
+    assert shown["pending"]["user_code"] and boss.get("/api/admin/clouds/drive").json()["pending"]
+    assert boss.delete("/api/admin/clouds/drive/connect").json()["pending"] is None
+    boss.post("/api/admin/clouds/drive/connect", json={"folder": "Server A"})
     google.approve()
     _due()
-    done = boss.post("/api/admin/gdrive/poll").json()
+    done = boss.post("/api/admin/clouds/drive/poll").json()
     assert done["connected"] and done["folder"] == "Server A"
     assert "refresh" not in json.dumps(done)
-    tested = boss.post("/api/admin/gdrive/test").json()
+    tested = boss.post("/api/admin/clouds/drive/test").json()
     assert tested == {"ok": True, "message": "someone@gmail.com: 0 items in Server A"}
-    assert boss.put("/api/admin/gdrive", json={"folder": "Server B"}).json()["folder"] == "Server B"
-    assert boss.put("/api/admin/gdrive", json={"folder": ""}).status_code == 400
-    assert boss.delete("/api/admin/gdrive").json()["connected"] is False
-    assert boss.put("/api/admin/gdrive", json={"folder": "Server C"}).status_code == 400
+    assert boss.put("/api/admin/clouds/drive", json={"folder": "Server B"}).json()["folder"] == "Server B"
+    assert boss.put("/api/admin/clouds/drive", json={"folder": ""}).status_code == 400
+    assert boss.delete("/api/admin/clouds/drive").json()["connected"] is False
+    assert boss.put("/api/admin/clouds/drive", json={"folder": "Server C"}).status_code == 400
 
 
 def test_the_folder_browser_lists_what_gamma_made_and_makes_folders(drive, google):
     make_user("gd_picker", "gd-picker-pw", is_admin=1)
     make_user("gd_member", "gd-member-pw")
     boss = login("gd_picker", "gd-picker-pw")
-    assert login("gd_member", "gd-member-pw").get("/api/admin/gdrive/browse").status_code == 403
+    assert login("gd_member", "gd-member-pw").get("/api/admin/clouds/drive/browse").status_code == 403
     drive.put_bytes("snapshots/ws1/one.zip", b"12345")
     google.add("Gamma backups", folder=True)  # a second of one name: the first is the one used
-    top = boss.get("/api/admin/gdrive/browse").json()
+    top = boss.get("/api/admin/clouds/drive/browse").json()
     assert [f["name"] for f in top["folders"]] == ["Gamma backups"] and top["files"] == [] and not top["more"]
-    held = boss.get("/api/admin/gdrive/browse", params={"path": "Gamma backups/snapshots/ws1"}).json()
+    held = boss.get("/api/admin/clouds/drive/browse", params={"path": "Gamma backups/snapshots/ws1"}).json()
     assert [(f["name"], f["size"]) for f in held["files"]] == [("one.zip", 5)] and held["files"][0]["modified"]
-    assert boss.get("/api/admin/gdrive/browse", params={"path": "Not there"}).json() == {
+    assert boss.get("/api/admin/clouds/drive/browse", params={"path": "Not there"}).json() == {
         "folders": [], "files": [], "more": False}
-    assert boss.get("/api/admin/gdrive/browse", params={"path": "a/../b"}).status_code == 400
+    assert boss.get("/api/admin/clouds/drive/browse", params={"path": "a/../b"}).status_code == 400
 
     # New folder, then the folder copies go to: a folder in a folder.
-    assert boss.post("/api/admin/gdrive/folders", json={"path": " Backups / Server A "}).json() == {
+    assert boss.post("/api/admin/clouds/drive/folders", json={"path": " Backups / Server A "}).json() == {
         "path": "Backups/Server A"}
-    boss.post("/api/admin/gdrive/folders", json={"path": "Backups/Server A"})  # there already: kept, not doubled
-    assert boss.post("/api/admin/gdrive/folders", json={"path": "/"}).status_code == 400  # never My Drive itself
+    boss.post("/api/admin/clouds/drive/folders", json={"path": "Backups/Server A"})  # there already: kept, not doubled
+    assert boss.post("/api/admin/clouds/drive/folders", json={"path": "/"}).status_code == 400  # never My Drive itself
     made = [google.path(f["id"]) for f in google.files.values() if f["mimeType"] == gdrive.FOLDER_MIME and f["mine"]]
     assert made.count("Backups/Server A") == 1
-    assert boss.put("/api/admin/gdrive", json={"folder": "Backups/Server A"}).json()["folder"] == "Backups/Server A"
-    assert boss.post("/api/admin/gdrive/test").json()["message"] == "someone@gmail.com: 0 items in Backups › Server A"
-    gdrive_account.client().put_bytes("snapshots/ws1/two.zip", b"2")
+    assert boss.put("/api/admin/clouds/drive", json={"folder": "Backups/Server A"}).json()["folder"] == "Backups/Server A"
+    assert boss.post("/api/admin/clouds/drive/test").json()["message"] == "someone@gmail.com: 0 items in Backups › Server A"
+    ACCOUNT.client().put_bytes("snapshots/ws1/two.zip", b"2")
     assert "Backups/Server A/snapshots/ws1/two.zip" in google.mine()
-    assert [f["name"] for f in boss.get("/api/admin/gdrive/browse", params={"path": "Backups"}).json()["folders"]] == [
+    assert [f["name"] for f in boss.get("/api/admin/clouds/drive/browse", params={"path": "Backups"}).json()["folders"]] == [
         "Server A"]
-    gdrive_account.disconnect()
-    assert boss.get("/api/admin/gdrive/browse").status_code == 400
+    ACCOUNT.disconnect()
+    assert boss.get("/api/admin/clouds/drive/browse").status_code == 400
 
 
 def _job(c, route, body):
@@ -454,7 +461,7 @@ def test_the_copies_in_drive_through_the_api(drive, google):
 
     assert boss.delete(f"/api/admin/offsite/snapshots/{ws}/{snap['name']}?store=drive").json() == {"ok": True}
     assert _copies(google, ws) == ["workspace.json"]
-    gdrive_account.disconnect()
+    ACCOUNT.disconnect()
     assert boss.get("/api/admin/offsite/snapshots?store=drive").status_code == 400
     assert boss.post("/api/jobs/bucket-download", json={"ws": ws, "name": snap["name"],
                                                          "store": "drive"}).status_code == 400
@@ -495,7 +502,7 @@ def test_several_copies_come_back_as_new_workspaces_in_one_job(drive, google):
 # --- the transport ---------------------------------------------------------------------
 
 def test_the_transport_answers_streams_and_drops_the_token_on_another_host(monkeypatch):
-    """``_request`` itself, against a local server: an answer, a body
+    """``cloud_http._request`` itself, against a local server: an answer, a body
     streamed into a sink, an error answer and a 308 as answers, a redirect
     to another host without the Authorization header, no server at all."""
     import socket
@@ -534,15 +541,15 @@ def test_the_transport_answers_streams_and_drops_the_token_on_another_host(monke
     base = f"http://127.0.0.1:{server.server_port}"
     try:
         auth = {"Authorization": "Bearer secret"}
-        resp = gdrive._request("GET", f"{base}/hello", auth)
+        resp = cloud_http._request("GET", f"{base}/hello", auth)
         assert (resp.status, resp.body) == (200, b"hello")
         sink = io.BytesIO()
-        assert gdrive._request("GET", f"{base}/big", auth, sink=sink).body == b"" and len(sink.getvalue()) == 3_000_000
-        missing = gdrive._request("GET", f"{base}/missing", auth)
-        assert missing.status == 404 and gdrive._error(missing)[0] == "notFound"
-        held = gdrive._request("PUT", f"{base}/session", {"Content-Range": "bytes 0-9/20"}, b"0123456789")
+        assert cloud_http._request("GET", f"{base}/big", auth, sink=sink).body == b"" and len(sink.getvalue()) == 3_000_000
+        missing = cloud_http._request("GET", f"{base}/missing", auth)
+        assert missing.status == 404 and cloud_http.error(missing)[0] == "notFound"
+        held = cloud_http._request("PUT", f"{base}/session", {"Content-Range": "bytes 0-9/20"}, b"0123456789")
         assert (held.status, held.headers["range"]) == (308, "bytes=0-9")
-        assert gdrive._request("GET", f"{base}/hop", auth).body == b"hello"
+        assert cloud_http._request("GET", f"{base}/hop", auth).body == b"hello"
         assert seen["/hop"] == "Bearer secret" and seen["/landed"] is None  # 127.0.0.1 → localhost: another host
     finally:
         server.shutdown()
@@ -550,5 +557,5 @@ def test_the_transport_answers_streams_and_drops_the_token_on_another_host(monke
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
-    with pytest.raises(gdrive.DriveUnreachable, match="could not be reached"):
-        gdrive._request("GET", f"http://127.0.0.1:{port}/", {}, timeout=5)
+    with pytest.raises(CloudUnreachable, match="could not be reached"):
+        cloud_http._request("GET", f"http://127.0.0.1:{port}/", {}, timeout=5)

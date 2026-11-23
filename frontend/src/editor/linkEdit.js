@@ -6,7 +6,7 @@
 //   - a page or note link, [[id]] or [[id|words]] (refLabels.js REF_RE; an
 //     ![[embed]] is no link),
 //   - a Markdown link, [label](href) (an image's ![…](…) is none),
-//   - a bare web address (https://…, as GFM links one) or <https://…>,
+//   - a bare web address (https://…, as the rendered view links one) or <https://…>,
 // outside code and math, where nothing is a link.
 import { protectedSpans } from "./mdScan.js";
 import { CHIP_RE, refWords } from "./refLabels.js";
@@ -63,8 +63,9 @@ export function linkSpans(content) {
     take({ from, to, kind: "md", label: m[2], href: m[3].replace(/^<|>$/g, "") });
   }
   for (const m of text.matchAll(BARE_RE)) {
-    // GFM links a bare address at a line's start or after a space, *, _, ~ or (.
-    if (!m[1] && m.index > 0 && !/[\s*_~(]/.test(text[m.index - 1])) continue;
+    // The rendered view (remark-gfm) links a bare address after anything
+    // but an ASCII letter: "攻略：https://…" is a link, "xhttps://…" none.
+    if (!m[1] && m.index > 0 && /[A-Za-z]/.test(text[m.index - 1])) continue;
     const href = m[1] || bareEnd(m[0]);
     const from = m.index, to = from + (m[1] ? m[0].length : href.length);
     take({ from, to, kind: "bare", href });

@@ -127,6 +127,21 @@ export function scanTables(content) {
   return out;
 }
 
+// The content with the math on a table's rows reading each escaped pipe
+// ("\|", the one a cell holds) as "\vert ": GFM reads "\|" in a cell as the
+// pipe it stands for, in code and a link's words too, and so does the
+// rendered view's math, where KaTeX would read it as a double bar.
+export function tableMathPipes(content) {
+  const tables = scanTables(content);
+  if (!tables.length) return content;
+  const inTable = (s) => tables.some((tb) => s.from >= tb.from && s.to <= tb.to);
+  let out = content;
+  for (const s of scanMathSpans(content).filter(inTable).reverse()) {
+    out = out.slice(0, s.from) + out.slice(s.from, s.to).replace(/(?<!\\)\\\|/g, "\\vert ") + out.slice(s.to);
+  }
+  return out;
+}
+
 export function parseTable(text) {
   const rows = text.split("\n").map(splitCells);
   const aligns = rows[1].map((c) =>

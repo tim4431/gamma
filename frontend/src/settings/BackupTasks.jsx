@@ -3,11 +3,11 @@ import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { ClockIcon, CloudUploadIcon, DuplicateIcon, HardDriveIcon, MoreIcon, PencilIcon, PlayIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
-import { DialogButtons, Empty, Field, FormNotice, Section, Segmented, SubDialog, Toggle, ToggleGroup } from "./SettingsKit";
+import { DialogButtons, Empty, Field, FormNotice, Row, Section, Segmented, SubDialog, Toggle, ToggleGroup } from "./SettingsKit";
 import { fmtWhen } from "./SettingsBackups";
 import { useSettingsRead } from "./settingsReads.js";
 import { fromUtcCron, localOffset, observesDst, parseCron, shiftTime, toUtcCron } from "./backupSchedule.js";
-import { STORE, STORES } from "./backupStores.js";
+import { STORE, STORES, storeText } from "./backupStores.js";
 import "./backupTasks.css";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 
@@ -69,13 +69,33 @@ function LastRun({ task }) {
     {task.last_run && task.state !== "queued" ? <span className="settingDesc">{date(task.last_run)}</span> : null}
     {result ? <span className="settingDesc">
       {[tn("{n} snapshot", "{n} snapshots", result.snapshots), fmtBytes(result.bytes), result.seconds >= 1 ? took(result.seconds) : "",
-        ...STORES.filter((store) => result[store] != null).map((store) => STORE[store].held())].filter(Boolean).join(" · ")}
+        ...STORES.filter((store) => result[store] != null).map((store) => storeText.held(store))].filter(Boolean).join(" · ")}
     </span> : null}
   </>;
 }
 
-// `stores`: where each store a task may copy to is ({bucket, drive},
-// backupStores.js; BackupBucket's bucketWhere, BackupDrive's driveWhere),
+// Where else each snapshot goes: one chip per backup destination set up
+// (and one the task still copies to that is no longer set up), each naming
+// the place it puts the copies on hover. Nothing while no destination is
+// set up (and for an account that is no admin).
+function CopiesOff({ stores, draft, patch }) {
+  const shown = STORES.filter((store) => stores[store] || draft[store]);
+  if (!shown.length) return null;
+  const on = shown.filter((store) => draft[store]);
+  const lost = on.find((store) => !stores[store]);
+  const hint = lost ? storeText.notSetUp(lost)
+    : on.length ? t("Each snapshot also goes to the destinations chosen, and this task’s retention applies there too.")
+      : t("Snapshots stay on this server. Choose a backup destination to keep a copy elsewhere too.");
+  return (
+    <Row icon={CloudUploadIcon} label={t("Copy off this server")} hint={hint} wide>
+      <ToggleGroup selected={on} onToggle={(store, value) => patch({ [store]: value })}
+        options={shown.map((store) => [store, STORE[store].title(), null, stores[store] || storeText.notSetUp(store)])} />
+    </Row>
+  );
+}
+
+// `stores`: where each store a task may copy to is ({drive, onedrive,
+// bucket}, backupStores.js `where`; BackupDestinations' useStores),
 // "" while it is not set up or for an account that is no admin. A new task
 // copies to each there is.
 function TaskEditor({ initial, workspaces, stores, onClose, onSaved }) {
@@ -160,13 +180,7 @@ function TaskEditor({ initial, workspaces, stores, onClose, onSaved }) {
           </Field>}
         <Toggle icon={HardDriveIcon} label={t("Include uploaded files")} checked={draft.uploads} onChange={(uploads) => patch({ uploads })}
           hint={t("Include PDFs and images alongside notes and chats.")} />
-        {/* A store's switch shows while it is set up, or while the task copies there. */}
-        {STORES.filter((store) => stores[store] || draft[store]).map((store) => (
-          <Toggle key={store} icon={CloudUploadIcon} label={STORE[store].toggle()} checked={!!draft[store]}
-            onChange={(on) => patch({ [store]: on })}
-            hint={stores[store] ? t("Each snapshot also goes to {where}, and this task’s retention applies there too.", { where: stores[store] })
-              : STORE[store].notSetUp()} />
-        ))}
+        <CopiesOff stores={stores} draft={draft} patch={patch} />
         <Section title={t("When to run")} />
         <div className="backupTaskGrid">
           <Field label={t("Frequency")}><MenuSelect block label={t("Frequency")} value={preset} onChange={choosePreset} options={FREQUENCIES} /></Field>
@@ -284,7 +298,7 @@ export function BackupTasks({ workspaces, stores = {}, confirm, onRefresh, onRan
           return <tr key={task.id}>
             <td><strong>{task.name}</strong><span className="settingDesc" title={names}>
               {[names, keeps, task.uploads ? t("includes files") : t("databases only"),
-                ...STORES.filter((store) => task[store]).map((store) => STORE[store].copiesTo())]
+                ...STORES.filter((store) => task[store]).map((store) => storeText.copiesTo(store))]
                 .filter(Boolean).join(" · ")}</span></td>
             <td><span>{when}</span>{whenUtc ? <span className="settingDesc">{whenUtc}</span> : null}</td>
             <td>{task.requested ? t("Queued") : task.enabled ? date(task.next_run) : t("Paused")}</td>

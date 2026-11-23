@@ -30,6 +30,25 @@ test('a known cause gets its sentence, its fix, and the server\'s own line', () 
   assert.equal(diagnose("ModuleNotFoundError: No module named 'fitz'", 'exit').action, 'log', 'a missing package shows the log');
 });
 
+test('a module the frozen server cannot import is a file missing from the install, fixed by what installed it', () => {
+  const line = "ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'";
+  const dir = 'D:\\Apps\\Gamma\\resources\\gamma-server';
+  assert.match(diagnose(line, 'exit').hint, /requirements\.txt/, 'a dev run installs the package');
+
+  const win = diagnose(line, 'exit', { dir, updates: 'desktop', platform: 'win32' });
+  assert.match(win.summary, /missing one of its files/);
+  assert.match(win.hint, /Install Gamma again/);
+  assert(win.hint.includes(dir), 'names the folder an antivirus may have taken a file from');
+  assert.match(win.hint, /260 characters/, 'a deep install folder is one way a file goes missing');
+  assert.equal(win.detail, line, "the server's own line stays");
+  assert.equal(win.action, 'log');
+
+  assert.match(diagnose(line, 'exit', { dir, updates: 'store', platform: 'win32' }).hint, /Repair Gamma in Windows Settings/);
+  assert.match(diagnose(line, 'exit', { dir, updates: 'mas', platform: 'darwin' }).hint, /App Store/);
+  assert.doesNotMatch(diagnose(line, 'exit', { dir, updates: 'desktop', platform: 'linux' }).hint, /260/, 'the path limit is Windows\'');
+  assert.equal(diagnose('sqlite3.OperationalError: disk I/O error', 'exit', { dir, updates: 'desktop' }).action, 'data', 'other causes keep their rule');
+});
+
 test('the first rule that matches wins, wherever its line sits', () => {
   const d = diagnose(['OSError: [Errno 98] address already in use', 'sqlite3.OperationalError: disk I/O error'].join('\n'), 'exit');
   assert.equal(d.action, 'retry');

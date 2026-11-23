@@ -28,7 +28,8 @@ const PANE_FILES = {
   integrations: ["SettingsIntegrations.jsx"],
   account: ["SettingsUsers.jsx", "SettingsSync.jsx", "SettingsMirrors.jsx", "SettingsCloudSignIn.jsx", "SettingsZotero.jsx"],
   workspaces: ["SettingsWorkspace.jsx", "SettingsMirrors.jsx"],
-  backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "BackupBucket.jsx", "BackupDrive.jsx", "CloudCopies.jsx"],
+  backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "BackupDestinations.jsx", "BackupCloud.jsx", "BackupBucket.jsx",
+    "CloudCopies.jsx", "backupStores.js"],
   maintenance: ["SettingsDialog.jsx"],
   users: ["SettingsUsers.jsx", "SettingsServer.jsx", "SettingsCloudSignIn.jsx", "SettingsGuests.jsx", "SettingsReports.jsx"],
   server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsZoteroApp.jsx", "SettingsServerOptions.jsx", "SettingsAi.jsx", "ProviderForm.jsx",
@@ -38,8 +39,10 @@ const PANE_FILES = {
 };
 // Rows a pane draws from a table (label={label}): the table holds the t()
 // call, or the T() of a registry the row translates (the Top bar's and the
-// Viewer tools' items; the pen section's words, SettingsDialog.jsx PEN_WORDS).
+// Viewer tools' items; the pen section's words, SettingsDialog.jsx PEN_WORDS;
+// the backup destinations' rows, named in backupStores.js STORE).
 const FROM_TABLES = new Set(["Folder chat", "PDF chat", "Notes chat", "Single paper", "Metadata extraction", "Multi-paper total",
+  "Google Drive", "OneDrive", "Bucket",
   "Double tap", "Squeeze", "Pen button", "Second pen button",
   ...TOPBAR_ITEMS.map((item) => item.label), ...VIEWER_TOOL_ITEMS.map((item) => item.label)]);
 // The hosts the pen section is worded for: the iPad app's HostInfo

@@ -30,6 +30,7 @@ export const SECTION_PREFS = Object.freeze({
   }),
   toolbars: sections({
     "Top bar": ["topbar"],
+    "Page header": ["pageExportButton"],
     // The released builds' highlighter colour has no row: it only seeds the
     // first text highlighter.
     "Viewer tools": ["viewerTools", "highlighterColor"],

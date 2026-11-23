@@ -556,7 +556,12 @@ a pen or highlighter stroke is claimed.
    (`PencilCapture.holdSlop`) from the anchor before it, at first the
    first sample. A Pencil touch on the bar or the launcher is theirs, and
    the recognizer ignores it, so it never stands in the way of a claim
-   (step 3).
+   (step 3). Touches that are over for the recognizer, with no Pencil touch
+   of the page's left and no stroke captured (an unclaimed Pencil touch at
+   its lift, a finger at once), make it **fail** (`settle`), and UIKit
+   resets it, with a palm still down too. Left `possible` it would never be
+   reset, and a recognizer waiting on it would never settle
+   ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)).
 2. **The page claims it.** `InkLayer.jsx` starts its stroke as always,
    draws its own draft, and posts `claim` with the pointer's id, where it
    went down and the tool in the preset's look (`claimForHost`,
@@ -708,7 +713,9 @@ pen's place among the contacts), `pdf/penSelect.js`, `shared/ui/regionDrag.js`,
 (`ink/fingerChords.js`). Which touches lose their lift, and why, is device
 check 38. A freeze this does not end is open: on an iPad Air with an Apple
 Pencil Pro the page answers no tap from the Pencil's first contact, and a
-reload does not help ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md),
+reload does not help. Its likely cause, the capture that never settled
+(step 1), is fixed and waits for that iPad
+([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md),
 [The touch report](#the-touch-report)).
 
 **Gestures.** `PencilGestures` (`UIPencilInteraction`) forwards the double
@@ -1266,6 +1273,7 @@ which the launcher's *Show server log* opens in Files). A report holds:
 - the build, iPadOS, the model and the screen's size and rate;
 - the Apple Pencil's system settings (`UIPencilInteraction`: only draws,
   double tap, squeeze, hover preview);
+- the native pieces' switches (below), `OFF` for one turned off;
 - `PencilCapture`'s state, its capture, recordings and claim queue;
 - every recognizer and interaction from the window down: each view that
   has one, by its depth, each recognizer's class and state, `disabled`,
@@ -1274,6 +1282,27 @@ which the launcher's *Show server log* opens in Files). A report holds:
 
 A file past 1 MB keeps its newest half. Nothing leaves the iPad unless its
 owner shares the file.
+
+### The native pieces' switches
+
+The iPad's Settings app has three switches under Gamma
+(`Resources/Settings.bundle`, read by `NativePieces`), one for each native
+piece that reaches the page's web view. They are there to find which one
+makes the Pencil Pro freeze
+([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)),
+and go once that is known. All are on by default, and a change takes effect
+at the next launch. *Off*:
+
+- **Native Pencil drawing** (`gamma.native.pencilCapture`): no
+  `PencilCapture`. The shell declares `ink` and `hold` false, so the page
+  claims no stroke and draws as in Safari. The touch report then has no
+  touch lines.
+- **Hide keyboard bar** (`gamma.native.hideAccessoryBar`): the content view
+  keeps its class, and the keyboard its accessory bar.
+- **Pencil gestures** (`gamma.native.pencilGestures`): no
+  `UIPencilInteraction`. The shell declares `pencil` and `pencilPhases`
+  false, so the double tap and the squeeze do nothing and their settings
+  are not shown.
 
 ### Tests
 
@@ -1335,6 +1364,9 @@ owner shares the file.
     bar hidden on a real `WKWebView`, and `ShellWebView`'s edit menu:
     every action refused while it is off but a key command's, and
     WebKit's own answers once it is on again (`ShellTests`)
+  - the native pieces' switches (`NativePiecesTests`, in `ShellTests`):
+    each on until its own is turned off, what the shell then declares,
+    and the Settings bundle writing the keys the app reads, all on
   - the touch report's parts (`TouchReportTests`): the latest lines
     kept, a touch's recognizers counted, the recognizer tree with its
     depth and its interactions, bare views skipped and a long tree cut,
@@ -1383,16 +1415,21 @@ owner shares the file.
   starts on This iPad without the launcher: the test passes
   `-gamma.servers` with `SavedServers` as a Data default, in the old
   plist notation. An unsigned build has no Keychain (see
-  `LocalServerStartTests`), so it gets no silent sign-in: the test waits
-  up to four minutes for the library and otherwise continues as a guest.
-  A fresh simulator's first run takes about five minutes, a later one
-  about one. Screenshots go into the result bundle, and also as PNGs
+  `LocalServerStartTests`), so it gets no silent sign-in: the test
+  continues as a guest, and dismisses the guide a new guest is shown. Both
+  tests take about two minutes. Screenshots go into the result bundle, and also as PNGs
   into the folder `TEST_RUNNER_GAMMA_UITEST_SHOTS` names. `TapsTests`
   opens the welcome PDF, selects a word of its text with a long press
   (the edit menu goes off) and checks that a tap still opens the
-  account menu with the selection up, once it is gone, and after ⌘R. No
-  simulator sends Apple Pencil touches, so the Pencil itself is beyond
-  it ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)
+  account menu with the selection up, once it is gone, and after ⌘R. Its
+  other test taps Home with a finger standing in for the Pencil, with a
+  recognizer waiting on the capture, and checks that a finger's taps are
+  still answered after it and after ⌘R; without `settle` none is.
+  `PencilStandIn` (a debug simulator build, `-gamma.pencilStandIn`) takes a
+  touch that begins in the window's left half for the Pencil, to
+  `PencilCapture` and to the page. It has no hover, pressure, tilt, roll or
+  squeeze, and none of the system's own Pencil recognizers, which stay
+  beyond a simulator ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)
   "Mimicking the reporter's iPad here").
 - `backend/tests/test_mobile_requirements.py`: every server dependency is
   in the mobile requirements or excluded with a reason, and nothing
@@ -1744,8 +1781,8 @@ Only an iPad can show these, and none has been run yet:
     this rule is not what ends it
     ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)).
     On such an iPad, take a touch report ([The touch report](#the-touch-report))
-    from a frozen session and from a fresh one, and repeat the test in
-    Safari.
+    from a frozen session and from a fresh one. The same web code in Safari
+    on that iPad does not freeze.
 39. SVG pictures ([pictures.md](pictures.md#svg-pictures)). Playwright's
     WebKit on Linux draws an SVG's `<img>` as Chromium does, under the
     file's own policy. On the iPad: an SVG from Files placed on a page and

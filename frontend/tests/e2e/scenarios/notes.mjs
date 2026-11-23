@@ -1747,6 +1747,63 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
+  // A note's web links stay chips in its editor (docs/dev/mentions.md "The
+  // link card"): the site's title for a bare address, a Markdown link's
+  // words; a press shows the card without the address, and only a link being
+  // typed, or one the caret steps into, shows as source.
+  await step("notes: web links stay chips while their note is edited; a press shows the card, typing or stepping in shows the source", async () => {
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Web chips source" } });
+    const video = "https://example.org/video/1";
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "wcblock", parent: src.id, position: "a0", content: `trip ${video} and [the guide](https://example.org/guide) end` }] } });
+    const p2 = await openPage(ctx);
+    await p2.route("https://icons.duckduckgo.com/**", (route) => route.fulfill({ status: 404, body: "" }));
+    await p2.route("**/api/link-preview?**", (route) => {
+      const url = new URL(route.request().url()).searchParams.get("url");
+      route.fulfill({ json: url === video ? { url, host: "example.org", title: "Video One", author: "Uploader" }
+        : { url, host: "example.org", title: null, author: null } });
+    });
+    await p2.goto(`${server.base}/?ws=${second.id}&page=${src.id}`);
+    const content = async () => (await tree(alice2, src.id))[0]?.content;
+    const chips = p2.locator(".blockEditorCm .cmLinkChip .linkChipText");
+    const source = () => p2.locator(".blockEditorCm .cm-content").innerText();
+    try {
+      await until(async () => same(await row(p2, "end").locator(".linkChip").allInnerTexts(), ["Video One", "the guide"]),
+        { what: "the rendered chips show the site's title and the link's words" });
+      await editRow(p2, "end");
+      assert(same(await chips.allInnerTexts(), ["Video One", "the guide"]), "the editor shows the same chips");
+      assert(!(await source()).includes("example.org"), "and no address");
+
+      await chips.first().click();
+      const card = p2.locator(".linkCard");
+      await card.waitFor();
+      assertEq(await card.locator(".citePreviewTitle").innerText(), "Video One", "a press shows the link's card");
+      assertEq(await card.locator(".citePreviewPage").innerText(), "Uploader · example.org/video/1", "with its author");
+      assert(!(await source()).includes(video), "the chip stays a chip");
+      await p2.keyboard.press("Escape");
+      await card.waitFor({ state: "detached" });
+      await p2.locator(".blockEditorCm").waitFor();
+
+      await p2.keyboard.press("End");
+      await p2.keyboard.type(" https://example.org/new");
+      assert((await source()).includes("https://example.org/new"), "an address being typed shows as typed");
+      await p2.keyboard.type(" ");
+      await until(async () => same(await chips.allInnerTexts(), ["Video One", "the guide", "example.org"]),
+        { what: "the caret off it, it is a chip" });
+      await p2.keyboard.press("ArrowLeft");
+      assertEq(await chips.count(), 3, "a caret at a chip's edge keeps it");
+      await p2.keyboard.press("ArrowLeft");
+      await until(async () => (await source()).includes("https://example.org/new"), { what: "a caret inside shows its source" });
+      await card.waitFor();
+      await closeEditor(p2);
+      await until(async () => (await content())?.trimEnd() === `trip ${video} and [the guide](https://example.org/guide) end https://example.org/new`,
+        { what: "the typed address saved" });
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
   // Notion's /page: a new page inside this one (a sub-page, with no folders
   // of its own: it is filed where its top is), linked where the command was
   // typed and opened with its title ready.
@@ -2299,6 +2356,103 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await closeEditor(p);
     assertNoProblems(p);
     await ctxO.close();
+  });
+
+  // A table's cells hold what a note's text does, and the table keeps its
+  // shape while they are edited: a picture sized in its cell writes the
+  // size's pipe escaped (a bare one split the row into a third column), a
+  // long address shows whole in the cell's field, which grows down at the
+  // column's width, a picture pasted into the field goes in, math reads
+  // \| as |x|, and the block's editor draws the table as the rendered view.
+  await step("notes: a table's cells take pictures, long links and |x| math, and the table keeps its shape while edited", async () => {
+    const ctxT = await alice2.context(browser);
+    const p = await openPage(ctxT, `${server.base}/?ws=${second.id}`);
+    await p.route("https://icons.duckduckgo.com/**", (route) => route.fulfill({ status: 404, body: "" }));
+    await p.route("**/api/link-preview?**", (route) =>
+      route.fulfill({ json: { url: new URL(route.request().url()).searchParams.get("url"), host: "example.org", title: null, author: null } }));
+    try {
+      const png = async (w, h) => Buffer.from(await p.evaluate(async ([w, h]) => {
+        const canvas = Object.assign(document.createElement("canvas"), { width: w, height: h });
+        canvas.getContext("2d").fillRect(0, 0, w, h);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+        return btoa(String.fromCharCode(...new Uint8Array(await blob.arrayBuffer())));
+      }, [w, h]), "base64");
+      const pic = await alice2.upload("/api/upload-image", await png(160, 120), "cell.png", "image/png");
+      const link = `https://example.org/explore/${"a1b2c3d4".repeat(6)}?xsec_token=${"Z".repeat(60)}&xsec_source=pc_search`;
+      const cellsPage = await alice2.api("/api/pages", { method: "POST", body: { title: "Table cells" } });
+      const block = await alice2.api("/api/blocks", { method: "POST", body: { parent_id: cellsPage.id,
+        content: `intro\n\n| link | picture |\n| --- | --- |\n| ![](${pic.url}) | $\\|x\\|$ |\n| ${link} | |` } });
+      await p.goto(`${server.base}/?ws=${second.id}&page=${cellsPage.id}`);
+      const content = async () => (await alice2.api(`/api/blocks/${cellsPage.id}/subtree`)).block.children[0].content;
+      const cellsOf = (text, has) => text.split("\n").find((l) => l.includes(has)).split(/(?<!\\)\|/).length - 2;
+      const wrap = p.locator(`.blockRowWrap[data-block-id="${block.id}"]`);
+      const table = wrap.locator(".mdObject-table table");
+      const cell = (n) => wrap.locator(".mdObject-table td").nth(n);
+      const field = p.locator(".mdTableCellInput");
+      await p.waitForFunction(() => [...document.querySelectorAll(".mdObject-table img.mdImg")].some((img) => img.complete && img.naturalWidth));
+      const math = await cell(1).locator(".katex-html").textContent();
+      assert(math.includes("x") && !math.includes("∥"), `the cell's $\\|x\\|$ reads |x| (${math})`);
+
+      // The picture's grip sizes it in its cell, its size's pipe escaped.
+      const ib = await cell(0).locator("img.mdImg").boundingBox();
+      await p.mouse.move(ib.x + ib.width / 2, ib.y + ib.height / 2);
+      const gb = await cell(0).locator(".mdResizeGrip.right").boundingBox();
+      await p.mouse.move(gb.x + gb.width / 2, gb.y + gb.height / 2);
+      await p.mouse.down();
+      await p.mouse.move(gb.x - 30, gb.y + gb.height / 2, { steps: 6 });
+      await p.mouse.up();
+      await until(async () => /\| !\[\\\|\d+\]\(\/api\/uploads\//.test(await content()), { what: "the size written as ![\\|N](…) in its cell" });
+      assertEq(cellsOf(await content(), "![\\|"), 2, "the picture's row keeps its two cells");
+
+      // The long address's cell: the field holds it whole, growing right
+      // over the cells beside it to the note's edge, then wrapping and
+      // growing down; the table keeps its width.
+      const width = (await table.boundingBox()).width;
+      const edge = await wrap.locator(".blockRendered").first().evaluate((el) => el.getBoundingClientRect().right);
+      const lb = await cell(2).boundingBox();
+      await cell(2).click({ position: { x: lb.width - 4, y: lb.height / 2 } }); // the row handle lies over its left edge
+      await field.waitFor();
+      assertEq(await field.inputValue(), link, "the field holds the whole address");
+      const fb = await field.boundingBox();
+      assert(fb.width > lb.width && Math.abs(fb.x + fb.width - edge) <= 1 && fb.height > lb.height * 1.8,
+        `the field reaches the note's edge and grows down (${fb.x}+${fb.width}×${fb.height} over ${lb.width}×${lb.height}, edge ${edge})`);
+      assertEq((await table.boundingBox()).width, width, "the table keeps its width while the cell is edited");
+
+      // Tab to the empty cell beside it; a pasted picture goes in at the caret.
+      await p.keyboard.press("Tab");
+      await until(async () => (await field.inputValue()) === "", { what: "Tab moved to the empty cell" });
+      const shot = (await png(40, 30)).toString("base64");
+      await p.evaluate((b64) => {
+        const dt = new DataTransfer();
+        dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], "shot.png", { type: "image/png" }));
+        document.querySelector(".mdTableCellInput")
+          .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      }, shot);
+      await until(async () => /^!\[\]\(\/api\/uploads\/\w+\.png\)$/.test(await field.inputValue()), { what: "the pasted picture's markdown in the field" });
+      await p.keyboard.press("Enter");
+      await field.waitFor({ state: "detached" });
+      await until(async () => { const row = (await content()).split("\n").find((l) => l.includes(link)); return /\| !\[\]\(\/api\/uploads\//.test(row); },
+        { what: "the pasted picture saved in its cell" });
+      assertEq(cellsOf(await content(), link), 2, "the address's row keeps its two cells");
+
+      // The block's editor draws the table as the rendered view: as wide,
+      // the address a chip, the pictures drawn.
+      await p.waitForFunction((id) => [...document.querySelectorAll(`.blockRowWrap[data-block-id="${id}"] img.mdImg`)].every((img) => img.complete), block.id);
+      const rendered = await table.boundingBox();
+      await wrap.locator(".blockRendered > p", { hasText: "intro" }).click();
+      const drawn = wrap.locator(".blockEditorCm .cmTableWidget table");
+      await drawn.waitFor();
+      await p.waitForFunction((id) => [...document.querySelectorAll(`.blockRowWrap[data-block-id="${id}"] .cmTableWidget img`)].every((img) => img.complete), block.id);
+      const db = await drawn.boundingBox();
+      assert(Math.abs(db.width - rendered.width) <= 1 && Math.abs(db.height - rendered.height) <= 1,
+        `the editor's table is the rendered one's size (${db.width}×${db.height} vs ${rendered.width}×${rendered.height})`);
+      assertEq(await wrap.locator(".cmTableWidget .linkChip").count(), 1, "the address is a chip in the editor's table");
+      assertEq(await wrap.locator(".cmTableWidget img.mdImg").count(), 2, "and its pictures are pictures");
+      await closeEditor(p);
+      assertNoProblems(p);
+    } finally {
+      await ctxT.close();
+    }
   });
 
   await step("notes: the object menu's Copy image — a PNG as it is, a JPEG as a PNG, an SVG as itself plus a PNG twice its size", async () => {

@@ -174,6 +174,9 @@ export const PREFS = {
   // one on the strip or a row of its ⋯ menu. Translate hidden is the
   // translate button turned off.
   viewerTools: pref("gamma-viewer-tools", ACCOUNT, VIEWER_TOOLS.DEFAULT, json(VIEWER_TOOLS.normalize)),
+  // The Export button among the page's buttons beside its title (Settings
+  // → Toolbars › Page header): the View menu's Export… for the open page.
+  pageExportButton: flag("gamma-page-export-button", ACCOUNT, true),
   // The colour the released builds' single text highlighter highlights in
   // (#rrggbbaa, "" for the picker's first swatch): what they still write.
   // This build only reads it, to seed the first text highlighter while the

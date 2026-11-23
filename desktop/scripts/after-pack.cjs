@@ -2,6 +2,8 @@
 // packed app needs before its targets are made.
 //
 // macOS: ad-hoc signing without a Developer ID (scripts/adhoc-sign.cjs).
+// The NSIS installer: the app's files fit beneath the longest install folder
+// it accepts (scripts/install-depth.cjs).
 // The Microsoft Store package: "Open with Gamma" on folders is a COM class
 // the package declares (assets/appx-extensions.xml), so its DLL is built
 // (scripts/build-open-with.cjs) and put beside Gamma.exe, where the manifest
@@ -15,10 +17,15 @@ const { Arch } = require('electron-builder');
 const adhocSign = require('./adhoc-sign.cjs');
 const { buildOpenWith } = require('./build-open-with.cjs');
 const { OPEN_WITH } = require('./openwith.cjs');
+const { checkInstallDepth } = require('./install-depth.cjs');
 
 module.exports = async function afterPack(context) {
   await adhocSign(context);
   if (context.electronPlatformName !== 'win32') return;
+  if (context.targets.some((target) => target.name === 'nsis')) {
+    const { deepest, room } = checkInstallDepth(context.appOutDir);
+    console.log(`  • install depth  ${deepest.length} of ${room} characters (${deepest})`);
+  }
   if (!context.targets.some((target) => target.name === 'appx')) return;
   if (context.arch !== Arch.x64) {
     throw new Error(`The Store package's folder verb is built for x64 only, not ${Arch[context.arch]}`);

@@ -21,8 +21,9 @@ Usage:
   python manage.py set-access <workspace-id> <private|public> [viewer|editor]
   python manage.py sweep-guests [--all]            # delete expired guest accounts now (--all: every guest)
   python manage.py set-option <name> <value> ...   # server options of Settings (gamma/server_options.py)
-  python manage.py gdrive-client [--desktop] <id> <secret>  # this server's own Google app for Drive, in place of Gamma's
-  python manage.py gdrive-client [--desktop] --remove       # back to Gamma's
+  python manage.py cloud-client drive [--desktop] <id> <secret>  # this server's own Google app for Drive, in place of Gamma's
+  python manage.py cloud-client onedrive <id>                    # ... its own Microsoft app for OneDrive (no secret)
+  python manage.py cloud-client <drive|onedrive> [--desktop] --remove  # back to Gamma's
   python manage.py setup                           # idempotent: missing personal workspaces + workspace files
   python manage.py migrate [--status] [--dry-run] [--global-only]
                                                    # upgrade the data directory (also runs at server start),
@@ -197,25 +198,33 @@ def sweep_guests(everyone=False):
     print(f"Deleted {len(gone)} guest account(s)" + (f": {', '.join(gone)}" if gone else "."))
 
 
-def gdrive_client(args):
-    """A Google OAuth client of this server's own for Drive backups, in
-    place of Gamma's: the "TVs and Limited Input devices" one a code is
-    asked through, or with ``--desktop`` the "Desktop app" one of Google's
-    page on this computer (drive.file); ``--remove`` goes back to Gamma's.
-    A change of client disconnects Drive."""
-    from gamma import gdrive_account
+def cloud_client(args):
+    """An OAuth client of this server's own for a cloud's backups, in place
+    of Gamma's (gamma/cloud_account.py): ``drive`` takes a Google client's
+    ID and secret, the "TVs and Limited Input devices" one a code is asked
+    through, or with ``--desktop`` the "Desktop app" one of Google's page on
+    this computer; ``onedrive`` a Microsoft public client's ID, no secret,
+    which does both. ``--remove`` goes back to Gamma's. A change of client
+    disconnects that cloud."""
+    from gamma import cloud_account
 
     desktop = "--desktop" in args
     args = [a for a in args if a != "--desktop"]
+    usage = ("Usage: python manage.py cloud-client drive [--desktop] <client-id> <client-secret> | "
+             "cloud-client onedrive <client-id> | cloud-client <cloud> [--desktop] --remove")
+    if not args or args[0] not in cloud_account.ACCOUNTS:
+        print(usage)
+        sys.exit(1)
+    cloud, rest = cloud_account.ACCOUNTS[args[0]], args[1:]
     try:
-        if args == ["--remove"]:
-            gdrive_account.remove_client(desktop=desktop)
-            print("Google Drive uses Gamma's app again.")
-        elif len(args) == 2:
-            gdrive_account.set_client(args[0], args[1], desktop=desktop)
-            print("Google Drive uses this server's own app.")
+        if rest == ["--remove"]:
+            cloud.remove_client(desktop=desktop)
+            print(f"{cloud.name} uses Gamma's app again.")
+        elif 1 <= len(rest) <= 2:
+            cloud.set_client(*rest, desktop=desktop)
+            print(f"{cloud.name} uses this server's own app.")
         else:
-            print("Usage: python manage.py gdrive-client [--desktop] <client-id> <client-secret> | --remove")
+            print(usage)
             sys.exit(1)
     except ValueError as e:
         print(e)
@@ -628,8 +637,8 @@ def main():
         sweep_guests(everyone="--all" in args)
     elif cmd == "set-option":
         set_options(args)
-    elif cmd == "gdrive-client":
-        gdrive_client(args)
+    elif cmd == "cloud-client":
+        cloud_client(args)
     elif cmd == "setup":
         setup()
     else:

@@ -124,7 +124,7 @@ function ScopeTag({ scope, prefs }) {
 // `tone="danger"`: the "Danger zone" of a pane or dialog — a red label and
 // rule over its rows in a red-edged box. Its buttons are `uiBtn sm
 // danger` (red at rest) and each row's hint says what is lost.
-// `tag`: a uiTag after the title (Backups › Bucket's admin tag, a far
+// `tag`: a uiTag after the title (Backups › Backup destinations' admin tag, a far
 // computer's Connected or Offline), so the title stays the section's name.
 export function Section({ title, tag, scope, prefs, action, guide, tone, children }) {
   const danger = tone === "danger";

@@ -18,6 +18,24 @@ update-feed files (`latest.yml` / `latest-mac.yml` / `latest-linux.yml`,
 `*.blockmap`), see *Auto-update* below. Each OS builds its own installer
 (no cross-building: the frozen backend is platform-specific).
 
+The Windows installer lets the person choose the install folder, and holds
+its path to 120 characters (`GAMMA_INSTDIR_MAX` in `assets/installer.nsh`,
+counting the `\Gamma` electron-builder adds to a folder that does not name
+it). Windows reaches no path longer than 259 characters while long paths
+are off, as they are by default, and the frozen server's deepest files sit
+about 120 characters below the folder (botocore's endpoint rules; the
+native modules, Tesseract's libraries and pydantic_core's extension, a
+little less). In a deeper folder such files are out of reach, whether or
+not the installer manages to write them; pydantic_core's is the first the
+server needs at startup, and a server without it stops with the card *This
+copy of Gamma is missing one of its files* (`lib/startup.js`). Past the limit the directory
+page turns Next off and its top text says why, in Chinese for a Simplified
+Chinese install and in English otherwise; an update or a silent install
+(`/D=`) keeps the folder it is given. `afterPack` measures the packed app
+(`scripts/install-depth.cjs`) and fails an NSIS build whose deepest file
+would not fit beneath a folder of that length, so the limit stays true as
+dependencies change.
+
 Linux is a Debian/Ubuntu `.deb` for x64 (`linux` + `deb` blocks): it
 installs to `/opt/Gamma` with the binary `gamma` (also symlinked into
 `/usr/bin`; `executableName` in the config — the default would have been

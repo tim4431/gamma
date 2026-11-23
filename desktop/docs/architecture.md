@@ -1934,8 +1934,13 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
 - `lib/startup.js` — why a sidecar would not start: the per-run tail of its
   log (the file is appended to across runs) and a rule table turning the
   server's last words into one sentence, the matched line, and the `action`
-  the launcher offers as a button; also the wording for a URL that would not
-  load, by what the shell knows of its server, and a certificate's card.
+  the launcher offers as a button. A module the packaged app's frozen
+  server cannot import is a file missing from that copy (an antivirus's
+  quarantine, an update cut short, or on Windows an install folder deep
+  enough to put a file past 260 characters), so its card says to install
+  again through whatever installed it rather than to install a package;
+  also the wording for a URL that would not load, by what the shell knows
+  of its server, and a certificate's card.
   No Electron, unit tested by `test/startup.test.js`.
 - `lib/updater.js` — the electron-updater wrapper described above.
 - `lib/shellSecurity.js` — which page in which view the `gammaShell` bridge
@@ -2023,8 +2028,10 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   namespaces.
   `scripts/after-pack.cjs` — its `afterPack` hook: `scripts/adhoc-sign.cjs`
   ad-hoc signs a macOS build made without a certificate
-  ([release.md](release.md)), and the Store package gets the folder verb's
-  DLL.
+  ([release.md](release.md)), an NSIS build checks that the app fits
+  beneath the installer's longest install folder
+  (`scripts/install-depth.cjs`, [release.md](release.md#package-locally)),
+  and the Store package gets the folder verb's DLL.
 - `native/open-with/` — the Store package's folder verb: `open_with.cpp`
   (the `IExplorerCommand` DLL, "Opening files and folders"), `verb.h`
   (generated), and `test/`, the harness that drives it (`invoke.cpp`) and

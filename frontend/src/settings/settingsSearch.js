@@ -14,7 +14,7 @@ import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 // workspace's Manage page or a row's menu — the `target` that is on the pane
 // itself. tests/settingsSearch.test.mjs checks every target against its
 // pane's source. An admin-only section of a pane everyone has (Backups ›
-// Bucket) is wrapped in `admin()`, a setting shown only under a
+// Backup destinations) is wrapped in `admin()`, a setting shown only under a
 // native host with a capability (Handwriting › the pen section, in
 // the iPad and Android apps) in `hostOnly(flags, entry)`, a flag or the list
 // of flags its row is shown under: the host's own, or those hostCaps
@@ -51,6 +51,8 @@ const entries = [
     `topbar top bar header toolbar button show hide order reorder arrange drag move${item.places ? " pane split side by side" : ""} ${item.keywords}`)),
   ...VIEWER_TOOL_ITEMS.map((item) => e("toolbars", t(item.label), t("Viewer tools"), t(item.hint),
     `viewer tools strip side toolbar PDF notebook button show hide order reorder arrange drag move ${item.keywords}`)),
+  e("toolbars", t("Export button"), t("Page header"), t("A button beside the page's title that opens Export…"),
+    "export download page header title button show hide annotated PDF markdown"),
   e("diagnostics", t("Suggest tours"), t("Tours"), t("A short tour the first time a feature comes up."), "guide onboarding hints help"),
   e("reading", t("Imported annotations"), t("PDFs"), t("Annotations saved inside a PDF become highlights"), "hide strip keep remove originals highlights PDF"),
   e("reading", t("Page direction"), t("PDFs"), t("Pages one under another, or side by side"), "page direction horizontal vertical scroll scrolling across down side by side layout spread book flip PDF"),
@@ -169,9 +171,11 @@ const entries = [
   e("backups", t("Backups"), null, t("Server-kept snapshots and the tasks that take them."), "snapshot backup"),
   e("backups", t("Periodic backup tasks"), null, t("Hourly, daily, weekly or monthly snapshots"), "automatic scheduled tasks hourly daily weekly monthly cron retention schedule"),
   e("backups", t("Restore a backup"), t("Saved snapshots"), t("A snapshot's Restore menu: replace or merge"), "restore replace merge snapshot roll back download", t("Saved snapshots")),
-  admin(e("backups", t("Bucket"), null, t("AWS S3, Cloudflare R2, MinIO or another S3-compatible store, for backup tasks to copy their snapshots to"), "administration offsite off-site backup bucket S3 R2 Cloudflare AWS MinIO cloud remote storage replicate disaster recovery")),
-  admin(e("backups", t("Cloud copies"), null, t("What the bucket and Google Drive hold, and the workspaces only the cloud has"), "administration restore cloud bucket drive copies lost disk disaster recovery fetch bring back download browse")),
-  admin(e("backups", t("Google Drive"), null, t("A folder in your Google Drive, for backup tasks to copy their snapshots to"), "administration offsite off-site backup google drive gdrive cloud remote storage sign in connect account oauth disaster recovery")),
+  admin(e("backups", t("Backup destinations"), null, t("Places off this server that backup tasks can copy their snapshots to. Set up one or more, then choose them in a task."), "administration offsite off-site backup destination cloud remote storage copy elsewhere disaster recovery")),
+  admin(e("backups", t("Google Drive"), t("Backup destinations"), t("A folder of a Google account's Drive"), "administration offsite off-site backup google drive gdrive cloud remote storage sign in connect account oauth disaster recovery")),
+  admin(e("backups", t("OneDrive"), t("Backup destinations"), t("A folder of a Microsoft account's OneDrive, personal or work"), "administration offsite off-site backup microsoft onedrive one drive office 365 sharepoint cloud remote storage sign in connect account oauth disaster recovery")),
+  admin(e("backups", t("Bucket"), t("Backup destinations"), t("AWS S3, Cloudflare R2, MinIO or another S3-compatible store"), "administration offsite off-site backup bucket S3 R2 Cloudflare AWS MinIO backblaze B2 cloud remote storage replicate disaster recovery")),
+  admin(e("backups", t("Cloud copies"), null, t("What the backup destinations hold, and the workspaces only the cloud has"), "administration restore cloud bucket drive onedrive copies lost disk disaster recovery fetch bring back download browse")),
   e("maintenance", t("Library maintenance"), null, t("Storage, search index and metadata health"), "metadata health text index rebuild papers"),
   e("maintenance", t("Uploaded files"), t("Storage"), t("PDFs and images on the server"), "storage quota uploads space used disk"),
   e("users", t("Users"), null, t("Accounts, storage limits, sign-in, guests and reports"), "administration accounts limits personal workspaces"),

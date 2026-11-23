@@ -28,6 +28,7 @@ import { chordLabel, composing } from "../shared/lib/hotkeys.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { sendsOnEnter } from "../chat/enterKey.js";
 import { BlockCmEditor } from "../editor/BlockCmEditor";
+import { renderNoteTable } from "../editor/BlockTree";
 import { LatexAcPopup, MathLivePreview } from "../editor/LatexEditor";
 import { MentionContext, MentionMenuPopup } from "../editor/MentionMenu";
 import { RefPickerPopup } from "../editor/RefPicker";
@@ -228,6 +229,7 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
           placeholder={fieldLabel}
           ariaLabel={fieldLabel}
           refLabels={labelsFor ? labelsFor(text) : NO_LABELS}
+          renderTable={renderNoteTable}
           mentions={mentions}
           onChange={(e) => {
             if (ticks && !wrote) {
