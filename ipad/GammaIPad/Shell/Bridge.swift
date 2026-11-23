@@ -53,6 +53,22 @@ struct HostInfo: Encodable, Equatable {
 
     static var current: HostInfo {
         HostInfo(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0")
+            .with(.current)
+    }
+
+    /// Without what a piece that is off would do (NativePieces): the page
+    /// then claims no stroke, or offers no Pencil gesture's setting.
+    func with(_ pieces: NativePieces) -> HostInfo {
+        var info = self
+        if !pieces.pencilCapture {
+            info.ink = false
+            info.hold = false
+        }
+        if !pieces.pencilGestures {
+            info.pencil = false
+            info.pencilPhases = false
+        }
+        return info
     }
 
     /// The document-start script. `receive` is a stub that queues whatever

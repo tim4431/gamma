@@ -177,8 +177,11 @@ final class ShellController: UIViewController {
         ])
         capture.surface = shell.webView
         gestures.surface = shell.webView
-        container.addGestureRecognizer(capture)
-        container.addInteraction(gestures.interaction)
+        if NativePieces.current.pencilCapture { container.addGestureRecognizer(capture) }
+        #if DEBUG && targetEnvironment(simulator)
+        PencilStandIn.link(shell.webView, to: capture)
+        #endif
+        if NativePieces.current.pencilGestures { container.addInteraction(gestures.interaction) }
         view = container
     }
 
