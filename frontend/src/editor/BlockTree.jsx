@@ -44,7 +44,7 @@ import { DiagramFigure, diagramCodeProps } from "../shared/ui/DiagramFigure";
 import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidth } from "../shared/lib/diagramMarkdown.js";
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
-import { blockSpans, mathTex, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
+import { blockSpans, mathTex, parseTable, protectedSpans, scanMathSpans, scanTables, tableMathPipes } from "./mdScan";
 import { diffMarkdown, rehypeDiffMarks } from "./mdDiff.js";
 import { NoteReviewBar } from "./NoteReviewBar";
 import { useNoteAsk, useNoteChange } from "../chat/noteReview.js";
@@ -124,6 +124,7 @@ function mdPreprocess(content, nested) {
 }
 
 function mdPreprocessProse(content, nested) {
+  content = tableMathPipes(content);
   // The editor centres every $$…$$ on its own row (cmMathDisplay); remark-math
   // only does that when the fences sit alone on their lines (same-line content
   // becomes "meta" and is dropped — raw source in the rendered view). So a
@@ -365,6 +366,7 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
             className="blockEditor blockEditorCm"
             value={draft}
             refLabels={refLabels}
+            renderTable={renderNoteTable}
             onChange={(e) => { setDraft(e.target.value); updateMathUi(e.target, true); }}
             onSelect={(e) => updateMathUi(e.target, false)}
             onBlur={save}
@@ -460,6 +462,14 @@ const DIFF_REHYPE = [rehypeRaw, rehypeNoteSanitize, rehypeDiffMarks, rehypeKatex
 // hrefs without the API header. The link card's edits find a rendered
 // link's source by it (linkEdit.js linkKey).
 export const noteUrl = (url) => (/^(blockref|blockembed|unlinked|mention):/.test(url) ? url : assetUrl(defaultUrlTransform(url)));
+
+// A table as the rendered view draws it, read-only: what the block editor's
+// table widget shows (BlockCmEditor's `renderTable`), so a table keeps its
+// look, width and height when the editor opens. A click on a cell is the
+// editor's, which hands it to the rendered table's field.
+export const renderNoteTable = (source, refLabels) => (
+  <div className="blockRendered"><BlockMarkdown content={source} blockId="" refLabels={refLabels} /></div>
+);
 
 // `onLinkEdit(key, n, change)`: the nth link of `key` (linkEdit.js linkKey)
 // changed through its link card (linkEdit.js applyLinkChange's `change`);
@@ -1809,6 +1819,7 @@ const BlockRow = React.memo(function BlockRow({
               // and the rendered table opens on that cell (BlockMarkdown's
               // editKey).
               onTableCell={(idx, cell) => openTableCell(`${block.id}:${idx}`, cell)}
+              renderTable={renderNoteTable}
               value={block.content || ""}
               onChange={(e) => {
                 onChangeText(block.id, e.target.value, e.selectionBefore);

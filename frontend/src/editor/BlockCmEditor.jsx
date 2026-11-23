@@ -6,6 +6,7 @@
 // moving the caret into it (arrow keys, or clicking the rendered chip)
 // expands it back to source.
 import React, { useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Annotation, Compartment, EditorState, Prec, StateEffect, StateField, Transaction } from "@codemirror/state";
 import {
   Decoration, EditorView, WidgetType, keymap,
@@ -21,7 +22,7 @@ import { highlightCode, makeCopyButton } from "./codeHighlight";
 import { codeMarksAt, codePaste, fenceInnerAt, scanFences } from "./fences.js";
 import { codeFences } from "../shared/lib/mdCode.js";
 import { scanImageSyntax, scanMarks } from "./mdMarks";
-import { mathTex, parseTable, protectedSpans, scanImages, scanMathSpans, scanTables } from "./mdScan";
+import { mathTex, protectedSpans, scanImages, scanMathSpans, scanTables } from "./mdScan";
 import { NO_MENTIONS, mentionChip, mentionChipClass, proseMentions } from "./mentions.js";
 import { CHIP_RE, refTargetTitle, refWords } from "./refLabels.js";
 import { applyLinkChange, linkMarkdown, linkSpanAt, linkSpans, pastedLink, spanWords, tablePipe } from "./linkEdit.js";
@@ -363,12 +364,16 @@ class ImageWidget extends WidgetType {
   }
 }
 
-// A GFM table as a plain read-only table (cells as their raw text), the same
-// object rules as the picture: it stays a table while the caret steps past
-// it, a right-click or a held finger shows the source, and it can be dragged
-// to another block.
+// A GFM table as the rendered view draws it — its links chips, its pictures
+// and math drawn — so opening the editor changes neither its width nor its
+// height: the editor mounts the owner's `renderTable` into the box as a
+// portal (BlockCmEditor's tables), which reads the app's contexts as the
+// rendered view does. The same object rules as the picture: it stays a
+// table while the caret steps past it, a right-click or a held finger shows
+// the source, and it can be dragged to another block.
 // Cells are edited in the rendered view, never as raw text (mdTools): in a
 // note row a click on one closes the editor onto it (objectWidget).
+const tableResizes = new WeakMap(); // box → its ResizeObserver
 class TableWidget extends WidgetType {
   constructor(source, idx, ctx) {
     super();
@@ -380,28 +385,16 @@ class TableWidget extends WidgetType {
   toDOM(view) {
     const box = document.createElement("div");
     box.className = "cmTableWidget";
-    const model = parseTable(this.source);
-    const table = document.createElement("table");
-    const cell = (tag, text, c) => {
-      const td = document.createElement(tag);
-      td.textContent = (text || "").replace(/\\\|/g, "|");
-      if (model.aligns[c]) td.style.textAlign = model.aligns[c];
-      return td;
-    };
-    const thead = document.createElement("thead");
-    const hr = document.createElement("tr");
-    model.header.forEach((h, c) => hr.appendChild(cell("th", h, c)));
-    thead.appendChild(hr);
-    table.appendChild(thead);
-    const tbody = document.createElement("tbody");
-    for (const row of model.body) {
-      const tr = document.createElement("tr");
-      model.header.forEach((_, c) => tr.appendChild(cell("td", row[c], c)));
-      tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    box.appendChild(table);
+    this.ctx.mountTable(box, this.source);
+    // The line grows as the portal draws the table and its pictures arrive.
+    const resize = new ResizeObserver(() => view.requestMeasure());
+    resize.observe(box);
+    tableResizes.set(box, resize);
     return objectWidget(view, box, { kind: "table", idx: this.idx, length: this.source.length, ctx: this.ctx });
+  }
+  destroy(box) {
+    tableResizes.get(box)?.disconnect();
+    this.ctx.unmountTable(box);
   }
   ignoreEvent() { return true; }
 }
@@ -1145,11 +1138,14 @@ const noteCopy = (view) => sourceCopied(copiedText(view.state),
 // drawn where its text was, in the same type (a text box's). `ownHistory`:
 // the editor keeps its own undo history (a comment's field, whose text is
 // no block), and `ariaLabel` names its text box; both are read when it
-// mounts, as `placeholder` is.
+// mounts, as `placeholder` is. `renderTable(source, refLabels)`: a table as
+// the rendered view draws it (BlockTree's renderNoteTable), which the
+// editor's table widgets show.
+let tableKeys = 0;
 const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   value, onChange, onSelect, onKeyDown, onBlur, onPaste, onUndo, ownHistory = false, ariaLabel,
   placeholder, autoFocus, clickPos, pinScroll = false, dataBlockId, className, refLabels, mentions, remoteCursors,
-  onObjectDrag, onObjectDragOver, onObjectDrop, onTableCell,
+  onObjectDrag, onObjectDragOver, onObjectDrop, onTableCell, renderTable,
 }, forwardedRef) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
@@ -1162,6 +1158,10 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   decoCtx.objectDrag = onObjectDrag;
   decoCtx.tableCell = onTableCell;
   decoCtx.linkCtx = useContext(LinkCardContext);
+  // The boxes the table widgets drew, each showing its table as a portal.
+  const [tables, setTables] = useState([]); // [{box, source, key}]
+  decoCtx.mountTable = (box, source) => setTables((ts) => [...ts, { box, source, key: (tableKeys += 1) }]);
+  decoCtx.unmountTable = (box) => setTables((ts) => ts.filter((tb) => tb.box !== box));
   const chipCompartment = useRef(new Compartment()).current;
   // An own history in a compartment, so that a text replaced from outside
   // starts it afresh (see the sync below).
@@ -1510,6 +1510,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         data-block-id={dataBlockId}
         data-guide="notes.editor"
       />
+      {tables.map(({ box, source, key }) => createPortal(renderTable(source, refLabels), box, key))}
       {linkCard && viewRef.current ? (
         <EditorLinkCard view={viewRef.current} card={linkCard} labels={refLabels} blockId={dataBlockId}
           onEditing={(field) => {

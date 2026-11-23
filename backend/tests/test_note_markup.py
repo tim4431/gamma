@@ -58,12 +58,15 @@ def test_logseq_image_sizes_become_the_alts():
     assert obsidian_image_sizes(code) == code.replace("![c](u){:width 5}", "![c|5](u)")
     assert obsidian_image_sizes("![a](u) {:width 3}") == "![a](u) {:width 3}"
     assert obsidian_image_sizes(None) == ""
+    # On a table's row the size's pipe is escaped: a bare one splits the cell.
+    assert obsidian_image_sizes("| ![c](u){:width 120} | x |") == "| ![c\\|120](u) | x |"
 
 
 def test_an_images_alt_and_width():
     assert alt_and_width("fig|300") == ("fig", "300")
     assert alt_and_width("fig|300x200", None) == ("fig", "300")
     assert alt_and_width("fig|300", "120") == ("fig", "120")
+    assert alt_and_width("fig\\|300") == ("fig", "300")
     assert alt_and_width("a|b") == ("a|b", None)
     assert alt_and_width("", "90") == ("", "90")
 

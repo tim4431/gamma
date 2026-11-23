@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   expandBlankLines, insertLink, isUrl, markedAt, scanImageSyntax, scanMarks, sizedImagesHtml, toggleMark,
 } from "../src/editor/mdMarks.js";
+import { tableMathPipes } from "../src/editor/mdScan.js";
 import { BLOCK_COMMANDS } from "../src/editor/blockCommands.js";
 
 // Apply {from, to, insert} changes addressed to the original text.
@@ -145,4 +146,11 @@ test("images are read with either size, and the rendered view sizes the ones the
   assert.equal(sizedImagesHtml("![e|80](/u/e.png){:width 160}"), '<img src="/u/e.png" alt="e" width="160" />');
   assert.equal(sizedImagesHtml("![[embed1]] and ![|120](/u/f.png)"),
     '![[embed1]] and <img src="/u/f.png" alt="" width="120" />');
+  // In a table's cell the size's pipe is escaped, as a bare one splits the cell.
+  assert.equal(sizedImagesHtml("| ![g\\|150](/u/g.png) | x |"), '| <img src="/u/g.png" alt="g" width="150" /> | x |');
+});
+
+test("math on a table's row reads an escaped pipe as the pipe; elsewhere it stays KaTeX's double bar", () => {
+  const table = "| a | b |\n| --- | --- |\n| $\\|x\\|$ | `c\\|d` |";
+  assert.equal(tableMathPipes(`${table}\n\n$\\|v\\|$`), "| a | b |\n| --- | --- |\n| $\\vert x\\vert $ | `c\\|d` |\n\n$\\|v\\|$");
 });

@@ -1016,6 +1016,21 @@ def test_a_links_alias_or_label_is_the_mentions_words(guest):
     assert not report["warnings"]
 
 
+def test_a_pictures_size_is_its_alts_in_a_cell_too(guest):
+    """``![[pic.png|300]]`` is ``![|300](url)``, and in a table's cell, where
+    Obsidian escapes the pipe, ``![\\|120](url)``: a bare pipe would split
+    the cell in two."""
+    report = _import(guest, _zip({
+        "SizeVault/.obsidian/app.json": "{}",
+        "SizeVault/Sized.md": "![[pic.png|300]]\n\n| a | b |\n| --- | --- |\n| ![[pic.png\\|120]] | x |\n",
+        "SizeVault/pic.png": PNG + b"sized",
+    }))
+    text = "\n".join(c["content"] for c in _subtree(guest, report["pages"][0]["id"])["children"])
+    assert "![|300](/api/uploads/" in text, text
+    row = next(line for line in text.split("\n") if "x" in line)
+    assert row.startswith("| ![\\|120](/api/uploads/") and row.count(" | ") == 1, row
+
+
 def test_a_flat_export_with_a_file_of_no_id(guest):
     """A hand-added file beside a flat export is no page of it: a whole-line
     link to it is a link, not a crash."""

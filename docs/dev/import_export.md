@@ -808,7 +808,9 @@ The rest of this section holds for every dialect unless it says otherwise:
   it is a warning and the link stays as typed) and points at
   `/api/uploads/…`; `![[img.png|300]]` / `|300x200` becomes the editor's
   `![|300](url)` size form, other pipe text the alt, and a Logseq graph's
-  `![alt](../assets/x.png){:width 300}` comes in as `![alt|300](url)`. A CSV that is no table
+  `![alt](../assets/x.png){:width 300}` comes in as `![alt|300](url)`; on
+  a table's row either is written `![\|300](url)`, as Obsidian escapes it
+  there (`note_markup.table_pipe`: a bare pipe would split the cell). A CSV that is no table
   page is such a file; one no new note links is left out with a warning
   once the pages are written, and a zip holding no note and no table page is
   a 400. Links that resolve to

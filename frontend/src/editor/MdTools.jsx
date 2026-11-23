@@ -6,8 +6,10 @@
 // a text transform on the block's markdown source — scanImages / scanTables
 // (mdScan.js) locate the nth rendered construct so the components can
 // address "their" source range without a position map from the renderer.
-import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { parseTable, scanImages, scanTables, serializeTable } from "./mdScan";
+import { tablePipe } from "./linkEdit.js";
+import { uploadFilesAsLines } from "../transfers/FileChip";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { ObjectMenuButton, useObjectMenu } from "./MdObject";
 import { doublePress, DRAG_MIN } from "../shared/ui/press.js";
@@ -33,10 +35,12 @@ import {
 export function applyImageEdit(content, idx, action, payload) {
   const im = scanImages(content)[idx];
   if (!im) return null;
-  // Edits write the Obsidian form (`![alt|300](url)`). A Logseq
-  // `{:width N}` after the image is inside its range, so it goes too.
+  // Edits write the Obsidian form (`![alt|300](url)`, `![alt\|300](url)` in
+  // a table's cell). A Logseq `{:width N}` after the image is inside its
+  // range, so it goes too.
+  const pipe = tablePipe(content, im.from);
   const rebuild = (alt, width) =>
-    `![${alt}${width ? `|${width}` : ""}](${im.url})`;
+    `![${alt}${width ? `${pipe}${width}` : ""}](${im.url})`;
   if (action === "width") {
     const w = Math.round(Number(payload) || 0);
     return content.slice(0, im.from) + rebuild(im.alt, w) + content.slice(im.to);
@@ -271,6 +275,14 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
 
 // --------------------------------------------------------------- MdTableWrap
 
+// The width `text` takes on one line in the font of a computed style.
+let measureCtx = null;
+function textWidth(text, cs) {
+  measureCtx ||= document.createElement("canvas").getContext("2d");
+  measureCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  return measureCtx.measureText(text).width;
+}
+
 // Wrapper around every rendered table: a horizontal scroller, and with onEdit
 // the Notion-style controls — "+" strips on the right/bottom edges, small
 // handles above the hovered or touched column / left of its row opening a menu
@@ -345,13 +357,17 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
     const raw = row === 0 ? model.header[col] : model.body[row - 1]?.[col];
     return (raw || "").replace(/\\\|/g, "|");
   };
+  // Where the field goes: over the cell, and `room` the width from the
+  // cell's left edge to the right of the column the table lays out in.
   const measureCell = (row, col) => {
     const wrap = wrapRef.current;
     const cell = wrap?.querySelector("table")?.rows[row]?.cells[col];
     if (!cell || !wrap) return null;
     const wr = wrap.getBoundingClientRect();
     const cr = cell.getBoundingClientRect();
-    return { left: cr.left - wr.left, top: cr.top - wr.top, width: cr.width, height: cr.height };
+    const column = (wrap.closest(".mdObject") || wrap).parentElement;
+    const room = (column?.getBoundingClientRect().right ?? wr.right) - cr.left;
+    return { left: cr.left - wr.left, top: cr.top - wr.top, width: cr.width, height: cr.height, room };
   };
   const openCell = (row, col) => {
     const rect = measureCell(row, col);
@@ -388,6 +404,38 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
   // as a newly mounted one does (onFocus), so every cell opens alike.
   const cellInput = useRef(null);
   useEffect(() => { cellInput.current?.select(); }, [cellEdit?.row, cellEdit?.col]);
+  // The field is the cell while its text fits, then grows right with it, up
+  // to the edge of the note's column (`room`), past which the text wraps and
+  // the field grows down over the rows below: a long address or a picture's
+  // source shows whole and the table keeps its shape. A caret asked for (a
+  // paste's) goes after what came in.
+  useLayoutEffect(() => {
+    const el = cellInput.current;
+    if (!el) return;
+    const { width, room } = cellEdit.rect;
+    const cs = getComputedStyle(el);
+    const chrome = el.offsetWidth - el.clientWidth + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const line = Math.ceil(textWidth(cellEdit.text, cs)) + chrome + 1;
+    el.style.width = `${Math.max(width, Math.min(line, room))}px`;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+    if (cellEdit.caret != null) el.setSelectionRange(cellEdit.caret, cellEdit.caret);
+  }, [cellEdit?.text, cellEdit?.row, cellEdit?.col, cellEdit?.caret]);
+  // A picture (or any file) pasted into the field is uploaded and goes in at
+  // the caret as its markdown, as a paste in the note's editor brings one;
+  // the field moved on or closed by then, it is left out.
+  const pasteFiles = async (e) => {
+    const files = Array.from(e.clipboardData?.files || []);
+    if (!files.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const { selectionStart: a, selectionEnd: b } = e.currentTarget;
+    const { row, col } = cellEdit;
+    const md = (await uploadFilesAsLines(files)).join(" ");
+    if (!md) return;
+    setCellEdit((ce) => (ce && ce.row === row && ce.col === col
+      ? { ...ce, text: ce.text.slice(0, a) + md + ce.text.slice(b), caret: a + md.length } : ce));
+  };
   // Commit the open cell; `next` = cell to reopen after the rewrite (Tab).
   const commitCell = (next) => {
     const ce = cellEdit;
@@ -569,16 +617,15 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
         <table>{children}</table>
       </div>
       {cellEdit ? (
-        <input
+        <textarea
           ref={cellInput}
           className="mdTableCellInput"
-          style={{
-            left: cellEdit.rect.left, top: cellEdit.rect.top,
-            width: cellEdit.rect.width, height: cellEdit.rect.height,
-          }}
+          rows={1}
+          style={{ left: cellEdit.rect.left, top: cellEdit.rect.top, minHeight: cellEdit.rect.height }}
           autoFocus
           value={cellEdit.text}
-          onChange={(e) => setCellEdit({ ...cellEdit, text: e.target.value })}
+          onChange={(e) => setCellEdit({ ...cellEdit, text: e.target.value, caret: null })}
+          onPaste={pasteFiles}
           onFocus={(e) => e.target.select()}
           onMouseDown={stop}
           onClick={stop}
