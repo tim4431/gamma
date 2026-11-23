@@ -188,8 +188,9 @@ path link its own.
 - **What it says** (`describeLink`): a bold title (the page's title, the
   page a note is on, the site's title from `/api/link-preview`, the cited
   paper), a muted line (what and where: "Page · Physics", "Note", the
-  address shortened, "PDF page 3"), the note's text or the citation's quote,
-  and "Open page ↵", "Open note ↵", "Open link ↗" or "Open in PDF ↵".
+  author and the address shortened, "PDF page 3"), the note's text or the
+  citation's quote, and "Open page ↵", "Open note ↵", "Open link ↗" or
+  "Open in PDF ↵".
 - **Where the note may be edited**, three quiet buttons follow it: Edit
   (✎), Copy link and Remove link. Copy link copies the page's own link for a
   page or note link, the address otherwise.
@@ -217,6 +218,29 @@ path link its own.
   caret is on, or on the selected words for a new link, the cursor in Link
   (`linkCardHost.js`). The form's fields take the focus without ending the
   editing session; a press outside both ends both.
+- **A web link's chip.** In the rendered view and the note editor alike, a
+  web link is a chip (BlockTree.jsx `LinkChip`, BlockCmEditor.jsx
+  `LinkChipWidget`): the site's icon and `webLinkLabel`'s words, a
+  Markdown link's own, else GitHub's readable name, the site's title or
+  the host. The editor shows a link's source only while an end of the
+  selection stands inside it (the arrow keys step in) or while it is being
+  typed: typed or deleted in, it stays source until the caret leaves it
+  (`typedLink`). One the note opened with, the card wrote or a paste put
+  there is a chip from the start, and a caret at its edge keeps it. A press
+  on the editor's chip puts the caret after it and shows its card, pinned;
+  with Ctrl or Cmd it opens the link. The address is its hover title.
+- **The site's title** (`/api/link-preview`, backend
+  `gamma/link_preview.py`, asked once per address by `loadSitePreview`):
+  YouTube, X, Reddit, TikTok, Vimeo and Spotify answer through their
+  oEmbed endpoints (an X post's text is its title); any other page is
+  fetched with a browser's headers in the reader's language, and its head
+  read: `og:title`, else `twitter:title`, else `<title>`, with the site's
+  name cut from either end ("…_哔哩哔哩_bilibili", "GitHub - …"), and its
+  `author`. A page that is not the one asked for (an HTTP error, a
+  redirect to a sign-in, visitor, check or 404 page or to the home page)
+  and a title that is only the site's name or an error's give none, and
+  the chip shows the host. What each platform answers a server:
+  [research/link-previews.md](../research/link-previews.md).
 - **Which link a rendered card edits.** The rendered view knows a link by
   its target only, so BlockMarkdown counts its links per target as it
   renders them, and the nth link of a target is the nth of the source's

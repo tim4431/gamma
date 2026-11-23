@@ -51,27 +51,78 @@ export function useLinkCardValue(values) {
 
 // --- a web page's title --------------------------------------------------------
 
-// GET /api/link-preview's title of an address, once per address ("" for
-// none): a bare link's chip label and its card's title.
-const siteTitles = new Map();
-export function useSiteTitle(href, enabled = true) {
-  const [title, setTitle] = useState(() => siteTitles.get(href) || "");
+// GET /api/link-preview's {title, author} of an address (backend
+// gamma/link_preview.py), asked once per address: a bare link's chip label,
+// its card's title and the author on its card's muted line. `sitePreview`
+// is what is known now (null before the answer), `loadSitePreview` the
+// answer ({} for none), `useSitePreview` both for a component.
+const NO_PREVIEW = Object.freeze({});
+const sitePreviews = new Map();   // href → {title, author} | Promise
+const isWeb = (href) => /^https?:\/\//i.test(href || "");
+export function sitePreview(href) {
+  const p = sitePreviews.get(href);
+  return p && !(p instanceof Promise) ? p : null;
+}
+export function loadSitePreview(href) {
+  if (!isWeb(href)) return Promise.resolve(NO_PREVIEW);
+  const known = sitePreviews.get(href);
+  if (known) return known instanceof Promise ? known : Promise.resolve(known);
+  const asked = fetch(`/api/link-preview?url=${encodeURIComponent(href)}`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => (d?.title ? { title: d.title, author: d.author || "" } : NO_PREVIEW))
+    .catch(() => NO_PREVIEW)
+    .then((p) => { sitePreviews.set(href, p); return p; });
+  sitePreviews.set(href, asked);
+  return asked;
+}
+export function useSitePreview(href, enabled = true) {
+  const [preview, setPreview] = useState(() => sitePreview(href) || NO_PREVIEW);
   useEffect(() => {
-    if (!enabled || !/^https?:\/\//i.test(href || "") || siteTitles.has(href)) return undefined;
+    if (!enabled || !isWeb(href)) return undefined;
     let dead = false;
-    fetch(`/api/link-preview?url=${encodeURIComponent(href)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        siteTitles.set(href, d?.title || "");
-        if (!dead && d?.title) setTitle(d.title);
-      })
-      .catch(() => {});
+    loadSitePreview(href).then((p) => { if (!dead) setPreview(p); });
     return () => { dead = true; };
   }, [href, enabled]);
-  return title || siteTitles.get(href) || "";
+  return sitePreview(href) || preview;
 }
 
 const hostOf = (href) => { try { return new URL(href).hostname.replace(/^www\./, ""); } catch { return ""; } };
+
+// GitHub addresses read without a fetch: owner/repo, #issue or PR, the file
+// a blob or tree link points at.
+function githubLabel(href) {
+  try {
+    const u = new URL(href);
+    if (!/(^|\.)github\.com$/i.test(u.hostname)) return "";
+    const p = u.pathname.split("/").filter(Boolean);
+    if (p.length === 0) return t("GitHub");
+    if (p.length === 1) return p[0];
+    const repo = `${p[0]}/${p[1]}`;
+    if (["issues", "pull", "discussions"].includes(p[2]) && p[3]) return `${repo} #${p[3]}`;
+    if (["blob", "tree"].includes(p[2]) && p.length > 3) return `${repo} · ${p[p.length - 1]}`;
+    if (p[2] === "releases") return `${repo} · releases`;
+    if (p[2] === "commit" && p[3]) return `${repo} @ ${p[3].slice(0, 7)}`;
+    return repo;
+  } catch { return ""; }
+}
+
+// Whether a web link's words are only its address (a bare link, or link
+// text that is itself an address): its chip then shows what it points to.
+export const bareLinkText = (text) => !String(text || "").trim() || /^(https?:\/\/|www\.)/i.test(String(text).trim());
+// What a web link's chip says, in the rendered view and the editor alike:
+// its own words, else GitHub's readable name, the site's title (`title`,
+// sitePreview's) or the host. `fetches`: whether the site's title would
+// change it (it has no words, and is no GitHub link).
+export function webLinkLabel(href, text, title) {
+  if (!bareLinkText(text)) return { label: text, fetches: false };
+  const gh = githubLabel(href);
+  return { label: gh || title || hostOf(href) || text || href, fetches: !gh };
+}
+// The site's icon a web link's chip shows ("" for an address with no host).
+export function siteIconUrl(href) {
+  const host = hostOf(href);
+  return host ? `https://icons.duckduckgo.com/ip3/${host}.ico` : "";
+}
 // An address as one muted line: host and path, no scheme, cut in the middle.
 function shortUrl(href) {
   const s = String(href || "").replace(/^https?:\/\/(www\.)?/i, "").replace(/\/$/, "");
@@ -85,8 +136,9 @@ const firstLine = (text) => plainSnippet(String(text || "").split("\n")[0]);
 // card shows it: {title, sub, quote, open: {label, external, run(e)} | null,
 // copy: an absolute address}, and `target`, its Link field's token
 // ({kind: "block", id, title, page} | {kind: "url", url, title}). `labels`
-// (a block's [[ref]] labels), the context and the site's title read here.
-export function describeLink(link, { labels, ctx, siteTitle = "", onOpenRef }) {
+// (a block's [[ref]] labels), the context and the site's preview (`site`,
+// useSitePreview's {title, author}) read here.
+export function describeLink(link, { labels, ctx, site = NO_PREVIEW, onOpenRef }) {
   const nav = ctx?.nav;
   if (link.kind === "ref") {
     const ref = labels?.[link.id] || ctx?.refCache?.[link.id];
@@ -142,11 +194,11 @@ export function describeLink(link, { labels, ctx, siteTitle = "", onOpenRef }) {
       copy: abs, target: { kind: "url", url: href, title },
     };
   }
-  const title = siteTitle || link.label || hostOf(href) || href;
+  const title = site.title || link.label || hostOf(href) || href;
   return {
-    title, sub: shortUrl(href),
+    title, sub: [site.author, shortUrl(href)].filter(Boolean).join(" · "),
     open: { label: t("Open link"), external: true, run: () => window.open(abs, "_blank", "noopener,noreferrer") },
-    copy: abs, target: { kind: "url", url: href, title: siteTitle || hostOf(href) || href },
+    copy: abs, target: { kind: "url", url: href, title: site.title || hostOf(href) || href },
   };
 }
 
@@ -348,9 +400,9 @@ function LinkEditForm({ edit, target, focus, onCancel, onDone, onRemove }) {
 // previews its card; a right-click or a held finger pins it (menuPress);
 // the pointer on its way from the link to the card keeps it (menuAim). A
 // pinned card closes on a press elsewhere, Escape or a pick.
-// `describe(siteTitle, ctx)` is describeLink's answer, asked when the card
+// `describe(site, ctx)` is describeLink's answer, asked when the card
 // shows; `edit` as LinkCardSurface takes it, `siteHref` an address whose
-// title the card fetches.
+// preview (`site`) the card fetches.
 export function LinkHover({ describe, edit, siteHref, children }) {
   const ctx = useContext(LinkCardContext);
   const ref = useRef(null);
@@ -358,7 +410,7 @@ export function LinkHover({ describe, edit, siteHref, children }) {
   const [card, setCard] = useState(null);   // {pinned, editing}
   const aim = useMenuAim({ active: !!card });
   const tipId = useRef(`linkcard-${Math.random().toString(36).slice(2)}`).current;
-  const siteTitle = useSiteTitle(siteHref, !!card);
+  const site = useSitePreview(siteHref, !!card);
   const later = (fn, ms) => { clearTimeout(timer.current); timer.current = setTimeout(fn, ms); };
   const close = () => { clearTimeout(timer.current); aim.keep(); setCard(null); };
   const preview = () => setCard((c) => c || { pinned: false });
@@ -394,7 +446,7 @@ export function LinkHover({ describe, edit, siteHref, children }) {
     return () => window.removeEventListener("scroll", close, true);
   }, [card]);
   useEffect(() => { if (!card) aim.setTarget(null); }, [card]);
-  const info = card ? describe(siteTitle, ctx) : null;
+  const info = card ? describe(site, ctx) : null;
   return (
     <>
       <span ref={ref} className="linkAnchor" aria-describedby={card ? tipId : undefined}

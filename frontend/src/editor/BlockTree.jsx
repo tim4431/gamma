@@ -23,7 +23,7 @@ import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
 import { citesSeveralSources, gammaLinkId, isSourceLink, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { EMBED_RE, NO_LABELS, REF_RE, refIdsOf, refWords, unlinkedText } from "./refLabels.js";
 import { applyLinkChange, linkKey, linkSpans, nthLinkSpan, spanWords } from "./linkEdit.js";
-import { LinkHover, describeLink, useSiteTitle } from "../shared/ui/LinkCard.jsx";
+import { LinkHover, bareLinkText, describeLink, siteIconUrl, useSitePreview, webLinkLabel } from "../shared/ui/LinkCard.jsx";
 import { plainSnippet } from "../search/snippets.js";
 import { InkCard } from "../ink/InkLayer";
 import { RecordingCard } from "../recording/RecordingCard";
@@ -170,40 +170,22 @@ function mdPreprocessProse(content, nested) {
     .replace(/==([^=\n]+?)==/g, "<mark>$1</mark>")));
 }
 
-// GitHub URLs get a readable label without any fetch: owner/repo, #issue/PR,
-// or the file a blob/tree link points at.
-function githubLabel(href) {
-  try {
-    const u = new URL(href);
-    if (!/(^|\.)github\.com$/i.test(u.hostname)) return null;
-    const p = u.pathname.split("/").filter(Boolean);
-    if (p.length === 0) return t("GitHub");
-    if (p.length === 1) return p[0];
-    const repo = `${p[0]}/${p[1]}`;
-    if (["issues", "pull", "discussions"].includes(p[2]) && p[3]) return `${repo} #${p[3]}`;
-    if (["blob", "tree"].includes(p[2]) && p.length > 3) return `${repo} · ${p[p.length - 1]}`;
-    if (p[2] === "releases") return `${repo} · releases`;
-    if (p[2] === "commit" && p[3]) return `${repo} @ ${p[3].slice(0, 7)}`;
-    return repo;
-  } catch { return null; }
-}
-
-// Notion-style link chip: favicon + label. Bare URLs (autolinked, or link
-// text that is itself a URL) get a fetched page title via /api/link-preview
-// (host shown until it arrives, or forever when the fetch fails/401s in the
-// shared view); user-written link text is kept as the label. Its link card
-// (shared/ui/LinkCard.jsx) says where it goes; `edit` is the card's.
+// Notion-style link chip: favicon + label (webLinkLabel, which the editor's
+// chip shares). A bare address (autolinked, or link text that is itself
+// one) shows its page's title from /api/link-preview, the host until it
+// arrives or when there is none (a shared view's visitor asks nothing);
+// written link text is the label. Its link card (shared/ui/LinkCard.jsx)
+// says where it goes; `edit` is the card's.
 function LinkChip({ href, text, edit }) {
-  const bare = /^(https?:\/\/|www\.)/i.test((text || "").trim());
-  const gh = githubLabel(href);
-  let host = "";
-  try { host = new URL(href).hostname.replace(/^www\./, ""); } catch (_) {}
-  const fetched = useSiteTitle(href, bare && !gh);
+  const bare = bareLinkText(text);
+  const { fetches } = webLinkLabel(href, text, "");
+  const site = useSitePreview(href, fetches);
+  const { label } = webLinkLabel(href, text, site.title);
+  const icon = siteIconUrl(href);
   const [iconBroken, setIconBroken] = useState(false);
-  const label = bare ? (gh || fetched || host || text) : (text || host);
   return (
     <LinkHover siteHref={href} edit={edit}
-      describe={(siteTitle, ctx) => describeLink({ kind: "url", href, label: bare ? gh || "" : text }, { ctx, siteTitle })}>
+      describe={(card, ctx) => describeLink({ kind: "url", href, label: bare ? (fetches ? "" : label) : text }, { ctx, site: card })}>
     <a
       className="linkChip"
       href={href}
@@ -212,14 +194,8 @@ function LinkChip({ href, text, edit }) {
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
-      {host && !iconBroken ? (
-        <img
-          className="linkChipIcon"
-          src={`https://icons.duckduckgo.com/ip3/${host}.ico`}
-          alt=""
-          loading="lazy"
-          onError={() => setIconBroken(true)}
-        />
+      {icon && !iconBroken ? (
+        <img className="linkChipIcon" src={icon} alt="" loading="lazy" onError={() => setIconBroken(true)} />
       ) : (
         <LinkIcon size={14} />
       )}

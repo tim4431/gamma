@@ -548,7 +548,7 @@ function ChatMarkdownLink({ href, children, title }) {
 function ChatWebLink({ href, title, children }) {
   return (
     <LinkHover siteHref={href}
-      describe={(siteTitle, ctx) => describeLink({ kind: "url", href, label: title || textOf(children) }, { ctx, siteTitle })}>
+      describe={(site, ctx) => describeLink({ kind: "url", href, label: title || textOf(children) }, { ctx, site })}>
       <a href={href} className="gammaLinkCard" target="_blank" rel="noreferrer">
         <ExternalLinkIcon size={14} aria-hidden="true" /><span className="gammaLinkLabel">{children}</span>
       </a>
