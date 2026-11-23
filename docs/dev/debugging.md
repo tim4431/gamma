@@ -127,7 +127,8 @@ What differs from the Windows commands elsewhere in these docs and in
   drives the app with a finger in that simulator, on This iPad
   ([ipad.md](ipad.md) "Tests"). Pick the simulator by the screen to match:
   an iPad Air 11-inch has the 1180 × 820-point screen of every 11-inch
-  iPad Air since the M2. No simulator sends Apple Pencil touches.
+  iPad Air since the M2. No simulator sends Apple Pencil touches; a debug
+  build there can take a finger for one (`-gamma.pencilStandIn`).
 
 ### Serving the build
 

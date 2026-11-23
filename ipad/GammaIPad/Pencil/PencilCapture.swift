@@ -138,7 +138,7 @@ final class PencilCapture: UIGestureRecognizer {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         for touch in touches {
             onTouch?("began", touch)
-            guard touch.type == .pencil else {
+            guard isPencil(touch) else {
                 // A finger is the page's, unless a stroke is being captured (a palm).
                 if capture == nil { ignore(touch, for: event) }
                 continue
@@ -157,10 +157,11 @@ final class PencilCapture: UIGestureRecognizer {
             let first: [Double] = recorder.samples[0]
             claims.began(key, at: CGPoint(x: first[0], y: first[1]), time: touch.timestamp)
         }
+        settle()
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-        for touch in touches where touch.type == .pencil {
+        for touch in touches where isPencil(touch) {
             let key = ObjectIdentifier(touch)
             guard var recorder = recordings[key] else { continue }
             // every sample the Pencil measured since the last frame (240 Hz)
@@ -175,7 +176,7 @@ final class PencilCapture: UIGestureRecognizer {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        for touch in touches where touch.type == .pencil {
+        for touch in touches where isPencil(touch) {
             onTouch?("ended", touch)
             let key = ObjectIdentifier(touch)
             guard var recorder = recordings.removeValue(forKey: key) else { continue }
@@ -197,10 +198,11 @@ final class PencilCapture: UIGestureRecognizer {
                 claims.ended(key, at: touch.timestamp) // a claim for it now comes too late
             }
         }
+        settle()
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        for touch in touches where touch.type == .pencil {
+        for touch in touches where isPencil(touch) {
             onTouch?("cancelled", touch)
             let key = ObjectIdentifier(touch)
             recordings.removeValue(forKey: key)
@@ -213,6 +215,26 @@ final class PencilCapture: UIGestureRecognizer {
                 claims.ended(key, at: touch.timestamp)
             }
         }
+        settle()
+    }
+
+    /// With no Pencil touch of the page's left and no stroke captured, these
+    /// touches are over for the recognizer: it fails, and UIKit resets it.
+    /// Left `possible` it is never reset, and what waits on it never settles:
+    /// one recognizer waiting on it for a Pencil touch leaves WebKit's tap
+    /// recognizer holding that touch, so no finger or Pencil gets a click
+    /// from the page again, a reload included
+    /// (docs/research/ipad-pencil-pro-freeze.md). The reset comes at once,
+    /// with a palm still down too, so the next Pencil touch is recorded.
+    private func settle() {
+        if capture == nil, recordings.isEmpty, state == .possible { state = .failed }
+    }
+
+    private func isPencil(_ touch: UITouch) -> Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        if PencilStandIn.isPencil(touch) { return true }
+        #endif
+        return touch.type == .pencil
     }
 
     override func reset() {

@@ -54,6 +54,9 @@ final class WebShell {
         configuration.allowsInlineMediaPlayback = true // the recordings' player
         let bridge = Bridge()
         bridge.install(in: configuration.userContentController, info: .current)
+        #if DEBUG && targetEnvironment(simulator)
+        PencilStandIn.install(in: configuration.userContentController)
+        #endif
 
         let webView = ShellWebView(frame: .zero, configuration: configuration)
         // Transparent until the page paints: the container shows the theme's colour.
@@ -66,7 +69,7 @@ final class WebShell {
         #if DEBUG
         webView.isInspectable = true // Safari's Web Inspector from a Mac
         #endif
-        Self.hideKeyboardAccessoryBar(of: webView)
+        if NativePieces.current.hidesAccessoryBar { Self.hideKeyboardAccessoryBar(of: webView) }
 
         self.webView = webView
         self.bridge = bridge
@@ -136,7 +139,8 @@ final class WebShell {
     private func recover() {
         onProcessEnded?()
         loginDue = true
-        Self.hideKeyboardAccessoryBar(of: webView) // a new process may bring a new content view
+        // a new process may bring a new content view
+        if NativePieces.current.hidesAccessoryBar { Self.hideKeyboardAccessoryBar(of: webView) }
         reload()
     }
 
