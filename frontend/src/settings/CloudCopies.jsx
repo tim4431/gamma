@@ -1,5 +1,5 @@
-// Settings → Backups › Cloud copies (admins, once the bucket or Google Drive
-// is set up): what the stores hold of the backup tasks' snapshots, and the
+// Settings → Backups › Cloud copies (admins, once a backup destination is
+// set up): what the stores hold of the backup tasks' snapshots, and the
 // ways back. Per store, how many copies of how many workspaces and their
 // size; the workspaces only the cloud has (this server lacks them: a lost
 // disk, or deleted here), each restorable as a new workspace, and all of
@@ -7,14 +7,14 @@
 // /api/jobs/bucket-restore-many, from each one's newest copy); Browse…, a
 // dialog over every copy by workspace, filtered by store and found by name,
 // each with Download, Restore and Delete. The copies are SettingsBackups.jsx's
-// reads (each store's listing, backupStores.js `mergeCopies`), and its
+// reads (each store's listing, BackupDestinations.jsx `useStores`), and its
 // `actions` start the jobs; `CopyRow` is also the row a workspace's section
 // there gives a copy only the cloud holds. docs/dev/settings.md.
 import React from "react";
 import { fmtBytes } from "../shared/lib/utils";
 import { ActionMenu } from "../shared/ui/Menus";
 import { DialogButtons, Empty, FormNotice, Row, Section, Segmented, SubDialog } from "./SettingsKit";
-import { STORE, STORES } from "./backupStores.js";
+import { STORE, STORES, storeText } from "./backupStores.js";
 import { CloudDownloadIcon, CloudIcon, CopyIcon, DownloadIcon, ImportIcon, PlusIcon, RefreshIcon, Trash2Icon } from "../shared/ui/Icons";
 import { TaskBlock } from "../tasks/TasksTray";
 import { isActive } from "../tasks/taskModel.js";
@@ -24,12 +24,11 @@ import { T, t, tn } from "../shared/i18n/i18n.js";
 const sizeOf = (copies) => copies.reduce((n, c) => n + (c.size_bytes || 0), 0);
 const nameOf = (g) => g.name || t("Unnamed workspace");
 
-// One copy in the bucket or in Google Drive. `here`: the server has its
-// workspace, which it restores into (or beside, as a new one); else it
-// comes back as a new workspace. `showStore` names the store (the browser,
-// where both are listed); a workspace's section says "only in …" instead.
+// One copy in a store. `here`: the server has its workspace, which it
+// restores into (or beside, as a new one); else it comes back as a new
+// workspace. `showStore` names the store (the browser, where every store is
+// listed); a workspace's section says "only in …" instead.
 export function CopyRow({ ws, label, copy: c, here, busy, when, actions, showStore = false }) {
-  const store = STORE[c.store];
   return (
     <div className="aiProvRow">
       <span className="aiProvAvatar"><CloudIcon size={16} /></span>
@@ -37,9 +36,9 @@ export function CopyRow({ ws, label, copy: c, here, busy, when, actions, showSto
         <span className="aiProvName">
           {when(c)}
           <span className="uiTag">{c.task ? t("Automatic") : t("backup")}</span>
-          {showStore ? <span className="uiTag">{store.held()}</span> : null}
+          {showStore ? <span className="uiTag">{storeText.held(c.store)}</span> : null}
         </span>
-        <span className="aiProvDesc">{showStore ? fmtBytes(c.size_bytes) : [fmtBytes(c.size_bytes), store.only()].join(" · ")}</span>
+        <span className="aiProvDesc">{showStore ? fmtBytes(c.size_bytes) : [fmtBytes(c.size_bytes), storeText.only(c.store)].join(" · ")}</span>
       </span>
       <span className="aiProvActions">
         <button className="uiBtn sm iconSq" title={t("Download as a zip")} aria-label={t("Download")} onClick={() => actions.fetch(ws, c)}>
@@ -58,7 +57,7 @@ export function CopyRow({ ws, label, copy: c, here, busy, when, actions, showSto
           <button className="uiBtn sm" disabled={busy} title={t("Make a workspace of this copy, with you as its owner")}
             onClick={() => actions.restore(ws, label, c, "new")}><ImportIcon size={14} /> {t("Restore as new…")}</button>
         )}
-        <button className="uiBtn sm iconSq danger" title={store.deleteButton()} aria-label={store.deleteLabel(when(c))}
+        <button className="uiBtn sm iconSq danger" title={storeText.deleteButton(c.store)} aria-label={storeText.deleteLabel(c.store, when(c))}
           onClick={() => actions.remove(ws, label, c)}>
           <Trash2Icon size={16} />
         </button>
@@ -152,7 +151,7 @@ function RestoreAllDialog({ missing, when, onStart, onClose }) {
                 aria-label={nameOf(g)} />
               <span className="aiProvMeta">
                 <span className="aiProvName">{nameOf(g)}</span>
-                <span className="aiProvDesc">{[when(c), fmtBytes(c.size_bytes), STORE[c.store].held()].join(" · ")}</span>
+                <span className="aiProvDesc">{[when(c), fmtBytes(c.size_bytes), storeText.held(c.store)].join(" · ")}</span>
               </span>
             </label>
           );
@@ -169,7 +168,7 @@ function RestoreAllDialog({ missing, when, onStart, onClose }) {
 }
 
 // `at`: each store's place ("" while it is not set up); `held`: each
-// store's listing read; `groups`: the copies of both, by workspace, newest
+// store's listing read; `groups`: the copies of all, by workspace, newest
 // first (mergeCopies); `actions`: {fetch, restore, remove, restoreMany}.
 export function CloudCopies({ at, held, groups, mine, when, actions, runningFor, tasks, onReload }) {
   const [browsing, setBrowsing] = React.useState(null); // null | {store, workspace}
@@ -180,7 +179,7 @@ export function CloudCopies({ at, held, groups, mine, when, actions, runningFor,
   const restoring = tasks.jobs.find((job) => job.kind === "copies-restore" && isActive(job)) || null;
   function summary(store) {
     const read = held[store];
-    if (read.error) return STORE[store].unreadable(read.error);
+    if (read.error) return storeText.unreadable(store, read.error);
     if (!read.data) return t("Reading {where}…", { where: at[store] });
     const copies = (read.data.groups || []).flatMap((g) => g.snapshots);
     if (!copies.length) return t("{where} · no copies yet", { where: at[store] });
@@ -209,7 +208,7 @@ export function CloudCopies({ at, held, groups, mine, when, actions, runningFor,
             const job = runningFor(g.workspace);
             return (
               <Row key={g.workspace} icon={CloudIcon} label={nameOf(g)}
-                hint={t("Newest copy {date} · {size} · {where}", { date: when(c), size: fmtBytes(c.size_bytes), where: STORE[c.store].held() })}>
+                hint={t("Newest copy {date} · {size} · {where}", { date: when(c), size: fmtBytes(c.size_bytes), where: storeText.held(c.store) })}>
                 <span className="setRowControls">
                   {g.snapshots.length > 1 ? (
                     <button className="uiBtn sm" onClick={() => setBrowsing({ workspace: g.workspace })}>

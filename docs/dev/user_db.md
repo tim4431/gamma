@@ -135,14 +135,16 @@ All state is SQLite + files on disk under a data directory (env
     the secret key encrypted like the AI keys; an older value's `enabled`,
     `interval_s` and `keep` are read as nothing;
     [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)), the
-    Google Drive connection (`gdrive`: `{refresh_token, email, name, folder,
-    connected_at, client_id}` as JSON, the token encrypted the same way, ""
-    once disconnected) and Google apps of the server's own for it, in
-    place of Gamma's (`gdrive_client`, the code's, and
-    `gdrive_desktop_client`, the page's: `{client_id, client_secret}`, set
-    by `manage.py gdrive-client [--desktop]`, the secret encrypted the
-    same way, "" once removed;
-    [debugging.md](debugging.md#google-drive)), this server's Zotero app
+    cloud connections (`gdrive` for Google Drive, `onedrive` for
+    OneDrive: `{refresh_token, email, name, folder, connected_at,
+    client_id}` as JSON, the token encrypted the same way and replaced as
+    Microsoft rotates it, "" once disconnected), OAuth clients of the
+    server's own in place of Gamma's (`gdrive_client`, the code's,
+    `gdrive_desktop_client`, the page's, and `onedrive_client`, OneDrive's
+    for both: `{client_id, client_secret}`, set by `manage.py cloud-client
+    <store> [--desktop]`, a secret encrypted the same way, "" once
+    removed; both in [debugging.md](debugging.md#cloud-destinations)),
+    this server's Zotero app
     (`zotero_app`: `{client_key, client_secret}`, the secret encrypted the
     same way, "" once removed; [zotero_sync.md](zotero_sync.md)) and the
     server options of Settings (`options`: `{guest_max, metadata_lookup,

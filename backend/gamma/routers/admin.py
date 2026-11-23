@@ -31,7 +31,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, gdrive_account, guests,
+from .. import (ai_settings, backups, chatgpt_oauth, cloud_account, cloud_auth, email_invites, guests,
                 hosted, integrity, jobs, ocr_auto, ocr_engine, offsite, proxy_settings, server_options, snapshot_copies,
                 workspaces, zotero_oauth)
 from ..backup_store import StoreConfigError, StoreError
@@ -483,10 +483,10 @@ def run_offsite(request: Request):
 
 
 def _bucket_call(fn, *args):
-    """A call to the bucket or to Google Drive: 400 when none can be used
-    (none set up, boto3 missing, no OAuth client, a connection Google no
-    longer honours), 404 for a copy that is not there, 502 when the store
-    refuses or cannot be reached."""
+    """A call to a store's copies: 400 when it cannot be used (none set
+    up, boto3 missing, no OAuth client, a connection the service no longer
+    honours), 404 for a copy that is not there, 502 when the store refuses
+    or cannot be reached."""
     try:
         return fn(*args)
     except StoreConfigError as e:
@@ -502,9 +502,10 @@ def _bucket_call(fn, *args):
 # Sync def: a listing of the store, network round trips.
 @router.get("/offsite/snapshots")
 def list_snapshot_copies(request: Request, store: str = "bucket"):
-    """The backup tasks' copies in the bucket, or with ``store=drive`` in
-    Google Drive (``snapshot_copies.listing``): ``{groups: [{workspace,
-    name, here, snapshots: [{name, size_bytes, created_at, task}]}]}``."""
+    """The backup tasks' copies in the bucket, or with ``store`` in another
+    store (``drive``, ``onedrive``; ``snapshot_copies.listing``):
+    ``{groups: [{workspace, name, here, snapshots: [{name, size_bytes,
+    created_at, task}]}]}``."""
     require_admin(request)
     return {"groups": _bucket_call(snapshot_copies.listing, store)}
 
@@ -516,26 +517,29 @@ def delete_bucket_snapshot(ws: str, name: str, request: Request, store: str = "b
     return {"ok": True}
 
 
-# --- Google Drive (gamma/gdrive_account.py) ------------------------------------
-# Settings → Backups → Google Drive: the server's connection, made by Google's device flow. Connect answers
-# the code to enter; while it is shown the pane posts /poll, which asks
-# Google at most once per Google's interval; the GET
-# (``gdrive_account.status``) also answers the code while one waits. The
-# token and the client's secret never leave the server.
+# --- the clouds (gamma/cloud_account.py) ---------------------------------------
+# Settings → Backups → Backup destinations: the server's Google Drive and
+# OneDrive connections, one set of routes for every cloud, ``{store}`` its
+# key (cloud_account.ACCOUNTS: ``drive``, ``onedrive``). Connect answers the
+# code to enter; while it is shown the pane posts /poll, which asks the
+# service at most once per its interval; the GET (``CloudAccount.status``)
+# also answers the code while one waits. Where Gamma is opened on its own
+# computer, /authorize opens the service's page instead, which comes back
+# to /callback. The tokens and a client's secret never leave the server.
 
-class DriveConnectRequest(BaseModel):
-    folder: str = gdrive_account.DEFAULT_FOLDER
+class CloudFolderRequest(BaseModel):
+    folder: str | None = None   # None: the cloud's default (``Gamma backups``)
 
 
-class DriveFolderRequest(BaseModel):
-    folder: str
+class CloudPathRequest(BaseModel):
+    path: str
 
 
 def _store_call(fn, *args):
-    """A call to Google Drive, or the bucket's folder browser: 400 with the
-    reason for a folder or client that cannot be, no OAuth client or a
-    bucket that cannot be used (a StoreConfigError is a ValueError), 502
-    when the store refuses or cannot be reached."""
+    """A call to a cloud, or the bucket's folder browser:
+    400 with the reason for a folder, a path or a client that cannot be, no
+    OAuth client or a store that cannot be used (a StoreConfigError is a
+    ValueError), 502 when the store refuses or cannot be reached."""
     try:
         return fn(*args)
     except ValueError as e:
@@ -544,126 +548,133 @@ def _store_call(fn, *args):
         raise HTTPException(status_code=502, detail=str(e))
 
 
-def _gdrive_callback(request: Request) -> str:
-    """Where Google's page sends the browser back: this server's callback
-    at the address the page itself was opened at, when that is a loopback
-    one over plain HTTP (the desktop app, a server opened on its own
-    computer) and the build has Gamma's "Desktop app" client; "" anywhere
-    else, where the pane connects with a code."""
+def _cloud_of(store: str) -> cloud_account.CloudAccount:
+    """The cloud ``store`` names; 404 for none."""
+    try:
+        return cloud_account.account(store)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+def _cloud_callback(request: Request, cloud: cloud_account.CloudAccount) -> str:
+    """Where the service's page sends the browser back: this server's
+    callback at the port the page itself was opened at, when that is a
+    loopback address over plain HTTP (the desktop app, a server opened on
+    its own computer) and there is a client for the page; on the host
+    Gamma was opened at, or the one the cloud's app registered (Microsoft's
+    ``localhost``). "" anywhere else, where the pane connects with a
+    code."""
     url = request.url
     if url.scheme != "http" or (url.hostname or "").strip("[]") not in LOOPBACK_HOSTS \
-            or gdrive_account.browser_client() is None:
+            or cloud.browser_client() is None:
         return ""
-    return f"http://{url.netloc}/api/admin/gdrive/callback"
+    host = cloud.cloud.loopback_host
+    netloc = (f"{host}:{url.port}" if url.port else host) if host else url.netloc
+    return f"http://{netloc}/api/admin/clouds/{cloud.key}/callback"
 
 
-@router.get("/gdrive")
-def get_gdrive(request: Request):
+@router.get("/clouds/{store}")
+def get_cloud(store: str, request: Request):
     """``{available, connected, email, name, folder, connected_at,
     problem, pending: {user_code, verification_url, expires_at, interval}
-    | null, error, browser}``; ``browser``: Connect… opens Google's page
-    here rather than showing a code."""
+    | null, error, revokes, browser}``; ``browser``: Connect… opens the
+    service's page here rather than showing a code."""
     require_admin(request)
-    return {**gdrive_account.status(), "browser": bool(_gdrive_callback(request))}
+    cloud = _cloud_of(store)
+    return {**cloud.status(), "browser": bool(_cloud_callback(request, cloud))}
 
 
-class DriveAuthorizeRequest(BaseModel):
-    folder: str = gdrive_account.DEFAULT_FOLDER
-
-
-@router.post("/gdrive/authorize")
-def authorize_gdrive(payload: DriveAuthorizeRequest, request: Request):
-    """Start signing in on Google's page: ``{url}``, the page to open; it
-    comes back to ``/gdrive/callback``. 400 where Gamma is not opened on
-    the server's own computer (connect with a code there)."""
+@router.post("/clouds/{store}/authorize")
+def authorize_cloud(store: str, payload: CloudFolderRequest, request: Request):
+    """Start signing in on the service's page: ``{url}``, the page to
+    open; it comes back to ``/clouds/{store}/callback``. 400 where Gamma is
+    not opened on the server's own computer (connect with a code there)."""
     require_admin(request)
-    callback = _gdrive_callback(request)
+    cloud = _cloud_of(store)
+    callback = _cloud_callback(request, cloud)
     if not callback:
-        raise HTTPException(status_code=400, detail="Google's page signs in only where Gamma is opened on the server's "
-                                                    "own computer: connect with a code instead.")
-    return {"url": _store_call(gdrive_account.start_browser, payload.folder, callback)}
+        raise HTTPException(status_code=400, detail="The sign-in page comes back only where Gamma is opened on the "
+                                                    "server's own computer: connect with a code instead.")
+    return {"url": _store_call(cloud.start_browser, payload.folder, callback)}
 
 
-@router.get("/gdrive/callback", response_class=HTMLResponse)
-def gdrive_callback(state: str = "", code: str = "", error: str = ""):
-    """Google's page comes back here, in whatever browser it opened in (the
-    system browser of the desktop app, which has no session): the state,
-    unguessable and used once, names the sign-in an admin started. A page
-    that says how it went; the pane, polling, sees the connection."""
-    problem = gdrive_account.finish_browser(state[:128], code[:2048], error[:100])
+@router.get("/clouds/{store}/callback", response_class=HTMLResponse)
+def cloud_callback(store: str, state: str = "", code: str = "", error: str = ""):
+    """The service's page comes back here, in whatever browser it opened in
+    (the system browser of the desktop app, which has no session): the
+    state, unguessable and used once, names the sign-in an admin started.
+    A page that says how it went; the pane, polling, sees the
+    connection."""
+    cloud = _cloud_of(store)
+    problem = cloud.finish_browser(state[:128], code[:4096], error[:100])
     if problem:
-        return HTMLResponse(html_page.page("Google Drive was not connected", problem), headers=html_page.headers())
-    return HTMLResponse(html_page.page("Google Drive is connected",
-                                       "Backups can go to your Drive now. Close this tab and go back to Gamma."),
+        return HTMLResponse(html_page.page(f"{cloud.name} was not connected", problem), headers=html_page.headers())
+    return HTMLResponse(html_page.page(f"{cloud.name} is connected",
+                                       f"Backups can go to your {cloud.name} now. Close this tab and go back to Gamma."),
                         headers=html_page.headers())
 
 
-# Sync defs from here: each may call Google.
-@router.post("/gdrive/connect")
-def connect_gdrive(payload: DriveConnectRequest, request: Request):
+# Sync defs from here: each may call the service.
+@router.post("/clouds/{store}/connect")
+def connect_cloud(store: str, payload: CloudFolderRequest, request: Request):
     """Start connecting: the GET's answer with ``pending``, the code to
-    enter at Google's address."""
+    enter at the service's address."""
     require_admin(request)
-    return _store_call(gdrive_account.start, payload.folder)
+    return _store_call(_cloud_of(store).start, payload.folder)
 
 
-@router.post("/gdrive/poll")
-def poll_gdrive(request: Request):
+@router.post("/clouds/{store}/poll")
+def poll_cloud(store: str, request: Request):
     """Whether the code was entered: the GET's answer, ``connected`` once
     it was, ``error`` when the connection ended without it."""
     require_admin(request)
-    return gdrive_account.poll()
+    return _cloud_of(store).poll()
 
 
-@router.delete("/gdrive/connect")
-def cancel_gdrive(request: Request):
+@router.delete("/clouds/{store}/connect")
+def cancel_cloud(store: str, request: Request):
     """Stop waiting for the code."""
     require_admin(request)
-    return gdrive_account.cancel()
+    return _cloud_of(store).cancel()
 
 
-@router.put("/gdrive")
-def update_gdrive(payload: DriveFolderRequest, request: Request):
+@router.put("/clouds/{store}")
+def update_cloud(store: str, payload: CloudFolderRequest, request: Request):
     """The folder new copies go to; 400 when it cannot be."""
     require_admin(request)
-    return _store_call(gdrive_account.set_folder, payload.folder)
+    return _store_call(_cloud_of(store).set_folder, payload.folder or "")
 
 
-@router.delete("/gdrive")
-def disconnect_gdrive(request: Request):
-    """Forget the connection and revoke it at Google; the copies stay in
-    Drive."""
+@router.delete("/clouds/{store}")
+def disconnect_cloud(store: str, request: Request):
+    """Forget the connection, revoking it at the service where it can; the
+    copies stay."""
     require_admin(request)
-    return gdrive_account.disconnect()
+    return _cloud_of(store).disconnect()
 
 
-class DrivePathRequest(BaseModel):
-    path: str
-
-
-@router.get("/gdrive/browse")
-def browse_gdrive(request: Request, path: str = ""):
-    """The folder browser's listing of the folder ``path`` from My Drive's
-    top ("" My Drive itself): ``backup_store.listing``'s ``{folders, files,
-    more}``, only what Gamma made (``drive.file``)."""
+@router.get("/clouds/{store}/browse")
+def browse_cloud(store: str, request: Request, path: str = ""):
+    """The folder browser's listing of the folder ``path`` from the
+    cloud's top ("" the top itself): ``{folders, files, more}``."""
     require_admin(request)
-    return _store_call(gdrive_account.browse, path)
+    return _store_call(_cloud_of(store).browse, path)
 
 
-@router.post("/gdrive/folders")
-def make_gdrive_folder(payload: DrivePathRequest, request: Request):
-    """Make the folder ``path`` from My Drive's top, and those above it
+@router.post("/clouds/{store}/folders")
+def make_cloud_folder(store: str, payload: CloudPathRequest, request: Request):
+    """Make the folder ``path`` from the cloud's top, and those above it
     that are not there: ``{path}``, the path as made."""
     require_admin(request)
-    return _store_call(gdrive_account.make_folder, payload.path)
+    return _store_call(_cloud_of(store).make_folder, payload.path)
 
 
-@router.post("/gdrive/test")
-def test_gdrive(request: Request):
+@router.post("/clouds/{store}/test")
+def test_cloud(store: str, request: Request):
     """What the folder holds, tried once: ``{ok, message}``, 200 either
     way."""
     require_admin(request)
-    return gdrive_account.test()
+    return _cloud_of(store).test()
 
 
 # --- this server's Zotero app (gamma/zotero_oauth.py) --------------------------

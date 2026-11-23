@@ -4,19 +4,18 @@ A task is a file under ``backups/tasks/``; its ``owner`` is the id of the
 account it belongs to (``users.id``), so a rename never touches it. Its run
 state: ``last_run`` (when the latest run started), ``state``, ``last_success``,
 ``last_error``, and ``last_result`` (what the latest successful run made:
-``{snapshots, bytes, seconds}``, and ``bucket`` / ``drive``: the copies
-sent, for a task that copies to the bucket or to Google Drive; absent
-until a run succeeds).
+``{snapshots, bytes, seconds}``, and per store a task copies to (``bucket``,
+``drive``, ``onedrive``): the copies sent there; absent until a run
+succeeds).
 
-A task with ``bucket`` on also uploads each snapshot it takes to the bucket
-set up in Settings → Backups, one with ``drive`` on to the Google Drive
-connected there, one with both to both (gamma/snapshot_copies.py, its
-DESTINATIONS); its retention prunes the copies in each as it prunes the
-snapshots here. Only an admin's task may: both are the server's. A copy
-that fails leaves the snapshots in place, goes on to the other store, and
-fails the run (``last_error``, the ``backup-failed`` notice); the task
-keeps its schedule, rather than retrying in an hour, since the snapshots
-were taken.
+A task with a store on (gamma/snapshot_copies.py DESTINATIONS: the bucket,
+Google Drive, OneDrive, each set up in Settings → Backups) also uploads each snapshot it takes there, to every store on;
+its retention prunes the copies in each as it prunes the snapshots here.
+Only an admin's task may: every store is the server's. A copy that fails
+leaves the snapshots in place, goes on to the next store, and fails the
+run (``last_error``, the ``backup-failed`` notice); the task keeps its
+schedule, rather than retrying in an hour, since the snapshots were
+taken.
 
 Every run is a full copy, so the limits below bound what an account can
 make the server keep: a task runs at most hourly, keeps at most
@@ -135,9 +134,8 @@ def stores(task):
 
 
 def check_copies(task, only=None):
-    """A task that copies off this server: its owner a server admin (the
-    bucket and Google Drive are the server's) and each of its stores (or
-    ``only``) set up."""
+    """A task that copies off this server: its owner a server admin (every
+    store is the server's) and each of its stores (or ``only``) set up."""
     wanted = [only] if only else stores(task)
     if not wanted:
         return

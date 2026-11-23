@@ -40,7 +40,7 @@ import { TaskBlock } from "../tasks/TasksTray";
 import { isActive } from "../tasks/taskModel.js";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 
-// `onBucket` opens Backups › Bucket, where off-site copies are set up.
+// `onBucket` opens Backups › Backup destinations, where off-site copies are set up.
 export function ServerSettings({ value, onBucket }) {
   return (
     <>

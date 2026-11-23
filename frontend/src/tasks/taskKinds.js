@@ -9,6 +9,7 @@
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { fmtBytes } from "../shared/lib/format.js";
 import { exportFormatOf } from "../transfers/transferFormats.js";
+import { STORE, storeText } from "../settings/backupStores.js";
 import * as ocrRuns from "../pdf/ocrRuns.js";
 import { elapsed, fmtElapsed, isActive, remainingMs } from "./taskModel.js";
 
@@ -88,20 +89,16 @@ export const TASK_KINDS = {
       if (params.source === "snapshot") {
         return params.mode === "merge" ? t("Merge a snapshot into “{name}”", args) : t("Restore “{name}” from a snapshot", args);
       }
-      if (params.source === "bucket") {
-        return params.into === "new" ? t("Restore “{name}” from the bucket as a new workspace", args)
-          : params.mode === "merge" ? t("Merge a copy from the bucket into “{name}”", args) : t("Restore “{name}” from the bucket", args);
-      }
-      if (params.source === "drive") {
-        return params.into === "new" ? t("Restore “{name}” from Google Drive as a new workspace", args)
-          : params.mode === "merge" ? t("Merge a copy from Google Drive into “{name}”", args) : t("Restore “{name}” from Google Drive", args);
+      if (STORE[params.source]) { // a copy in a backup destination
+        const how = params.into === "new" ? "restoreNew" : params.mode === "merge" ? "restoreMerge" : "restoreReplace";
+        return storeText[how](params.source, args.name);
       }
       return params.mode === "merge" ? t("Merge {file} into “{name}”", args) : t("Restore “{name}” from {file}", args);
     },
-    // An uploaded zip is gone once its job ended; a stored snapshot, and a copy in the bucket or in Google Drive, are still there.
+    // An uploaded zip is gone once its job ended; a stored snapshot, and a copy in a backup destination, are still there.
     retry: ({ params }) => (params.source === "snapshot"
       ? ["restore-snapshot", { ws: params.ws, name: params.snapshot, mode: params.mode }]
-      : params.source === "bucket" || params.source === "drive"
+      : STORE[params.source]
         ? ["bucket-restore", { ws: params.ws, name: params.snapshot, store: params.source, mode: params.mode, into: params.into || "" }]
         : null),
   },
@@ -117,19 +114,18 @@ export const TASK_KINDS = {
     retry: ({ params }) => (params.all
       ? ["workspace-copy", { ws: params.ws, ...(params.new ? { name: params.to_name } : { to: params.to }) }] : null),
   },
-  // Several copies in the bucket or in Google Drive, each restored as a new
+  // Several copies in backup destinations, each restored as a new
   // workspace (Settings → Backups › Cloud copies' Restore all…, admins).
   "copies-restore": {
     icon: "import", open: "settings:backups",
     title: ({ params }) => tn("Restore {n} workspace from the cloud", "Restore {n} workspaces from the cloud", params.count || 0),
     retry: ({ params }) => ["bucket-restore-many", { items: params.items || [] }],
   },
-  // A backup task's copy in the bucket or in Google Drive (`store`),
-  // downloaded (Settings → Backups, admins).
+  // A backup task's copy in a backup destination (`store`), downloaded
+  // (Settings → Backups, admins).
   "bucket-download": {
     icon: "download", open: "settings:backups",
-    title: ({ params }) => (params.store === "drive" ? t("Download of “{name}” from Google Drive", { name: named(params.name) })
-      : t("Download of “{name}” from the bucket", { name: named(params.name) })),
+    title: ({ params }) => storeText.download(params.store || "bucket", named(params.name)),
     retry: ({ params }) => ["bucket-download", { ws: params.ws, name: params.snapshot, store: params.store || "bucket" }],
   },
   import: {

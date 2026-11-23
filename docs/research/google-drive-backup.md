@@ -6,7 +6,10 @@ that writes there, and the design that was picked. Surveyed in November
 2026 from Google's documentation and Gamma's backup code
 (`gamma/s3.py`, `gamma/offsite.py`, `gamma/snapshot_copies.py`,
 `gamma/backup_schedule.py`). How it works now is in
-[debugging.md](../dev/debugging.md#google-drive).
+[debugging.md](../dev/debugging.md#google-drive); since then the OAuth and the
+connection are shared with OneDrive ([onedrive-icloud-backup.md](onedrive-icloud-backup.md)):
+`gamma/gdrive_account.py` became `gamma/cloud_account.py`, `/api/admin/gdrive`
+`/api/admin/clouds/drive`, and `manage.py gdrive-client` `manage.py cloud-client drive`.
 
 ## What Google allows
 

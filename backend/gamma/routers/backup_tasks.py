@@ -18,8 +18,11 @@ class TaskInput(BaseModel):
     workspaces: list[str] = Field(default_factory=list, max_length=100)
     cron: str = Field(default='0 3 * * *', max_length=200)
     uploads: bool = True
-    bucket: bool = False   # also copy each snapshot to the bucket (admins; gamma/snapshot_copies.py)
-    drive: bool = False    # also copy each snapshot to Google Drive (admins; the same)
+    # Also copy each snapshot off this server, to each store on (admins;
+    # gamma/snapshot_copies.py DESTINATIONS, a field per store).
+    bucket: bool = False   # the S3-compatible bucket
+    drive: bool = False    # Google Drive
+    onedrive: bool = False  # OneDrive
     retention_mode: Literal['days', 'count'] = 'days'
     retention_value: int = Field(default=30, ge=1, le=tasks.MAX_RETENTION)
 

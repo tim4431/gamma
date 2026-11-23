@@ -5,14 +5,14 @@
 // workspace keeps at most a fixed number of manual ones, and a replace
 // first keeps the current state as a "Before restore" snapshot. GUI for
 // /api/workspaces/{ws}/backups* (gamma/ws_backup.py). Between the task
-// table and the snapshots, admins get the Bucket (BackupBucket.jsx) and
-// Google Drive (BackupDrive.jsx) that tasks may copy their snapshots to,
-// and Cloud copies (CloudCopies.jsx): what the stores hold (each store's
-// `copies` read, backupStores.js; gamma/snapshot_copies.py), the
-// workspaces only the cloud has, each or all restored as new workspaces,
-// and a browser over every copy. A workspace's snapshots say which are in
-// a store too, and a copy of it only there is a row of its own (download,
-// restore, delete).
+// table and the snapshots, admins get Backup destinations
+// (BackupDestinations.jsx: Google Drive, OneDrive, a bucket), the places
+// tasks may copy their snapshots to, and Cloud copies
+// (CloudCopies.jsx): what the stores hold (`useStores`; backupStores.js;
+// gamma/snapshot_copies.py), the workspaces only the cloud has, each or
+// all restored as new workspaces, and a browser over every copy. A
+// workspace's snapshots say which are in a store too, and a copy of it
+// only there is a row of its own (download, restore, delete).
 //
 // Also here: ServerBackups — the admin's whole-data-directory snapshots
 // (Settings → Server; /api/admin/backups*, gamma/backups.py). Restoring one
@@ -22,10 +22,9 @@ import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { saveUrl } from "../shared/lib/saveFile.js";
 import { BackupTasks } from "./BackupTasks";
-import { BackupBucket, BUCKET_READ, bucketWhere } from "./BackupBucket";
-import { BackupDrive, DRIVE_READ, driveWhere } from "./BackupDrive";
+import { BackupDestinations, useStores } from "./BackupDestinations";
 import { CloudCopies, CopyRow } from "./CloudCopies";
-import { STORE, STORES, mergeCopies } from "./backupStores.js";
+import { STORES, copyOf, storeText } from "./backupStores.js";
 import { backupsOf, useSettingsRead, useSettingsReads } from "./settingsReads.js";
 import { ActionMenu } from "../shared/ui/Menus";
 import { PaneHead, Section, Empty, FormNotice, Row } from "./SettingsKit";
@@ -78,21 +77,8 @@ export function WorkspaceBackups({ value }) {
   }, [reads, mine]);
   // The stores (admins): where each is ("" while it is not set up), and
   // what each holds, by workspace.
-  const at = {
-    bucket: bucketWhere(useSettingsRead(isAdmin ? BUCKET_READ : null).data?.settings),
-    drive: driveWhere(useSettingsRead(isAdmin ? DRIVE_READ : null).data),
-  };
-  const held = {
-    bucket: useSettingsRead(at.bucket ? STORE.bucket.copies : null),
-    drive: useSettingsRead(at.drive ? STORE.drive.copies : null),
-  };
-  const bucketGroups = at.bucket ? held.bucket.data?.groups : null;
-  const driveGroups = at.drive ? held.drive.data?.groups : null;
-  const copyGroups = React.useMemo(() => mergeCopies({ bucket: bucketGroups, drive: driveGroups }), [bucketGroups, driveGroups]);
+  const { at, held, groups: copyGroups, reload: loadCopies } = useStores(isAdmin);
   const anyStore = STORES.some((store) => at[store]);
-  const loadCopies = React.useCallback(() => {
-    for (const store of STORES) if (at[store]) reads.read(STORE[store].copies, { force: true }).catch(() => {});
-  }, [reads, at.bucket, at.drive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Snapshots, restores and deletes run as background jobs
   // (tasks/useTasks.js): the one running for a workspace shows under its
@@ -108,7 +94,7 @@ export function WorkspaceBackups({ value }) {
     if (job.kind === "copies-restore" && job.result) setStatus(restoredText(job.result));
   });
 
-  // A copy in the bucket or in Google Drive (`c.store`): downloaded through
+  // A copy in a store (`c.store`): downloaded through
   // a job whose file this tab saves, restored into its workspace or (`into`
   // "new") into one made for it.
   function fetchCopy(ws, c) {
@@ -122,7 +108,7 @@ export function WorkspaceBackups({ value }) {
       title: into ? t("Restore as a new workspace") : mode === "merge" ? t("Merge backup") : t("Restore backup"),
       message: into
         ? t("Restore the copy of \"{name}\" from {b} as a new workspace? You become its owner; invite its members again afterwards.", args)
-        : mode === "merge" ? STORE[c.store].mergeQuestion(args) : STORE[c.store].replaceQuestion(args),
+        : mode === "merge" ? storeText.mergeQuestion(c.store, args) : storeText.replaceQuestion(c.store, args),
       confirmLabel: into ? t("Restore") : mode === "merge" ? t("Merge") : t("Replace"),
       danger: mode === "replace",
       onConfirm: () => startJob("bucket-restore", { ws, name: c.name, store: c.store, mode: into ? "replace" : mode, into }, into ? {} : { restoreInto: ws },
@@ -130,15 +116,14 @@ export function WorkspaceBackups({ value }) {
     });
   }
   function removeCopy(ws, label, c) {
-    const store = STORE[c.store];
     confirm({
-      title: store.deleteTitle,
-      message: store.deleteQuestion({ name: label, b: when(c), size_bytes: fmtBytes(c.size_bytes) }),
+      title: storeText.deleteTitle(c.store),
+      message: storeText.deleteQuestion(c.store, { name: label, b: when(c), size_bytes: fmtBytes(c.size_bytes) }),
       confirmLabel: t("Delete"), danger: true,
       onConfirm: async () => {
         try {
-          await apiJson(`${API}${store.copy(ws, c.name)}`, { method: "DELETE" });
-          setStatus(store.deleted());
+          await apiJson(`${API}${copyOf(c.store, ws, c.name)}`, { method: "DELETE" });
+          setStatus(storeText.deleted(c.store));
           loadCopies();
         } catch (e) { setStatus(t("Delete failed: {message}", { message: e.message })); }
       },
@@ -268,7 +253,7 @@ export function WorkspaceBackups({ value }) {
                 {when(b)}
                 <span className="uiTag">{b.scheduled ? t("Automatic") : b.auto ? t("Before restore") : b.label || t("backup")}</span>
                 {sentTo(b.name).map((store) => (
-                  <span key={store} className="uiTag" title={STORE[store].heldTitle()}>{STORE[store].held()}</span>
+                  <span key={store} className="uiTag" title={storeText.heldTitle(store)}>{storeText.held(store)}</span>
                 ))}
               </span>
               <span className="aiProvDesc">
@@ -318,8 +303,7 @@ export function WorkspaceBackups({ value }) {
         <>
           <BackupTasks workspaces={mine} stores={at} confirm={confirm} onRefresh={loadList}
             onRan={anyStore ? loadCopies : undefined} />
-          {isAdmin ? <BackupBucket setStatus={setStatus} /> : null}
-          {isAdmin ? <BackupDrive setStatus={setStatus} confirm={confirm} /> : null}
+          {isAdmin ? <BackupDestinations setStatus={setStatus} confirm={confirm} /> : null}
           {isAdmin ? (
             <CloudCopies at={at} held={held} groups={copyGroups} mine={mine} when={when} actions={copyActions}
               runningFor={runningFor} tasks={tasks} onReload={loadCopies} />
@@ -337,7 +321,7 @@ export function WorkspaceBackups({ value }) {
           )}>
             {STORES.filter((store) => at[store] && held[store].error).map((store) => (
               <FormNotice key={store}>
-                {STORE[store].unreadable(held[store].error)}{" "}
+                {storeText.unreadable(store, held[store].error)}{" "}
                 <button type="button" className="uiBtn sm" onClick={loadCopies}>{t("Try again")}</button>
               </FormNotice>
             ))}
@@ -349,7 +333,7 @@ export function WorkspaceBackups({ value }) {
   );
 }
 
-// `onBucket` opens Backups › Bucket (the Off-site copies row's jump).
+// `onBucket` opens Backups › Backup destinations (the Off-site copies row's jump).
 export function ServerBackups({ setStatus, confirm, tasks, onBucket }) {
   // the Server pane's read (settingsReads.js), newest first
   const { data, error: readError, reload } = useSettingsRead("/admin/backups");
@@ -456,11 +440,11 @@ export function ServerBackups({ setStatus, confirm, tasks, onBucket }) {
         {t("Snapshots live in {dir} inside the data directory. To roll back, stop the server and run {command}.", {
           dir: <code>backups/</code>, command: <code>{"manage.py backups --restore <name>"}</code> })}
       </div>
-      {/* What keeps a copy off this disk is the bucket, in Backups. */}
+      {/* What keeps a copy off this disk is a backup destination, in Backups. */}
       {onBucket ? (
-        <Row icon={CloudUploadIcon} label={t("Off-site copies")} hint={t("These stay on this disk; a bucket keeps copies elsewhere")}
-          title={t("A server snapshot stays in the data directory, so a lost disk takes it along. An S3-compatible bucket, set up under Backups › Bucket, holds the snapshots backup tasks send it and, with GAMMA_S3_BUCKET in the server's environment, a copy of every database and uploaded file.")}>
-          <button type="button" className="uiBtn sm" title={t("Open Settings → Backups → Bucket")} onClick={onBucket}>{t("Open Bucket")}</button>
+        <Row icon={CloudUploadIcon} label={t("Off-site copies")} hint={t("These stay on this disk; a backup destination keeps copies elsewhere")}
+          title={t("A server snapshot stays in the data directory, so a lost disk takes it along. The backup destinations in Backups (Google Drive, OneDrive, a bucket) hold the snapshots backup tasks send them; with GAMMA_S3_BUCKET in the server's environment, the bucket also gets a copy of every database and uploaded file.")}>
+          <button type="button" className="uiBtn sm" title={t("Open Settings → Backups → Backup destinations")} onClick={onBucket}>{t("Open Backup destinations")}</button>
         </Row>
       ) : null}
     </Section>

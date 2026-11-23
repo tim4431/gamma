@@ -318,8 +318,10 @@ export const RULES = [
   ["backend/tests/goodnotes_fixtures.py", ["transfers", "ipad"]], // the GoodNotes notebooks they import and hand over
   // the fake Zotero the Zotero link scenario's second Gamma talks to, and the library it serves
   ["backend/tests/zotero_fake.py", ["zotero-link"]],
-  // the fake Google the settings group's Google Drive step talks to
+  // the fake Google and Microsoft the settings group's cloud steps talk to, and what they share
   ["backend/tests/gdrive_fake.py", ["settings"]],
+  ["backend/tests/onedrive_fake.py", ["settings"]],
+  ["backend/tests/cloud_fake.py", ["settings"]],
   ["backend/tests/zotero_fixtures.py", ["zotero-link"]],
   // the printed scan the scan-layer scenario has recognized, and the models that read it
   ["backend/tests/ocr_fixtures.py", ["scan-layer"]],
@@ -531,10 +533,12 @@ export const RULES = [
   ["backend/gamma/routers/publisher_sessions.py", ["settings"]],
   ["backend/gamma/routers/clip.py", []], // the browser extension's ingest
   ["backend/gamma/offsite.py", ["settings"]], // the Off-site copies section of Backups
-  ["backend/gamma/gdrive*.py", ["settings"]], // Backups › Google Drive
-  ["backend/gamma/snapshot_copies.py", ["settings"]], // the copies in the bucket and in Google Drive
+  ["backend/gamma/gdrive.py", ["settings"]], // Backups › Backup destinations › Google Drive
+  ["backend/gamma/onedrive.py", ["settings"]], // … › OneDrive
+  ["backend/gamma/cloud_*.py", ["settings"]], // what the clouds share: HTTP, OAuth, the connection
+  ["backend/gamma/snapshot_copies.py", ["settings"]], // the copies in every backup destination
   ["backend/gamma/s3.py", ["settings"]],
-  ["backend/gamma/backup_store.py", ["settings"]], // what the bucket and Google Drive share
+  ["backend/gamma/backup_store.py", ["settings"]], // what every backup destination shares
   // the core every scenario goes through: app, auth, db, migrations, workspaces, blocks, ops, uploads, prefs, collab …
   // the chat's pictures of handwriting (view_ink, an attached group, a transcribed selection): the AI modules' groups
   ["backend/gamma/ink_view.py", [...CHAT, "settings", "ink-zoom"]],
