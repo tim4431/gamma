@@ -3027,8 +3027,10 @@ export async function settingsScenarios(env) {
       await until(async () => (await menu().innerText()) === "test-model-b", { what: "the row on the new model" });
       assertEq((await metadata.getAttribute("class")).includes("aiTaskMissing"), false, "no longer red");
       assertEq(await hint(), "Test connection · Pay per token");
-      assertEq(JSON.stringify((await user.api("/api/ai/models")).roles.metadata),
-        JSON.stringify({ pick: `${ownId}:test-model-b`, model: `${ownId}:test-model-b`, state: "ok" }));
+      // The row shows a pick before its PUT lands (useAiModels writes it at once).
+      await until(async () => JSON.stringify((await user.api("/api/ai/models")).roles.metadata)
+        === JSON.stringify({ pick: `${ownId}:test-model-b`, model: `${ownId}:test-model-b`, state: "ok" }),
+        { what: "the task on test-model-b, saved" });
       assertEq((await user.api("/api/notices")).notices.length, 0, "nothing left to tell");
       assertNoProblems(page);
     } finally {
@@ -3764,7 +3766,8 @@ export async function settingsScenarios(env) {
       assertEq((await group.locator(".modelMenuName").allInnerTexts()).join(), "lab-model", "the shared connection's model, the one picked");
       await group.getByRole("option", { name: /^lab-model/ }).click();
       await until(async () => (await chatModel.innerText()) === "lab-model", { what: "the chat on the shared model" });
-      assert((await user.api("/api/ai/models")).roles.chat.pick.startsWith("server:"), "the shared entry's model");
+      await until(async () => (await user.api("/api/ai/models")).roles.chat.pick.startsWith("server:"),
+        { what: "the chat on the shared entry's model, saved" });
       // Usage says what is left of the allowance.
       await nav(page, "Usage").click();
       await row(page, "Shared allowance").getByText("0 of 50k tokens in the last 24 h", { exact: true }).waitFor();
