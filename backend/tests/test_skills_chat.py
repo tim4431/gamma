@@ -244,6 +244,35 @@ def test_the_agent_loads_a_skill_and_lists_them_in_its_prompt(org, provider):
         skills.remove(ids["user_id"], made["id"], None)
 
 
+def test_a_built_in_kept_to_a_slash_leaves_the_listing_and_still_runs_from_it(org, provider):
+    """Settings' Only from / for a built-in (PUT .../state {model: false}):
+    the prompt stops naming it, load_skill refuses it, and a message that
+    runs it from "/" still carries its instructions."""
+    c, ids = org
+    c.put("/api/ai/skills/builtin:explain/state", json={"model": False}).raise_for_status()
+    try:
+        _streamed(c.post("/api/ai/chat", json={"prompt": "what does eq. 3 mean", "agent_scope": "folder",
+                                               "folder": "", "stream": True}))
+        system = provider.calls[0]["system"]
+        assert "- summarize:" in system and "- explain:" not in system
+        catalog = skills.catalog(ids["user_id"], True)
+        assert [s["model"] for s in catalog if s["name"] == "explain"] == [False]
+        text, action = run_agent_tool(ids["ws"], {"type": "folder", "folder": "", "skills": catalog},
+                                      "load_skill", {"name": "explain"})
+        assert text.startswith("error: no skill /explain") and action["error"]
+
+        # "/" is untouched: the message still reads the instructions.
+        explain = skills.BUILTIN_PREFIX + "explain"
+        _streamed(c.post("/api/ai/chat", json={
+            "prompt": "eq. 3", "agent_scope": "folder", "folder": "", "stream": True,
+            "skill": {"id": explain, "name": "explain", "args": "eq. 3"}}))
+        turn = provider.calls[-1]["messages"][-1]["content"]
+        assert turn.endswith(_block("explain", skills.render(skills.find(skills.builtins(), explain), "eq. 3"))
+                             + "\n\neq. 3")
+    finally:
+        c.put("/api/ai/skills/builtin:explain/state", json={"model": True}).raise_for_status()
+
+
 def _load(skill_id, name, error=False, result=SAVED_RESULT):
     return {"tool": "load_skill", "kind": "error" if error else "skill", "args": {"name": name},
             "result": result, **({"error": True} if error else {"skill_id": skill_id})}

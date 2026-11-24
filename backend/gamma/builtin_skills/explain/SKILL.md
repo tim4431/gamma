@@ -1,6 +1,6 @@
 ---
 name: explain
-description: Explains the selected passage, an equation or a concept from the paper at the level asked for, from first intuition to the details.
+description: Walks through one passage, equation or concept of the paper at length and at the level asked for, from first intuition to the details. For a request to be taken through something, not for an ordinary question about the paper.
 argument-hint: "[what to explain and for whom, e.g. 'eq. 3 for an undergraduate']"
 ---
 

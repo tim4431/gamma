@@ -64,11 +64,16 @@ TOOLS = [
         "run": _run_load_skill, "replay": _replay, "elided": ELIDED_RESULT,
         "spec": {
             "name": "load_skill",
+            # Says what the listing says (skills.LISTING_HEAD): answering
+            # directly is the rule, loading a skill the exception, and a skill
+            # already loaded is not loaded again.
             "description": (
                 "Load one of the user's skills, listed under Skills in the system prompt: its instructions "
-                "for a kind of request. Call it when the user's request fits a skill, before answering, then "
-                "follow the instructions it returns. A message that begins with \"The user ran the skill …\" "
-                "already carries its skill."),
+                "for one kind of request. Only for a message that plainly asks for the whole piece of work a "
+                "skill's description names — answer an ordinary question or a follow-up directly instead, and "
+                "do not load a skill whose instructions are already in this conversation. When one does fit, "
+                "call it before answering, then follow the instructions it returns. A message that begins "
+                "with \"The user ran the skill …\" already carries its skill."),
             "parameters": {
                 "type": "object",
                 "properties": {"name": {"type": "string", "description": "the skill's name, as listed"}},
