@@ -31,13 +31,13 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from .. import (ai_settings, backups, chatgpt_oauth, cloud_account, cloud_auth, email_invites, guests,
+from .. import (ai_settings, backups, cloud_account, cloud_auth, email_invites, guests,
                 hosted, integrity, jobs, ocr_auto, ocr_engine, offsite, proxy_settings, server_options, snapshot_copies,
                 workspaces, zotero_oauth)
 from ..backup_store import StoreConfigError, StoreError
 from ..auth import require_admin
-from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
-                 new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
+from .ai import (AIProviderRequest, SignInComplete, SignInStart, SignInStatus, begin_signin, new_signin_entry,
+                 reconnect_signin_entry, redeem_signin, seeded_signin_models, signin_status)
 from .zotero import CALLBACK_PATH as ZOTERO_CALLBACK_PATH, oauth_base as zotero_oauth_base
 from ..db import account_name, account_names, connect_users_db
 from ..logbuf import tail as _log_tail
@@ -250,8 +250,8 @@ def _cloud() -> dict:
 # ids are the namespaced ``server:<id>`` every account's runtime uses; the
 # Test button, the model list and a sign-in's subscription usage go through
 # /api/ai/providers/{id}/test|usage and /api/ai/model-catalog, which take
-# that id from an admin. A ChatGPT sign-in is made (or reconnected) through
-# /ai-providers/chatgpt/start + status + complete, the account flow's helpers
+# that id from an admin. A sign-in (ChatGPT, Gemini) is made or reconnected
+# through /ai-providers/<protocol>/start + status + complete, the account flow's helpers
 # with the state bound to ("server", admin). Each entry carries its
 # ``access`` (who may use it), set on add or edit.
 
@@ -318,40 +318,41 @@ def add_ai_provider(payload: SharedProviderRequest, request: Request):
     return _shared_ai_view()
 
 
-@router.post("/ai-providers/chatgpt/start")
-def shared_chatgpt_start(request: Request, payload: ChatGPTAuthStart | None = None):
+# Sync def: asking for a device code is a network round trip.
+@router.post("/ai-providers/{protocol}/start")
+def shared_signin_start(protocol: str, request: Request, payload: SignInStart | None = None):
     require_admin(request)
-    return begin_chatgpt_signin(("server", request.state.user_id), request, payload)
+    return begin_signin(protocol, ("server", request.state.user_id), request, payload)
 
 
-@router.post("/ai-providers/chatgpt/status")
-def shared_chatgpt_status(payload: ChatGPTAuthStatus, request: Request):
+@router.post("/ai-providers/{protocol}/status")
+def shared_signin_status(protocol: str, payload: SignInStatus, request: Request):
     require_admin(request)
-    return chatgpt_oauth.status(("server", request.state.user_id), payload.state)
+    return signin_status(protocol, ("server", request.state.user_id), payload.state)
 
 
 # Sync def: the code exchange and the model listing are network round trips.
-@router.post("/ai-providers/chatgpt/complete")
-def shared_chatgpt_complete(payload: ChatGPTAuthComplete, request: Request):
-    """Redeem a shared sign-in: a new shared ChatGPT entry, or, with
+@router.post("/ai-providers/{protocol}/complete")
+def shared_signin_complete(protocol: str, payload: SignInComplete, request: Request):
+    """Redeem a shared sign-in: a new shared entry, or, with
     ``provider_id``, new tokens on an existing one (reconnect)."""
     require_admin(request)
     me = request.state.user_id
-    oauth = redeem_chatgpt_signin(("server", me), payload.state, payload.callback)
+    oauth = redeem_signin(protocol, ("server", me), payload.state, payload.callback)
     if payload.provider_id:
         def reconnect(config):
             entry = _shared_entry(config, payload.provider_id)
-            if entry.get("protocol") != "chatgpt":
+            if entry.get("protocol") != protocol:
                 raise HTTPException(status_code=404, detail="provider not found")
-            reconnect_chatgpt_entry(entry, oauth, payload.name, payload.models)
+            reconnect_signin_entry(entry, oauth, payload.name, payload.models)
         ai_settings.edit_server_ai(reconnect)
         return _shared_ai_view()
-    entry = new_chatgpt_entry(ai_settings.new_server_provider_id(), oauth, payload.name, payload.models)
+    entry = new_signin_entry(protocol, ai_settings.new_server_provider_id(), oauth, payload.name, payload.models)
     _add_shared(entry)
     if not entry["models"]:
         # Listed live through the admin's runtime, which offers the shared
         # entries after the admin's own.
-        models = seeded_chatgpt_models(me, entry["id"])
+        models = seeded_signin_models(me, entry["id"])
         if models:
             def seed(config):
                 for e in config["providers"]:

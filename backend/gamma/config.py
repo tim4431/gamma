@@ -384,4 +384,5 @@ AI_BASE_URLS = {
     "anthropic": "https://api.anthropic.com",
     "openai": "https://api.openai.com",
     "chatgpt": "https://chatgpt.com/backend-api/codex",
+    "gemini-signin": "https://cloudcode-pa.googleapis.com/v1internal",
 }

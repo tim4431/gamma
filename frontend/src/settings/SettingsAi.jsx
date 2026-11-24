@@ -20,9 +20,10 @@ import { SECTION_PREFS } from "./sectionPrefs.js";
 import { useSettingsRead } from "./settingsReads.js";
 import { accessSummary, modelList, useProviderEditor } from "./providerEditor.js";
 import { ProviderForm } from "./ProviderForm.jsx";
-import { ActivityIcon, BanIcon, CheckIcon, GlobeIcon, KeyIcon, LanguagesIcon, MessageSquareIcon, MicIcon, PaperIcon, PenIcon, PlusIcon, RefreshIcon, Trash2Icon, UserIcon } from "../shared/ui/Icons";
+import { signInWords } from "./aiServices.js";
+import { ActivityIcon, BanIcon, CheckIcon, GlobeIcon, KeyIcon, LanguagesIcon, MessageSquareIcon, MicIcon, PaperIcon, PenIcon, PlusIcon, RefreshIcon, StarIcon, Trash2Icon, UserIcon } from "../shared/ui/Icons";
 import { billingLabel, connectionsInUse, taskRow } from "../ai/aiModels.js";
-import { TaskModelMenu } from "../ai/ModelMenu.jsx";
+import { ChatModels, TaskModelMenu } from "../ai/ModelMenu.jsx";
 import { ProviderLogo } from "../ai/ProviderLogo.jsx";
 import { T, fmtDate, getLocale, t } from "../shared/i18n/i18n.js";
 
@@ -135,7 +136,8 @@ function ProviderRow({ provider, protocol, oauth, test, health = null, usage, on
         </span>
         <span className="aiProvDesc">
           {oauth
-            ? t("{connected} · ChatGPT subscription", { connected: provider.oauth_connected ? t("signed in{account}", { account: provider.account ? ` as ${provider.account}` : "" }) : t("not connected") })
+            ? t("{connected} · {plan}", { plan: signInWords(provider.protocol).plan,
+              connected: provider.oauth_connected ? t("signed in{account}", { account: provider.account ? ` as ${provider.account}` : "" }) : t("not connected") })
             : `${provider.key_hint ? `key ${provider.key_hint} · ` : provider.shared ? "" : `${t("no key")} · `}${protocol?.label || provider.protocol}`}
           {provider.base_url ? ` · ${provider.base_url}` : ""}
         </span>
@@ -342,6 +344,12 @@ export function AiSettings({ value }) {
           <Row icon={MessageSquareIcon} label={t("Chat")} {...taskRow(info, "chat")}
             title={t("The model a new chat starts with, and the one titles and structured notes use. The chat's model chip changes it too, on every device.")}>
             <TaskModelMenu role="chat" ai={ai} label={t("Chat")} />
+          </Row>
+          <Row icon={StarIcon} label={t("Chat models")} wide
+            hint={ai.favorites.length ? t("The chat's model chip offers these to switch between.")
+              : t("Add the models you switch between: the chat's model chip offers them.")}
+            title={t("The models the chat's model chip lists beside the one in use, to switch with a click. A star in any model menu adds one too.")}>
+            <ChatModels ai={ai} />
           </Row>
           <Row icon={PaperIcon} label={t("Metadata & citations")} {...taskRow(info, "metadata")}
             title={t("Metadata first tries arXiv and DOI records. This model checks which of the records the PDF's text names is this document, reads the metadata off the PDF when no registry has it, and writes the slide citation; a fast, cheap model is usually enough.")}>

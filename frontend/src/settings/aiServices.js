@@ -11,9 +11,72 @@ import { T, t } from "../shared/i18n/i18n.js";
 // tiles and the dialog's cards.
 export const SERVICE_TILES = {
   chatgpt: { label: t("ChatGPT"), hint: t("Sign in with your subscription. No API key.") },
+  "gemini-signin": { label: t("Gemini"), hint: t("Sign in with your Google account. No API key.") },
   anthropic: { label: t("Anthropic"), hint: t("Claude models, with an API key") },
   openai: { label: t("OpenAI API"), hint: t("GPT models, with an API key") },
 };
+
+// Each sign-in protocol's own words: the connect dialog's sign-in step and
+// a signed-in connection's row. `paste` is what a sign-in made in a browser
+// on another machine hands back: ChatGPT's redirect address, which fails
+// to load ("address"), or the code Google's page shows ("code").
+export const SIGN_INS = {
+  chatgpt: {
+    title: t("Sign in with ChatGPT"), billed: t("No API key — usage is billed to your ChatGPT subscription."),
+    open: t("Open ChatGPT sign-in"), reopen: t("Re-open ChatGPT sign-in"), plan: t("ChatGPT subscription"),
+    unstarted: t("Open ChatGPT sign-in first."), unfinished: t("Finish the sign-in first, or paste the address it ended on."),
+    paste: "address",
+  },
+  "gemini-signin": {
+    title: t("Sign in with Google"), billed: t("No API key — usage counts against your account's Gemini CLI quota."),
+    open: t("Open Google sign-in"), reopen: t("Re-open Google sign-in"), plan: t("Google account"),
+    unstarted: t("Open Google sign-in first."), unfinished: t("Finish the sign-in first, or paste the code Google shows."),
+    paste: "code",
+  },
+};
+// A sign-in this browser has no words for yet reads as ChatGPT's.
+export const signInWords = (protocol) => SIGN_INS[protocol] || SIGN_INS.chatgpt;
+
+// What a sign-in hands back, as copied: the address its redirect ended on
+// with its code (ChatGPT's localhost:1455/auth/callback, a loopback
+// /oauth2callback), of the sign-in `state` when one is given, or the code
+// Google's page shows ("4/0A…").
+export function signInAddress(text, state = "") {
+  if (/^4\/[\w-]{10,}$/.test(text)) return true;
+  try {
+    const url = new URL(text);
+    return /\/(auth\/callback|oauth2callback)$/.test(url.pathname) && !!url.searchParams.get("code")
+      && (!state || url.searchParams.get("state") === state);
+  } catch {
+    return false;
+  }
+}
+
+// The ways to connect an AI service, as the chat's setup card's tiles
+// ({value, label, hint}): each protocol the server offers (sign-in first,
+// then the API-key ones in the server's order), then "Other service" for
+// the named services and a custom endpoint, which opens the connect dialog
+// on its first preset. A tile's value is a protocol id or "other". A
+// protocol with a caution note (the Gemini sign-in's terms) is no first
+// step to offer: it stays in the connect dialog, its note under its card.
+export function aiServiceTiles(info) {
+  const protocols = [...(info?.protocols || [])].filter((p) => !p.note)
+    .sort((a, b) => Number(b.auth === "oauth") - Number(a.auth === "oauth"));
+  const tiles = protocols.map((p) => ({
+    value: p.id,
+    label: SERVICE_TILES[p.id]?.label || p.label,
+    hint: SERVICE_TILES[p.id]?.hint || (p.auth === "oauth" ? t("Subscription sign-in") : t("API key")),
+  }));
+  if (protocols.some((p) => p.auth !== "oauth")) {
+    const names = serviceGroups(info?.services).map((group) => group.name).join(", ");
+    tiles.push({
+      value: "other",
+      label: t("Other service"),
+      hint: names ? t("{services} or any OpenAI-compatible endpoint", { services: names }) : t("Any OpenAI-compatible endpoint"),
+    });
+  }
+  return tiles;
+}
 
 // The named services by vendor, in the server's order (the chat's setup
 // card names them on its Other tile).

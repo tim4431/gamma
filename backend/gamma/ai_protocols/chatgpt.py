@@ -83,6 +83,7 @@ class ChatGPT(ResponsesWire):
     label = "ChatGPT (subscription sign-in)"
     auth = "oauth"
     oauth = chatgpt_oauth
+    entry_name = "ChatGPT"
     has_account_usage = True
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",

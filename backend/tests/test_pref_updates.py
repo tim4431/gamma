@@ -83,14 +83,14 @@ def test_chatgpt_signin_keeps_a_key_added_during_its_network_calls(monkeypatch):
     make_user("pu_oauth", "pu-password-1")
     me = account_of("pu_oauth")
     tab1, tab2 = login("pu_oauth", "pu-password-1"), login("pu_oauth", "pu-password-1")
-    monkeypatch.setattr(ai_router, "redeem_chatgpt_signin", lambda owner, state, callback: {
+    monkeypatch.setattr(ai_router, "redeem_signin", lambda protocol, owner, state, callback: {
         "access_token": "a", "refresh_token": "r", "expires_at": int(time.time()) + 3600,
         "account_id": "acct"})
 
     def slow_models(user, entry_id):
         time.sleep(0.6)
         return "gpt-x"
-    monkeypatch.setattr(ai_router, "seeded_chatgpt_models", slow_models)
+    monkeypatch.setattr(ai_router, "seeded_signin_models", slow_models)
 
     out = {}
     t = threading.Thread(target=lambda: out.setdefault("r", tab1.post(

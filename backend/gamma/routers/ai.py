@@ -1,4 +1,4 @@
-"""AI chat, provider settings, model discovery, and ChatGPT OAuth routes."""
+"""AI chat, provider settings, model discovery, and the subscription sign-in routes."""
 
 import hashlib
 import ipaddress
@@ -791,7 +791,7 @@ def _no_credential(entry: dict) -> dict:
     """The in-body failure for an entry ``ai_runtime`` dropped: no key, or a
     ChatGPT sign-in whose refresh failed."""
     return {"ok": False, "auth": True, "kind": "auth",
-            "error": "ChatGPT sign-in expired or disconnected — sign in again"
+            "error": "the sign-in expired or was disconnected — sign in again"
             if _is_oauth_protocol(entry.get("protocol"))
             else "entry has no usable credential — set an API key or sign in again"}
 
@@ -1504,20 +1504,30 @@ def ai_transcribe(request: Request, file: UploadFile = File(...),
     raise HTTPException(status_code=502, detail=f"transcription failed — {detail}")
 
 
-# --- ChatGPT subscription sign-in (OAuth PKCE, Codex CLI's flow) --------------
-# start → the browser opens auth.openai.com, and gamma/chatgpt_oauth.py keeps
-# the sign-in until the server has its code: caught from the redirect on this
-# machine, or through the device code the form's status calls poll — else the
-# user pastes the address the redirect failed to load. complete then stores
-# the tokens on a provider entry.
+# --- subscription sign-ins (OAuth PKCE) ------------------------------------
+# ChatGPT through Codex CLI's flow (gamma/chatgpt_oauth.py), Gemini through
+# Gemini CLI's (gamma/gemini_oauth.py): each sign-in protocol's adapter names
+# its flow module (``Protocol.oauth``), which keeps a sign-in from start until
+# the server has its code — caught from the redirect on this machine, or
+# (ChatGPT) through the device code the form's status calls poll — else the
+# user pastes the address the redirect failed to load, or the code Google
+# shows. complete then stores the tokens on a provider entry.
 
-class ChatGPTAuthStart(BaseModel):
+class SignInStart(BaseModel):
     local: bool = False   # the page runs at a loopback address
-    device: bool = False  # also ask for a device code (the form shows it)
+    device: bool = False  # also ask for a device code where the provider has them
 
 
-class ChatGPTAuthStatus(BaseModel):
+class SignInStatus(BaseModel):
     state: str = ""
+
+
+class SignInComplete(BaseModel):
+    state: str = ""
+    callback: str = ""      # pasted redirect URL (or a bare code); "" once status is ready
+    provider_id: str = ""   # existing entry to reconnect; "" creates a new one
+    name: str = ""
+    models: str = ""
 
 
 def _same_machine(request: Request, claimed: bool) -> bool:
@@ -1532,36 +1542,54 @@ def _same_machine(request: Request, claimed: bool) -> bool:
     return claimed and (ip.is_loopback or bool(mapped and mapped.is_loopback))
 
 
-def begin_chatgpt_signin(owner, request: Request, payload: ChatGPTAuthStart | None) -> dict:
+def signin_flow(protocol: str):
+    """The flow module of a sign-in protocol (its ``begin``, ``status`` and
+    ``redeem``); 404 for a protocol that is no sign-in."""
+    proto = ai_protocols.PROTOCOLS.get(protocol)
+    if not proto or proto.auth != "oauth":
+        raise HTTPException(status_code=404, detail="no such sign-in")
+    return proto.oauth
+
+
+def begin_signin(protocol: str, owner, request: Request, payload: SignInStart | None) -> dict:
     """Start a sign-in for ``owner``: an account name (its own entry), or
     ``("server", <admin>)`` for a shared entry (routers/admin.py). Returns
     {auth_url, state, local, device}."""
-    payload = payload or ChatGPTAuthStart()
-    return chatgpt_oauth.begin(owner, local=_same_machine(request, payload.local), device=payload.device)
+    flow = signin_flow(protocol)
+    payload = payload or SignInStart()
+    return flow.begin(owner, local=_same_machine(request, payload.local), device=payload.device)
 
 
-def redeem_chatgpt_signin(owner, state: str, callback: str) -> dict:
+def signin_status(protocol: str, owner, state: str) -> dict:
+    """{ready, error} of a sign-in ``owner`` started (a due device code is
+    polled here)."""
+    return signin_flow(protocol).status(owner, state)
+
+
+def redeem_signin(protocol: str, owner, state: str, callback: str) -> dict:
     """The tokens of a sign-in ``owner`` started (400 otherwise): the ones the
     server caught, else the pasted redirect URL's code. The state belongs to
     whoever started it — another account, or the same admin's own-entry
     form, can't redeem it (and so can't attach that login's tokens
     elsewhere)."""
+    flow = signin_flow(protocol)
     try:
-        return chatgpt_oauth.redeem(owner, state, callback)
+        return flow.redeem(owner, state, callback)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"token exchange failed: {e}")
 
 
-def new_chatgpt_entry(entry_id: str, oauth: dict, name: str, models: str) -> dict:
-    return {"id": entry_id, "protocol": "chatgpt",
-            "name": name.strip()[:MAX_NAME_LEN] or "ChatGPT", "api_key": "", "base_url": "",
+def new_signin_entry(protocol: str, entry_id: str, oauth: dict, name: str, models: str) -> dict:
+    return {"id": entry_id, "protocol": protocol,
+            "name": name.strip()[:MAX_NAME_LEN] or ai_protocols.PROTOCOLS[protocol].entry_name,
+            "api_key": "", "base_url": "",
             "models": models.strip()[:MAX_MODELS_LEN], "created_at": page_now(), "oauth": oauth}
 
 
-def reconnect_chatgpt_entry(entry: dict, oauth: dict, name: str, models: str) -> None:
-    """New tokens on an existing ChatGPT entry; a non-blank name or model
+def reconnect_signin_entry(entry: dict, oauth: dict, name: str, models: str) -> None:
+    """New tokens on an existing sign-in entry; a non-blank name or model
     list replaces the stored one."""
     entry["oauth"] = oauth
     if name.strip():
@@ -1570,7 +1598,7 @@ def reconnect_chatgpt_entry(entry: dict, oauth: dict, name: str, models: str) ->
         entry["models"] = models.strip()[:MAX_MODELS_LEN]
 
 
-def seeded_chatgpt_models(user_id: str, entry_id: str) -> str:
+def seeded_signin_models(user_id: str, entry_id: str) -> str:
     """A new sign-in's first models, asked live from the account through
     ``user_id``'s runtime (the tokens must be stored first); "" when the
     listing fails — they are then picked in the entry's form."""
@@ -1582,42 +1610,35 @@ def seeded_chatgpt_models(user_id: str, entry_id: str) -> str:
 
 
 # Sync def: asking for a device code is a network round trip.
-@router.post("/ai/oauth/chatgpt/start")
-def chatgpt_auth_start(request: Request, payload: ChatGPTAuthStart | None = None):
-    return begin_chatgpt_signin(require_key_owner(request), request, payload)
+@router.post("/ai/oauth/{protocol}/start")
+def signin_start(protocol: str, request: Request, payload: SignInStart | None = None):
+    return begin_signin(protocol, require_key_owner(request), request, payload)
 
 
 # Sync def: a due device code is polled with OpenAI.
-@router.post("/ai/oauth/chatgpt/status")
-def chatgpt_auth_status(payload: ChatGPTAuthStatus, request: Request):
-    return chatgpt_oauth.status(require_key_owner(request), payload.state)
+@router.post("/ai/oauth/{protocol}/status")
+def signin_wait(protocol: str, payload: SignInStatus, request: Request):
+    return signin_status(protocol, require_key_owner(request), payload.state)
 
 
-class ChatGPTAuthComplete(BaseModel):
-    state: str = ""
-    callback: str = ""      # pasted redirect URL (or a bare code); "" once status is ready
-    provider_id: str = ""   # existing entry to reconnect; "" creates a new one
-    name: str = ""
-    models: str = ""
-
-
-# Sync def: the code exchange and the model listing are network round trips.
-@router.post("/ai/oauth/chatgpt/complete")
-def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
+# Sync def: the code exchange (with Gemini, the account's setup too) and the
+# model listing are network round trips.
+@router.post("/ai/oauth/{protocol}/complete")
+def signin_complete(protocol: str, payload: SignInComplete, request: Request):
     user_id = require_key_owner(request)
-    oauth = redeem_chatgpt_signin(user_id, payload.state, payload.callback)
+    oauth = redeem_signin(protocol, user_id, payload.state, payload.callback)
     # Every write below is a read-modify-write of the list as it is THEN
     # (update_provider_entries): a key added in another tab during the
     # network calls stays.
     if payload.provider_id:
         def reconnect(entries):
             entry = _own_entry(entries, payload.provider_id)
-            if entry.get("protocol") != "chatgpt":
+            if entry.get("protocol") != protocol:
                 raise HTTPException(status_code=404, detail="provider not found")
-            reconnect_chatgpt_entry(entry, oauth, payload.name, payload.models)
+            reconnect_signin_entry(entry, oauth, payload.name, payload.models)
         update_provider_entries(user_id, reconnect)
         return _masked_settings(request)
-    entry = new_chatgpt_entry(new_provider_id(), oauth, payload.name, payload.models)
+    entry = new_signin_entry(protocol, new_provider_id(), oauth, payload.name, payload.models)
 
     def add(entries):
         if len(entries) >= MAX_PROVIDERS:
@@ -1627,7 +1648,7 @@ def chatgpt_auth_complete(payload: ChatGPTAuthComplete, request: Request):
     if not entry["models"]:
         # Seed the model list live from the account (the tokens stored
         # first: the listing reads them back through ai_runtime).
-        models = seeded_chatgpt_models(user_id, entry["id"])
+        models = seeded_signin_models(user_id, entry["id"])
         if models:
             def seed(entries):
                 for e in entries:

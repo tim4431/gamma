@@ -1201,10 +1201,10 @@ native app").
 lists the server's shared connections with the same rows and the same
 add/edit form as Models' Connections (`ProviderRow`, `ProviderForm`; both forms'
 state is `useProviderEditor`, here over `/api/admin/ai-providers`, for the
-account's list over `/api/ai/providers` in App). An entry is an API-key service or a ChatGPT
-subscription signed in with the account form's steps
-(`/api/admin/ai-providers/chatgpt/*`; [ai.md](ai.md) "How a sign-in reaches
-the server"); the dialog is titled "Connect a
+account's list over `/api/ai/providers` in App). An entry is an API-key service or a
+sign-in (ChatGPT, Gemini) made with the account form's steps
+(`/api/admin/ai-providers/<protocol>/*`; [ai.md](ai.md) "How a sign-in reaches
+the server", "The Gemini sign-in"); the dialog is titled "Connect a
 shared AI service" and tests a new entry once it is saved. Its last step,
 **Who may use it**, is the shared form's own: three `IconChoices` tiles —
 Every account / Accounts and guests / Selected accounts — and, under the

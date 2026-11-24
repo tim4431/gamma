@@ -5,7 +5,9 @@ request, the reply and its stream, the token report, the model listing,
 the credential check, the account's quota, what the provider accepts — so
 the routes and the chat loop never branch on a protocol id. ``conf`` is one
 resolved provider entry (``ai_settings.ai_runtime``): ``{protocol,
-base_url, api_key, name}`` plus protocol extras (``account_id``).
+base_url, api_key, name}`` plus a sign-in's ``account_id``, what its calls
+name the account by (the ChatGPT account, the Gemini sign-in's Code Assist
+project).
 
 Messages come in one common shape: ``{role, content}`` turns, an assistant
 turn may carry ``tool_calls`` ([{id, name, arguments-dict}]) and
@@ -393,6 +395,41 @@ def sse_json(response):
             continue
 
 
+def _sse_json(lines: list):
+    data = "\n".join(lines).strip()
+    if not data or data == "[DONE]":
+        return None
+    try:
+        return json.loads(data)
+    except ValueError:
+        return None
+
+
+def sse_events(response):
+    """The JSON events of a server-sent-events response read by the
+    standard's rule: an event's ``data:`` lines joined, up to the blank line
+    that ends it (Google's Code Assist backend may spread one over several).
+    A ``data:`` line after a whole event begins the next one, for a server
+    that leaves the blank lines out."""
+    lines = []
+    for raw in response:
+        line = raw.decode("utf-8", "replace").rstrip("\r\n")
+        if line.startswith("data:"):
+            event = _sse_json(lines) if lines else None
+            if event is not None:
+                lines.clear()
+                yield event
+            lines.append(line[5:].lstrip(" "))
+        elif not line.strip():
+            event = _sse_json(lines)
+            lines.clear()
+            if event is not None:
+                yield event
+    event = _sse_json(lines)
+    if event is not None:
+        yield event
+
+
 def bearer_json_request(url: str, key: str, **headers) -> URLRequest:
     return URLRequest(url, headers={**bearer(key), "Accept": "application/json",
                                     "User-Agent": "Gamma/model-catalog", **headers})
@@ -406,10 +443,13 @@ class Protocol:
     id = ""
     label = ""
     auth = "key"         # "oauth": the entry holds sign-in tokens, refreshed by ``oauth``
-    # The sign-in module of an "oauth" protocol: needs_refresh(oauth), and
-    # refresh(oauth) -> the new oauth dict, None when the grant is refused,
-    # or raises chatgpt_oauth.RefreshUnavailable when there was no verdict.
+    # The sign-in module of an "oauth" protocol (gamma/chatgpt_oauth.py,
+    # gamma/gemini_oauth.py): begin / status / redeem, the sign-in in
+    # progress (routers/ai.py), needs_refresh(oauth), and refresh(oauth) ->
+    # the new oauth dict, None when the grant is refused, or raises
+    # chatgpt_oauth.RefreshUnavailable when there was no verdict.
     oauth = None
+    entry_name = ""      # a sign-in's: the name its new entry gets when the user gives none
     entry = True         # an entry may name it (False: a variant another protocol switches to)
     native_pdf = True    # the provider takes the PDF file itself, not only extracted text
     streams_only = False # the reply always arrives as SSE, even for a caller that wants it whole
@@ -418,6 +458,10 @@ class Protocol:
     # endpoint — a custom base URL on the same wire shows neither.
     key_placeholder = ""
     key_url = ""
+    # A sentence the connect dialog shows under the protocol's card (the
+    # Gemini sign-in's terms warning); a protocol with one is left off the
+    # chat's setup card.
+    note = ""
     # The speed tiers this wire can ask for: canonical name (SPEED_ORDER) ->
     # the value it sends. Empty = the wire has no speed control.
     speeds: dict = {}
@@ -555,7 +599,7 @@ class Protocol:
         the stop reason attached."""
         state = {"got": False, "stop": "", "usage": None}
         seen = False
-        for event in sse_json(response):
+        for event in self.sse(response):
             seen = True
             for out in self.stream_event(event, state):
                 state["got"] = state["got"] or out[0] in ("text", "tool")
@@ -573,6 +617,11 @@ class Protocol:
             raise NotAnAIStream("the endpoint answered without any AI stream events — check the connection's base URL")
         if not state["got"]:
             raise RuntimeError(f"empty response (stop reason={state['stop'] or 'unknown'} — {EMPTY_REPLY_HINT})")
+
+    def sse(self, response):
+        """The parsed events of a streamed reply: one per ``data:`` line
+        (``sse_json``), or by the standard's rule where a wire needs it."""
+        return sse_json(response)
 
     def stream_event(self, event, state):
         """The events one parsed SSE event yields; ``state`` is the stream's
