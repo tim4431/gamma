@@ -1,9 +1,10 @@
 // The one model menu (docs/dev/ai.md "The model menu"): a search box over
-// every connection's models, the favorites first, then a group per
+// every connection's models, the chat models first (the account's
+// favorites: the list the chat's model chip offers), then a group per
 // connection under its logo, named with how it is paid for. A row shows the model, what it
 // can't do ("no tools", for the handwriting task "can't convert to text"),
 // whether it sees pictures, its context window and, on a connection paid
-// per token, its price; its star makes it a favorite. A task's menu starts
+// per token, its price; its star adds it to the chat models. A task's menu starts
 // with "Use chat model", the translation task's ends with the translation
 // services, and a pick that is no longer offered stands at the top, marked
 // unavailable. What it lists is modelMenu.js menuGroups.
@@ -14,11 +15,12 @@
 // drawn as menu rows. ModelMenuList is the open menu, for a caller that
 // opens it from a control of its own (the chat's model chip);
 // TaskModelMenu is a task's, a MenuSelect that opens it (Settings → AI →
-// Models, Language & translation's Translate with). ModelFacts is a row's
-// facts, the connect dialog's model checklist's too.
+// Models, Language & translation's Translate with). ChatModels is Settings
+// → AI → Models' list of the chat models. ModelFacts is a row's facts, the
+// connect dialog's model checklist's too.
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ContextMenu, MenuItem, MenuLabel, MenuSelect } from "../shared/ui/Menus";
-import { CheckIcon, EyeIcon, SearchIcon, StarIcon } from "../shared/ui/Icons";
+import { CheckIcon, EyeIcon, SearchIcon, StarIcon, XIcon } from "../shared/ui/Icons";
 import { composing } from "../shared/lib/hotkeys.js";
 import { t } from "../shared/i18n/i18n.js";
 import { billingLabel, followed, modelName } from "./aiModels.js";
@@ -90,7 +92,7 @@ export function ModelMenuList({ x, y, anchorRight = false, anchorBottom = false,
     }
   };
   const heading = (group) => {
-    if (group.key === "favorites") return t("Favorites");
+    if (group.key === "favorites") return t("Chat models");
     if (group.key === "engines") return t("Translation services");
     if (!group.key.startsWith("connection:")) return null;
     const billing = billingLabel(group.billing);
@@ -121,8 +123,8 @@ export function ModelMenuList({ x, y, anchorRight = false, anchorBottom = false,
         </MenuItem>
         {starrable ? (
           <button type="button" className={`ctlBtn modelMenuStar${r.favorite ? " on" : ""}`} tabIndex={-1} aria-pressed={r.favorite}
-            aria-label={r.favorite ? t("Remove {model} from favorites", { model: name }) : t("Add {model} to favorites", { model: name })}
-            title={r.favorite ? t("Remove from favorites") : t("Add to favorites")}
+            aria-label={r.favorite ? t("Remove {model} from the chat models", { model: name }) : t("Add {model} to the chat models", { model: name })}
+            title={r.favorite ? t("Remove from the chat models") : t("Add to the chat models")}
             onMouseDown={(e) => e.preventDefault()} onClick={() => onToggleFavorite(r.id)}>
             <StarIcon size={14} filled={r.favorite} />
           </button>
@@ -181,5 +183,48 @@ export function TaskModelMenu({ role, ai, label }) {
           value={role === "chat" && !r.pick ? r.model : r.pick} onPick={(id) => ai.setRole(role, id)}
           onToggleFavorite={ai.canWrite ? ai.toggleFavorite : null} follow={follow} engines={engines} task={role} />
       )} />
+  );
+}
+
+// The chat models (Settings → AI → Models): the models the chat's model
+// chip offers to switch to, besides the one in use — the account's
+// favorites, in the order they were added. Each is a chip with its
+// connection's logo and a remove button; one no longer offered stays,
+// marked unavailable, so it can be removed. "Add model…" opens the model
+// menu: a pick adds that model and closes it, a star adds or removes one
+// and leaves it open for the next. `ai` is useAiModels'.
+export function ChatModels({ ai }) {
+  const info = ai.aiInfo;
+  const favorites = ai.favorites;
+  const add = (id) => { if (!favorites.includes(id)) ai.toggleFavorite(id); };
+  return (
+    <div className="aiModelChips" role="list" aria-label={t("Chat models")}>
+      {favorites.map((id) => {
+        const model = ai.models.find((m) => m.id === id);
+        const name = modelName(info, id);
+        const where = model ? model.provider_name : info?.missing?.[id]?.connection || t("a removed connection");
+        return (
+          <span key={id} role="listitem" className="categoryTag chatModelTag"
+            title={model ? where : t("{model} is no longer offered", { model: name })}>
+            {model ? <ProviderLogo service={model.service} size={14} fallback={false} /> : null}
+            {name}
+            {model ? null : <span className="uiTag warn modelMenuTag">{t("unavailable")}</span>}
+            {ai.canWrite ? (
+              <button type="button" className="uiClose uiCloseSm" title={t("Remove from the chat models")}
+                aria-label={t("Remove {model} from the chat models", { model: name })} onClick={() => ai.toggleFavorite(id)}>
+                <XIcon size={14} />
+              </button>
+            ) : null}
+          </span>
+        );
+      })}
+      {ai.canWrite ? (
+        <MenuSelect label={t("Add a chat model")} options={[]} display={t("Add model…")} disabled={!ai.models.length}
+          listbox={(at) => (
+            <ModelMenuList {...at} label={t("Add a chat model")} models={ai.models} favorites={favorites}
+              missing={info?.missing} onPick={add} onToggleFavorite={ai.toggleFavorite} />
+          )} />
+      ) : null}
+    </div>
   );
 }

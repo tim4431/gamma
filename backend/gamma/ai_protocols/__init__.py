@@ -10,11 +10,14 @@ preset (``services.py``).
   OpenRouter, local servers …); switches to ``openai-responses`` for
   OpenAI's own tool calls
 - ``chatgpt`` — ChatGPT subscription sign-in (the Codex Responses backend)
+- ``gemini-signin`` — Gemini through a Google sign-in (the Code Assist
+  backend Gemini CLI uses)
 """
 
 from .anthropic import Anthropic
 from .base import SPEED_ORDER, Protocol
 from .chatgpt import ChatGPT
+from .gemini import GeminiSignIn
 from .openai import OpenAIChat
 from .responses import OPENAI_RESPONSES
 from .quota import READERS
@@ -22,7 +25,7 @@ from .services import DEFAULT_MAX_TOKENS, SERVICES, service_of
 
 # Every wire a call may go over, by id; the ones an entry may name come
 # first, in the order the settings form offers them.
-WIRES = {p.id: p for p in (Anthropic(), OpenAIChat(), ChatGPT(), OPENAI_RESPONSES)}
+WIRES = {p.id: p for p in (Anthropic(), OpenAIChat(), ChatGPT(), GeminiSignIn(), OPENAI_RESPONSES)}
 
 # The protocols a provider entry may name.
 PROTOCOLS = {pid: p for pid, p in WIRES.items() if p.entry}

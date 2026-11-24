@@ -25,8 +25,12 @@ The catalog a chat sees has two sources:
   beside the module (`BUILTIN_DIR`), read once per process (`builtins()`, cached). Three ship:
   `summarize` (a structured summary of the paper or pages in context),
   `review` (a referee-style critique: claims, evidence, weaknesses,
-  questions for the authors) and `explain` (a passage, an equation or a
-  concept at the level asked for). Each takes its arguments through
+  questions for the authors) and `explain` (a walkthrough of one passage,
+  equation or concept at the level asked for). A description whose words
+  would otherwise cover an ordinary question ends by saying what the skill
+  is not for — `explain`'s "not for an ordinary question about the paper" —
+  since the description is what the model matches a request against
+  ("Loading one is the exception"). Each takes its arguments through
   `$ARGUMENTS` and says what to do when they are empty, so a body loaded
   by `load_skill`, which has none, still reads well. A file that does not
   parse, or whose `name` is not its folder's name, is skipped with a
@@ -37,9 +41,12 @@ The catalog a chat sees has two sources:
   Chat, Your skills ("Storage" below).
 
 An account skill with a built-in's name replaces that built-in in the
-catalog. An account may also turn a built-in off. Skills an admin shares
-with the server and skills a workspace shares are further sources the
-catalog could take ("Left out").
+catalog. An account may also turn a built-in off, or keep it to "/" — the
+`model` choice an account skill carries in its own field, which for a
+built-in is the account's `manual` list ("Storage"), so both sources are
+settled the same way and `catalog` hands the rest of the code one shape.
+Skills an admin shares with the server and skills a workspace shares are
+further sources the catalog could take ("Left out").
 
 ## The format and its parser
 
@@ -78,7 +85,12 @@ so Settings states and enforces the same numbers.
 
 `catalog(user_id, personal)` is the effective skills of a request, sorted
 by name: the account's own (`source: "account"`) when `personal`, then the
-built-ins the account has neither turned off nor replaced. `personal` is a
+built-ins the account has neither turned off nor replaced, each carrying
+the account's `model` for it (`_builtin`: false where the account keeps it
+to "/", and a built-in that ships `disable-model-invocation` stays false
+whatever the account says). Nothing downstream asks where a skill came
+from: `listing`, `load_skill` and `registry.available` read `model` alone.
+`personal` is a
 signed-in session that is not a guest, a share link or an integration
 token; everyone else gets the built-ins alone, so a token's request, a
 context export or a share's visitor never reads a private skill's
@@ -223,9 +235,9 @@ listing and no tool, and still takes "/".
 **The listing.** `prompt.agent_system` then ends with `skills.listing`:
 
 ```
-Skills: instructions the user keeps for kinds of requests. When a request fits one, call load_skill with its name before answering, then follow it. A message that begins with “The user ran the skill …” already carries its skill.
+Skills: instructions the user keeps for a few kinds of request. Most messages are not one of them — answer an ordinary question, a follow-up, or anything you can answer yourself, without a skill. Load one only when the message plainly asks for the whole piece of work its description names: call load_skill with that name before answering, then follow what it returns. A loaded skill's instructions stay in the conversation, so do not load the same skill again while you can still see them. A message that begins with “The user ran the skill …” already carries its skill.
 
-- explain: Explains the selected passage, …
+- explain: Walks through one passage, equation …
 - review: A referee-style critique …
 ```
 
@@ -234,6 +246,28 @@ while the account's skills stand. At most 50 skills in 8,000 characters
 (`LISTING_SKILLS`, `LISTING_CHARS`): when it is longer, every description
 is cut to the longest length that fits (Codex's rule), and skills are
 dropped from the end only when the names alone do not fit.
+
+**Loading one is the exception.** The head (`LISTING_HEAD`) states the rule
+the other way round from how it first read. "When a request fits one, call
+load_skill with its name before answering" named no case where a skill does
+not apply, and it is the last thing in the system prompt, so a model took
+every message as something to match against the list and loaded a skill for
+each one: a question about an equation fits "explain a concept", and the
+answer then came in the shape of a whole walkthrough, with the skill's
+instructions added to the prompt again. The head now names the ordinary
+case first — an ordinary question, a follow-up, anything the model can
+answer itself gets no skill — and makes loading one the exception, for a
+message that plainly asks for the whole piece of work a description names.
+It also says that a loaded skill's instructions stay in the conversation
+("Replay" below renders them again from the saved id), so there is nothing
+to gain by loading the same skill a second time; "while you can still see
+them" is what leaves the emergency retry's `elided` stub, which asks for
+another call, working. `load_skill`'s own description says the same, since
+a model may read a tool's description more closely than the prompt. The
+descriptions are the other half: one that covers an ordinary question in
+its own words ("explain … a concept from the paper") pulls the model
+whatever the head says, so a built-in whose words reach that far ends by
+naming what it is not for ("Sources").
 
 **The call.** `load_skill {name}` takes the name alone (a leading `/` is
 stripped): the conversation is its input. It answers with
@@ -369,19 +403,28 @@ check being the rule.
   skills before the first one; failures are a `FormNotice`.
 - **The editor** is a `SubDialog` over `useDraftOf`, with the dismissal
   guard: the name with a fixed `/` before it, checked as it is typed
-  (format, length, names taken); the description; the argument hint; the
-  instructions, a wide textarea whose hint explains `$ARGUMENTS`; and *The
-  assistant may use it on its own*, on by default. A save sends the
-  `updated_at` the editor opened with; a 409 *changed* keeps the draft and
-  offers *Load the newer version*.
+  (format, length, names taken); the description, whose hint asks for what
+  the skill is for *and what it is not for*, since that is what the
+  assistant matches a request against ("Loading one is the exception"); the
+  argument hint; the instructions, a wide textarea whose hint explains
+  `$ARGUMENTS`; and *The assistant may use it on its own*, on by default.
+  A save sends the `updated_at` the editor opened with; a 409 *changed*
+  keeps the draft and offers *Load the newer version*.
 - **Built-in skills** lists the server's, each with its translated
   description, View (a read-only `SubDialog` with the instructions and
   *Copy to your skills*, which opens the editor on a copy under the same
-  name, which then replaces it) and an on/off switch. A built-in an
-  account skill replaces says *Replaced by your skill* and has no switch.
-- **Guests** see the built-ins, with no actions, the switches disabled and
-  no Copy; the server answers their writes 403. Integration tokens cannot
-  use the routes at all.
+  name, which then replaces it) and a `MenuSelect` of how it is offered
+  (`BUILTIN_STATES`), the permission rows' control: *On its own*, *Only
+  from /* — the editor's *The assistant may use it on its own* turned off,
+  for a skill the account cannot edit — and *Off*. The three are one
+  control because a skill that is not offered at all has no use for the
+  other choice; each write sends only the half its state settles
+  (`BUILTIN_WRITES`), so off and on again keeps the account's *Only from /*.
+  A built-in an account skill replaces says *Replaced by your skill* and
+  has no control.
+- **Guests** see the built-ins, with no actions, the state control disabled
+  and no Copy; the server answers their writes 403. Integration tokens
+  cannot use the routes at all.
 
 Every write, a 409 on delete and Try again call `refreshSkills()` once, so
 the "/" menu has the change at once with one read. Settings search finds
@@ -402,7 +445,7 @@ is 403). A refusal is 400 `{detail}`, 404 for no such skill.
 | POST | `/api/ai/skills/import` | `{text, replace?}`, a SKILL.md's text → 201 with the new skill, or 200 when `replace` overwrote the one of its name in place (its id and `created_at` kept); a clash without `replace` is 409 `{detail, kind: "name", id}` |
 | PUT | `/api/ai/skills/{id}` | `{name, description, argument_hint, body, model, updated_at}` → the row; 409 `{detail, kind: "changed", skill}` (with its body) when `updated_at` is not the stored one; 400 for a built-in |
 | DELETE | `/api/ai/skills/{id}?updated_at=` | → `{ok: true}`; 409 when stale; 400 for a built-in |
-| PUT | `/api/ai/skills/builtin:{name}/state` | `{off}` → the built-in's row; 404 for an unknown built-in |
+| PUT | `/api/ai/skills/builtin:{name}/state` | `{off?, model?}` → the built-in's row; either left out stays as it stands, so turning one off keeps its `model` choice for when it comes back; 404 for an unknown built-in |
 
 ## Storage
 
@@ -411,7 +454,8 @@ key `skills` (`PREF_KEY`, in `db.USER_PREF_KEYS`):
 
 ```
 {"skills": [{id, name, description, argument_hint, body, model, created_at, updated_at}],
- "off": [names of the built-ins turned off]}
+ "off": [names of the built-ins turned off],
+ "manual": [names of the built-ins kept to "/"]}
 ```
 
 `/api/prefs` refuses the key (`routers/prefs._check_key`); the skill routes
@@ -422,6 +466,12 @@ that transaction, and every edit moves `updated_at` forward
 `profile`. A pref value is opaque JSON, so no migration step was needed,
 and deleting an account removes its `user_prefs` rows. At most 50 skills
 an account (`MAX_SKILLS`).
+
+`off` and `manual` are two lists of names, not one state each, so a copy
+written before `manual` existed reads as none (`_names`) and the two
+choices are set apart from one another (`set_builtin_state`). `_clean`
+builds both every read, and `_nothing_stored()` is the value of an account
+with no skills — what a guest, a share link or a token is read as.
 
 A message that ran a skill keeps `skill: {id, name, args}`: a user message
 of the pages.db `chats` and `chat_history` tables
@@ -448,12 +498,15 @@ lands the catalog is unknown (`ready` false): "/" opens no picker and a
 
 `tests/test_skills.py` (the shipped files, the parser's cases, the routes
 with their 409s, 403s and the caps the listing names, the reserved pref
-key, `render`, `invocation` and `safe_name`, the shared title cases),
+key, a built-in turned off and one kept to "/" — the row, the catalog's
+`model`, each write settling only its own half — `render`, `invocation` and
+`safe_name`, the shared title cases),
 `tests/test_skills_chat.py` (the expanded turn and its replay byte for
 byte, the missing note and the 400, the token's catalog, another member
 continuing the conversation reading the note, `load_skill`'s arming,
-refusal, stub, replay and emergency elision, the listing, titles and
-exports), `tests/test_local_agents_skills.py` with steps in
+refusal, stub, replay and emergency elision, a built-in kept to "/" gone
+from the listing and the tool but still read on its turn, the listing,
+titles and exports), `tests/test_local_agents_skills.py` with steps in
 `test_computer_chats.py` and `test_remote_chat.py` (the stored invocation,
 the prompt's section, a skill gone before the start or the claim, the
 older computer's 409, the steer refusal, `earlier_of`), and in the
@@ -463,7 +516,8 @@ the shipped files). The browser group `chat-skills`
 (`tests/e2e/scenarios/chatSkills.mjs`) drives the menu, a send with its
 chip and copy, dismissal and an unmatched `/word` sent as text, *Manage
 skills…* opening the Chat pane at Your skills, a skill made in Settings
-and a built-in turned off reaching the menu without a reload, the draft
+and a built-in turned off reaching the menu without a reload (and one set
+to *Only from /* staying in it), the draft
 restored after a vanished skill, Retry and an unchanged edit posting the
 skill again, and the edit bubble's × dropping it; the local-agents group
 picks a skill from the menu and checks the chip and the skill it stores

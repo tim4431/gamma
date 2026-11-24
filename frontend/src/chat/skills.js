@@ -20,7 +20,7 @@ export const BUILTIN_TEXT = [
   T("[focus or length, e.g. 'for a journal club' or 'one paragraph']"),
   T("A referee-style critique of the paper in context — its claims, whether the evidence supports them, weaknesses, and questions for the authors."),
   T("[venue, focus or stance, e.g. 'NeurIPS, focus on the experiments']"),
-  T("Explains the selected passage, an equation or a concept from the paper at the level asked for, from first intuition to the details."),
+  T("Walks through one passage, equation or concept of the paper at length and at the level asked for, from first intuition to the details. For a request to be taken through something, not for an ordinary question about the paper."),
   T("[what to explain and for whom, e.g. 'eq. 3 for an undergraduate']"),
 ];
 

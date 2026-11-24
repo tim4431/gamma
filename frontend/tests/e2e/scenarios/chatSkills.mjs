@@ -147,7 +147,7 @@ export async function chatSkillScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("chat skills: a skill made in Settings is in the / menu without a reload, and a built-in turned off leaves it", async () => {
+  await step("chat skills: a skill made in Settings is in the / menu without a reload; a built-in turned off leaves it, one kept to / stays", async () => {
     await clearChat();
     const { ctx, page, input, requests } = await setup();
     try {
@@ -167,17 +167,26 @@ export async function chatSkillScenarios(env) {
       await editor.getByRole("button", { name: "Save", exact: true }).click();
       await editor.waitFor({ state: "detached" });
       await settings.locator('.settingsPane [data-setting="/journal-club"]').waitFor();
-      // The switch follows the server's answer.
-      const offer = settings.getByRole("checkbox", { name: "Offer /explain", exact: true });
-      await offer.click();
-      await until(async () => !(await offer.isChecked()), { what: "the built-in turned off" });
-      assert((await user.api("/api/ai/skills")).skills.find((s) => s.id === "builtin:explain")?.off, "stored as off");
+      // How a built-in is offered follows the server's answer: Off leaves the
+      // menu, Only from / keeps it there and takes it from the assistant.
+      const stored = async (id) => (await user.api("/api/ai/skills")).skills.find((s) => s.id === id);
+      const offered = (name) => settings.getByRole("button", { name: `How /${name} is offered`, exact: true });
+      await offered("explain").click();
+      await page.getByRole("menuitemradio", { name: "Off", exact: true }).click();
+      await until(async () => (await stored("builtin:explain"))?.off, { what: "the built-in stored as off" });
+      await until(async () => (await offered("explain").innerText()).includes("Off"), { what: "the row reads Off" });
+      await offered("summarize").click();
+      await page.getByRole("menuitemradio", { name: "Only from /", exact: true }).click();
+      await until(async () => (await stored("builtin:summarize"))?.model === false,
+        { what: "the built-in stored as run from / only" });
+      assert(!(await stored("builtin:summarize"))?.off, "still offered in the menu");
       await settings.getByRole("button", { name: "Close settings", exact: true }).click();
       await settings.waitFor({ state: "detached" });
       await input.fill("/");
       await menu(page).waitFor();
       const listed = await names(page);
       assert(listed.includes("/journal-club") && !listed.includes("/explain"), `the new skill in, the one turned off out: ${listed}`);
+      assert(listed.includes("/summarize"), `one kept to "/" is still in the menu: ${listed}`);
       const row = menu(page).getByRole("option").filter({ hasText: "/journal-club" });
       assert((await row.innerText()).includes("[audience]"), "its argument hint");
       assertEq(await row.locator(".uiTag").count(), 0, "an account skill has no Built-in tag");

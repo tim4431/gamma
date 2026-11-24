@@ -1,5 +1,6 @@
-"""The skills sections of Settings → AI → Chat: the account's own skills and its built-ins'
-on/off state (gamma/skills.py, docs/dev/skills.md).
+"""The skills sections of Settings → AI → Chat: the account's own skills and how its
+built-ins are offered — on or off, and whether the assistant may load one on
+its own (gamma/skills.py, docs/dev/skills.md).
 
 Session only: an integration token is refused outright (require_user_id),
 as on every account endpoint, so a token's holder never reads the account's
@@ -36,7 +37,11 @@ class ImportRequest(BaseModel):
 
 
 class BuiltinState(BaseModel):
-    off: bool
+    """How a built-in is offered. Each is left as it stands when it is not
+    sent, so turning one off keeps its ``model`` choice for when it comes
+    back."""
+    off: bool | None = None
+    model: bool | None = None
 
 
 def _refusal(e: skills.SkillError) -> JSONResponse:
@@ -100,7 +105,7 @@ def import_skill(payload: ImportRequest, request: Request):
 def set_builtin_state(name: str, payload: BuiltinState, request: Request):
     user_id = require_personal_user_id(request, GUESTS_READ_ONLY)
     try:
-        return skills.set_builtin_off(user_id, name, payload.off)
+        return skills.set_builtin_state(user_id, name, payload.off, payload.model)
     except skills.SkillError as e:
         return _refusal(e)
 

@@ -21,8 +21,8 @@ only read path is the masked GET /api/ai/settings (last 4 characters, never
 the key itself). There is no env key.
 
 Admins may add SHARED entries (Settings → Server → Shared AI provider,
-/api/admin/ai-providers*): the same shape — an API key, or a ChatGPT
-sign-in made through /api/admin/ai-providers/chatgpt/* — ids namespaced
+/api/admin/ai-providers*): the same shape — an API key, or a sign-in
+(ChatGPT, Gemini) made through /api/admin/ai-providers/<protocol>/* — ids namespaced
 ``server:<id>`` so they never collide with an account's, each with an
 ``access`` saying who may use it ({"who": "everyone" | "selected", "users":
 [account ids], "guests": bool}). They live in the users.db `settings` KV
@@ -103,7 +103,7 @@ def new_provider_id() -> str:
 # --- validation, shared by /api/ai/providers* and /api/admin/ai-providers* ----
 
 def is_oauth_protocol(protocol) -> bool:
-    """Sign-in protocols (ChatGPT) hold OAuth tokens instead of an API key."""
+    """Sign-in protocols (ChatGPT, Gemini) hold OAuth tokens instead of an API key."""
     proto = ai_protocols.PROTOCOLS.get(protocol)
     return bool(proto) and proto.auth == "oauth"
 
@@ -221,8 +221,8 @@ def mask_entry(entry: dict, hint: bool = True) -> dict:
         "models": (entry.get("models") or "").strip(),
         "test_model": (entry.get("test_model") or "").strip(),
         "created_at": entry.get("created_at") or "",
-        # ChatGPT sign-in entries: connection status + account label only,
-        # never the tokens themselves.
+        # Sign-in entries: connection status + account label only, never
+        # the tokens themselves.
         "oauth_connected": bool(oauth.get("access_token")),
         # The signed-in account's e-mail: like the key hint, not for someone
         # who sees a shared sign-in without being an admin.
@@ -284,7 +284,7 @@ def protocol_choices() -> dict:
     """What the settings form offers: the protocols (auth "oauth" = sign-in
     entries, no API key field) and the named services."""
     protocols = [{"id": pid, "label": proto.label, "default_base_url": proto.base_url, "auth": proto.auth,
-                  "key_placeholder": proto.key_placeholder, "key_url": proto.key_url}
+                  "key_placeholder": proto.key_placeholder, "key_url": proto.key_url, "note": proto.note}
                  for pid, proto in ai_protocols.PROTOCOLS.items()]
     # Each preset with its optional fields spelled out: how it is paid for,
     # its quota reader and whether one reads it (``quota``, as on a saved
@@ -1163,7 +1163,7 @@ def transcriber_for(user_id: str, model_hint: str = "") -> tuple:
     if not pid:
         raise HTTPException(status_code=503,
                             detail="Voice input needs an OpenAI API key (Settings → AI → Models) — "
-                                   "Anthropic and ChatGPT sign-in connections don't offer transcription.")
+                                   "Anthropic and sign-in connections don't offer transcription.")
     conf = rt["providers"][pid]
     return ai_protocols.of(conf), conf
 

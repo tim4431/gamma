@@ -249,6 +249,32 @@ def test_built_in_toggle_and_an_account_skill_replacing_one(owner):
     assert [s["id"] for s in skills.catalog(me, True) if s["name"] == "explain"] == ["builtin:explain"]
 
 
+def _model_of(client, name, catalog_for):
+    """``(the row's model, the catalog's model)`` for one built-in."""
+    return (_listed(client, "builtin:" + name)["model"],
+            next(s["model"] for s in skills.catalog(catalog_for, True) if s["name"] == name))
+
+
+def test_a_built_in_kept_to_a_slash_stays_in_the_catalog_the_assistant_cannot_load_it(owner):
+    me = account_of("sk_owner")
+    assert _model_of(owner, "explain", me) == (True, True)
+    r = owner.put("/api/ai/skills/builtin:explain/state", json={"model": False})
+    assert r.status_code == 200 and r.json()["model"] is False
+    # Still offered and still runnable from "/": only load_skill loses it.
+    assert r.json()["effective"] is True and r.json()["off"] is False
+    assert _model_of(owner, "explain", me) == (False, False)
+    assert "builtin:explain" in {s["id"] for s in skills.catalog(me, True)}
+    # The other built-ins are untouched, and so is "/" for this one.
+    assert _model_of(owner, "review", me) == (True, True)
+
+    # Off and on again keeps the choice; each write settles only its own half.
+    owner.put("/api/ai/skills/builtin:explain/state", json={"off": True}).raise_for_status()
+    assert _listed(owner, "builtin:explain")["model"] is False
+    assert owner.put("/api/ai/skills/builtin:explain/state", json={"off": False}).json()["model"] is False
+    assert owner.put("/api/ai/skills/builtin:explain/state", json={"model": True}).json()["model"] is True
+    assert owner.put("/api/ai/skills/builtin:nope/state", json={"model": False}).status_code == 404
+
+
 def test_a_guest_reads_the_built_ins_and_writes_nothing():
     guest = fresh_client()
     guest.post("/api/login-guest").raise_for_status()

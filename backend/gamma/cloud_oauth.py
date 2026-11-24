@@ -166,14 +166,16 @@ def exchange_code(service: Service, oauth: OAuthClient, code: str, verifier: str
     raise CloudError(f"{service.name} did not take the sign-in: {message or reason or resp.status}")
 
 
-def refresh(service: Service, oauth: OAuthClient, refresh_token: str, *, again: str = "") -> tuple[str, int, str]:
+def refresh(service: Service, oauth: OAuthClient, refresh_token: str, *, again: str = "",
+            attempts: int = cloud_http.ATTEMPTS) -> tuple[str, int, str]:
     """A new access token for ``refresh_token``: ``(access token, lifetime
     in seconds, the refresh token to keep)``, the last a new one where the
     service rotates them (Microsoft), else the one given. CloudConfigError,
     ending in ``again`` (what to do), when the service no longer honours
-    it."""
+    it. ``attempts``: fewer for a caller a person waits on (the Gemini
+    sign-in renews its token in front of a chat request)."""
     resp = cloud_http.form(service.token_url(), _with_secret(service, oauth, {
-        "client_id": oauth.id, "refresh_token": refresh_token, "grant_type": "refresh_token"}))
+        "client_id": oauth.id, "refresh_token": refresh_token, "grant_type": "refresh_token"}), attempts=attempts)
     data = resp.json()
     if resp.status == 200 and data.get("access_token"):
         return (str(data["access_token"]), int(data.get("expires_in") or 3600),

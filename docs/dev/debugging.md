@@ -1206,6 +1206,20 @@ instead of fixing; the fix removes its entry.
   does not touch Settings → Users or `UnitInput`, while 5 other groups
   ran beside it; dev's tip passed one such run, and the group run alone
   passed.
+- **test_remote_asks: a remote turn waits ten minutes at most past its
+  deadline** (`backend/tests/test_remote_asks.py:352`, this machine,
+  2026-11-23): `_card` timed out after 30 s waiting for the shell's poll to
+  list an ask, in a full local run with the backend and backend-mobile
+  suites going at once (the same window logged a 3.4 s
+  `PATCH /api/local-agents/codex`). The test sets
+  `GAMMA_AGENT_RUN_TIMEOUT` to 1, so `_watch` stops the turn one second
+  after it starts and `_stopping()` declines every ask it held: when the
+  stand-in Codex does not raise its ask, and the follower's long poll
+  does not return it, inside that second, no card ever reaches
+  `shell.last` and none can afterwards. `FAR_WAIT_S`, patched to 1, then
+  bounds how long the card stays once it is up. Three runs of the file
+  alone passed (24 each). Seen on a branch (ai-gemini) that changes no
+  local-agents, home or runner code.
 - **The brand check** (`tools/branding/build.mjs --check`, this machine,
   2026-11-14): one run ended with an uncaught file-system error (its stack
   lost) while the backend suite and the frontend tests ran beside it; 18

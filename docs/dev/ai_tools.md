@@ -162,7 +162,7 @@ back with `ai_revert.revert_change` ([mcp.md](mcp.md) "Undoing a change").
 | `create_page` | Create pages | folder | Make a page of notes in a folder (made when missing) or inside a page; the user can revert it |
 | `export` | Read pages | folder + page | Start the Export dialog's job for a page or a folder (Markdown, the annotated PDF, the notes as a PDF, BibTeX, Obsidian, Zotero RDF, Notion, Logseq); the app downloads the file. Only a live chat in the app has it |
 | `backlinks` | Read pages | folder + page | The notes that link to a page or a note (`[[id]]`) among the pages the chat reaches, newest first |
-| `load_skill` | Use skills on its own | folder + page | Load one of the account's skills by its name, from the list the system prompt ends with: the skill's instructions, `$ARGUMENTS` empty. Only a skill the assistant may use on its own; offered only where the request's catalog has one, never over MCP. The saved chip keeps the skill's id and a stub, never the instructions ([skills.md](skills.md#load_skill-the-agent-loads-a-skill-itself)) |
+| `load_skill` | Use skills on its own | folder + page | Load one of the account's skills by its name, from the list the system prompt ends with: the skill's instructions, `$ARGUMENTS` empty. Only a skill the assistant may use on its own; offered only where the request's catalog has one, never over MCP. Both the listing and this description make loading the exception — an ordinary question or a follow-up is answered directly, and a skill already loaded is not loaded again ([skills.md](skills.md#load_skill-the-agent-loads-a-skill-itself) "Loading one is the exception"). The saved chip keeps the skill's id and a stub, never the instructions |
 
 ### list_pages (folder only)
 
