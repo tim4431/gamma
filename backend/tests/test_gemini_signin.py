@@ -17,7 +17,7 @@ import cloud_fake
 import gamma.gemini_oauth as go
 from ai_fixtures import FakeResp
 from conftest import account_of, login, make_user
-from gamma import ai_catalog, cloud_oauth, config
+from gamma import ai_catalog, ai_settings, cloud_oauth, config
 from gamma.ai_protocols import WIRES
 from gamma.ai_settings import ai_runtime, load_provider_entries
 from gamma.chatgpt_oauth import RefreshUnavailable
@@ -358,8 +358,12 @@ def test_an_admin_signs_in_a_shared_entry_the_same_way(client, google, monkeypat
     # The account flow's state doesn't redeem on the shared one, nor back.
     assert admin.post("/api/ai/oauth/gemini-signin/complete", json={
         "state": started["state"], "callback": "4/x"}).status_code == 400
-    r = admin.post("/api/admin/ai-providers/gemini-signin/complete", json={
-        "state": started["state"], "callback": _pasted_code(google, started["auth_url"])})
-    assert r.status_code == 200, r.text
-    shared = next(p for p in r.json()["providers"] if p["protocol"] == "gemini-signin")
-    assert shared["id"].startswith("server:") and shared["models"] == "gemini-2.5-flash, gemini-2.5-pro"
+    try:
+        r = admin.post("/api/admin/ai-providers/gemini-signin/complete", json={
+            "state": started["state"], "callback": _pasted_code(google, started["auth_url"])})
+        assert r.status_code == 200, r.text
+        shared = next(p for p in r.json()["providers"] if p["protocol"] == "gemini-signin")
+        assert shared["id"].startswith("server:") and shared["models"] == "gemini-2.5-flash, gemini-2.5-pro"
+    finally:
+        # The run shares one users.db, and a shared entry is offered to every account.
+        ai_settings.save_server_ai({"providers": []})
