@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { formService, keyOptional, serviceSections } from "../src/settings/aiServices.js";
+import { aiServiceTiles, formService, keyOptional, serviceSections, signInAddress, signInWords } from "../src/settings/aiServices.js";
 
 const KEYLESS = JSON.parse(readFileSync(new URL("../../tests/shared/ai_models.json", import.meta.url), "utf8")).keyless;
 
@@ -56,4 +56,21 @@ test("a form may go without a key where the server would save it without one", (
   for (const c of KEYLESS.cases) {
     assert.equal(keyOptional({ protocol: c.protocol, base_url: c.base_url }, KEYLESS.choices), c.key_optional, c.note);
   }
+});
+
+test("a sign-in with a caution note is in the dialog under its own card, never a setup tile", () => {
+  const info = { ...INFO, protocols: [...INFO.protocols, { id: "gemini-signin", label: "Gemini (Google sign-in)", auth: "oauth",
+    note: "Google's terms forbid it." }] };
+  assert.ok(shape(serviceSections(info))[0][1].includes("Gemini:gemini-signin"), "the dialog's sign-in group offers it");
+  assert.deepEqual(aiServiceTiles(info).map((tile) => tile.value), ["chatgpt", "anthropic", "openai", "other"]);
+});
+
+test("what a sign-in hands back connects when pasted: ChatGPT's or a loopback redirect address, or Google's code", () => {
+  assert.ok(signInAddress("http://localhost:1455/auth/callback?code=abc&state=s1", "s1"));
+  assert.ok(!signInAddress("http://localhost:1455/auth/callback?code=abc&state=old", "s1"), "another sign-in's");
+  assert.ok(signInAddress("http://127.0.0.1:53121/oauth2callback?code=4%2F0Axyz&state=s1", "s1"));
+  assert.ok(signInAddress("4/0AVG7fiQabcdefghijk_-XYZ"));
+  assert.ok(!signInAddress("4/short") && !signInAddress("hello there") && !signInAddress("https://example.com/?code=x"));
+  assert.equal(signInWords("gemini-signin").paste, "code");
+  assert.equal(signInWords("chatgpt").paste, "address");
 });

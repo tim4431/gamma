@@ -308,7 +308,7 @@
   "services": {
     "about": "Every service a connection may be named by: the service field of GET /api/ai/settings' providers and of /api/ai/models' rows (gamma/ai_settings.py service_id), in the server's order: each entry protocol's id, each preset's (gamma/ai_protocols/services.py), then custom. The pytest holds the list to the server's, the frontend's node test holds each id to a logo (frontend/src/ai/providerMarks.js serviceMark), but those in fallback, which wear the generic one on purpose.",
     "ids": [
-      "anthropic", "openai", "chatgpt",
+      "anthropic", "openai", "chatgpt", "gemini-signin",
       "deepseek", "kimi", "kimi-cn", "kimi-code", "qwen", "qwen-cn", "qwen-coding", "qwen-coding-cn",
       "glm", "glm-cn", "glm-coding", "glm-coding-cn", "openrouter", "opencode", "opencode-go", "gemini", "groq", "ollama",
       "custom"

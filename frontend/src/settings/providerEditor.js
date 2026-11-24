@@ -1,6 +1,6 @@
 // The AI connect dialog's state (useProviderEditor) and the helpers its
-// forms (ProviderForm.jsx) and the chat's setup card share; the services
-// it connects are aiServices.js. A module of its
+// forms (ProviderForm.jsx) share; the services it connects, the chat setup
+// card's tiles and each sign-in's words are aiServices.js. A module of its
 // own because App holds the account's editor from startup, while the
 // Settings dialog and the chat are fetched on first use
 // (docs/dev/frontend-refactor.md, "Lazy boundaries").
@@ -8,7 +8,7 @@ import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { friendlyApiError } from "../library/libraryUtils";
 import { T, t } from "../shared/i18n/i18n.js";
-import { SERVICE_TILES, keyOptional, serviceGroups } from "./aiServices.js";
+import { keyOptional, signInAddress, signInWords } from "./aiServices.js";
 
 // A provider's model list as stored: comma-separated names.
 export const modelList = (raw) => (raw || "").split(",").map((name) => name.trim()).filter(Boolean);
@@ -33,58 +33,25 @@ export const SERVICE_WORDING = [
   T("API key"), T("API key (China)"), T("Coding plan subscription"), T("Coding plan subscription (China)"),
   T("Pay as you go"), T("Subscription"), T("On this computer or network"),
   T("Alibaba's terms allow the Coding Plan only inside coding tools such as Qwen Code, and other use may get the plan suspended."),
+  // A protocol's note (gamma/ai_protocols/gemini.py GeminiSignIn.note).
+  T("Google's terms forbid using Gemini CLI's sign-in in other apps, and accounts have been suspended for it. A Gemini API key from Google AI Studio is the supported way."),
 ];
-
-// The ways to connect an AI service, as the chat's setup card's tiles
-// ({value, label, hint}): each protocol the server offers (sign-in first,
-// then the API-key ones in the server's order), then "Other service" for
-// the named services and a custom endpoint, which opens the connect dialog
-// on its first preset. A tile's value is a protocol id or "other".
-export function aiServiceTiles(info) {
-  const protocols = [...(info?.protocols || [])].sort((a, b) => Number(b.auth === "oauth") - Number(a.auth === "oauth"));
-  const tiles = protocols.map((p) => ({
-    value: p.id,
-    label: SERVICE_TILES[p.id]?.label || p.label,
-    hint: SERVICE_TILES[p.id]?.hint || (p.auth === "oauth" ? t("Subscription sign-in") : t("API key")),
-  }));
-  if (protocols.some((p) => p.auth !== "oauth")) {
-    const names = serviceGroups(info?.services).map((group) => group.name).join(", ");
-    tiles.push({
-      value: "other",
-      label: t("Other service"),
-      hint: names ? t("{services} or any OpenAI-compatible endpoint", { services: names }) : t("Any OpenAI-compatible endpoint"),
-    });
-  }
-  return tiles;
-}
 
 // The page runs at a loopback address, so this browser shares the server's
 // machine and the server can catch the sign-in's localhost redirect itself.
 export const onThisMachine = () => /^(localhost|127(\.\d+){3}|\[::1\])$/.test(window.location.hostname);
 
-// A sign-in's redirect address as copied from the address bar (of the sign-in
-// `state` when one is given).
-export function signInAddress(text, state = "") {
-  try {
-    const url = new URL(text);
-    return url.pathname === "/auth/callback" && !!url.searchParams.get("code")
-      && (!state || url.searchParams.get("state") === state);
-  } catch {
-    return false;
-  }
-}
-
 // A form's sign-in fields once it is connected, or before a new start.
 const SIGN_IN_CLEARED = { oauthState: "", oauthCallback: "", oauthLocal: false, oauthDevice: null, oauthWaitError: "" };
 
 // The connect dialog's state, one path for both provider lists: the
-// account's own (App: `base` /api/ai/providers, sign-in at
-// /api/ai/oauth/chatgpt) and Settings → Server's shared entries
-// (/api/admin/ai-providers, sign-in at `${base}/chatgpt`). ProviderForm's
+// account's own (App: `base` /api/ai/providers, sign-ins under
+// /api/ai/oauth) and Settings → Server's shared entries
+// (/api/admin/ai-providers, sign-ins under `base` too). ProviderForm's
 // `value` contract over the REST collection `base` (POST adds, PUT/DELETE
-// `${base}/<id>`, each answering with the list; a ChatGPT sign-in goes
-// through `${signIn}/start`, `status` while the server may catch it, and
-// `complete`). The model picker lists live through /api/ai/model-catalog,
+// `${base}/<id>`, each answering with the list; a sign-in goes through
+// `${signIn}/<protocol>/start`, `status` while the server may catch it,
+// and `complete`). The model picker lists live through /api/ai/model-catalog,
 // which takes a saved entry's id (a shared one from an admin).
 // `onSaved()` hears every change `run` saved (the account refreshes its
 // model list and login check, the Server section says so);
@@ -92,7 +59,7 @@ const SIGN_IN_CLEARED = { oauthState: "", oauthCallback: "", oauthLocal: false, 
 // it is saved with its models — both lists test it right away. `shared`
 // (the Server section) gives every form an `access` — who may use the
 // entry — that is saved with it.
-export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatgpt`, onSaved, onConnected, shared = false }) {
+export function useProviderEditor({ info, setInfo, base, signIn = base, onSaved, onConnected, shared = false }) {
   const [form, setForm] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -100,9 +67,10 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
   const [customModel, setCustomModel] = React.useState(""); // the Models step's "Add by name" field
   const catalogRequest = React.useRef(0);
   const protocolOf = (id) => info?.protocols?.find((p) => p.id === id);
-  // Sign-in protocols (ChatGPT OAuth) have no key/base-URL fields — the
+  // Sign-in protocols (ChatGPT, Gemini) have no key/base-URL fields — the
   // server marks them with auth: "oauth" in the protocols payload.
   const isOauth = (id) => protocolOf(id)?.auth === "oauth";
+  const signInAt = (protocol) => `${signIn}/${encodeURIComponent(protocol)}`;
   const stored = form?.id ? info?.providers?.find((p) => p.id === form.id) : null;
   // What the live list is for; `oauthConnectedAt` re-lists after a
   // reconnect that keeps the entry's id.
@@ -147,19 +115,22 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
   }, [target, stored?.oauth_connected, keyless]); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => { setCustomModel(""); }, [form?.id, form?.protocol]);
 
-  // "Open ChatGPT sign-in": the OAuth page in a new tab. The server listens
-  // for its localhost:1455 redirect when this browser shares its machine
-  // (`oauthLocal`), and otherwise offers a device code (`oauthDevice`); either
-  // way the form asks `${signIn}/status` until the server has the sign-in.
-  // Elsewhere the redirect page fails to load and its address is pasted.
-  async function startChatGPTAuth() {
+  // "Open ChatGPT sign-in" / "Open Google sign-in": the OAuth page in a new
+  // tab. The server listens for its redirect when this browser shares its
+  // machine (`oauthLocal`), and otherwise ChatGPT offers a device code
+  // (`oauthDevice`); either way the form asks `status` until the server has
+  // the sign-in. Elsewhere ChatGPT's redirect page fails to load and its
+  // address is pasted, and Google's page shows a code to paste.
+  async function startSignIn() {
     setError("");
+    const protocol = form?.protocol;
     try {
-      const d = await apiJson(`${signIn}/start`, {
+      const d = await apiJson(`${signInAt(protocol)}/start`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ local: onThisMachine(), device: true }),
       });
-      setForm((f) => (f ? { ...f, ...SIGN_IN_CLEARED, oauthState: d.state, oauthLocal: !!d.local, oauthDevice: d.device || null } : f));
+      setForm((f) => (f?.protocol === protocol
+        ? { ...f, ...SIGN_IN_CLEARED, oauthState: d.state, oauthLocal: !!d.local, oauthDevice: d.device || null } : f));
       window.open(d.auth_url, "_blank", "noopener");
     } catch (err) {
       setError(err.message);
@@ -177,13 +148,13 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
   // card opened it and the sign-in already brought models.
   async function connectSignIn(callback = "") {
     const f = latest.current.form;
-    if (!f?.oauthState) { setError(t("Hit “Open ChatGPT sign-in” first, then paste the URL it ends on.")); return; }
+    if (!f?.oauthState) { setError(signInWords(f?.protocol).unstarted); return; }
     if (completing.current === f.oauthState) return;
     completing.current = f.oauthState;
     let made = null;
     try {
       await run(async () => {
-        const next = await apiJson(`${signIn}/complete`, {
+        const next = await apiJson(`${signInAt(f.protocol)}/complete`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ state: f.oauthState, callback, provider_id: f.id || "", name: f.name.trim(), models: f.models.trim() }),
         });
@@ -208,13 +179,14 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
   // (a device code is polled with OpenAI on these calls, at its own pace).
   const watching = form && isOauth(form.protocol) && form.oauthState && (form.oauthLocal || form.oauthDevice)
     && !form.oauthWaitError ? form.oauthState : "";
+  const watchingAt = watching ? signInAt(form.protocol) : "";
   React.useEffect(() => {
     if (!watching) return undefined;
     let stopped = false;
     let timer = 0;
     const ask = async () => {
       try {
-        const s = await apiJson(`${signIn}/status`, {
+        const s = await apiJson(`${watchingAt}/status`, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state: watching }),
         });
         if (stopped) return;
@@ -271,7 +243,7 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
     // A typed callback completes the sign-in (or a reconnect).
     if (callback) { await connectSignIn(callback); return; }
     if (oauth && !f.id) {
-      setError(f.oauthState ? t("Finish the sign-in first, or paste the address it ended on.") : t("Open ChatGPT sign-in first."));
+      setError(f.oauthState ? signInWords(f.protocol).unfinished : signInWords(f.protocol).unstarted);
       return;
     }
     if (!oauth && !f.id && !f.api_key.trim() && !keyOptional(f, info)) { setError(t("An API key is required.")); return; }
@@ -330,7 +302,7 @@ export function useProviderEditor({ info, setInfo, base, signIn = `${base}/chatg
     setCustomModel,
     aiProtocolOf: protocolOf,
     isOauthProto: isOauth,
-    startChatGPTAuth,
+    startSignIn,
     connectSignIn,
     loadModelCatalog,
     addCatalogModel: (m) => m && setForm((f) => {

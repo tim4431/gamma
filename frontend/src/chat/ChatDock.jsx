@@ -55,7 +55,7 @@ import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { linesLabel } from "../shared/model/blockModel.js";
 import { CharSlider, Toggle, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from "../settings/AssistantTools";
-import { aiServiceTiles } from "../settings/providerEditor.js";
+import { aiServiceTiles } from "../settings/aiServices.js";
 import { PathLinkContext } from "../editor/pathLinkContext.js";
 import FileKindIcon from "../shared/ui/FileIcon.jsx";
 import { formatOf } from "../documents/formats.js";

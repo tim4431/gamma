@@ -1,6 +1,6 @@
 // The connect dialog, for the account's list (SettingsAi.jsx AiSettings)
 // and Settings → Server's shared one (SharedAiProviderSettings) alike: the
-// service, the credential (an API key or the ChatGPT sign-in), the models
+// service, the credential (an API key or a sign-in), the models
 // and, for a shared entry, who may use it. Its state lives in
 // useProviderEditor (providerEditor.js); this module only renders it.
 import React from "react";
@@ -9,8 +9,8 @@ import { composing } from "../shared/lib/hotkeys.js";
 import { billingLabel } from "../chat/tokenUsage";
 import { AccountPicker, Step, Field, CopyField, GlyphChoices, IconChoices, PasswordInput, Segmented } from "./SettingsKit";
 import { useAccounts } from "./SettingsWorkspace";
-import { modelList, onThisMachine, signInAddress } from "./providerEditor.js";
-import { autoBilling, formService, keyOptional, serviceSections } from "./aiServices.js";
+import { modelList, onThisMachine } from "./providerEditor.js";
+import { autoBilling, formService, keyOptional, serviceSections, signInAddress, signInWords } from "./aiServices.js";
 import { ModelFacts } from "../ai/ModelMenu.jsx";
 import { ProviderLogo } from "../ai/ProviderLogo.jsx";
 import { matchesWords } from "../ai/modelMenu.js";
@@ -18,25 +18,30 @@ import { CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MonitorIcon, RefreshIc
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 
-// Step 2 for a ChatGPT sign-in. OpenAI ends the sign-in on localhost:1455
-// (Codex CLI's registered redirect). When this browser shares the server's
-// machine, the server catches it and the form only waits. Anywhere else that
-// page fails to load: its address is pasted here, which connects at once, or
-// the device code is entered at OpenAI instead while the form waits.
-function ChatGPTSignIn({ form, setForm, busy, start, connect }) {
+// Step 2 for a sign-in (ChatGPT, Gemini), in the protocol's own words
+// (aiServices.js SIGN_INS). When this browser shares the server's machine,
+// the server catches the redirect and the form only waits. Anywhere else
+// ChatGPT ends on localhost:1455 (Codex CLI's registered redirect), a page
+// that fails to load, and Google on its own page showing a code: either is
+// pasted here, which connects at once, or ChatGPT's device code is entered
+// at OpenAI instead while the form waits.
+function SignInStep({ form, setForm, busy, start, connect }) {
+  const words = signInWords(form.protocol);
   const started = !!form.oauthState;
   // Until the start answers, where the page runs predicts what it will say.
   const local = started ? !!form.oauthLocal : onThisMachine();
   const device = form.oauthDevice;
+  const code = words.paste === "code";
   const waiting = started && (local || device) && !form.oauthWaitError ? (
     <div className="aiKeyCheck" role="status"><span className="transferSpin inline" /> {t("Waiting for the sign-in…")}</div>
   ) : null;
   const where = (device?.verification_url || "").replace(/^https?:\/\//, "");
   const paste = (
-    <Field label={t("Callback URL")} hint={t("The full address the sign-in ended on")}>
+    <Field label={code && !local ? t("Authorization code") : t("Callback URL")}
+      hint={code && !local ? t("The code Google shows once you allow it") : t("The full address the sign-in ended on")}>
       <input
         className="aiKeyInput" type="text" spellCheck={false}
-        placeholder="http://localhost:1455/auth/callback?code=…"
+        placeholder={code && !local ? "4/0A…" : code ? "http://127.0.0.1:…/oauth2callback?code=…" : "http://localhost:1455/auth/callback?code=…"}
         value={form.oauthCallback || ""}
         onChange={(event) => setForm((f) => ({ ...f, oauthCallback: event.target.value }))}
         onPaste={(event) => {
@@ -51,15 +56,17 @@ function ChatGPTSignIn({ form, setForm, busy, start, connect }) {
   );
   return <>
     <ol className="oauthInstructions">
-      <li>{t("Open ChatGPT sign-in below and log in.")}</li>
-      {local ? <li>{t("Gamma connects as soon as you are done. There is nothing to copy.")}</li> : <>
+      <li>{t("Open the sign-in below and log in.")}</li>
+      {local ? <li>{t("Gamma connects as soon as you are done. There is nothing to copy.")}</li> : code ? (
+        <li>{t("Google then shows a code. Copy it and paste it below. Gamma connects right away.")}</li>
+      ) : <>
         <li>{t("It ends on a page that cannot load (“localhost refused to connect”). That is expected.")}</li>
         <li>{t("Copy that page's address and paste it below. Gamma connects right away.")}</li>
       </>}
     </ol>
     <div className="reportModalBtns settingsAlignStart">
       <button className="uiBtn" disabled={busy} onClick={start}>
-        {started ? t("Re-open ChatGPT sign-in") : t("Open ChatGPT sign-in")}
+        {started ? words.reopen : words.open}
       </button>
     </div>
     {local ? <>
@@ -99,7 +106,7 @@ const SECTION_ICONS = { signin: SparklesIcon, key: KeyIcon, local: MonitorIcon }
 // 2 the API key — the provider's own placeholder and "Get a key at …" link
 // (key_placeholder / key_url from the adapter or the service preset),
 // checked live by the debounced model fetch; optional for a local preset
-// and a custom endpoint — or the ChatGPT sign-in; 3 the models, a
+// and a custom endpoint — or a sign-in (ChatGPT, Gemini); 3 the models, a
 // searchable checklist of the live list with what the catalogs know of each,
 // the list's first one picked when nothing is, and any name added by hand
 // (a saved one the list lacks stays listed), with the name, test model and
@@ -118,7 +125,7 @@ export function ProviderForm({ value, onCancel }) {
     setCustomModel,
     aiProtocolOf,
     isOauthProto,
-    startChatGPTAuth,
+    startSignIn,
     connectSignIn,
     loadModelCatalog,
     addCatalogModel,
@@ -142,7 +149,8 @@ export function ProviderForm({ value, onCancel }) {
   const matches = (item) => matchesWords(serviceQuery, ...[item.label, item.vendor, item.hint, billingLabel(item.billing), ...item.plans.map((plan) => plan.label)]
     .filter(Boolean).map((text) => t(text)));
   const shown = sections.map((section) => ({ ...section, cards: section.cards.filter(matches) })).filter((section) => section.cards.length);
-  const note = preset?.note ? t(preset.note) : null;
+  // A preset's note, else the protocol's own (the Gemini sign-in's terms).
+  const note = preset?.note ? t(preset.note) : !preset && service !== "custom" && protocol?.note ? t(protocol.note) : null;
   const choose = (next) => {
     const named = services.find((item) => item.id === next);
     const reset = { service: next, models: "", test_model: "", billing: "" };
@@ -230,13 +238,12 @@ export function ProviderForm({ value, onCancel }) {
 
       <Step
         n={2}
-        title={oauth ? t("Sign in with ChatGPT") : keyless ? t("API key, if it needs one") : t("Paste your API key")}
-        hint={oauth
-          ? t("No API key — usage is billed to your ChatGPT subscription.") : t("Stored on the server, never shown to the browser again.")}
+        title={oauth ? signInWords(aiKeysForm.protocol).title : keyless ? t("API key, if it needs one") : t("Paste your API key")}
+        hint={oauth ? signInWords(aiKeysForm.protocol).billed : t("Stored on the server, never shown to the browser again.")}
       >
         {oauth ? (
-          <ChatGPTSignIn form={aiKeysForm} setForm={setAiKeysForm} busy={aiKeysBusy}
-            start={startChatGPTAuth} connect={connectSignIn} />
+          <SignInStep form={aiKeysForm} setForm={setAiKeysForm} busy={aiKeysBusy}
+            start={startSignIn} connect={connectSignIn} />
         ) : (
           <>
             <Field label={t("API key")} hint={aiKeysForm.id ? t("Leave empty to keep the current one")
@@ -299,7 +306,7 @@ export function ProviderForm({ value, onCancel }) {
           <button
             className="uiBtn sm"
             disabled={!!aiModelCatalog?.loading || formOauthPending}
-            title={formOauthPending ? t("Connect with ChatGPT first") : t("Fetch the models available to this credential")}
+            title={formOauthPending ? t("Sign in first") : t("Fetch the models available to this credential")}
             onClick={loadModelCatalog}
           >
             {aiModelCatalog?.loading

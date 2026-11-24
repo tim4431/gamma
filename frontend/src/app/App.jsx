@@ -3487,7 +3487,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // credential); a connection the dialog made is tested at once.
   const aiEditor = useProviderEditor({
     info: aiKeysInfo, setInfo: setAiKeysInfo,
-    base: `${API}/ai/providers`, signIn: `${API}/ai/oauth/chatgpt`,
+    base: `${API}/ai/providers`, signIn: `${API}/ai/oauth`,
     onSaved: () => { refreshAiModels(); if (Object.values(aiHealth).some((r) => !r.ok)) checkAiHealth(); },
     onConnected: (entry, form) => finishNewConnection(entry, !!form.fromChat),
   });

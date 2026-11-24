@@ -738,6 +738,54 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // The Gemini sign-in (docs/dev/ai.md "The Gemini sign-in"): its card says
+  // Google's terms forbid it, and from a browser on another machine Google
+  // ends on a page showing a code, which connects once pasted. Google's side
+  // is faked as ChatGPT's is above.
+  await step("settings: the Gemini sign-in warns of Google's terms, and the code Google shows connects once pasted", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await page.evaluate(() => {
+        window.open = (url) => { window.testSignInUrl = url; return null; };
+      });
+      let waits = 0;
+      await page.route("**/api/ai/oauth/gemini-signin/start", (route) => route.fulfill({ json: {
+        auth_url: "https://accounts.google.com/o/oauth2/v2/auth?state=g-state", state: "g-state", local: false, device: null } }));
+      await page.route("**/api/ai/oauth/gemini-signin/status", (route) => { waits++; return route.fulfill({ json: { ready: false, error: "" } }); });
+      let completed = null;
+      await page.route("**/api/ai/oauth/gemini-signin/complete", async (route) => {
+        completed = route.request().postDataJSON();
+        const info = await user.api("/api/ai/settings");
+        info.providers.push({ id: "gemini-test", protocol: "gemini-signin", name: "Gemini", models: "gemini-test-pro",
+          oauth_connected: true, quota: true, service: "gemini-signin", billing: "subscription" });
+        await route.fulfill({ json: info });
+      });
+      await page.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["gemini-test-pro", "gemini-test-flash"] } }));
+      await openSettings(page);
+      await nav(page, "Models").click();
+      await page.getByRole("button", { name: "Add provider", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      await dialog.getByRole("group", { name: "Sign in or subscription", exact: true }).getByRole("button", { name: "Gemini", exact: true }).click();
+      await dialog.getByText(/^Google's terms forbid using Gemini CLI's sign-in in other apps/).waitFor();
+      await dialog.getByText("Sign in with Google", { exact: true }).waitFor();
+      await dialog.getByRole("button", { name: "Open Google sign-in", exact: true }).click();
+      await until(() => page.evaluate(() => !!window.testSignInUrl));
+      const code = dialog.getByRole("textbox", { name: /Authorization code/ });
+      await code.waitFor();      // Pasting Google's code connects: no Connect click, no waiting on the server.
+      await code.evaluate((input, text) => {
+        input.focus();
+        const data = new DataTransfer();
+        data.setData("text/plain", text);
+        input.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+      }, "4/0AfakeGoogleCode12345");
+      const edit = page.getByRole("dialog", { name: "Edit key", exact: true });
+      await edit.getByRole("button", { name: "2 usable" }).waitFor();
+      assertEq(completed?.callback, "4/0AfakeGoogleCode12345", "the pasted code is redeemed");
+      assertEq(waits, 0, "nothing to wait for: the code comes from the person");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: connecting an assistant, and the workspaces each connection reads", async () => {
     const { ctx, page } = await setup();
     const second = await user.api("/api/workspaces", { method: "POST", body: { name: "Other assistant workspace" } });
@@ -2953,6 +3001,44 @@ export async function settingsScenarios(env) {
       assertEq(await page.getByRole("button", { name: "Rename pages — Folder chat", exact: true }).innerText(), "Allow");
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  // The chat models (docs/dev/ai.md "The model menu"): Models › Chat models
+  // lists the models the composer's chip offers beside the one in use (the
+  // account's favorites), Add model… adds one and its × takes it off, so the
+  // chip switches between them in one click.
+  await step("settings: Chat models are what the chat's model chip switches between: Add model… adds one, its × removes it", async () => {
+    const ownId = (await user.api("/api/ai/settings")).providers.find((p) => p.name === "Test connection").id;
+    const [a, b] = [`${ownId}:test-model-a`, `${ownId}:test-model-b`];
+    const favorites = async () => (await user.api("/api/ai/models")).favorites;
+    await user.api("/api/ai/models/roles", { method: "PUT", body: { chat: a, favorites_remove: await favorites() } });
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Models").click();
+      const list = row(page, "Chat models");
+      await list.getByText("Add the models you switch between", { exact: false }).waitFor();
+      await list.getByRole("button", { name: "Add a chat model", exact: true }).click();
+      await page.getByRole("listbox", { name: "Add a chat model", exact: true }).getByRole("option", { name: /^test-model-b/ }).click();
+      await list.getByRole("listitem").filter({ hasText: "test-model-b" }).waitFor();      await until(async () => JSON.stringify(await favorites()) === JSON.stringify([b]), { what: "the account's chat models" });
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      // The chip offers the model in use and the chat models, a click apart.
+      const modelChip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
+      await modelChip.click();
+      const offered = page.locator(".uiSelectMenu").getByRole("group", { name: "Model", exact: true }).locator(".ctxMenuText");
+      assertEq((await offered.allInnerTexts()).join(), "test-model-a,test-model-b", "the chip lists the one in use, then the chat models");
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: /test-model-b/ }).click();
+      await until(async () => (await modelChip.innerText()).includes("test-model-b"), { what: "the chip on the pick" });
+      await until(async () => (await user.api("/api/ai/models")).roles.chat.pick === b, { what: "the account's chat model" });
+      await openSettings(page);
+      await nav(page, "Models").click();
+      await row(page, "Chat models").getByRole("button", { name: "Remove test-model-b from the chat models", exact: true }).click();
+      await until(async () => (await favorites()).length === 0, { what: "the chat model removed" });
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/ai/models/roles", { method: "PUT", body: { chat: a, favorites_remove: await favorites() } });
+    }
   });
 
   // A task's model on a connection that goes (docs/dev/ai.md "Models for

@@ -146,7 +146,10 @@ gpt-/o-family filter on its model listing. Compatible servers get
 embedding/audio/image models). Anthropic subscription sign-in is
 deliberately absent: Anthropic's terms forbid third-party apps from routing
 requests through Free/Pro/Max plan credentials, so Claude is reached with a
-Console API key.
+Console API key. Google's terms forbid the same for Gemini CLI's sign-in,
+and Google has suspended accounts for it. That sign-in is still offered,
+at the developer's request, with the warning on its card ("The Gemini
+sign-in" below); the supported way is the Gemini API key preset.
 
 The Connections section also exposes `POST /api/ai/providers/{id}/usage`,
 for any connection with a quota reader (`ai_protocols.quota_reader`: a
@@ -199,7 +202,9 @@ sync never copies it, and only the two writes below change it:
 - **A pick** is a registry id, or `""` to follow the chat model. The chat's
   own `""` is the first model offered, the account's own before the
   server's.
-- **`favorites`**: the chat chip's quick list, at most 50.
+- **`favorites`**: the chat models, at most 50: the models the chat's
+  chip offers beside the one in use, which Settings → AI → Models lists
+  as Chat models ("The model menu").
 - **`chat_migrated`**: the chat pick is still the one migration step 71
   wrote from the old one-connection pref, `ai-provider` (that entry's first
   model).
@@ -353,8 +358,8 @@ groups, in order (`menuGroups` in `ai/modelMenu.js`,
 - the current pick when it is no longer offered, marked unavailable;
 - a task's "Use chat model (X)" ("Default: Microsoft (free)" for
   translation with no model offered);
-- the favorites, in the order they were starred (one no longer offered
-  stays, so its star can come off);
+- the chat models (the favorites), in the order they were added, under
+  "Chat models" (one no longer offered stays, so its star can come off);
 - one group per connection, in the registry's order, under its logo and
   named with its billing tag;
 - for translation, the services.
@@ -373,7 +378,7 @@ which the connect dialog's model checklist shows too, with one formatter
 only for a pay-per-token connection, and its checklist lines each fact up
 in a column of its own (`data-fact`, a subgrid), under the model's name on
 a phone. Its star, a `ctlBtn` sized to
-`--ctl-icon-btn-xs`, toggles a favorite. A task row whose pick is missing
+`--ctl-icon-btn-xs`, adds the model to the chat models or takes it off. A task row whose pick is missing
 turns its trigger amber (`.aiTaskMissing .uiSelectBtn`), and so does
 Dictation's when nothing transcribes.
 
@@ -383,11 +388,22 @@ starts its fetch for the next read; `price` only for billing `api`). No
 model name or price is written in the code, and an unknown fact is left
 out.
 
-The chat's model chip (`AgentChip`) lists the favorites and the model in
-use, each with its connection, and "All models…" opens the menu above the
-chip. Naming the model alone (no other agent leading it), the chip starts
-with the logo of the model's connection, where one is drawn. A pick there sets the account's chat model, so every device follows.
-Agent selection, effort and speed are as before.
+The chat's model chip (`AgentChip`) lists the model in use, then the chat
+models, each with its connection, so switching between them is one click;
+"All models…" opens the menu above the chip for any other. Naming the
+model alone (no other agent leading it), the chip starts with the logo of
+the model's connection, where one is drawn. A pick there sets the
+account's chat model, so every device follows. Agent selection, effort
+and speed are as before.
+
+Settings → AI → Models has a **Chat models** row under Chat (`ChatModels`
+in `ai/ModelMenu.jsx`), which builds that list. Each model is a chip with
+its connection's logo and a remove button. One no longer offered stays,
+marked unavailable, until it is removed. "Add model…" opens the model
+menu: a pick adds the model and closes the menu, and a star adds or
+removes a model and leaves the menu open. Both writes are
+`favorites_add` / `favorites_remove` ("Models for each task"). The Chat
+row above it is still the one model a new chat starts with.
 
 ### Other services
 
@@ -395,8 +411,8 @@ The connect dialog's first step shows every way to connect as a tile with
 its logo, in three groups (`serviceSections` in `settings/aiServices.js`,
 pure, `tests/aiServices.test.mjs`), with a search box over them:
 
-- "Sign in or subscription": the sign-in protocols (ChatGPT), then the
-  presets billed as a subscription;
+- "Sign in or subscription": the sign-in protocols (ChatGPT, Gemini), then
+  the presets billed as a subscription;
 - "API key": the key protocols (Anthropic, OpenAI API), then the
   pay-per-token presets;
 - "On your computer or network": the local presets, then "Custom
@@ -407,9 +423,13 @@ segmented control under it (Qwen's international and China endpoints).
 Each tile (`GlyphChoices`, settings/SettingsKit.jsx) is the logo beside the
 name and, under it, the billing tag, every tile one height and as many to
 a row as fit (two in the dialog, one on a phone); each group's caption has
-its icon (a subscription's sparkles, a key, a computer). The chat's setup card keeps its own
-tiles (`aiServiceTiles` in `settings/providerEditor.js`: the protocols,
-then Other). All presets ride the `openai` wire. The branches for OpenAI's
+its icon (a subscription's sparkles, a key, a computer). A preset's
+`note`, or a protocol's (`Protocol.note`, sent with the protocols: the
+Gemini sign-in's terms warning), is a line under its tile's plans. The
+chat's setup card keeps its own tiles (`aiServiceTiles` in
+`settings/aiServices.js`: the protocols without a note, then Other), so
+the Gemini sign-in is offered only in the dialog, under its warning. All
+presets ride the `openai` wire. The branches for OpenAI's
 and Anthropic's own endpoints (`is_openai_platform`,
 `is_anthropic_platform`) never apply to them.
 
@@ -487,7 +507,7 @@ the brand has one (Claude's for Anthropic, Gemini, DeepSeek, Kimi, Qwen),
 the mono one elsewhere (OpenAI's for the API and the ChatGPT sign-in,
 Z.ai's for GLM, OpenRouter, OpenCode, Groq, Ollama). `serviceMark` picks
 a mark by the service's vendor, its id up to the first `-` (`kimi-code`
-is Kimi's, `qwen-coding-cn` Qwen's), and `chatgpt` wears OpenAI's. A
+is Kimi's, `qwen-coding-cn` Qwen's, `gemini-signin` Gemini's), and `chatgpt` wears OpenAI's. A
 custom endpoint, and an id with no mark, draws the globe (the chip draws
 nothing). A mono mark takes the colour of the text around it; a colour
 fill is lifted a quarter of the way toward the ink on a dark scheme
@@ -554,14 +574,14 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 
 | Concern | Adapter member |
 |---|---|
-| what the form offers | `label`, `base_url` (env default, `config.AI_BASE_URLS`), `auth` (`"key"` / `"oauth"` + the `oauth` module that refreshes tokens), `entry`, `key_placeholder` / `key_url` (the key field's hint and "Get a key at" link, for the provider's own endpoint) |
+| what the form offers | `label`, `base_url` (env default, `config.AI_BASE_URLS`), `auth` (`"key"` / `"oauth"` + the `oauth` module: the sign-in's `begin` / `status` / `redeem` and its token refresh), `entry_name` (a new sign-in entry's name), `entry`, `key_placeholder` / `key_url` (the key field's hint and "Get a key at" link, for the provider's own endpoint), `note` (a sentence under its card in the connect dialog) |
 | the chat call | `tool_wire(conf)` (the wire a call with tools goes over: this one, or a sibling, as OpenAI's Responses API is for an entry on OpenAI's own platform), `wire(conf, tools)` (`tool_wire` when the call carries tools, else this one), `request(...)`, `reply_text`, `stop_reason` (a whole reply's), `read_reply`, `streams_only` |
 | speed tiers | `speeds` (canonical name → the value this wire sends), `speed_value(speed)`, `speed_tiers(conf)` (what an entry may be asked for when its own listing names none) |
-| the stream | `events` (one loop in the base) over `stream_event` / `stream_end`, with `("reasoning", …)` before the tool calls where the wire reports thinking; a stream without a single event raises `NotAnAIStream` |
+| the stream | `events` (one loop in the base) over `sse` (one event per `data:` line; the Gemini wire's joins an event's lines, `sse_events`), `stream_event` / `stream_end`, with `("reasoning", …)` before the tool calls where the wire reports thinking; a stream without a single event raises `NotAnAIStream` |
 | token counts | `usage(raw)` → `{input, output, cache_read, cache_write}` |
 | models | `models_request`, `models(data, conf)` → `[{id, context_window, efforts, speeds, images, price}]` (`listed_window` / `listed_efforts` / `listed_speeds` / `listed_images` / `listed_price` read whatever the listing carries; `price` None when it names none, False for one that varies with something no call reports), `catalog_hints` |
 | credential check | `ping_request` (default: the model listing) |
-| quota | `has_account_usage`, `account_usage_request`, `account_usage`, `refusal(status)`: the protocol's own quota (the ChatGPT sign-in). A preset's reader in `ai_protocols/quota.py` answers the same three; `ai_protocols.quota_reader(conf)` picks one ("Other services") |
+| quota | `has_account_usage`, `account_usage_request`, `account_usage`, `refusal(status)`: the protocol's own quota (the ChatGPT and Gemini sign-ins). A preset's reader in `ai_protocols/quota.py` answers the same three; `ai_protocols.quota_reader(conf)` picks one ("Other services") |
 | attachments, dictation | `native_pdf`, `transcription` (a rank), `transcription_request`, `transcript` |
 | hosted web search | `hosted_web_search(conf, site)`: the provider's own search tool as the tools entry to send, limited to one domain when `site` is given (Anthropic's `allowed_domains`, the Responses wires' `filters.allowed_domains`), or None; asked of `tool_wire(conf)`, the wire a call with tools goes over. A tool spec with a `hosted` entry goes out as that entry. A stream that used it yields `("web_searched", {"error"})` as each search runs (the provider's error code when one failed, else "") and `("web_sources", [{url, title, date?}])` for the pages it found, `date` the provider's own date of a page (Anthropic's `page_age`). `search_web`'s AI engine runs it ([ai_tools.md](ai_tools.md) "search_web") |
 
@@ -570,12 +590,15 @@ OpenAI and every compatible server), `responses.py` (the Responses API that
 OpenAI's platform and the ChatGPT backend both speak; `openai-responses` is
 the variant an OpenAI entry switches to for tool calls, never an entry's own
 protocol), `chatgpt.py` (the Codex backend: its listing, quota and client
-version). `quota.py` holds the quota readers a preset names (OpenCode
+version), `gemini.py` (Google's Code Assist backend, Gemini's
+generateContent wrapped: "The Gemini sign-in"). `quota.py` holds the quota readers a preset names (OpenCode
 Go's). `ai_client.py` is the transport (open, read, stream, errors);
 `ai_catalog.py` fetches and caches listings, context windows and prices
 (`fetch_json` is the one fetch every listing, quota and ping goes through).
-The sign-in flow itself (`chatgpt_oauth.py`, `/api/ai/oauth/chatgpt/*`) is
-provider-specific by nature.
+The sign-in flows themselves (`chatgpt_oauth.py`, `gemini_oauth.py`) are
+provider-specific by nature; their routes are one set,
+`/api/ai/oauth/<protocol>/start|status|complete` (`routers/ai.py`
+`signin_flow`: the protocol's `oauth` module, a 404 for any other).
 
 A new service on an existing wire (a gateway, a hosted model) is a
 `SERVICES` preset or just a custom base URL. A new wire is one module
@@ -591,9 +614,9 @@ Shared AI provider, `/api/admin/ai-providers*`), so the members of a lab do
 not each need a key. A shared entry has an account entry's shape (`id, name,
 protocol, api_key, base_url, models, test_model, created_at`, plus `oauth`
 for a sign-in) and an `access`, who may use it (below). It holds an API
-key, or a ChatGPT subscription the admin signs in to from the same form:
-`POST /api/admin/ai-providers/chatgpt/start`, `status` and `complete`, the
-account flow's `begin_chatgpt_signin` / `redeem_chatgpt_signin` with the
+key, or a sign-in (ChatGPT, Gemini) the admin makes from the same form:
+`POST /api/admin/ai-providers/<protocol>/start`, `status` and `complete`, the
+account flow's `begin_signin` / `redeem_signin` with the
 state bound to `("server", <admin>)`, so neither flow's state redeems on
 the other. `provider_id` on `complete` reconnects an entry. An admin's own
 entry is never turned into a shared one in place: a key is pasted into the
@@ -850,6 +873,109 @@ the Connect button, and in Chromium the address is also picked up from the
 clipboard when the tab regains focus (the browser asks once). Both are
 unofficial OpenAI endpoints, like the rest of this flow, so they may need
 maintenance.
+
+### The Gemini sign-in
+
+The protocol `gemini-signin` signs in with a Google account through
+Gemini CLI's OAuth client and calls Google's Code Assist backend, which is
+what Gemini CLI does. Calls count against the account's Gemini CLI quota:
+the free tier, or a Google AI Pro or Ultra plan. **Google's terms forbid
+this in third-party software, and accounts have been suspended for it**
+([research note](../research/gemini-signin.md)). The developer asked for
+it anyway, so it ships with the warning as the protocol's `note`, shown
+under its card in the connect dialog, and it is never one of the chat
+setup card's tiles. The supported way to reach Gemini is the `gemini` API
+key preset. The sign-in flow is `gamma/gemini_oauth.py`, and the wire is
+`gamma/ai_protocols/gemini.py`.
+
+**The sign-in.** It uses the routes every sign-in uses
+(`/api/ai/oauth/gemini-signin/start|status|complete`, and
+`/api/admin/ai-providers/gemini-signin/*` for a shared entry), with the same
+pending-state rules as ChatGPT's: in memory, 15 minutes, bound to its
+owner, one-shot. The OAuth calls are `gamma/cloud_oauth.py`'s, the
+helpers the Drive backup's Google sign-in uses: an authorization URL with
+PKCE, `access_type=offline` and `prompt=consent` (so a refresh token
+always comes back), and the code traded with the client's secret, which
+Google doesn't treat as secret for a desktop client. A grant without the
+`cloud-platform` scope is refused. Google gives a desktop client no device
+codes, so a sign-in ends in one of two ways:
+
+- **Caught.** On this machine (`_same_machine`, as for ChatGPT), a listener
+  on a free loopback port takes the redirect to
+  `http://127.0.0.1:<port>/oauth2callback`. Google lets a desktop client
+  use any loopback port, so nothing else can hold it. The listener closes
+  once no local sign-in waits.
+- **Pasted.** Anywhere else the redirect is
+  `https://codeassist.google.com/authcode`, Google's page that shows the
+  code. The form asks for an "Authorization code" and connects as soon as
+  one is pasted (`signInAddress` in `settings/aiServices.js` knows the
+  `4/0A…` shape, and the clipboard is read on focus as for ChatGPT).
+
+**Setup.** After the code is traded, `setup` finds the account's Code
+Assist project as Gemini CLI's `setup.ts` does. `loadCodeAssist` names the
+project and plan of an account that is set up. On the first sign-in of a
+free-tier account, `onboardUser` with the default tier starts a
+long-running operation, which is polled (`GET operations/…`) for up to 60 s.
+The project id is stored as the sign-in's `account_id`, the field the
+runtime conf carries, and the plan name as `plan`. Google may answer in
+other ways, and each becomes the sign-in's error: "verify this account
+first: open <link>" (`VALIDATION_REQUIRED`), the ineligible tiers'
+reasons, or a tier that needs a Google Cloud project of its own, which
+this sign-in doesn't set up. The e-mail comes from the userinfo
+endpoint. These calls, and the token calls, go through
+`gamma/cloud_http.py`.
+
+**Tokens.** Google doesn't rotate refresh tokens. `refresh` makes one try,
+because it runs in front of a chat request (`cloud_oauth.refresh`'s
+`attempts`). A grant Google refuses (`invalid_grant`, a refused client)
+ends the sign-in. Any other failure raises
+`chatgpt_oauth.RefreshUnavailable`, and `ai_settings`' backoff and
+renewal treat it exactly as ChatGPT's.
+
+**The wire.** `POST {base}:streamGenerateContent?alt=sse` (base
+`https://cloudcode-pa.googleapis.com/v1internal`), always streamed
+(`streams_only`), with the body `{model, project, user_prompt_id,
+request}`. `request` holds Gemini's own fields:
+
+- `contents`: user turns carry their PDFs and pictures as `inlineData`,
+  and the text last; an empty text part is left out, because Gemini
+  refuses one. An assistant turn is a `model` turn of text and
+  `functionCall` parts. A tool result is a `functionResponse`, named after
+  its call, with `{output}`, and its pictures follow it. Turns of one role
+  in a row merge into one (tool results, then the next user message).
+- `systemInstruction`, and `tools` as `functionDeclarations` with
+  `parametersJsonSchema` (JSON Schema as written, not Gemini's OpenAPI
+  subset). There is no hosted search on this wire.
+- `generationConfig`: thinking counts toward Gemini's output cap, so
+  `maxOutputTokens` is the reply's cap plus the effort's `thinkingBudget`
+  (`none`/`minimal` 128, `low` 1024, `medium` 8192, `high` 24576), or
+  plus 24576 for the model's own dynamic thinking, at most 65536.
+  `includeThoughts` is on.
+- `session_id`: the chat's cache key.
+
+The answer's events wrap Gemini's (`{response: {candidates,
+usageMetadata}}`), and an event may span several `data:` lines
+(`sse_events`). Thought parts become the turn's `reasoning`
+(`thought`). Function calls arrive whole, and each signed call's
+`thoughtSignature` is kept on the same `reasoning` under
+`thought_signatures` by call id. That dict is not text, so it stays within
+the reply (`reasoning_text`) and is echoed on the round that replays the
+turn. Gemini 3 refuses the next round without it. A turn replayed without
+signatures sends Google's documented stand-in,
+`skip_thought_signature_validator`, on its first call. `MAX_TOKENS`
+reads as a cut-off reply, and a `promptFeedback.blockReason` as an error.
+Usage: `input` is `promptTokenCount` (which includes the cached part)
+plus tool-use prompt tokens, `output` is the candidates' tokens plus the
+thoughts', and `cache_read` is `cachedContentTokenCount`.
+
+**Models and quota.** The backend lists no models. The account's quota,
+`POST {base}:retrieveUserQuota` with `{project}`, has one bucket per model
+it may use (`modelId`, `remainingFraction`, `resetTime`). The listing is
+those model ids (`models_request` asks the quota), the Usage tile shows
+one bar per bucket, and the free credential check (`ping_request`) asks
+it too. models.dev's `google` listing supplies the context windows. Every
+call names the protocol's own endpoint and sends the user agent `Gamma`;
+it doesn't claim to be Gemini CLI.
 
 ## Chat endpoint
 
