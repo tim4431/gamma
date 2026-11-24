@@ -4,12 +4,14 @@
 // account's, each opening its editor, with Add and Import SKILL.md… on the
 // rule; Built-in skills lists the server's, each with View (its
 // instructions, and a copy to edit under the same name, which then replaces
-// it) and a switch. The listing is the chat's own (chat/useSkills.js, GET
-// /api/ai/skills without bodies, with the server's limits); a skill's
-// instructions are read as its editor or viewer opens. Every write reads
-// the listing again once (refreshSkills), which the "/" menu shares, so it
-// has the change at once. A guest's sections are read-only: the server
-// answers a guest's writes with 403, and a guest has no skills of its own.
+// it) and how it is offered (BUILTIN_STATES: the editor's two choices for a
+// skill the account cannot edit). The listing is the chat's own
+// (chat/useSkills.js, GET /api/ai/skills without bodies, with the server's
+// limits); a skill's instructions are read as its editor or viewer opens.
+// Every write reads the listing again once (refreshSkills), which the "/"
+// menu shares, so it has the change at once. A guest's sections are
+// read-only: the server answers a guest's writes with 403, and a guest has
+// no skills of its own.
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { pickFiles } from "../shared/lib/pickFiles.js";
@@ -17,7 +19,8 @@ import { DialogButtons, Empty, Field, FormNotice, Row, Section, SubDialog, Toggl
 import { refreshSkills, useSkills } from "../chat/useSkills.js";
 import { skillDescription, skillHint } from "../chat/skills.js";
 import { MorphText } from "../shared/ui/MotionWidgets";
-import { CopyIcon, EyeIcon, ImportIcon, PencilIcon, PlusIcon, SlashIcon, TrashIcon } from "../shared/ui/Icons";
+import { MenuSelect } from "../shared/ui/Menus";
+import { BanIcon, CheckIcon, CopyIcon, EyeIcon, ImportIcon, PencilIcon, PlusIcon, SlashIcon, TrashIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
 const ENDPOINT = `${API}/ai/skills`;
@@ -33,6 +36,29 @@ const readSkill = (id) => apiJson(skillUrl(id));
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 const byName = (a, b) => a.name.localeCompare(b.name);
+
+// How a built-in is offered: the two choices an account skill has as well,
+// as one control, since a skill that is not offered at all has no use for
+// the other. "Only from /" is an account skill's "The assistant may use it
+// on its own" turned off, for a built-in whose description otherwise draws
+// the assistant to it (docs/dev/skills.md "Loading one is the exception").
+const BUILTIN_STATES = [
+  ["auto", t("On its own"), CheckIcon],
+  ["manual", t("Only from /"), SlashIcon],
+  ["off", t("Off"), BanIcon],
+];
+const builtinState = (row) => (row.off ? "off" : row.model === false ? "manual" : "auto");
+// What each state sends: the one it settles, the other left as it stands.
+const BUILTIN_WRITES = {
+  auto: { off: false, model: true },
+  manual: { off: false, model: false },
+  off: { off: true },
+};
+const builtinSaid = (state, name) => (
+  state === "off" ? t("/{name} is no longer offered.", { name })
+    : state === "manual" ? t("/{name} runs only when you type it.", { name })
+      : t("The assistant may use /{name} on its own.", { name })
+);
 
 const fromSkill = (skill) => ({
   name: skill.name || "", description: skill.description || "", argument_hint: skill.argument_hint || "",
@@ -104,7 +130,7 @@ function SkillEditor({ skill, taken, limits, onClose, onSaved, onNewer }) {
           </span>
         </Field>
         {problem ? <FormNotice>{problem}</FormNotice> : null}
-        <Field label={t("Description")} hint={t("When it fits: the assistant reads this to pick the skill.")}>
+        <Field label={t("Description")} hint={t("The assistant reads this to pick the skill: say what it is for, and what it is not for.")}>
           <textarea className="aiKeyInput promptTextarea" rows={2} required maxLength={limits.description} value={draft.description}
             onChange={(event) => patch("description")(event.target.value)} />
         </Field>
@@ -228,10 +254,13 @@ export function SkillsSettings({ canEdit, confirm, setStatus }) {
     upload(text);
   });
 
-  function setOn(row, on) {
+  // Sets how a built-in is offered. Only what the state settles is sent
+  // (gamma/skills.py set_builtin_state), so turning one off and on again
+  // keeps the "on its own" choice made for it.
+  function setBuiltinState(row, next) {
     run(row.id, async () => {
-      await apiJson(`${skillUrl(row.id)}/state`, json("PUT", { off: !on }));
-      written(on ? t("/{name} is offered in the chat again.", { name: row.name }) : t("/{name} is no longer offered.", { name: row.name }));
+      await apiJson(`${skillUrl(row.id)}/state`, json("PUT", BUILTIN_WRITES[next]));
+      written(builtinSaid(next, row.name));
     });
   }
 
@@ -291,11 +320,9 @@ export function SkillsSettings({ canEdit, confirm, setStatus }) {
               <button type="button" className="uiBtn sm" disabled={busy === row.id} aria-label={t("View /{name}", { name: row.name })}
                 onClick={() => openView(row)}><EyeIcon size={14} />{t("View")}</button>
               {row.replaced ? null : (
-                <span className="switch">
-                  <input type="checkbox" checked={!row.off} disabled={!canEdit || busy === row.id}
-                    aria-label={t("Offer /{name}", { name: row.name })} onChange={(event) => setOn(row, event.target.checked)} />
-                  <span className="switchTrack" />
-                </span>
+                <MenuSelect value={builtinState(row)} options={BUILTIN_STATES} disabled={!canEdit || busy === row.id}
+                  label={t("How /{name} is offered", { name: row.name })}
+                  onChange={(next) => setBuiltinState(row, next)} />
               )}
             </span>
           </Row>

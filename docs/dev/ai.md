@@ -1978,7 +1978,10 @@ a text file's line as `[<file name>:N](/?page=…&line=N&quote=<the line's
 verbatim text>)` ([pdf_citations.md](pdf_citations.md) "Line links").
 With `load_skill` armed, the prompt ends with the skills the model may
 load, one `- name: description` line each, sorted by name so the block
-reads the same while the account's skills stand
+reads the same while the account's skills stand. Its head makes loading
+one the exception, an ordinary question answered directly, since a block
+of names at the end of the prompt otherwise reads as a list to match every
+message against
 ([skills.md](skills.md#load_skill-the-agent-loads-a-skill-itself)).
 
 The changing tools (rename, move, folders and labels, the note editors) are
@@ -2095,7 +2098,9 @@ choice requires **Fetch documents**; turning fetching off preserves its stored
 choice. Turning cookie use off does not disconnect publishers or affect
 interactive PDF saves. **Use skills on its own** (`skills`, Allow or Off,
 default Allow) arms `load_skill`, where the account has a skill the
-assistant may load; Off leaves "/" working
+assistant may load; Off leaves "/" working. One skill at a time is the same
+choice in Settings → AI → Chat: the editor's *The assistant may use it on
+its own* for the account's own, *Only from /* for a built-in
 ([skills.md](skills.md#load_skill-the-agent-loads-a-skill-itself)). Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,

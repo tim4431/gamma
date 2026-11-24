@@ -808,8 +808,10 @@ AI:
   argument hint, instructions, and whether the assistant may use it on its
   own) whose save names the version it read, so a change made elsewhere
   meanwhile is a notice with *Load the newer version*, never overwritten.
-  Built-in skills lists the server's with View (and *Copy to your
-  skills*) and an on/off switch. A guest's sections are read-only. They
+  Built-in skills lists the server's with View (and *Copy to your skills*)
+  and how each is offered — *On its own*, *Only from /* (the editor's
+  choice, for a skill the account cannot edit) or *Off*. A guest's
+  sections are read-only. They
   read the chat's own skill store, not the pane's reads, and every write
   refreshes it once ([skills.md](skills.md#settings--ai--chat-the-skills-sections)).
   `openSettings("skills")` (the "/" menu's *Manage skills…*, the card of a

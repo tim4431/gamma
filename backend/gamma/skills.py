@@ -12,7 +12,12 @@ catalog a chat sees:
 - the account's own, in users.db ``user_prefs`` under the account-wide
   reserved key ``skills`` (/api/prefs refuses it; routers/skills.py is the
   only way in) as ``{"skills": [{id, name, description, argument_hint, body,
-  model, created_at, updated_at}], "off": [built-in names turned off]}``.
+  model, created_at, updated_at}], "off": [built-in names turned off],
+  "manual": [built-in names kept to "/"]}``.
+
+``model`` (an account skill's field, a built-in's ``manual``) is the same
+choice for both sources: whether the assistant may load the skill itself, or
+it runs only from "/".
 
 An account skill of a built-in's name replaces it. Messages store only
 ``{id, name, args}``; every request renders the instructions again from the
@@ -51,9 +56,19 @@ LIMITS = {"name": MAX_NAME, "description": MAX_DESCRIPTION, "hint": MAX_HINT, "b
 
 BUILTIN_DIR = Path(__file__).resolve().with_name("builtin_skills")
 
-LISTING_HEAD = ("Skills: instructions the user keeps for kinds of requests. When a request fits one, call "
-                "load_skill with its name before answering, then follow it. A message that begins with "
-                "“The user ran the skill …” already carries its skill.")
+# What the listing says above the names. Most messages fit no skill, so the
+# rule it states is to answer directly, loading one the exception. Put the
+# other way round ("when a request fits one, call load_skill"), at the end of
+# the system prompt, a model read every message as something to match and
+# loaded a skill for each one (docs/dev/skills.md "Loading one is the
+# exception").
+LISTING_HEAD = ("Skills: instructions the user keeps for a few kinds of request. Most messages are not one of "
+                "them — answer an ordinary question, a follow-up, or anything you can answer yourself, "
+                "without a skill. Load one only when the message plainly asks for the whole piece of work "
+                "its description names: call load_skill with that name before answering, then follow what it "
+                "returns. A loaded skill's instructions stay in the conversation, so do not load the same "
+                "skill again while you can still see them. A message that begins with “The user ran the "
+                "skill …” already carries its skill.")
 
 
 class SkillError(ValueError):
@@ -189,20 +204,34 @@ def builtins() -> list[dict]:
     return [dict(s) for s in _builtins()]
 
 
+def _names(value, key: str) -> list[str]:
+    """One of the stored lists of built-in names (``off``, ``manual``),
+    sorted and without duplicates; [] for anything else, so a copy written
+    before the key existed reads as none."""
+    names = value.get(key) if isinstance(value.get(key), list) else []
+    return sorted({n for n in names if isinstance(n, str)})
+
+
 def _clean(value) -> dict:
-    """The stored value as ``{"skills": [...], "off": [...]}``, whatever an
-    older or damaged copy holds."""
+    """The stored value as ``{"skills": [...], "off": [...], "manual":
+    [...]}``, whatever an older or damaged copy holds."""
     value = value if isinstance(value, dict) else {}
     entries = value.get("skills") if isinstance(value.get("skills"), list) else []
-    off = value.get("off") if isinstance(value.get("off"), list) else []
     return {"skills": [e for e in entries if isinstance(e, dict) and isinstance(e.get("id"), str)
                        and isinstance(e.get("name"), str) and isinstance(e.get("body"), str)],
-            "off": sorted({n for n in off if isinstance(n, str)})}
+            "off": _names(value, "off"), "manual": _names(value, "manual")}
 
 
 def load(user_id: str) -> dict:
-    """The account's stored skills, ``{"skills": [...], "off": [...]}``."""
+    """The account's stored skills, ``{"skills": [...], "off": [...],
+    "manual": [...]}``."""
     return _clean(get_pref(user_id, PREF_KEY)[0])
+
+
+def _nothing_stored() -> dict:
+    """The stored value of an account that keeps no skills: what a guest, a
+    share link or an integration token is read as."""
+    return _clean({})
 
 
 def update(user_id: str, change) -> dict:
@@ -224,17 +253,28 @@ def _account_skill(entry: dict) -> dict:
             "created_at": entry.get("created_at") or "", "updated_at": entry.get("updated_at") or ""}
 
 
+def _builtin(skill: dict, manual: set) -> dict:
+    """A built-in as the account has it: ``model`` false where the account
+    keeps it to "/" (``manual``), as an account skill's own ``model`` false
+    does. A built-in that ships ``disable-model-invocation`` stays that way
+    whatever the account says."""
+    return {**skill, "model": skill["model"] and skill["name"] not in manual}
+
+
 def catalog(user_id: str | None, personal: bool) -> list[dict]:
     """The skills a request may use, sorted by name: the account's own when
     ``personal`` (a signed-in session that is no guest, share link or
     integration token), then the built-ins it has not turned off or
-    replaced with a skill of the same name. Otherwise the built-ins alone,
-    so a token's request or a context export never reads private
+    replaced with a skill of the same name, each with the account's choice
+    of whether the assistant may load it. Otherwise the built-ins alone, so
+    a token's request or a context export never reads private
     instructions."""
-    stored = load(user_id) if personal and user_id else {"skills": [], "off": []}
+    stored = load(user_id) if personal and user_id else _nothing_stored()
     own = [_account_skill(e) for e in stored["skills"]]
     taken = {s["name"] for s in own} | set(stored["off"])
-    return sorted(own + [s for s in builtins() if s["name"] not in taken], key=lambda s: s["name"])
+    manual = set(stored["manual"])
+    built = [_builtin(s, manual) for s in builtins() if s["name"] not in taken]
+    return sorted(own + built, key=lambda s: s["name"])
 
 
 def find(catalog: list[dict], skill_id) -> dict | None:
@@ -397,16 +437,20 @@ def _row(skill: dict, body: bool = False) -> dict:
 def rows(user_id: str, personal: bool) -> list[dict]:
     """What GET /api/ai/skills lists, without bodies: every account skill
     (``personal`` only) and every built-in, with whether each takes part in
-    the catalog (``effective``) and, for a built-in, whether it is turned
-    ``off`` or ``replaced`` by an account skill of its name. Sorted by name,
-    an account skill before the built-in it replaces."""
-    stored = load(user_id) if personal else {"skills": [], "off": []}
+    the catalog (``effective``), whether the assistant may load it
+    (``model``, the account's choice for a built-in too) and, for a built-in,
+    whether it is turned ``off`` or ``replaced`` by an account skill of its
+    name. Sorted by name, an account skill before the built-in it
+    replaces."""
+    stored = load(user_id) if personal else _nothing_stored()
     own = [_row(_account_skill(e)) for e in stored["skills"]]
     names = {r["name"] for r in own}
+    manual = set(stored["manual"])
     out = list(own)
     for skill in builtins():
         off, replaced = skill["name"] in stored["off"], skill["name"] in names
-        out.append({**_row(skill), "effective": not off and not replaced, "off": off, "replaced": replaced})
+        out.append({**_row(_builtin(skill, manual)), "effective": not off and not replaced,
+                    "off": off, "replaced": replaced})
     return sorted(out, key=lambda r: (r["name"], r["source"] != "account"))
 
 
@@ -519,13 +563,24 @@ def remove(user_id: str, skill_id: str, seen: str | None):
     update(user_id, change)
 
 
-def set_builtin_off(user_id: str, name: str, off: bool) -> dict:
-    """Turn a built-in off or back on for the account; its row."""
+def _listed(names: list, name: str, present: bool) -> list:
+    rest = set(names) - {name}
+    return sorted((rest | {name}) if present else rest)
+
+
+def set_builtin_state(user_id: str, name: str, off: bool | None = None, model: bool | None = None) -> dict:
+    """How a built-in is offered to the account, the two choices an account
+    skill has as well: ``off`` whether it is left out of the catalog
+    altogether (and so out of "/"), ``model`` whether the assistant may load
+    it on its own. Either left out stays as it stands, so turning a built-in
+    off and on again keeps the choice the account made for it. Its row."""
     if not find(builtins(), BUILTIN_PREFIX + name):
         raise SkillNotFound("There is no such built-in skill.")
 
     def change(value):
-        names = set(value["off"]) - {name}
-        value["off"] = sorted(names | {name} if off else names)
+        if off is not None:
+            value["off"] = _listed(value["off"], name, off)
+        if model is not None:
+            value["manual"] = _listed(value["manual"], name, not model)
     update(user_id, change)
     return next(r for r in rows(user_id, True) if r["id"] == BUILTIN_PREFIX + name)
