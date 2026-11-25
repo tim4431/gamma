@@ -450,6 +450,9 @@ class Protocol:
     # chatgpt_oauth.RefreshUnavailable when there was no verdict.
     oauth = None
     entry_name = ""      # a sign-in's: the name its new entry gets when the user gives none
+    # A sign-in's fields beyond its callback, which the form asks for and
+    # ``oauth.redeem`` takes by name (the Gemini sign-in's Google Cloud project).
+    signin_fields: tuple = ()
     entry = True         # an entry may name it (False: a variant another protocol switches to)
     native_pdf = True    # the provider takes the PDF file itself, not only extracted text
     streams_only = False # the reply always arrives as SSE, even for a caller that wants it whole

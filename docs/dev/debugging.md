@@ -1231,6 +1231,13 @@ instead of fixing; the fix removes its entry.
   before it, and in a rerun of `test_mcp.py` and every file after it
   (9,923 passed). Seen on a branch (link-edit) that changes no workspace,
   token or MCP code.
+- **standby: a library a newer Gamma wrote opens on the update page…**
+  (`frontend/tests/e2e/scenarios/standby.mjs:47`, this machine,
+  2026-11-24): the wait for Export all's download (`page.waitForEvent
+  ("download")`) ran out its 30 s in a full run on parallel workers (972
+  of 973 steps passed). The group run alone passed, the step in 2 s. Seen
+  on a branch (ai-gemini) that changes no standby, export or migration
+  code.
 
 ### What a run leaves behind
 

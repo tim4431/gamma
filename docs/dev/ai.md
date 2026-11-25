@@ -147,9 +147,11 @@ embedding/audio/image models). Anthropic subscription sign-in is
 deliberately absent: Anthropic's terms forbid third-party apps from routing
 requests through Free/Pro/Max plan credentials, so Claude is reached with a
 Console API key. Google's terms forbid the same for Gemini CLI's sign-in,
-and Google has suspended accounts for it. That sign-in is still offered,
-at the developer's request, with the warning on its card ("The Gemini
-sign-in" below); the supported way is the Gemini API key preset.
+and Google has suspended accounts for it; since June 2026 Google also
+serves that sign-in only to organizations' Gemini Code Assist licenses. It
+is still offered, at the developer's request, for those licenses, with the
+warning on its card ("The Gemini sign-in" below); the supported way is the
+Gemini API key preset.
 
 The Connections section also exposes `POST /api/ai/providers/{id}/usage`,
 for any connection with a quota reader (`ai_protocols.quota_reader`: a
@@ -878,21 +880,31 @@ maintenance.
 
 The protocol `gemini-signin` signs in with a Google account through
 Gemini CLI's OAuth client and calls Google's Code Assist backend, which is
-what Gemini CLI does. Calls count against the account's Gemini CLI quota:
-the free tier, or a Google AI Pro or Ultra plan. **Google's terms forbid
-this in third-party software, and accounts have been suspended for it**
-([research note](../research/gemini-signin.md)). The developer asked for
-it anyway, so it ships with the warning as the protocol's `note`, shown
-under its card in the connect dialog, and it is never one of the chat
-setup card's tiles. The supported way to reach Gemini is the `gemini` API
-key preset. The sign-in flow is `gamma/gemini_oauth.py`, and the wire is
+what Gemini CLI does. Calls count against the account's Gemini Code Assist
+license. **Since 2026-06-18 Google serves this client only to Gemini Code
+Assist Standard and Enterprise**, an organization's license on a Google
+Cloud project. Individual accounts (free, Google AI Pro and Ultra) are
+refused at setup with "This client is no longer supported for Gemini Code
+Assist for individuals", and Google points them to Antigravity. **Google's
+terms also forbid this client in third-party software, and accounts have
+been suspended for it** ([research note](../research/gemini-signin.md)).
+The developer asked for it anyway, for an organization's license, so it
+ships with both warnings in the protocol's `note`, shown under its card in
+the connect dialog, and it is never one of the chat setup card's tiles.
+Antigravity's sign-in is not offered: posing as that client is what got
+accounts banned. The supported way to reach Gemini is the `gemini` API key
+preset. The sign-in flow is `gamma/gemini_oauth.py`, and the wire is
 `gamma/ai_protocols/gemini.py`.
 
 **The sign-in.** It uses the routes every sign-in uses
 (`/api/ai/oauth/gemini-signin/start|status|complete`, and
 `/api/admin/ai-providers/gemini-signin/*` for a shared entry), with the same
 pending-state rules as ChatGPT's: in memory, 15 minutes, bound to its
-owner, one-shot. The OAuth calls are `gamma/cloud_oauth.py`'s, the
+owner. One difference: the sign-in ends only once setup succeeds (below).
+The step's first field is the license's **Google Cloud project**, the
+protocol's one `signin_fields` entry. `complete` takes it as `project`, and
+the route passes it to the flow's `redeem` (`routers/ai.py`
+`signin_fields`), so no route branches on the protocol. The OAuth calls are `gamma/cloud_oauth.py`'s, the
 helpers the Drive backup's Google sign-in uses: an authorization URL with
 PKCE, `access_type=offline` and `prompt=consent` (so a refresh token
 always comes back), and the code traded with the client's secret, which
@@ -911,17 +923,33 @@ codes, so a sign-in ends in one of two ways:
   one is pasted (`signInAddress` in `settings/aiServices.js` knows the
   `4/0A…` shape, and the clipboard is read on focus as for ChatGPT).
 
-**Setup.** After the code is traded, `setup` finds the account's Code
-Assist project as Gemini CLI's `setup.ts` does. `loadCodeAssist` names the
-project and plan of an account that is set up. On the first sign-in of a
-free-tier account, `onboardUser` with the default tier starts a
-long-running operation, which is polled (`GET operations/…`) for up to 60 s.
-The project id is stored as the sign-in's `account_id`, the field the
-runtime conf carries, and the plan name as `plan`. Google may answer in
-other ways, and each becomes the sign-in's error: "verify this account
-first: open <link>" (`VALIDATION_REQUIRED`), the ineligible tiers'
-reasons, or a tier that needs a Google Cloud project of its own, which
-this sign-in doesn't set up. The e-mail comes from the userinfo
+**Setup.** The code is traded first, and the tokens wait in the pending
+sign-in (`tokens`). Then `setup` finds the account's Code Assist project
+as Gemini CLI's `setup.ts` does with `GOOGLE_CLOUD_PROJECT` set:
+`loadCodeAssist` names the project typed (`cloudaicompanionProject`, and
+`duetProject` in its metadata) and answers the project and plan of an
+account that is set up. A license that leaves the project out runs on the
+one typed. Otherwise the default tier is onboarded with `onboardUser`, a
+long-running operation polled (`GET operations/…`) for up to 60 s: on the
+typed project for a tier that needs the user's own
+(`userDefinedCloudaicompanionProject`), with none for a tier on Google's
+own project. The project id is stored as the sign-in's `account_id`, the
+field the runtime conf carries, and the plan name as `plan`. A project
+must be an ID (`my-project-123`), not the project number, which Code
+Assist refuses. Google may refuse in other ways, and each becomes the
+sign-in's error:
+
+- "verify this account first: open <link>" (`VALIDATION_REQUIRED`);
+- the ineligible tiers' own reasons. Without a project, `RETIRED` follows
+  them: individual accounts were retired in June 2026, so enter the
+  organization's project, or use a Gemini API key;
+- a tier that needs its project when none was typed.
+
+A failed setup leaves the sign-in waiting with its tokens. The user types
+the project, and Connect (or a paste again) tries setup once more without
+a second Google sign-in or a second trade of the one-shot code. The form
+marks a sign-in the server holds as `oauthReady`, and `busy` keeps two
+redeems from trading one code. The e-mail comes from the userinfo
 endpoint. These calls, and the token calls, go through
 `gamma/cloud_http.py`.
 
