@@ -328,9 +328,14 @@ paper-metadata worker's property writes — the one content write opening a
 page can cause, [paper_metadata.md](paper_metadata.md)). `batch_id` is the
 client's name for the batch and `cursor` its caret as stored (JSON); both
 are `''` on a batch without a name, which covers every server-side writer
-(`record_ops`, `log_reload`, `apply_batches` and the rest). A partial
-unique index (`idx_page_ops_batch`, where `batch_id != ''`) allows one row
-per page, client and id. The catch-up below returns neither column: an old
+(`record_ops`, `log_reload`, `apply_batches` and the rest) but one:
+`PUT /blocks/{id}` logs the `batch` its writer names (the handwriting's
+save, [handwriting.md](handwriting.md) "Fences") under client `''`, so
+every such writer shares that client's ids; the save's are
+`ink-<tab>-<n>`, the tab's random id and a count. A partial unique index
+(`idx_page_ops_batch`, where `batch_id != ''`) allows one row per page,
+client and id. A batch whose row the log has pruned since (below) is
+applied again when it is sent again. The catch-up below returns neither column: an old
 batch's caret would place a peer who may have left.
 
 A `set` logs the block's whole text, so typing in one long block writes that
@@ -844,6 +849,13 @@ poll (`hidden`), and `peers` / `me` as React state. The session owns:
   draft was edited from, and the server merges it into a drawing someone
   else saved meanwhile. The answer's `properties` names the merged file,
   and the draft takes it ([handwriting.md](handwriting.md) "Client").
+  That `PUT` is logged with no client, so its echo reaches the writer's
+  tab too, as a remote batch, and it can come after the answer. Until the
+  tree has applied the answer's `seq`, the draft stays on screen: the
+  session's `applied()` is `{pageId, seq}`, the open page and the seq of
+  the newest batch its tree holds (-1 while a reload is on its way), which
+  `usePageCollab` hands on as `applied` (handwriting.md "Client",
+  inkStore).
 - **same-box merge**: every change of a text box sends its whole
   `text_box`, since a keystroke stores the size the box measured at, and
   every change of a picture its whole `picture`. So the set carries

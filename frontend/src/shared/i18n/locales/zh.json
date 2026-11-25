@@ -2194,6 +2194,8 @@
   "Handwriting included": "包含手写",
   "Handwriting merged": "手写已合并",
   "Handwriting not saved yet: {err}": "手写尚未保存：{err}",
+  "Handwriting is still loading. Try again in a moment.": "手写仍在加载，请稍后再试。",
+  "Handwriting is still saving. Try again in a moment.": "手写仍在保存，请稍后再试。",
   "Handwriting not saved: {err}": "手写未保存：{err}",
   "Handwriting not sent": "手写未发送",
   "Handwriting on page {n}": "第 {n} 页的手写",

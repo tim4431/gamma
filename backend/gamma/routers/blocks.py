@@ -81,6 +81,7 @@ class UBUpdateRequest(StorableBody):
     properties: dict | None = None
     base_properties: dict | None = None  # the values `properties` was computed from (an ink merge, ops.py)
     base_ids: list[str] | None = None    # an ink merge: the base file's stroke ids as the client loaded it
+    batch: str | None = None    # the writer's name for this write: sent again, it is answered from the op log, not applied twice
 
 
 class BulkPatch(BaseModel):
@@ -678,17 +679,19 @@ def op_refusal(e: OpError) -> JSONResponse:
                         content={"detail": e.detail, **({"conflict": e.conflict} if e.conflict else {})})
 
 
-def _ops(ws: str, page_id: str, ops: list[dict], request: Request, scope, client: str = "") -> dict:
+def _ops(ws: str, page_id: str, ops: list[dict], request: Request, scope, client: str = "", batch: str = "") -> dict:
     """Apply ops to a page on behalf of the request, logged under
     ``client`` (``writer_client``'s, where the route takes the vault's): a
     share editor is confined to the shared pages; a refused batch raises
-    its OpError, which the route answers (``op_refusal``)."""
+    its OpError, which the route answers (``op_refusal``). ``batch``: the
+    writer's name for the write, which a retry of it answers from the log
+    (``ops.apply_ops``)."""
     if scope is not None:
         with connect_pages_db(ws) as conn:
             if not scope.allows_page(conn, page_id):
                 raise HTTPException(status_code=403, detail="not accessible via this share link")
     return commit_ops(ws, page_id, ops, actor=actor_of(request), client=client, share_scoped=scope is not None,
-                      via=share_via(request))
+                      batch_id=batch[:64], via=share_via(request))
 
 
 @router.post("/blocks")
@@ -751,7 +754,10 @@ def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
     ink merge may carry ``base_ids`` (the base file's stroke ids) and
     answers ``ink_conflict: {clean, lost_ours, returned}``
     ([handwriting.md](../../docs/dev/handwriting.md) "Two writers, one
-    group")."""
+    group"). ``batch`` names the write: the same batch sent again (its
+    answer was lost) is answered from the op log with what it applied then
+    and its ``seq``, not applied twice. The answer carries the block's
+    ``page_id`` and the batch's ``seq``."""
     ws = require_ws_writer(request)
     scope = share_scope(request)
     with connect_pages_db(ws) as conn:
@@ -770,10 +776,10 @@ def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
             if payload.base_ids is not None:
                 op["base_ids"] = payload.base_ids
     try:
-        result = _ops(ws, page_id, [op], request, scope)
+        result = _ops(ws, page_id, [op], request, scope, batch=payload.batch or "")
     except OpError as e:
         return op_refusal(e)
-    out = {"ok": True, "updated_at": result["at"], "seq": result["seq"]}
+    out = {"ok": True, "updated_at": result["at"], "seq": result["seq"], "page_id": page_id}
     if block_id in result.get("ink_conflicts", {}):
         out["ink_conflict"] = result["ink_conflicts"][block_id]
     if payload.content is not None:
