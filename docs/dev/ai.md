@@ -205,8 +205,8 @@ sync never copies it, and only the two writes below change it:
   own `""` is the first model offered, the account's own before the
   server's.
 - **`favorites`**: the chat models, at most 50: the models the chat's
-  chip lists first, which Settings → AI → Models lists as Chat models
-  ("The model menu").
+  chip offers beside the one in use, which Settings → AI → Models lists
+  as Chat models ("The model menu").
 - **`chat_migrated`**: the chat pick is still the one migration step 71
   wrote from the old one-connection pref, `ai-provider` (that entry's first
   model).
@@ -349,14 +349,13 @@ add a connection."
 
 ### The model menu
 
-`ai/ModelMenu.jsx` is the one model menu: `ModelPicker` (its search box
-and list, on a surface of the caller's: the chat's model panel),
-`ModelMenuList` (the two in a `ContextMenu`, the open menu) and
-`TaskModelMenu` (a task's row in Settings → AI → Models, and "Translate
-with" in Settings → Language & translation, the same `translate` task).
-`TaskModelMenu` is a `MenuSelect` that opens `ModelMenuList` through its
-`listbox` slot (`shared/ui/Menus.jsx`). Its groups, in order (`menuGroups`
-in `ai/modelMenu.js`, `tests/modelMenu.test.mjs`):
+`ai/ModelMenu.jsx` is the one model menu: `ModelMenuList` (the open menu,
+for the chat's chip) and `TaskModelMenu` (a task's row in Settings → AI →
+Models, and "Translate with" in Settings → Language & translation, the same
+`translate` task). `TaskModelMenu` is a `MenuSelect` that opens
+`ModelMenuList` through its `listbox` slot (`shared/ui/Menus.jsx`). Its
+groups, in order (`menuGroups` in `ai/modelMenu.js`,
+`tests/modelMenu.test.mjs`):
 
 - the current pick when it is no longer offered, marked unavailable;
 - a task's "Use chat model (X)" ("Default: Microsoft (free)" for
@@ -364,8 +363,7 @@ in `ai/modelMenu.js`, `tests/modelMenu.test.mjs`):
 - the chat models (the favorites), in the order they were added, under
   "Chat models" (one no longer offered stays, so its star can come off);
 - one group per connection, in the registry's order, under its logo and
-  named with its billing tag (a favorite in it too, unless `once`: the
-  chat's panel lists each model once, a favorite in the chat models alone);
+  named with its billing tag;
 - for translation, the services.
 
 A search box filters every group by each word typed (the model, its
@@ -394,7 +392,7 @@ model name or price is written in the code, and an unknown fact is left
 out.
 
 Settings → AI → Models has a **Chat models** row under Chat (`ChatModels`
-in `ai/ModelMenu.jsx`): the models the chat's model chip lists first.
+in `ai/ModelMenu.jsx`): the models the chat's model chip switches between.
 Each model is a chip with its connection's logo and a remove button. One no longer offered stays,
 marked unavailable, until it is removed. "Add model…" opens the model
 menu: a pick adds the model and closes the menu, and a star adds or
@@ -405,25 +403,32 @@ row above it is still the one model a new chat starts with.
 ### The model chip
 
 The composer's model chip (`chat/ModelChip.jsx`) reads the model and its
-effort ("GPT-5 · high"), led by the logo of the model's connection where
-one is drawn and followed by the speed's glyph. A press opens one panel
+effort ("GPT-5 High"), led by the logo of the model's connection where one
+is drawn, and by a bolt while the chat runs fast. A press opens one panel
 above it (a `MenuSelect` whose `listbox` slot is the panel, `popup`
-"dialog"), in three bands:
+"dialog"), which works as Codex's does:
 
-- **the models**: for Gamma AI the model menu's `ModelPicker` with `once`:
-  the search box, the chat models first, each with its connection, then
-  every connection's others, a star adding one to the chat models; for a
-  computer's agent its own models, a row each. A pick sets the account's
-  chat model (Gamma AI's, so every device follows) and closes the panel;
-- **the knobs** the picked model takes, each a heading over a `Segmented`
-  as wide as the panel: Reasoning effort (Default, then the model's
-  levels) and Speed (Default, then the tiers its provider sells, each with
-  its glyph). A computer agent's Default names its own ("Default (high)").
-  A knob changed leaves the panel open, so effort and speed are set in one
-  visit; a model without levels or tiers has no such band
-  (`effortKnob` / `speedKnob` build both sides' knobs);
-- **Manage models…** (Gamma AI's): Settings → AI → Models.
+- its head is the **Fast** button (a bolt, on or off, where the model can
+  run fast: `fastChoice` in `chat/modelPrefs.js`, "Speed" below), the
+  effort over the model's name, and **Reset to default**, which takes the
+  effort and Fast off again and is disabled while neither is picked;
+- under it the effort's `StopSlider` (`shared/ui/StopSlider.jsx`) of the
+  levels the model takes, with no stop for the default. With none picked
+  it stands on the model's own level where that is known (a computer's
+  agent says it), and is bare where it is not (Gamma AI's, which sends no
+  effort then): nothing shows a level that is not the one at work;
+- the middle of the head opens the models, "Select model": for Gamma AI
+  the one in use, then the chat models, each with its connection's logo
+  and name (the connection's name gives way first), then **All models…**,
+  which turns the panel into the model menu, for any other model and for
+  the stars, and **Manage models…** (Settings → AI → Models); for a
+  computer's agent its own models. A pick comes back to the first view,
+  where the new model's effort can be set; Gamma AI's is the account's
+  chat model, so every device follows.
 
+A model with neither levels nor Fast has the list alone, and a pick closes
+it. The levels' names are `effortLabel`'s (`chat/modelPrefs.js`: "Low" …
+"Extra high", "Max"), in the panel, the chip, a reply's foot and Settings.
 Who answers is not the chip's: that is the header's agent picker ("The
 picker").
 
@@ -1361,7 +1366,7 @@ lowest first, looked up live like its context window
 `supported_reasoning_levels`), else models.dev's `reasoning_options`
 (`{type: "effort", values}`; a model that doesn't reason or only takes a
 token budget has none). `[]` means the model has no effort control: the
-chip's panel drops its effort knob and nothing is sent. A model no source
+chip's panel has no slider and nothing is sent. A model no source
 knows gets `/api/ai/models`' generic `efforts` (low / medium / high). The
 preference itself never changes with the model: `effortFor` in
 `chat/modelPrefs.js` sends it as it is when the model takes it, else the
@@ -1376,7 +1381,7 @@ Every reply names what answered it: the stream's `{"model": {id, name,
 effort, speed, tools}}` line (after `{context}`) is saved on the reply as
 `model`, `effort` and `speed`. A chat whose model can't call tools carries
 `tools_off` there too, the reason, saved as `toolsOff` ("Models that can't
-call tools"). The reply's foot shows "gpt-5.5 · high" before the
+call tools"). The reply's foot shows "gpt-5.5 · High" before the
 token line, with the speed as its glyph (`SPEED_ICONS` in `chat/ChatTranscript.jsx`
 — a bolt for `fast`, a clock for `flex`, nothing for the usual routing; the
 tooltip names the tier, since the glyph carries no text). The line comes a
@@ -1391,11 +1396,14 @@ come from the providers' listings alone.
 ### Speed (service tier)
 
 Providers sell a faster route to the same model: Anthropic's fast mode,
-OpenAI's and Codex's `service_tier`. One account pref covers them all:
-`chatSpeed`, set from the composer's model chip or Settings → AI → Chat. Its
-values are `ai_protocols.SPEED_ORDER`, `flex` (slower and cheaper) and
-`fast` (the premium low-latency route, around twice the price per token), or
-"" for the provider's usual routing, which leaves the field out.
+OpenAI's and Codex's `service_tier`. The names a request carries are
+`ai_protocols.SPEED_ORDER`, `flex` (slower and cheaper) and `fast` (the
+premium low-latency route, around twice the price per token), or "" for the
+provider's usual routing, which leaves the field out. The chat runs fast or
+not: one account pref covers every model, `chatSpeed` ("" or `fast`), the
+model chip's Fast button and Settings → AI → Chat's Fast; a profile that
+still holds `flex` reads as "". The translated view's speed keeps both
+([translation.md](translation.md)).
 
 Each wire maps those canonical names to its own (`Protocol.speeds`,
 `speed_value`), so nothing outside `ai_protocols/` knows a provider's
@@ -1410,17 +1418,20 @@ spelling:
 `GET /api/ai/model-info` names a model's tiers, cheapest first
 (`ai_catalog.speed_tiers`): the entry's own listing first (the Codex
 backend's `service_tiers`, `[{id, name}]` — source `"provider"`), else what
-the wire itself can ask for (`"protocol"`). `[]` means no speed control and
-the chip's panel drops its Speed knob. Anthropic's listing carries no
+the wire itself can ask for (`"protocol"`). `[]` means no speed control, and
+the chip's panel has no Fast button without `fast` among them. Anthropic's listing carries no
 speed facts, so its answer is wire-wide: fast mode is offered for every
 model that endpoint serves. A model that doesn't take it (fast mode is the
 Opus line only) is refused upstream with the provider's own message; the
 alternative, a table of model names in the repository, would go stale.
 
-`speedFor` in `chat/modelPrefs.js` sends the preference only when the model
-has that tier. Unlike effort there is no nearest tier: paying for a speed
-the model doesn't offer, and silently dropping to the cheap one, are both
-decisions that are the user's to make.
+`fastChoice` in `chat/modelPrefs.js` sends `fast` only when the model has
+it: there is no nearest tier to substitute, since paying for a speed the
+model doesn't offer would be the wrong call to make for the user. A
+computer's agent set up to run fast of its own (Codex's config, its model's
+`speed`) is on with nothing picked, and turned off as `standard`; a
+conversation of its that ran at `flex` goes on at the agent's own speed
+(`modelChoice`).
 
 What a reply reports is the speed that *served* it, as far as the provider
 says. Each wire reads the tier out of its response — OpenAI's

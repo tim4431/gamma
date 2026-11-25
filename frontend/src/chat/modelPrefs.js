@@ -1,7 +1,7 @@
 // The two knobs the chat sends with a model: how hard it thinks (reasoning
-// effort) and which of the provider's service tiers serves the call (speed).
-// The chat keeps ONE preference of each (the chatEffort / chatSpeed prefs)
-// and sends each model what that model actually takes; a model's levels and
+// effort) and whether it runs fast (speed). The chat keeps ONE preference of
+// each (the chatEffort / chatSpeed prefs) and sends each model what that
+// model actually takes; a model's levels and
 // tiers come from GET /api/ai/model-info (its provider's listing, else
 // models.dev for effort, else what the wire itself can ask for).
 import { T, t } from "../shared/i18n/i18n.js";
@@ -15,11 +15,16 @@ export function modelLabel(m) {
 
 // Lowest first — the order mirrors EFFORT_ORDER in gamma/routers/ai.py.
 export const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+// A level as people read it, wherever one is named (the model chip, a
+// reply's foot, Settings); one unknown here by its own word.
+const EFFORT_LABELS = { none: T("None"), minimal: T("Minimal"), low: T("Low"), medium: T("Medium"), high: T("High"),
+  xhigh: T("Extra high"), max: T("Max") };
+export const effortLabel = (level) => (EFFORT_LABELS[level] ? t(EFFORT_LABELS[level]) : level || "");
 
 // The service tiers, cheapest first — ai_protocols.SPEED_ORDER. "flex"
 // trades latency for a lower price, "fast" buys the provider's premium
 // low-latency routing (Anthropic's fast mode, OpenAI's and Codex's) at a
-// higher one.
+// higher one. The translated view offers both, the chat "fast" alone.
 export const SPEED_ORDER = ["flex", "fast"];
 // Their names in a menu, through t() where they show.
 export const SPEED_LABELS = { flex: T("Flex"), fast: T("Fast") };
@@ -41,10 +46,15 @@ export function effortFor(preferred, levels) {
   return best;
 }
 
-// The tier to send for the preferred one: itself when the model has it, else
-// "" — the provider's usual routing. Unlike effort there is no nearest tier:
-// paying for a speed the model doesn't offer, or silently dropping to the
-// cheap one, would both be the wrong call to make for the user.
-export function speedFor(preferred, tiers) {
-  return preferred && tiers?.includes(preferred) ? preferred : "";
+// The chat's Fast button (chat/ModelChip.jsx): {on, next}, whether the chat
+// runs fast and the speed a press picks; null for a model that can't (no
+// "fast" among its `tiers`), which is sent no speed. `chosen` is the speed
+// picked, "" for none, and `own` the one a computer's agent runs at then: an
+// agent set up to run fast is on with nothing picked, and off is then
+// "standard", picked by name.
+export function fastChoice(chosen, tiers, own = "") {
+  if (!tiers?.includes("fast")) return null;
+  const on = (chosen || own) === "fast";
+  const usual = own === "fast";
+  return { on, next: on === usual ? (on ? "standard" : "fast") : "" };
 }

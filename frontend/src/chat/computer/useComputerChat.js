@@ -18,11 +18,11 @@ import { askShellWatching } from "../../vault/useVault.js";
 import { stripFacts } from "../agents.js";
 import { readLocalAgents } from "../useLocalAgents.js";
 import { refreshSkills } from "../useSkills.js";
-import { effortKnob, speedKnob } from "../ModelChip.jsx";
+import { fastChoice } from "../modelPrefs.js";
 import { noteDirUsed, usedDirs } from "./usedDirs.js";
 import {
   AWAY_POLL_MS, POLL_MS, SOURCES_MAX, TEXT_MAX, answerBody, askPath, awayFrom, canSend, chatPath, emptyLine, isRemote,
-  lastEnded, liveTurn, modelChoice, modelDisplay, retryOf, shownMessages, sourcesBody, steeringTurn, turnBody, workPlace,
+  lastEnded, liveTurn, modelChoice, retryOf, shownMessages, sourcesBody, steeringTurn, turnBody, workPlace,
 } from "./computerChat.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -328,9 +328,9 @@ const places = new Map();
 //               go now
 //   steering    the turn a queued message's Steer goes to: the one whose
 //               agent works now, "" for none (computerChat.js steeringTurn)
-//   chip        the model chip's props (chat/ModelChip.jsx: label, text,
-//               speed, models, model, onModel, knobs): the agent's
-//               models, efforts and speeds, the choice the conversation's
+//   chip        the model chip's props (chat/ModelChip.jsx): the agent's
+//               models, its efforts and whether it runs fast, the choice
+//               the conversation's
 //   grants      the Allowed in this chat chip's props (GrantChip), null
 //               while nothing is allowed
 //   place, pickPlace   where the conversation works (workPlace), the
@@ -449,24 +449,21 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], here =
       : shown ? t("This conversation is no longer one you can read.")
         : emptyLine(info, label, where, place, page), again: false } : null;
 
-  // The composer's model chip (chat/ModelChip.jsx): the agent's models, and
-  // the model's efforts and speeds as its knobs (each Default naming the
-  // agent's own where it says: a Codex set up for priority runs Fast
-  // unless Standard is picked), the choice the conversation's; `speed`
-  // the one chosen, which ChatDock draws as Gamma AI's glyph.
+  // The composer's model chip (chat/ModelChip.jsx): the agent's models, the
+  // effort levels of the one shown (the agent's own where it says) and
+  // whether it runs fast (a Codex set up for priority does unless it is
+  // turned off); the choice is the conversation's.
   const efforts = choice.shown?.efforts || [];
-  const speeds = choice.shown?.speeds || [];
   const pick = (change) => pickModel({ model: choice.model, effort: choice.effort, speed: choice.speed, ...change });
+  const nameOf = (m) => m?.label || m?.id || "";
   const chip = {
-    label: t("{agent}'s model", { agent: label }), text: modelDisplay(choice), speed: choice.speed,
-    models: models.map((m) => [m.id, m.label || m.id]), model: choice.model || choice.shown?.id || "",
+    label: t("{agent}'s model", { agent: label }), name: nameOf(choice.shown),
+    models: models.map((m) => ({ id: m.id, name: nameOf(m) })), model: choice.model || choice.shown?.id || "",
     onModel: (model) => pick({ model }),
-    knobs: [
-      ...(efforts.length ? [effortKnob(choice.effort, (effort) => pick({ effort }), efforts,
-        choice.shown.effort ? t("Default ({effort})", { effort: choice.shown.effort }) : t("Default"))] : []),
-      ...(speeds.length ? [speedKnob(choice.speed, (speed) => pick({ speed }), speeds,
-        choice.shown.speed ? t("Default ({speed})", { speed: choice.shown.speed }) : t("Default"))] : []),
-    ],
+    effort: efforts.length ? { value: choice.effort, levels: efforts, own: choice.shown.effort || "", onChange: (effort) => pick({ effort }) } : null,
+    fast: fastChoice(choice.speed, choice.shown?.speeds, choice.shown?.speed || ""),
+    onSpeed: (speed) => pick({ speed }),
+    onReset: choice.effort || choice.speed ? () => pick({ effort: "", speed: "" }) : null,
   };
   // The commands allowed in this chat (Gamma AI's GrantChip), null for none.
   const allowed = (chat.computer?.grants || []).map((g) => g.command).join(", ");

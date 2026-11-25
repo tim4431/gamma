@@ -13,7 +13,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { Section, Row, Toggle, SubDialog, Field, PasswordInput, UnitInput, Empty, DialogButtons } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { termsOf, useSettingsRead } from "./settingsReads.js";
-import { SPEED_LABELS, SPEED_ORDER } from "../chat/modelPrefs.js";
+import { SPEED_LABELS, SPEED_ORDER, effortLabel } from "../chat/modelPrefs.js";
 import { TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX } from "../app/prefs";
 import { TaskModelMenu } from "../ai/ModelMenu.jsx";
 import { taskRow } from "../ai/aiModels.js";
@@ -302,7 +302,7 @@ function TranslationPerformance({ value }) {
         label={t("Translation effort")}
         value={value.translateEffort}
         onChange={value.setTranslateEffort}
-        options={[["", t("Default")], ["minimal", t("Minimal")], ["low", t("Low")], ["medium", t("Medium")], ["high", t("High")]]}
+        options={[["", t("Default")], ...["minimal", "low", "medium", "high"].map((level) => [level, effortLabel(level)])]}
       />
     </Row> : null}
     {!engine ? <Row

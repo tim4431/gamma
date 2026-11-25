@@ -339,11 +339,10 @@ export const PREFS = {
 
   // --- Chat behaviour (Settings → AI → Chat / Tool usage) ---
   chatEffort: pref("gamma-chat-effort", ACCOUNT, ""),
-  // Which service tier the chat asks the provider for ("" = its usual
-  // routing, "flex" cheaper and slower, "fast" the premium low-latency one
-  // — chat/modelPrefs.js SPEED_ORDER). Each model gets it only when it has
+  // Whether the chat asks the provider for its premium low-latency routing
+  // ("fast") or its usual one (""). Each model gets it only when it has
   // that tier; a model without one is called as usual.
-  chatSpeed: pref("gamma-chat-speed", ACCOUNT, ""),
+  chatSpeed: pref("gamma-chat-speed", ACCOUNT, "", oneOf(["", "fast"])),
   // What a message sent while a reply runs does (chat/enterKey.js
   // followUpSteers): "steer" (default) goes into it at once, "queue" waits
   // for the reply to end; Ctrl/⌘+Enter does the other. Codex's "Follow-up

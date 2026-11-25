@@ -25,14 +25,6 @@ test("favorites first, then a group per connection in the registry's order, with
   assert.ok(groups[1].rows[0].favorite && !groups[1].rows[1].favorite, "a favorite is starred in its connection's group too");
 });
 
-test("listed once (the chat's model panel): a favorite stands in the chat models alone, and a connection left empty goes", () => {
-  assert.deepEqual(shape(menuGroups(MODELS, { favorites: [B1.id, A1.id], once: true })), [
-    ["favorites", [B1.id, A1.id]],
-    ["connection:aaaaaaaa", [A2.id]],
-    ["connection:server:cccccccc", [S1.id]],
-  ]);
-});
-
 test("a search keeps the models matching every word, across connections", () => {
   assert.deepEqual(shape(menuGroups(MODELS, { query: "GPT" })), [["connection:aaaaaaaa", [A1.id, A2.id]]]);
   // the connection's name counts, and every word must match

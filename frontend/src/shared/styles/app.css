@@ -5111,10 +5111,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 :is(.chatModelChip, .chatPlaceChip) .uiSelectBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .chatPlaceChip .uiSelectBtn > svg { flex-shrink: 0; }
-/* The chip's label is a row: the model with its effort, ellipsized, then
-   the speed tier's glyph. In a reply's foot the same glyph sits inline. */
+/* The chip's label is a row: the bolt while it runs fast, the logo, the
+   model, ellipsized, then its effort, whole. In a reply's foot the bolt
+   sits inline. */
+.chatModelChip .uiSelectBtn { max-width: 240px; }
 .chatModelChip .uiSelectLabel { display: inline-flex; align-items: center; gap: 5px; overflow: hidden; }
 .chatModelChip .chatModelText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatModelChip .chatModelEffort { flex: none; color: var(--text-dim); }
 /* Who answers (AgentPicker.jsx): a frameless pill leading the chat
    header's buttons, the agent's icon before its name. It keeps its width
    (a long name ellipsized at the cap); in a narrow header it is the icon
