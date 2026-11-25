@@ -1,11 +1,11 @@
 # The Pencil Pro freeze on an iPad Air
 
-Open as of 2026-11-22: a likely cause is found and fixed, and no iPad has
-confirmed it. On an iPad Air with an Apple Pencil Pro, the page in the iPad
-app stops answering taps from the Pencil's first contact. A finger standing
-in for the Pencil in a simulator shows the same symptoms, with one made-up
-link ("The likely cause"). The mechanics are in [dev/ipad.md](../dev/ipad.md)
-("The pen", "The touch report", "Tests").
+Solved: users reported on 2026-11-24 that handwriting on the iPad works
+since 0.4.11. On an iPad Air with an Apple Pencil Pro, the page in the iPad
+app stopped answering taps from the Pencil's first contact. On the
+evidence, the shell's Pencil recognizer never settled after a touch it did
+not claim ("The cause"); the reporter's own iPad was never measured. The mechanics are in [dev/ipad.md](../dev/ipad.md) ("The
+pen", "The touch report", "Tests").
 
 ## The reports
 
@@ -48,11 +48,18 @@ differs from 0.4.7 on the pen's path only by the touch report's logging in
 did not freeze. The demo ran `0.4.9-dev.4` (43bddc43), whose `frontend/src`
 does not differ from v0.4.9's.
 
+**2026-11-24, on 0.4.11: solved.** Users report that the handwriting issue
+is gone. Between 0.4.9 and 0.4.11 one commit touches `ipad/` (7628a652, the
+fix with the switches below, first shipped in 0.4.10), and none the web
+app's pen and touch code. Whether the reporters had all three switches on,
+whether 0.4.10 was enough for them, and whether iPadOS was updated
+meanwhile was not said.
+
 **The developer's iPad:** an iPad Pro 11-inch (M2) with an Apple Pencil
 (2nd generation). It hovers too, and nothing freezes there. Its iPadOS
 version is not recorded.
 
-## The likely cause
+## The cause
 
 `PencilCapture` never reached a final state for a touch it did not claim.
 A finger was ignored and a Pencil's tap recorded and dropped, and the
@@ -79,9 +86,8 @@ no help, and writing alive until a tool is tapped, since a claimed stroke
 settles and a tap does not.
 
 The link is made up. Which of the system's recognizers waits on
-`PencilCapture` for a Pencil touch, why only on some iPads, and so whether
-this is the reporter's freeze, only a touch report from there can say. The
-fault itself is not in doubt: a recognizer has to end in a final state.
+`PencilCapture` for a Pencil touch, and why only on some iPads, was never
+seen: no touch report came from there.
 
 **The fix** (`PencilCapture.settle`): with no Pencil touch of the page's
 left and no stroke captured, it fails, and UIKit resets it. Seven of seven
@@ -106,7 +112,7 @@ were answered with it.
 - **A capture left open** in `PencilCapture`. While one is open the
   recognizer tracks every finger, the bar's included, and the bar answers a
   finger. With nothing armed the page claims no stroke, so none opens. That
-  does not clear the recognizer itself ("The likely cause").
+  does not clear the recognizer itself ("The cause").
 - **The shell's edit menu.** `ShellWebView.editMenuShown` goes off on a
   PDF selection, and a reload leaves it off, since the page says nothing
   as it unloads. In the iPad Air 11-inch simulator a finger's selection
@@ -114,58 +120,36 @@ were answered with it.
   up, after it was gone, and after ⌘R (`TapsTests`; its first version could
   not fail, as it took the PDF's word "Settings" for the menu's item). That rules out its
   `canPerformAction` and `buildMenu` overrides as the cause of dead taps
-  on iPadOS 27.2. It is still a defect that the menu stays off across
-  reloads.
+  on iPadOS 27.2. That the menu stayed off across reloads was a defect of
+  its own, since put right (`ShellController.pageGone`).
 - **The live line view.** It takes no touches (`isUserInteractionEnabled`
   is false).
 - **The hover classes.** `inkHovering` only hides the cursor.
 - **Haptics.** The page asks for one only on a held shape, a pen lasso's
   selection or a gesture's tool switch, not on a contact.
 - **A non-finite sample.** The roll is checked and the force guarded.
-  The bridge does drop a message it cannot encode, silently: `deliver`'s
-  `try?` around `JSONEncoder`. That would lose a `stroke`, but the freeze
-  needs no claim.
+  The bridge dropped a message it could not encode, silently. That would
+  have lost a `stroke`, but the freeze needs no claim. A stroke's end now
+  goes again without its samples (`Bridge.sendStroke`).
+- **Escape and the keyboard.** In the simulator no key reaches the page
+  after a finger taps a button, and Escape never does. Safari there
+  behaves the same on a plain page, so it is not the shell's.
 
-## What is left
+## The other pieces
 
-Safari leaves what the app puts around the page. Three pieces of its own
-reach the page's web view, in the order to suspect them:
+Safari left what the app puts around the page. Besides `PencilCapture`, two
+pieces of its own reach the page's web view: the content view's class,
+swapped at run time for one without the keyboard's accessory bar
+(`WebShell.hideKeyboardAccessoryBar`), and `UIPencilInteraction` on the
+container, which puts a `UIHoverGestureRecognizer` there. All three got a
+switch in the iPad's Settings app, under Gamma ([dev/ipad.md](../dev/ipad.md)
+"The native pieces' switches"), to be turned off one at a time had the fix
+not been enough. In the simulator each takes away its own piece and no
+other.
 
-1. **`PencilCapture`** as it was before `settle`. It takes the Pencil's
-   touches on the page and leaves the bar's alone, as the freeze does.
-2. **The content view's class**, swapped at run time for one without the
-   keyboard's accessory bar (`WebShell.hideKeyboardAccessoryBar`). Only the
-   page's web view gets it, not the bar's. Not tested.
-3. **`UIPencilInteraction`**, on the container, which puts a
-   `UIHoverGestureRecognizer` there (the first version of
-   `TouchReportTests` found it). It covers the bar as well, which does not
-   freeze. Not tested.
-
-Each has a switch in the iPad's Settings app, under Gamma
-([dev/ipad.md](../dev/ipad.md) "The native pieces' switches"). The reporter
-goes through them on the build that has the fix:
-
-1. All three on: touch the page with the Pencil, then tap a button with a
-   finger. Answered, the fix worked, and the rest is not needed.
-2. Frozen: turn one off, quit Gamma (swipe it away), open it and repeat.
-   Turn it on again before the next. The one whose absence ends the freeze
-   makes it.
-3. No single one ends it: all three off. Still frozen, it is none of them.
-
-In the simulator each takes away its own piece and no other (the touch
-report's recognizers, interactions and the content view's class), and with
-each off, and with all off, a stand-in Pencil's stroke lands and a finger's
-tap is answered.
-
-Below them is a `WKWebView` as such, against Safari's. WebKit has open bugs
-where pointer events stop for good after a dismissed UIKit menu or a system
-gesture: [257735](https://bugs.webkit.org/show_bug.cgi?id=257735) and
-[236390](https://bugs.webkit.org/show_bug.cgi?id=236390) (reported on an
-iPad Air). Neither involves the Pencil.
-
-- **What the reporter's hardware adds.** A Pencil Pro adds squeeze, barrel
-  roll (an estimated touch property) and haptics over a 2nd-generation
-  Pencil. An iPad Air's screen runs at 60 Hz, a Pro's at 120.
+**Open:** the switches go once it is known that they were all on for the
+people it was solved for. With one off, the piece behind it may be what
+ended the freeze, and the build without the switch would bring it back.
 
 ## The touch report
 
@@ -176,7 +160,8 @@ recognizer and interaction from the window down with its state, and the
 last 100 touch lines. Each line gives a touch's begin, or a Pencil touch's
 end, cancel or reset, with every recognizer UIKit gave it.
 
-To get one from the reporter, on 0.4.9 or later:
+Should a freeze come back, to get one from an iPad that has it, on 0.4.9 or
+later:
 
 1. Launch the app, touch the page once with the Pencil, and check that
    taps are dead.
@@ -197,17 +182,6 @@ other, is the baseline to compare with. In the frozen report, look for:
   lines do not, and an `expecting` (estimated properties still to come) on
   its end. Up to 0.4.9 an `ended` without a `reset` is every unclaimed
   touch; with the fix a `reset` follows each.
-
-## Next questions for the reporter
-
-1. **Scribble off before the first contact.** Quit the app, turn Scribble
-   off, launch, then touch.
-2. **The system's *Only Draw with Apple Pencil*,** on and off, from a
-   fresh launch.
-3. **Quitting the app** (swiped away): does it clear the freeze?
-4. **After a reload, a finger only:** does the page answer until the Pencil
-   touches it again?
-5. **The version** in Settings, and which one the Pencil last wrote in.
 
 ## Mimicking the reporter's iPad here
 

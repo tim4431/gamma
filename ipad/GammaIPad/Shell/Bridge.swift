@@ -461,6 +461,16 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
         return result != nil
     }
 
+    /// A claimed stroke's end, which the page's claim waits for: one that
+    /// cannot be delivered (a sample JSON has no number for) goes again with
+    /// no samples, which ends the claim and saves nothing. Without it the
+    /// page would hold the stroke for drawn still, and leave the Pencil's
+    /// double tap and squeeze unanswered until a reload.
+    func sendStroke(pointerId: Int, samples: [[Double]], held: Int?) async {
+        if await send(.stroke(pointerId: pointerId, samples: samples, held: held)) { return }
+        await send(.stroke(pointerId: pointerId, samples: []))
+    }
+
     /// Delivers `message` and hands back what the web's promise resolved
     /// with, as Foundation types (`{}` when it resolved with nothing, as a
     /// page without a listener for the type does), or nil when it could not

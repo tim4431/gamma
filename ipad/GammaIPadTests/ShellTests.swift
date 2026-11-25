@@ -172,4 +172,18 @@ final class EditMenuTests: XCTestCase {
         webView.editMenuShown = true
         XCTAssertEqual(actions.map { webView.canPerformAction($0, withSender: nil) }, asOn, "on again: WebKit's answers")
     }
+
+    @MainActor
+    func testANewDocumentAndTheEndOfThePagesProcessBringTheMenuBack() throws {
+        let name = "EditMenuTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let shell = ShellController(model: AppModel(defaults: defaults)).shell
+        shell.webView.editMenuShown = false
+        shell.navigation.webView(shell.webView, didCommit: nil)
+        XCTAssertTrue(shell.webView.editMenuShown, "a page says nothing as it unloads")
+        shell.webView.editMenuShown = false
+        shell.onProcessEnded?()
+        XCTAssertTrue(shell.webView.editMenuShown)
+    }
 }

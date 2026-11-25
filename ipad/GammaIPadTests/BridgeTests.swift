@@ -1,4 +1,5 @@
 import UIKit
+import WebKit
 import XCTest
 @testable import Gamma
 
@@ -265,5 +266,41 @@ final class BridgeTests: XCTestCase {
         ), script)
         XCTAssertTrue(script.contains(#"setAttribute("data-host", "ipad")"#))
         XCTAssertTrue(script.contains("queue.push({ msg, resolve, reject })"), "the stub queues until host.js drains it")
+    }
+}
+
+/// A claimed stroke's end reaches the page (`Bridge.sendStroke`), in a real
+/// web view whose page keeps what it is sent.
+@MainActor
+final class StrokeEndTests: XCTestCase {
+    private func page() async throws -> (Bridge, WKWebView) {
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let bridge = Bridge()
+        bridge.webView = webView
+        webView.loadHTMLString("<script>window.got = []; window.gammaNative = { receive: async (m) => { window.got.push(m); } };</script>", baseURL: nil)
+        for _ in 0..<100 {
+            if (try? await webView.callAsync("return Array.isArray(window.got);", in: .page)) as? Bool == true { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return (bridge, webView)
+    }
+
+    private func got(_ webView: WKWebView) async throws -> [String] {
+        let sent = try await webView.callAsync("return window.got.map((m) => `${m.type} ${m.pointerId} ${m.samples.length}`);", in: .page)
+        return try XCTUnwrap(sent as? [String])
+    }
+
+    func testAStrokeGoesOnceWithItsSamples() async throws {
+        let (bridge, webView) = try await page()
+        await bridge.sendStroke(pointerId: 7, samples: [[1, 2, 0.5, 0], [3, 4, 0.5, 8]], held: nil)
+        let sent = try await got(webView)
+        XCTAssertEqual(sent, ["stroke 7 2"])
+    }
+
+    func testAStrokeThatCannotBeEncodedStillEndsItsClaim() async throws {
+        let (bridge, webView) = try await page()
+        await bridge.sendStroke(pointerId: 7, samples: [[1, 2, .nan, 0]], held: nil)
+        let sent = try await got(webView)
+        XCTAssertEqual(sent, ["stroke 7 0"], "with no samples: the claim ends and saves nothing")
     }
 }

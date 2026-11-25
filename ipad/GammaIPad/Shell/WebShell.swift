@@ -56,6 +56,7 @@ final class WebShell {
         bridge.install(in: configuration.userContentController, info: .current)
         #if DEBUG && targetEnvironment(simulator)
         PencilStandIn.install(in: configuration.userContentController)
+        UITestPage.install(in: configuration.userContentController)
         #endif
 
         let webView = ShellWebView(frame: .zero, configuration: configuration)
