@@ -14,7 +14,7 @@ import { t, T, tn } from "../shared/i18n/i18n.js";
 import { findBlock, flattenBlocks } from "../shared/model/blockModel.js";
 import { eraserKeep, mergeInk } from "./ink.js";
 import { eraseAlongChanges, eraseManyChanges, missingGroups, overBudget, withGroupBlocks } from "./inkEdits.js";
-import { foldInto, passFold, picturesStayed, recordEntry, stepChanges, takeEntry, undoMessage } from "./inkHistory.js";
+import { foldInto, passFold, picturesStayed, recordEntry, stepChanges, stepWaits, takeEntry, undoMessage } from "./inkHistory.js";
 import * as inkStore from "./inkStore";
 
 // focusedBlockId: the open page; leaving it empties the history.
@@ -102,6 +102,15 @@ export function useInkDocument({ focusedBlockId, readOnly, blocksRef, setBlocks,
   function inkUndo(redo, from = null) {
     if (readOnly) return false;
     const h = inkHistRef.current;
+    // The entry waits, with a pill, while it cannot step onto its groups as
+    // they are: one's DELETE has gone and its block is still on the page
+    // (the deletion would take what the step brings back), or one names a
+    // file that is still on its way (stepped without it, the step would
+    // replace what it holds). A linked step the block history has begun
+    // goes on as it is, so its two halves stay one step.
+    const stack = redo ? h.redo : h.undo;
+    const wait = from ? null : notReady(stack[stack.length - 1]);
+    if (wait) { setStatus(wait); return false; }
     const entry = takeEntry(h, redo, from);
     if (!entry) {
       if (!from) setStatus(redo ? t("Nothing to redo in handwriting.") : t("Nothing to undo in handwriting."));
@@ -123,6 +132,16 @@ export function useInkDocument({ focusedBlockId, readOnly, blocksRef, setBlocks,
     setStatus(undoMessage(entry, redo, kept, inkPageNumber((entry.changes[0] || entry.link).page), stayed));
     if (!redo) guideEvents.emit("ink.undone");
     return entry;
+  }
+  // Why `entry` cannot step now (inkUndo), as the pill says it, else null;
+  // a file it waits for is fetched (inkHistory.js stepWaits).
+  function notReady(entry) {
+    const wait = stepWaits(entry, { blockOf: (id) => findBlock(blocksRef.current, id), hasDraft: (id) => !!inkStore.draft(id),
+      deleting: inkStore.isDeleting, fileState: inkStore.fileState });
+    if (!wait) return null;
+    if (wait.saving) return t("Handwriting is still saving. Try again in a moment.");
+    inkStore.loadInk(wait.loading);
+    return t("Handwriting is still loading. Try again in a moment.");
   }
   // A stroke edit's pill (a snapped shape, a scribble erase, a stamped
   // line): its Undo steps the stroke history, as the strip's Undo does.

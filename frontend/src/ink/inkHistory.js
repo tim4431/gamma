@@ -42,6 +42,27 @@ export function stepChanges(entry, redo, inkOf) {
   return { changes, kept };
 }
 
+// Why `entry` cannot step onto its groups as they are now, else null:
+// {saving: true} when one's DELETE has gone and its block is still on the
+// page (the deletion would take what the step brings back); {loading: url}
+// when one with no draft names a file that is not here yet — on its way,
+// never asked for, or failed with another try due — since stepped without
+// it the step would replace what it holds. A file gone for good does not
+// hold it: the step goes onto the drawing it had. `blockOf(id)` the
+// group's block on the page, `hasDraft(id)`, `deleting(id)`
+// (inkStore.isDeleting), `fileState(url)` (inkStore.fileState).
+export function stepWaits(entry, { blockOf, hasDraft, deleting, fileState }) {
+  for (const c of entry?.changes || []) {
+    const block = blockOf(c.id);
+    if (!block) continue;
+    if (deleting(c.id)) return { saving: true };
+    const url = block.properties?.ink_url || "";
+    if (hasDraft(c.id) || !url) continue;
+    if (["unknown", "loading", "failed"].includes(fileState(url))) return { loading: url };
+  }
+  return null;
+}
+
 // Whether an eraser flush (`changes`, of the pass `pass`) folds into the
 // last entry of `h`: that entry is the same pass's, and each group it
 // holds is still drawn as its `after`. A group changed meanwhile (a save

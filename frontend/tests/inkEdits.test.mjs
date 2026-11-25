@@ -10,7 +10,7 @@ import {
   GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, encodeStroke, eraserKeep, inkBytes, newCanvasInk, newInk, pdfPositionOf, strokeBytes,
 } from "../src/ink/ink.js";
 import {
-  currentGroup, eraseAlongChanges, eraseManyChanges, freshInk, missingGroups, overBudget, pasteTooBig, splitsGroup, withGroupBlocks,
+  currentGroup, eraseAlongChanges, eraseManyChanges, freshInk, missingGroups, overBudget, pasteTooBig, pickGroup, splitsGroup, withGroupBlocks,
 } from "../src/ink/inkEdits.js";
 
 const stroke = (id, x = 10, extra = {}) => encodeStroke({ id, ch: "xy", pen: false, size: 1, samples: [{ x, y: -40 }, { x, y: 40 }], ...extra });
@@ -45,6 +45,26 @@ test("the group the next stroke joins: the surface's current one while its block
   assert.equal(currentGroup({ page: 1, id: "n" }, 1, tree), null, "not a group");
   assert.equal(currentGroup({ page: 1, id: "g1" }, 1, tree, (id) => id === "g1"), null, "closed by a comment thread");
   assert.equal(currentGroup({ page: 1, id: "g1" }, 1, tree, (id) => id === "g2"), tree[0], "another group's thread");
+});
+
+test("the strokes a stroke lands on, read as it applies: the group's draft, else its loaded file; a group whose file is not here, or a full one, is passed over for a new group", () => {
+  const group = (id, url) => ({ id, content: "", properties: { ink_url: url, ink_strokes: 1 }, children: [] });
+  const tree = [group("g1", "/u/a.ink"), group("g2", ""), group("g3", "/u/missing.ink")];
+  const file = page(stroke("a"));
+  const drafts = new Map([["g9", { ink: page(stroke("d")) }]]);
+  const pick = (id, { draft, closed, bytes = 10, count = 1 } = {}) => pickGroup({ page: 1, id }, 1, { width: 612, height: 792 }, bytes, count, {
+    blocks: tree, closed, makeId: () => "new", fileOf: (url) => (url === "/u/a.ink" ? file : null),
+    draftOf: (gid) => (gid === id && draft ? { ink: draft } : drafts.get(gid) || null) });
+  assert.deepEqual(pick("g1"), { id: "g1", before: file }, "its loaded file");
+  const drawn = page(stroke("a"), stroke("b", 20));
+  assert.deepEqual(pick("g1", { draft: drawn }), { id: "g1", before: drawn }, "its draft over its file: the stroke before it, still unsaved");
+  assert.deepEqual(ids(pick("g2").before), [], "a group naming no file yet starts from a fresh one");
+  assert.equal(pick("g2").id, "g2");
+  const passed = pick("g3");
+  assert.equal(passed.id, "new", "its file failed to load (or is not here yet): a new group, never an empty drawing over the stored one");
+  assert.deepEqual(ids(passed.before), []);
+  assert.equal(pick("g1", { closed: (gid) => gid === "g1" }).id, "new", "closed: a comment thread, or its DELETE on its way");
+  assert.equal(pick("g1", { draft: many(MAX_STROKES) }).id, "new", "full");
 });
 
 test("a change that leaves strokes in a group with no block in the tree puts the block back", () => {

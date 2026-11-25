@@ -8336,7 +8336,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // page opens. Called after the page's collab session, so its pagehide
   // and visibilitychange listeners come after collab's. A group with a
   // comment thread keeps its block when erased empty (inkThreads, below).
-  const { flushInk, scheduleInk, pending: inkPending } = useInkSave({ focusedBlockId, blocksRef, setStatus, liveSaved, keeps: (id) => inkThreads.keeps(id) });
+  const { flushInk, scheduleInk, pending: inkPending } = useInkSave({ focusedBlockId, blocksRef, setStatus, liveSaved, keeps: (id) => inkThreads.keeps(id),
+    treeApplied: collab.applied });
   // The page's ink by surface (ink/useInkSurfaces.js): its groups, each
   // surface's, where a paste without a point goes, a surface's name in
   // messages.

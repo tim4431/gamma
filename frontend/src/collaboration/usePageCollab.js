@@ -160,7 +160,7 @@ export function usePageCollab(opts) {
   return {
     commit: session.commit, flush: session.flush, hasPending: session.hasPending, peers, me,
     sendCursor: session.sendCursor, sendInkLive: session.sendInkLive, overlay: session.overlay, reloadFailed: session.reloadFailed,
-    tooLong: session.tooLong, gone: session.gone,
+    tooLong: session.tooLong, gone: session.gone, applied: session.applied,
     reconnect: () => { if (enabled && pageId) session.connect(pageId); },
   };
 }

@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { encodeStroke, newInk, translateStrokes } from "../src/ink/ink.js";
 import {
-  HISTORY_CAP, foldInto, passFold, picturesStayed, recordEntry, stepChanges, takeEntry, undoMessage,
+  HISTORY_CAP, foldInto, passFold, picturesStayed, recordEntry, stepChanges, stepWaits, takeEntry, undoMessage,
 } from "../src/ink/inkHistory.js";
 import { setLocale } from "../src/shared/i18n/i18n.js";
 
@@ -16,6 +16,23 @@ const stroke = (id, x = 10) => encodeStroke({ id, ch: "xyt", pen: false, samples
 const drawing = (...strokes) => ({ ...newInk(1, 612, 792), strokes });
 const ids = (ink) => ink.strokes.map((s) => s.id);
 const empty = () => ({ undo: [], redo: [] });
+
+test("an undo waits while it cannot step onto its groups as they are: a group's DELETE gone with its block still on the page, or a group's file not here yet", () => {
+  const entry = { changes: [{ id: "g1" }, { id: "g2" }] };
+  const blocks = { g1: { id: "g1", properties: { ink_url: "/u/a.ink" } }, g2: { id: "g2", properties: { ink_url: "/u/b.ink" } } };
+  const at = (over = {}) => stepWaits(entry, { blockOf: (id) => blocks[id] || null, hasDraft: () => false, deleting: () => false,
+    fileState: () => "loaded", ...over });
+  assert.equal(at(), null, "every file here: it steps");
+  assert.deepEqual(at({ deleting: (id) => id === "g2" }), { saving: true }, "the deletion would take what the step brings back");
+  assert.equal(at({ deleting: (id) => id === "g2", blockOf: (id) => (id === "g2" ? null : blocks[id]) }), null,
+    "once the block has gone the step puts the group back, as an undo of an erasure does");
+  for (const state of ["loading", "unknown", "failed"]) {
+    assert.deepEqual(at({ fileState: (url) => (url === "/u/b.ink" ? state : "loaded") }), { loading: "/u/b.ink" }, state);
+  }
+  assert.equal(at({ fileState: () => "gone" }), null, "a file gone for good: the step goes onto the drawing it had");
+  assert.equal(at({ fileState: () => "loading", hasDraft: () => true }), null, "a draft holds the strokes");
+  assert.equal(stepWaits(undefined, { blockOf: () => null, hasDraft: () => false, deleting: () => false, fileState: () => "loaded" }), null);
+});
 
 test("the history keeps the last 200 entries", () => {
   assert.equal(HISTORY_CAP, 200);

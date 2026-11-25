@@ -1442,9 +1442,19 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     try { st.ws.send(JSON.stringify({ ...msg, t: "ink-live" })); return true; } catch { return false; }
   }
 
+  // The open page and the seq of the newest batch its tree on screen
+  // holds, -1 while a reload is on its way (the tree on screen may be a
+  // read from before batches this tab applied). The handwriting keeps a
+  // drawing it saved on screen until the tree has applied that save's seq
+  // (ink/inkStore.js setTreeApplied).
+  function applied() {
+    const s = st.session;
+    return { pageId: s.pageId, seq: s.reloading ? -1 : s.seq };
+  }
+
   return {
     commit, flush, hasPending, sendCursor, sendInkLive, hide, pendingKeepaliveBodies, connect, disconnect,
-    overlay, retryNow, reloadFailed, tooLong, gone,
+    overlay, retryNow, reloadFailed, tooLong, gone, applied,
     get peers() { return peers; },
     get me() { return me; },
   };

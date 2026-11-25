@@ -819,6 +819,27 @@ def test_block_update_merges_ink_and_answers_what_it_stored(guest):
     assert x.color == "#2563eb" and x.pts[0] == 35000
 
 
+def test_block_update_sent_again_under_its_batch_is_answered_from_the_log_not_applied_twice(guest):
+    """The browser's ink flush names its write (``batch``): sent again after
+    its answer was lost, it gets the first answer back (the file it stored,
+    its seq) and changes nothing, so a stroke someone erased since stays
+    erased (handwriting.md "Fences"). The answer names the block's page."""
+    page, u0 = _group(guest, [_stroke("a")], "mb1")
+    ours = _upload(guest, [_stroke("a"), _stroke("x", 300)])
+    body = {"properties": {"ink_url": ours, "ink_strokes": 2}, "base_properties": {"ink_url": u0}, "batch": "ink-tab-1"}
+    first = guest.put("/api/blocks/mb1", json=body)
+    assert first.status_code == 200, first.text
+    assert first.json()["page_id"] == page and first.json()["properties"]["ink_url"] == ours
+    # someone erases x: the drawing is u0's bytes again
+    guest.put("/api/blocks/mb1", json={"properties": {"ink_url": u0, "ink_strokes": 1}, "base_properties": {"ink_url": ours}})
+    again = guest.put("/api/blocks/mb1", json=body)
+    assert again.status_code == 200, again.text
+    assert again.json()["seq"] == first.json()["seq"]
+    assert again.json()["properties"]["ink_url"] == ours   # what it stored then
+    props, ink = _stored(guest, "mb1")
+    assert props["ink_url"] == u0 and [s.id for s in ink.strokes] == ["a"]   # applied once: x stays erased
+
+
 def test_block_update_with_base_ids_merges_a_purged_base_by_deletions(guest):
     """When the base file is gone, the stroke ids the client loaded it with
     let deletions win on both sides instead of a blind union."""
