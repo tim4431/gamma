@@ -1273,7 +1273,6 @@ which the launcher's *Show server log* opens in Files). A report holds:
 - the build, iPadOS, the model and the screen's size and rate;
 - the Apple Pencil's system settings (`UIPencilInteraction`: only draws,
   double tap, squeeze, hover preview);
-- the native pieces' switches (below), `OFF` for one turned off;
 - `PencilCapture`'s state, its capture, recordings and claim queue;
 - every recognizer and interaction from the window down: each view that
   has one, by its depth, each recognizer's class and state, `disabled`,
@@ -1282,28 +1281,6 @@ which the launcher's *Show server log* opens in Files). A report holds:
 
 A file past 1 MB keeps its newest half. Nothing leaves the iPad unless its
 owner shares the file.
-
-### The native pieces' switches
-
-The iPad's Settings app has three switches under Gamma
-(`Resources/Settings.bundle`, read by `NativePieces`), one for each native
-piece that reaches the page's web view. They were made to find which one
-made the Pencil Pro freeze
-([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)),
-which is solved, and go once they are known to have been on for the people
-it was solved for. All are on by default, and a change takes effect
-at the next launch. *Off*:
-
-- **Native Pencil drawing** (`gamma.native.pencilCapture`): no
-  `PencilCapture`. The shell declares `ink` and `hold` false, so the page
-  claims no stroke and draws as in Safari. The touch report then has no
-  touch lines.
-- **Hide keyboard bar** (`gamma.native.hideAccessoryBar`): the content view
-  keeps its class, and the keyboard its accessory bar.
-- **Pencil gestures** (`gamma.native.pencilGestures`): no
-  `UIPencilInteraction`. The shell declares `pencil` and `pencilPhases`
-  false, so the double tap and the squeeze do nothing and their settings
-  are not shown.
 
 ### Tests
 
@@ -1370,9 +1347,6 @@ at the next launch. *Off*:
     (`StrokeEndTests`, in `BridgeTests.swift`), and the edit menu back on
     with a new document and at the end of the page's process
     (`EditMenuTests`)
-  - the native pieces' switches (`NativePiecesTests`, in `ShellTests`):
-    each on until its own is turned off, what the shell then declares,
-    and the Settings bundle writing the keys the app reads, all on
   - the touch report's parts (`TouchReportTests`): the latest lines
     kept, a touch's recognizers counted, the recognizer tree with its
     depth and its interactions, bare views skipped and a long tree cut,

@@ -90,7 +90,6 @@ enum TouchReport {
                 + "double tap \(PencilAction.name(UIPencilInteraction.preferredTapAction)), "
                 + "squeeze \(PencilAction.name(UIPencilInteraction.preferredSqueezeAction)), "
                 + "hover preview \(UIPencilInteraction.prefersHoverToolPreview)",
-            "Native pieces: \(NativePieces.current.summary)",
             "Pencil capture: \(capture)",
             "Recognizers and interactions:",
         ] + tree(root) + ["Latest touches, oldest first:"] + recent.lines

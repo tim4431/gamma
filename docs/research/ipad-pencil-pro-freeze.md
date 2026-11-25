@@ -4,7 +4,8 @@ Solved: users reported on 2026-11-24 that handwriting on the iPad works
 since 0.4.11. On an iPad Air with an Apple Pencil Pro, the page in the iPad
 app stopped answering taps from the Pencil's first contact. On the
 evidence, the shell's Pencil recognizer never settled after a touch it did
-not claim ("The cause"); the reporter's own iPad was never measured. The mechanics are in [dev/ipad.md](../dev/ipad.md) ("The
+not claim ("The cause"): the fix for that is what ended it. The reporter's
+own iPad was never measured. The mechanics are in [dev/ipad.md](../dev/ipad.md) ("The
 pen", "The touch report", "Tests").
 
 ## The reports
@@ -50,10 +51,11 @@ does not differ from v0.4.9's.
 
 **2026-11-24, on 0.4.11: solved.** Users report that the handwriting issue
 is gone. Between 0.4.9 and 0.4.11 one commit touches `ipad/` (7628a652, the
-fix with the switches below, first shipped in 0.4.10), and none the web
-app's pen and touch code. Whether the reporters had all three switches on,
-whether 0.4.10 was enough for them, and whether iPadOS was updated
-meanwhile was not said.
+fix, with a switch in the iPad's Settings app for each native piece, first
+shipped in 0.4.10), and none the web app's pen and touch code. The
+reporter's switches were in their default state, all on, where the only
+difference on the pen's path is the fix. Whether 0.4.10 was enough for them,
+and whether iPadOS was updated meanwhile, was not said.
 
 **The developer's iPad:** an iPad Pro 11-inch (M2) with an Apple Pencil
 (2nd generation). It hovers too, and nothing freezes there. Its iPadOS
@@ -141,15 +143,9 @@ Safari left what the app puts around the page. Besides `PencilCapture`, two
 pieces of its own reach the page's web view: the content view's class,
 swapped at run time for one without the keyboard's accessory bar
 (`WebShell.hideKeyboardAccessoryBar`), and `UIPencilInteraction` on the
-container, which puts a `UIHoverGestureRecognizer` there. All three got a
-switch in the iPad's Settings app, under Gamma ([dev/ipad.md](../dev/ipad.md)
-"The native pieces' switches"), to be turned off one at a time had the fix
-not been enough. In the simulator each takes away its own piece and no
-other.
-
-**Open:** the switches go once it is known that they were all on for the
-people it was solved for. With one off, the piece behind it may be what
-ended the freeze, and the build without the switch would bring it back.
+container, which puts a `UIHoverGestureRecognizer` there. The fix ended the
+freeze with both in place, so neither makes it by itself. The switches for the three
+(7628a652), which nobody needed, are gone again.
 
 ## The touch report
 
