@@ -34,15 +34,18 @@ export const SERVICE_WORDING = [
   T("Pay as you go"), T("Subscription"), T("On this computer or network"),
   T("Alibaba's terms allow the Coding Plan only inside coding tools such as Qwen Code, and other use may get the plan suspended."),
   // A protocol's note (gamma/ai_protocols/gemini.py GeminiSignIn.note).
-  T("Google's terms forbid using Gemini CLI's sign-in in other apps, and accounts have been suspended for it. A Gemini API key from Google AI Studio is the supported way."),
+  T("Since June 2026 Google serves this sign-in only to Gemini Code Assist Standard and Enterprise, through your organization's Google Cloud project. Google's terms forbid using Gemini CLI's sign-in in other apps, and accounts have been suspended for it. A Gemini API key from Google AI Studio is the supported way."),
 ];
 
 // The page runs at a loopback address, so this browser shares the server's
 // machine and the server can catch the sign-in's localhost redirect itself.
 export const onThisMachine = () => /^(localhost|127(\.\d+){3}|\[::1\])$/.test(window.location.hostname);
 
-// A form's sign-in fields once it is connected, or before a new start.
-const SIGN_IN_CLEARED = { oauthState: "", oauthCallback: "", oauthLocal: false, oauthDevice: null, oauthWaitError: "" };
+// A form's sign-in fields once it is connected, or before a new start
+// (`oauthReady`: the server holds the sign-in, so Connect completes it, a
+// setup Google refused tried again; the Gemini project typed stays).
+const SIGN_IN_CLEARED = { oauthState: "", oauthCallback: "", oauthLocal: false, oauthDevice: null, oauthWaitError: "",
+  oauthReady: false };
 
 // The connect dialog's state, one path for both provider lists: the
 // account's own (App: `base` /api/ai/providers, sign-ins under
@@ -156,7 +159,8 @@ export function useProviderEditor({ info, setInfo, base, signIn = base, onSaved,
       await run(async () => {
         const next = await apiJson(`${signInAt(f.protocol)}/complete`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ state: f.oauthState, callback, provider_id: f.id || "", name: f.name.trim(), models: f.models.trim() }),
+          body: JSON.stringify({ state: f.oauthState, callback, provider_id: f.id || "", name: f.name.trim(), models: f.models.trim(),
+            ...((f.oauthProject || "").trim() ? { project: f.oauthProject.trim() } : {}) }),
         });
         const connected = f.id ? next.providers.find((p) => p.id === f.id)
           : next.providers.find((p) => !(latest.current.info?.providers || []).some((old) => old.id === p.id));
@@ -190,7 +194,11 @@ export function useProviderEditor({ info, setInfo, base, signIn = base, onSaved,
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state: watching }),
         });
         if (stopped) return;
-        if (s.ready) { connectSignIn(""); return; }
+        if (s.ready) {
+          setForm((f) => (f?.oauthState === watching ? { ...f, oauthReady: true } : f));
+          connectSignIn("");
+          return;
+        }
         if (s.error) { setForm((f) => (f?.oauthState === watching ? { ...f, oauthWaitError: s.error } : f)); return; }
       } catch {}
       if (!stopped) timer = setTimeout(ask, 2500);
@@ -240,8 +248,10 @@ export function useProviderEditor({ info, setInfo, base, signIn = base, onSaved,
     if (!f) return;
     const oauth = isOauth(f.protocol);
     const callback = oauth ? (f.oauthCallback || "").trim() : "";
-    // A typed callback completes the sign-in (or a reconnect).
-    if (callback) { await connectSignIn(callback); return; }
+    // A typed callback completes the sign-in (or a reconnect), and so does
+    // Connect on a sign-in the server already holds: a setup Google refused
+    // (a Gemini project to name) is tried again without signing in again.
+    if (callback || (oauth && f.oauthState && f.oauthReady)) { await connectSignIn(callback); return; }
     if (oauth && !f.id) {
       setError(f.oauthState ? signInWords(f.protocol).unfinished : signInWords(f.protocol).unstarted);
       return;

@@ -24,8 +24,10 @@ import { T, t, tn } from "../shared/i18n/i18n.js";
 // ChatGPT ends on localhost:1455 (Codex CLI's registered redirect), a page
 // that fails to load, and Google on its own page showing a code: either is
 // pasted here, which connects at once, or ChatGPT's device code is entered
-// at OpenAI instead while the form waits.
-function SignInStep({ form, setForm, busy, start, connect }) {
+// at OpenAI instead while the form waits. `fields` are the protocol's own
+// (the server's `signin_fields`): the Gemini sign-in's Google Cloud project
+// comes first, since what is pasted connects at once.
+function SignInStep({ form, setForm, busy, start, connect, fields = [] }) {
   const words = signInWords(form.protocol);
   const started = !!form.oauthState;
   // Until the start answers, where the page runs predicts what it will say.
@@ -55,6 +57,16 @@ function SignInStep({ form, setForm, busy, start, connect }) {
     </Field>
   );
   return <>
+    {fields.includes("project") ? (
+      <Field label={t("Google Cloud project")}
+        hint={t("Only for Gemini Code Assist Standard or Enterprise: your organization's project ID. Individual accounts can't sign in here.")}>
+        <input
+          className="aiKeyInput" type="text" spellCheck={false} autoComplete="off" placeholder="my-project-123"
+          value={form.oauthProject || ""}
+          onChange={(event) => setForm((f) => ({ ...f, oauthProject: event.target.value }))}
+        />
+      </Field>
+    ) : null}
     <ol className="oauthInstructions">
       <li>{t("Open the sign-in below and log in.")}</li>
       {local ? <li>{t("Gamma connects as soon as you are done. There is nothing to copy.")}</li> : code ? (
@@ -243,7 +255,7 @@ export function ProviderForm({ value, onCancel }) {
       >
         {oauth ? (
           <SignInStep form={aiKeysForm} setForm={setAiKeysForm} busy={aiKeysBusy}
-            start={startSignIn} connect={connectSignIn} />
+            start={startSignIn} connect={connectSignIn} fields={protocol?.signin_fields || []} />
         ) : (
           <>
             <Field label={t("API key")} hint={aiKeysForm.id ? t("Leave empty to keep the current one")
@@ -401,7 +413,8 @@ export function ProviderForm({ value, onCancel }) {
         <button className="uiBtn primary" disabled={aiKeysBusy} onClick={submitAiProvider}>
           <MorphText>{aiKeysBusy
             ? t("Saving…")
-            : !aiKeysForm.id || (oauth && (aiKeysForm.oauthCallback || "").trim()) ? t("Connect") : t("Save changes")}</MorphText>
+            : !aiKeysForm.id || (oauth && ((aiKeysForm.oauthCallback || "").trim() || aiKeysForm.oauthReady))
+              ? t("Connect") : t("Save changes")}</MorphText>
         </button>
       </div>
     </div>

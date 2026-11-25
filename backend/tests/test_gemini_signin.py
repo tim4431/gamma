@@ -39,8 +39,10 @@ class GeminiGoogle(FakeGoogle):
 
 class FakeCodeAssist:
     """cloudcode-pa.googleapis.com's setup calls: loadCodeAssist answers
-    ``loaded``; onboardUser starts an operation that is done the second time
-    it is asked about. Every call needs an access token FakeGoogle issued."""
+    ``loaded`` (or ``loaded(body)``: what it says depends on the project the
+    request names); onboardUser starts an operation that is done the second
+    time it is asked about, on the project the request named, else Google's
+    own (PROJECT). Every call needs an access token FakeGoogle issued."""
 
     def __init__(self, google, loaded):
         self.base, self.google, self.loaded = BASE, google, loaded
@@ -48,18 +50,20 @@ class FakeCodeAssist:
 
     def handle(self, method, url, headers, body=None):
         line = f"{method} {url[len(BASE):]}"
-        self.calls.append((line, json.loads(body) if body else None))
+        sent = json.loads(body) if body else None
+        self.calls.append((line, sent))
         token = {k.lower(): v for k, v in headers.items()}.get("authorization", "")[7:]
         if token not in self.google.access:
             return cloud_fake.Reply(401, {}, json.dumps({"error": {"message": "Request had invalid credentials."}}).encode())
         if line == "POST :loadCodeAssist":
-            return self._json(self.loaded)
+            return self._json(self.loaded(sent) if callable(self.loaded) else self.loaded)
         if line == "POST :onboardUser":
+            self.onboarded = sent.get("cloudaicompanionProject") or PROJECT
             return self._json({"name": "operations/onboard-1", "done": False})
         if line == "GET /operations/onboard-1":
             self.asked += 1
             return self._json({"name": "operations/onboard-1", "done": True, "response": {
-                "cloudaicompanionProject": {"id": PROJECT, "name": "Gemini"}}} if self.asked > 1 else
+                "cloudaicompanionProject": {"id": self.onboarded, "name": "Gemini"}}} if self.asked > 1 else
                 {"name": "operations/onboard-1", "done": False})
         return cloud_fake.Reply(404, {}, b"{}")
 
@@ -71,6 +75,20 @@ class FakeCodeAssist:
 FREE_TIER = {"allowedTiers": [{"id": "free-tier", "name": "Gemini Code Assist for individuals", "isDefault": True}]}
 SIGNED_UP = {"currentTier": {"id": "standard-tier", "name": "Standard"}, "paidTier": {"id": "g1-pro-tier", "name": "Google AI Pro"},
              "cloudaicompanionProject": PROJECT}
+# Google's answer to an individual account since June 2026.
+RETIRED = {"ineligibleTiers": [{"reasonCode": "INELIGIBLE_ACCOUNT", "tierId": "free-tier", "reasonMessage": (
+    "This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, "
+    "please migrate to the Antigravity suite of products: https://antigravity.google")}]}
+ORG_PROJECT = "acme-gemini-01"
+
+
+def org_license(sent):
+    """An organization's Standard license: refused as an individual without
+    its project, a tier on the user's own project to set up with it."""
+    if sent.get("cloudaicompanionProject") != ORG_PROJECT:
+        return RETIRED
+    return {"allowedTiers": [{"id": "standard-tier", "name": "Gemini Code Assist Standard", "isDefault": True,
+                              "userDefinedCloudaicompanionProject": True}]}
 
 
 class _Json:
@@ -184,7 +202,7 @@ def test_the_redirect_is_caught_on_this_machine(google, monkeypatch):
     assert go.status("someone", started["state"]) == {"ready": False, "error": ""}
     direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with direct.open(back, timeout=10) as page:
-        assert "<title>Signed in to Gemini · Gamma</title>".encode() in page.read()
+        assert "<title>Signed in with Google · Gamma</title>".encode() in page.read()
     assert go.status("someone", started["state"]) == {"ready": True, "error": ""}
     oauth = go.redeem("someone", started["state"])
     # An account already set up is read as it is: its project, its paid plan.
@@ -193,21 +211,63 @@ def test_the_redirect_is_caught_on_this_machine(google, monkeypatch):
         go.redeem("someone", started["state"], "4/again")
 
 
-@pytest.mark.parametrize("loaded, said", [
+@pytest.mark.parametrize("loaded, project, said", [
     ({"ineligibleTiers": [{"reasonCode": "VALIDATION_REQUIRED", "validationUrl": "https://accounts.google.com/verify"}]},
-     "verify this account first: open https://accounts.google.com/verify"),
-    ({"ineligibleTiers": [{"reasonCode": "UNSUPPORTED_LOCATION", "reasonMessage": "Not available in your country."}]},
-     "can't use Gemini here: Not available in your country."),
+     "", ["verify this account first: open https://accounts.google.com/verify"]),
+    # An individual account since June 2026: Google's words, then what is left.
+    (RETIRED, "", ["can't use Gemini here: This client is no longer supported for Gemini Code Assist for individuals",
+                   "Google retired this sign-in for individual accounts",
+                   "With Gemini Code Assist Standard or Enterprise, enter your organization's Google Cloud project"]),
     ({"allowedTiers": [{"id": "standard-tier", "isDefault": True, "userDefinedCloudaicompanionProject": True}]},
-     "needs a Google Cloud project"),
+     "", ["needs its Google Cloud project: enter the project's ID"]),
+    (RETIRED, "acme-other", ["can't use Gemini here: This client is no longer supported"]),
+    (FREE_TIER, "123456789012", ["'123456789012' is no Google Cloud project ID", "not its number"]),
 ])
-def test_setup_says_why_an_account_cannot_use_gemini(google, monkeypatch, loaded, said):
+def test_setup_says_why_an_account_cannot_use_gemini(google, monkeypatch, loaded, project, said):
     _code_assist(monkeypatch, google, loaded)
     started = go.begin("someone")
     code = _pasted_code(google, started["auth_url"])
     with pytest.raises(ValueError, match="Gemini setup failed") as failed:
-        go.redeem("someone", started["state"], code)
-    assert said in str(failed.value)
+        go.redeem("someone", started["state"], code, project=project)
+    for words in said:
+        assert words in str(failed.value)
+    if project:
+        assert "Google retired this sign-in" not in str(failed.value), "a project named: no talk of individual accounts"
+
+
+def test_an_organization_s_license_connects_through_its_project_without_signing_in_again(ada, google, monkeypatch):
+    """Refused as an individual, the sign-in waits with its tokens: the
+    project typed then is tried on the next Connect, and the code Google
+    gave (one-shot) is not traded again."""
+    assist = _code_assist(monkeypatch, google, org_license)
+    monkeypatch.setattr(ai_catalog, "urlopen", lambda req, timeout=0: _Json(BUCKETS))
+    started = ada.post("/api/ai/oauth/gemini-signin/start").json()
+    code = _pasted_code(google, started["auth_url"])
+    refused = ada.post("/api/ai/oauth/gemini-signin/complete", json={"state": started["state"], "callback": code})
+    assert refused.status_code == 400 and "Google retired this sign-in" in refused.json()["detail"]
+    assert go.status(account_of("gemini_ada"), started["state"]) == {"ready": True, "error": ""}
+    r = ada.post("/api/ai/oauth/gemini-signin/complete", json={
+        "state": started["state"], "callback": code, "project": ORG_PROJECT, "name": "Acme Gemini"})
+    assert r.status_code == 200, r.text
+    assert sum(1 for call in google.calls if call == "POST /token") == 1, "the code traded once"
+    # Set up as Gemini CLI does with GOOGLE_CLOUD_PROJECT: the project named
+    # on loadCodeAssist and on the onboarding of a tier on the user's own project.
+    load = [body for line, body in assist.calls if line == "POST :loadCodeAssist"][-1]
+    onboard = next(body for line, body in assist.calls if line == "POST :onboardUser")
+    assert load["cloudaicompanionProject"] == ORG_PROJECT and load["metadata"]["duetProject"] == ORG_PROJECT
+    assert (onboard["tierId"], onboard["cloudaicompanionProject"]) == ("standard-tier", ORG_PROJECT)
+    stored = next(e for e in load_provider_entries(account_of("gemini_ada")) if e.get("name") == "Acme Gemini")
+    assert (stored["oauth"]["account_id"], stored["oauth"]["plan"]) == (ORG_PROJECT, "Gemini Code Assist Standard")
+
+
+def test_a_license_already_set_up_runs_on_the_project_named(google, monkeypatch):
+    """An organization's account Code Assist already knows: its current tier
+    and no project of Google's, so the project the user named is the one."""
+    _code_assist(monkeypatch, google, lambda sent: {"currentTier": {"id": "standard-tier", "name": "Standard"}}
+                 if sent.get("cloudaicompanionProject") == ORG_PROJECT else RETIRED)
+    started = go.begin("someone")
+    oauth = go.redeem("someone", started["state"], _pasted_code(google, started["auth_url"]), project=ORG_PROJECT)
+    assert (oauth["account_id"], oauth["plan"]) == (ORG_PROJECT, "Standard")
 
 
 def test_a_refresh_renews_and_a_refused_grant_ends_the_sign_in(google, monkeypatch):
@@ -347,6 +407,8 @@ def test_only_a_sign_in_protocol_has_sign_in_routes(ada, guest, client):
     protocols = {p["id"]: p for p in ada.get("/api/ai/settings").json()["protocols"]}
     assert protocols["gemini-signin"]["auth"] == "oauth"
     assert "terms" in protocols["gemini-signin"]["note"] and protocols["chatgpt"]["note"] == ""
+    # The form asks for the project where the sign-in takes one, and only there.
+    assert protocols["gemini-signin"]["signin_fields"] == ["project"] and protocols["chatgpt"]["signin_fields"] == []
 
 
 def test_an_admin_signs_in_a_shared_entry_the_same_way(client, google, monkeypatch):

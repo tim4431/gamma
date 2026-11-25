@@ -247,21 +247,21 @@ export async function localAgentScenarios(env) {
       await dock.waitFor();
       return dock;
     };
-    // The agents the composer's chip lists, by name (without a row's hint, "not ready"), its menu closed again.
+    // The agents the header's picker lists, by name (without a row's hint, "not ready"), its menu closed again.
     const agentsListed = async (page, dock) => {
-      await dock.locator(".chatModelChip .uiSelectBtn").click();
+      await dock.locator(".chatAgentPicker .uiSelectBtn").click();
       const names = await page.locator(".uiSelectMenu [role=group]").first().getByRole("menuitemradio").locator(".ctxMenuText").allInnerTexts();
       await page.keyboard.press("Escape");
       return names.map((s) => s.trim());
     };
-    // The chat's Codex side, picked in the composer's chip unless it shows
-    // already (no AI service: the agent is the chat's own), its strip saying
-    // the agent is there.
+    // The chat's Codex side, picked in the header's agent picker unless it
+    // shows already (no AI service: the agent is the chat's own), its strip
+    // saying the agent is there.
     const codexSide = async (page) => {
       const dock = await openChat(page);
-      await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+      await dock.locator(".chatAgentPicker .uiSelectBtn").waitFor();
       if (!(await dock.locator(".computerStrip").count())) {
-        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await dock.locator(".chatAgentPicker .uiSelectBtn").click();
         await page.getByRole("menuitemradio", { name: "Codex", exact: true }).click();
       }
       await dock.locator(".computerStrip").waitFor();
@@ -624,8 +624,8 @@ export async function localAgentScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
-        await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
-        assertEq((await agentsListed(page, dock)).join("|"), "Gamma AI|Codex", "the chip lists Gamma AI and the agent turned on");
+        await dock.locator(".chatAgentPicker .uiSelectBtn").waitFor();
+        assertEq((await agentsListed(page, dock)).join("|"), "Gamma AI|Codex", "the picker lists Gamma AI and the agent turned on");
         await codexSide(page);
         await until(async () => (await dock.locator(".computerStrip").innerText()).trim() === "Codex on this computer · paper",
           { what: "the strip names the agent and the folder" });
@@ -862,23 +862,26 @@ export async function localAgentScenarios(env) {
 
         const modelChip = dock.locator(".chatModelChip .uiSelectBtn");
         await modelChip.click();
-        const items = page.locator(".uiSelectMenu .ctxMenuItem");
+        // The panel: Codex's models, a pick closing it, then the model's knobs, which leave it open.
+        const panel = page.locator(".modelPanel");
+        const items = panel.locator(".modelPanelList .ctxMenuItem");
         assert((await items.allInnerTexts()).some((s) => s.includes("GPT Fake Mini")) &&
           !(await items.allInnerTexts()).some((s) => s.includes("Hidden")), "the models Codex lists, not its hidden ones");
         await items.filter({ hasText: "GPT Fake Mini" }).click();
         await modelChip.click();
-        const sections = page.locator(".uiSelectMenu .ctxMenuLabel");
-        await until(async () => (await sections.allInnerTexts()).some((s) => /effort/i.test(s)), { what: "the menu's sections" });
-        assert(!(await sections.allInnerTexts()).some((s) => /speed/i.test(s)), "a model with no other tier offers no speed");
+        const knobs = panel.locator(".modelPanelKnob > .popoverSection");
+        await until(async () => (await knobs.allInnerTexts()).some((s) => /effort/i.test(s)), { what: "the panel's knobs" });
+        assert(!(await knobs.allInnerTexts()).some((s) => /speed/i.test(s)), "a model with no other tier offers no speed");
         await items.filter({ hasText: /^\s*GPT Fake\s*$/ }).click();
         await modelChip.click();
-        assert((await sections.allInnerTexts()).some((s) => /speed/i.test(s)) &&
-          (await items.allInnerTexts()).some((s) => /Default \(standard\)/.test(s)), "its speeds, the default named");
-        await items.filter({ hasText: /^\s*medium\s*$/i }).click();
-        await modelChip.click();
-        await items.filter({ hasText: /^\s*fast\s*$/i }).click();
+        const speed = panel.getByRole("group", { name: "Speed", exact: true });
+        await until(async () => (await knobs.allInnerTexts()).some((s) => /speed/i.test(s)), { what: "the speed knob" });
+        assert((await speed.getByRole("button").allInnerTexts()).some((s) => /Default \(standard\)/.test(s)), "its speeds, the default named");
+        await panel.getByRole("group", { name: "Reasoning effort", exact: true }).getByRole("button", { name: "medium", exact: true }).click();
+        await speed.getByRole("button", { name: "Fast", exact: true }).click();
         await until(async () => /GPT Fake · medium/i.test(await modelChip.innerText())
           && await dock.locator(".chatModelChip .chatSpeedGlyph").count() === 1, { what: "the chip shows the choice, the speed its glyph" });
+        await page.keyboard.press("Escape");
 
         const replies = dock.locator(".chatBubble.ai");
         const earlier = await replies.count();
@@ -927,7 +930,7 @@ export async function localAgentScenarios(env) {
         await dock.locator(".computerStrip").waitFor();
         await dock.locator(".chatEmpty", { hasText: "Ask Codex anything" }).waitFor();
         // Gamma AI picked shows the setup card, which offers Codex beside the AI services
-        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await dock.locator(".chatAgentPicker .uiSelectBtn").click();
         await page.getByRole("menuitemradio", { name: "Gamma AI", exact: true }).click();
         const card = dock.locator(".chatSetup");
         await card.waitFor();

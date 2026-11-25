@@ -60,7 +60,7 @@ import { PathLinkContext } from "../editor/pathLinkContext.js";
 import FileKindIcon from "../shared/ui/FileIcon.jsx";
 import { formatOf } from "../documents/formats.js";
 import ChipPreview from "./ChipPreview.jsx";
-import { effortFor, modelLabel, speedFor } from "./modelPrefs";
+import { effortFor, speedFor } from "./modelPrefs";
 import { modelChoiceLabel } from "../ai/modelMenu.js";
 import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, EyeIcon, FileIcon,
   HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteMarkIcon, SearchIcon,
@@ -76,7 +76,8 @@ import {
 import { historyRows, lastTurnState, sessionRows, sessionsAway, sessionsDir, sessionsWords, sourceNote, steerTaken,
 } from "./computer/computerChat.js";
 import ComputerStrip from "./computer/ComputerStrip.jsx";
-import AgentChip, { agentIcon } from "./AgentChip.jsx";
+import AgentPicker, { agentIcon } from "./AgentPicker.jsx";
+import ModelChip, { effortKnob, speedKnob } from "./ModelChip.jsx";
 import PlaceChip from "./computer/PlaceChip.jsx";
 import { GAMMA, agentChoice, agentLabel, asksNewChat, gammaAgent, newChatQuestion, pickAgent } from "./agents.js";
 import { canRecord, createRecorder, gestureContext } from "../recording/recorder.js";
@@ -599,13 +600,12 @@ export default function ChatDock({
   // must not default on, and turning it on by hand gets a warning, not silence.
   const activeModel = (aiInfo?.models || []).find((m) => m.id === chatModel) || null;
   // Every connection's models; a pick is the account's chat model, on
-  // every device (useAiModels setRole). The chip lists the favorites and
-  // the model in use, and opens the menu of all of them (AgentChip).
+  // every device (useAiModels setRole). The chip's panel lists them, the
+  // favorites first (ModelChip).
   const headerModels = aiInfo?.models || [];
   const headerModel = headerModels.find((m) => m.id === chatModel) || headerModels[0] || null;
   const setChatModel = (id) => aiModels?.setRole("chat", id);
   const favoriteModels = (aiModels?.favorites || []).map((id) => headerModels.find((m) => m.id === id)).filter(Boolean);
-  const quickModels = headerModel && !favoriteModels.includes(headerModel) ? [headerModel, ...favoriteModels] : favoriteModels;
   // The model can't call tools on its connection: its chats go without them,
   // which the composer's No tools chip says (a click checks it again, on an
   // own connection or by an administrator), and the agent's intro and
@@ -2156,7 +2156,7 @@ export default function ChatDock({
   // conversation to lose (a viewer's chat is never kept, an empty one has
   // nothing to drop).
   const discardArmed = newChatAlt && canSave && chatMessages.length > 0;
-  // Another agent picked in the composer's chip (AgentChip). A conversation
+  // Another agent picked in the header's agent picker (AgentPicker). A conversation
   // keeps the agent it began with: in one with messages the pick asks
   // first, and on yes the agent picked starts a new conversation (its
   // side's active one archived) while the one left stays where it was.
@@ -2321,36 +2321,51 @@ export default function ChatDock({
       title: t("Chat settings — context {chatContextChars} chars, tools, tokens{usageTitle}", { chatContextChars: chatContextChars.toLocaleString(), usageTitle }),
       popover: { name: "chatsettings", content: settingsOpen ? (
         <Popover className="chatSettingsPop">
-          <div className="popoverHint">{t("These preferences also appear in Settings and follow your account. Choose the model and reasoning effort on the message box.")}</div>
-          <div className="popoverSection">{t("Context per page · {pages}", { pages: approxPages(chatContextChars) })}</div>
-          <CharSlider value={chatContextChars} onChange={setChatContextChars} />
-          <div className="popoverHint">
-            {t("Extracted PDF text sent with each message. The multi-paper total is in Settings / AI / Chat, the agent's read window in Settings / AI / Tool usage.")}
+          <div className="chatSetHead">
+            <span className="popoverTitle">{t("Chat settings")}</span>
+            {openSettings ? (
+              <button type="button" className="uiBtn sm ghost" onClick={() => openSettings("assistant")}
+                title={t("Every chat setting, in Settings → AI → Chat")}>{t("All settings…")}</button>
+            ) : null}
           </div>
-          {/* The account's master switch for tools (Settings → AI → Tool usage's Assistant tools), then this kind's permissions. */}
-          <div data-guide="chat.tools">
-            <Toggle icon={SparklesIcon} label={t("Tools")} hint={t("Allow tools in all chats")} checked={toolsEnabled} onChange={setAgentEnabled}
-              title={t("Tools {off} for all chats - click to change the global setting", { off: toolsEnabled ? t("on") : t("off") })} />
-          </div>
-          <div className="chatToolPicker">
-            <AgentToolPicker kind={chatKind} perms={agentPerms} setPerms={setAgentPerms} disabled={!toolsEnabled} />
-          </div>
-          <div className="popoverHint">
-            {t("Applies to all {kind} conversations on your account.", { kind: chatKindLabel.toLowerCase() })}
-          </div>
-          <div className="popoverSection">{t("Tokens · this conversation")}</div>
-          {totalUsage ? (
-            <div className="chatUsageTotal" title={usageDetail(totalUsage)}>
-              <UsageLine usage={totalUsage} className="chatMsgUsage inline" />
-              {ctxUsed ? <span className="chatMsgUsage inline">{ctxWindow ? <UsageRing fraction={ctxUsed / ctxWindow} /> : null}{ctxText}</span> : null}
-              <span className="popoverHint">
-                {t("{n} replies counted, as the provider reported them. Totals per day and model: Settings / AI / Usage.", { n: chatMessages.filter((m) => m.role === "ai" && m.usage).length })}
-                {costLabel(totalUsage) ? ` ${t("The cost is estimated from public prices; subscriptions and shared connections are not billed per token.")}` : ""}
-              </span>
+          <section className="chatSetSection">
+            <div className="chatSetSectionHead">
+              <span className="popoverSection">{t("Context per page")}</span>
+              <span className="chatSetValue">{approxPages(chatContextChars)}</span>
             </div>
-          ) : (
-            <div className="popoverHint">{t("No token counts yet — they appear under each reply once the provider reports them.")}</div>
-          )}
+            <CharSlider value={chatContextChars} onChange={setChatContextChars} />
+            <div className="popoverHint">{t("Characters of PDF text sent with each message.")}</div>
+          </section>
+          <section className="chatSetSection">
+            {/* The account's master switch for tools (Settings → AI → Tool usage's Assistant tools), then this kind's permissions. */}
+            <div data-guide="chat.tools">
+              <Toggle icon={SparklesIcon} label={t("Tools")} hint={t("Read, search and change your library")} checked={toolsEnabled}
+                onChange={setAgentEnabled} title={t("Tools {off} for all chats - click to change the global setting", { off: toolsEnabled ? t("on") : t("off") })} />
+            </div>
+            {toolsEnabled ? <>
+              <AgentToolPicker kind={chatKind} perms={agentPerms} setPerms={setAgentPerms} />
+              <div className="popoverHint">
+                {t("Applies to all {kind} conversations on your account.", { kind: chatKindLabel.toLowerCase() })}
+              </div>
+            </> : (
+              <div className="popoverHint">{t("Off in every chat: the assistant answers from what you send it.")}</div>
+            )}
+          </section>
+          <section className="chatSetSection">
+            <div className="popoverSection">{t("Tokens · this conversation")}</div>
+            {totalUsage ? (
+              <div className="chatUsageTotal" title={usageDetail(totalUsage)}>
+                <UsageLine usage={totalUsage} className="chatMsgUsage inline" />
+                {ctxUsed ? <span className="chatMsgUsage inline">{ctxWindow ? <UsageRing fraction={ctxUsed / ctxWindow} /> : null}{ctxText}</span> : null}
+                <span className="popoverHint">
+                  {t("{n} replies counted, as the provider reported them. Totals per day and model: Settings / AI / Usage.", { n: chatMessages.filter((m) => m.role === "ai" && m.usage).length })}
+                  {costLabel(totalUsage) ? ` ${t("The cost is estimated from public prices; subscriptions and shared connections are not billed per token.")}` : ""}
+                </span>
+              </div>
+            ) : (
+              <div className="popoverHint">{t("No token counts yet — they appear under each reply once the provider reports them.")}</div>
+            )}
+          </section>
         </Popover>
       ) : null },
     },
@@ -2364,38 +2379,26 @@ export default function ChatDock({
         : canSave ? t("New chat — keeps this conversation in history and starts a fresh one (Alt+click: discard it)") : t("New chat"),
     },
   ].filter(Boolean);
-  // The composer's model chip (AgentChip), "Allowed in this chat" and Stop,
+  // The composer's model chip (ModelChip), "Allowed in this chat" and Stop,
   // for the agent shown: Gamma AI's models, efforts and speeds, or the
-  // computer agent's (useComputerSide). The chip words them (the agent
-  // first while there are several), the speed chosen its glyph.
-  const knobs = !aiOff && headerModel;
+  // computer agent's (useComputerSide). The chip words the model and its
+  // effort, the speed chosen its glyph; its panel lists every connection's
+  // models, the favorites first, and the knobs the model takes.
+  const shows = !aiOff && headerModel;
   const chip = onComputer ? { ...side.chip, glyph: <SpeedGlyph speed={side.chip.speed} /> } : {
     label: knobsLabel(speed),
-    text: knobs ? [headerModel.model, effort].filter(Boolean).join(" · ") : "",
-    logo: knobs ? headerModel.service || "" : "",
-    glyph: knobs ? <SpeedGlyph speed={speed} /> : null, speed: knobs ? speed : "",
-    models: aiOff ? [] : quickModels.map((m) => [m.id, modelLabel(m), null,
-      <span key="where" className="ctxMenuHint">{m.provider_name}</span>]),
-    model: headerModel?.id || "", onModel: setChatModel,
-    allModels: aiOff || !headerModels.length ? null : { models: headerModels, favorites: aiModels?.favorites || [],
-      missing: aiModels?.aiInfo?.missing, value: headerModel?.id || "", onPick: setChatModel,
-      onToggleFavorite: aiModels?.canWrite ? aiModels.toggleFavorite : null },
-    sections: aiOff ? [] : [
-      ...(effortLevels.length ? [{
-        label: t("Reasoning effort"),
-        value: effort,
-        onChange: setChatEffort,
-        options: [["", t("Default")], ...effortLevels.map((ef) => [ef, ef])],
-      }] : []),
+    text: shows ? [headerModel.model, effort].filter(Boolean).join(" · ") : "",
+    logo: shows ? headerModel.service || "" : "",
+    glyph: shows ? <SpeedGlyph speed={speed} /> : null,
+    picker: shows ? { models: headerModels, favorites: aiModels?.favorites || [], missing: aiModels?.aiInfo?.missing,
+      value: headerModel.id, onPick: setChatModel, onToggleFavorite: aiModels?.canWrite ? aiModels.toggleFavorite : null } : null,
+    knobs: shows ? [
+      ...(effortLevels.length ? [effortKnob(effort, setChatEffort, effortLevels)] : []),
       // Only what this model's provider actually offers: a tier it doesn't
       // have would be refused upstream.
-      ...(speedTiers.length ? [{
-        label: t("Speed"),
-        value: speed,
-        onChange: setChatSpeed,
-        options: [["", t("Default")], ...speedTiers.map((tier) => [tier, tier])],
-      }] : []),
-    ],
+      ...(speedTiers.length ? [speedKnob(speed, setChatSpeed, speedTiers)] : []),
+    ] : [],
+    onManage: shows && openSettings ? () => openSettings("ai") : null,
   };
   const grants = onComputer ? side.grants : grantedHere.length && !aiOff ? {
     list: grantedHere.map(permissionLabel).join(", "),
@@ -2424,12 +2427,18 @@ export default function ChatDock({
     : !canSteer(item) ? t("Files, attached blocks and handwriting go with a message of their own: this one is sent when the reply ends")
       : steerTarget ? "" : onComputer ? t("{agent} hasn't started yet: this one goes when its turn ends", { agent: side.label })
         : t("This reply can't take messages in: this one is sent when it ends"));
-  const headerContent = readOnly ? <span className="uiTag">{t("Read only")}</span>
-    : actions.length > 0 && !canSave && !onComputer ? (
+  // The header leads its buttons with who answers, while there is more
+  // than one agent to talk to (AgentPicker).
+  const headerContent = readOnly ? <span className="uiTag">{t("Read only")}</span> : <>
+    {agentList.length > 1 ? (
+      <AgentPicker agents={agentList} agent={agent} onAgent={chooseAgent} onManage={openSettings ? () => openSettings("agents") : null} />
+    ) : null}
+    {actions.length > 0 && !canSave && !onComputer ? (
       <span className="uiTag" title={t("You can view this workspace: this conversation stays in this tab and isn't saved")}>
         {t("Not saved")}
       </span>
-    ) : null;
+    ) : null}
+  </>;
 
   return (
     <DockWindow title={t("Chat")} guide="chat.grip" onGrip={onGrip} onFold={onFold}
@@ -2830,9 +2839,7 @@ export default function ChatDock({
               <BanIcon size={14} /><span className="chatGrantLabel">{checkingTools ? t("Checking…") : t("No tools")}</span>
             </button>
           ) : null}
-          {chip.models.length || agentList.length > 1 ? (
-            <AgentChip guide="chat.model" agents={agentList} agent={agent} onAgent={chooseAgent} {...chip} />
-          ) : null}
+          {chip.picker || chip.models?.length ? <ModelChip guide="chat.model" {...chip} /> : null}
           {/* The mic, while a reply runs too: its transcript is sent, or
               queued, as a typed message would be. */}
           {dictation === "busy" ? (

@@ -37,7 +37,7 @@ from .. import (ai_settings, backups, cloud_account, cloud_auth, email_invites, 
 from ..backup_store import StoreConfigError, StoreError
 from ..auth import require_admin
 from .ai import (AIProviderRequest, SignInComplete, SignInStart, SignInStatus, begin_signin, new_signin_entry,
-                 reconnect_signin_entry, redeem_signin, seeded_signin_models, signin_status)
+                 reconnect_signin_entry, redeem_signin, seeded_signin_models, signin_fields, signin_status)
 from .zotero import CALLBACK_PATH as ZOTERO_CALLBACK_PATH, oauth_base as zotero_oauth_base
 from ..db import account_name, account_names, connect_users_db
 from ..logbuf import tail as _log_tail
@@ -338,7 +338,8 @@ def shared_signin_complete(protocol: str, payload: SignInComplete, request: Requ
     ``provider_id``, new tokens on an existing one (reconnect)."""
     require_admin(request)
     me = request.state.user_id
-    oauth = redeem_signin(protocol, ("server", me), payload.state, payload.callback)
+    oauth = redeem_signin(protocol, ("server", me), payload.state, payload.callback,
+                          **signin_fields(protocol, payload))
     if payload.provider_id:
         def reconnect(config):
             entry = _shared_entry(config, payload.provider_id)

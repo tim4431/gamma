@@ -1809,17 +1809,23 @@ the hook's `place(id, slot)`.
 ## Chat settings are global
 
 The chat's shortcuts edit the **same shared preferences** as Settings: the
-composer's model chip (model, reasoning effort and speed, a `MenuSelect`
-whose further sections list only the picked model's own levels and tiers)
-and the header's ⚙ popover (single-paper context budget,
-the Tools switch and the tool permissions, the token counts).
+composer's model chip (model, reasoning effort and speed: a panel whose
+knobs list only the picked model's own levels and tiers,
+[ai.md](ai.md#the-model-chip)) and the header's ⚙ popover. The popover
+is a title with **All settings…** (Settings → AI → Chat), then a band each,
+split by hairlines: the single-paper context budget, the Tools switch and
+the tool permissions, the token counts.
 The popover's Tools switch edits the global `agentEnabled` preference
 (Tool usage's Assistant tools); there is no conversation-local tools
 override or reset on New chat.
 Permissions remain scoped by chat kind (folder, PDF, notes), applying to all
 chats of that kind. Each is a state menu: Allow, Ask (an approval card before
-each call) or Off. Settings compares all three kinds in a table; the chat
-popover shows grouped rows for its kind. They share one catalog: the keys,
+each call) or Off. Settings compares all three kinds in a table, a preset
+menu over each column. The chat popover shows its kind's, while the tools
+are on: the four presets as `IconChoices` tiles, two to a row, each saying
+what it allows (none pressed for a custom set), then **Each tool**, a
+disclosure that counts the tools in each state and opens onto the grouped
+rows, open from the start on a custom set. They share one catalog: the keys,
 groups, states, defaults and presets in `chat/chatSettings.js`, the labels and
 icons in `AssistantTools.jsx`. The journal-sign-in choice is disabled while
 fetching is off, with its value preserved. An approval card's **Always

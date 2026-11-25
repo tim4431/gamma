@@ -213,7 +213,8 @@ export const RULES = [
   // (remote-chat: the agent a comment names on another server's page)
   ["frontend/src/chat/agents.js", [...CHAT, "local-agents", "remote-chat", "remote-asks"]],
   ["frontend/src/chat/useLocalAgents.js", [...CHAT, "local-agents", "settings"]],
-  ["frontend/src/chat/AgentChip.jsx", [...CHAT, "local-agents", "remote-chat", "remote-asks"]],
+  ["frontend/src/chat/AgentPicker.jsx", [...CHAT, "local-agents", "remote-chat", "remote-asks"]],
+  ["frontend/src/chat/ModelChip.jsx", [...CHAT, "local-agents", "settings"]],
   // the picker of that side; text-anchors: a selection of lines as the chat's chip
   ["frontend/src/chat/ChatDock.jsx", [...CHAT, "ink-zoom", "text-search", "text-anchors", "local-agents", "remote-chat", "remote-asks"]],
   // the one transcript, its cards and History, which draw a computer agent's conversation as Gamma AI's

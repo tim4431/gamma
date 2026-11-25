@@ -198,7 +198,7 @@ export function UsageLine({ usage, className = "chatMsgUsage" }) {
 // than a word — a bolt for the provider's fast route, a clock for its slow,
 // cheap one — so the chip stays short. Nothing for its usual routing, and
 // the tooltip (`knobsLabel`) names the tier the glyph stands for.
-const SPEED_ICONS = { fast: ZapIcon, flex: ClockIcon };
+export const SPEED_ICONS = { fast: ZapIcon, flex: ClockIcon };
 export function SpeedGlyph({ speed, size = 13 }) {
   const Icon = SPEED_ICONS[speed];
   return Icon ? <Icon size={size} className="chatSpeedGlyph" aria-hidden="true" /> : null;
