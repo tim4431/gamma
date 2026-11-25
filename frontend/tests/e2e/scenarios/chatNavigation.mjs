@@ -1112,11 +1112,15 @@ export async function chatNavigationScenarios(env) {
     // and effort, the glyph and the tooltip the tier.
     const chipSpeed = async (page) => [await chip(page).locator(".chatSpeedGlyph").count(),
       await chip(page).getAttribute("title")];
-    // The choices' own words: a model row's connection after its name, and
-    // the menu's "All models…" row, are not choices of these sections.
-    const menuItems = (page) => page.locator(".uiSelectMenu [role=menuitemradio] .ctxMenuText").allInnerTexts();
-    // Until model-info answers, the menu offers the generic levels: wait for the model's own.
+    // The panel's choices in their own words: the models' names (not the
+    // connection after one), then each knob's options.
+    const panel = (page) => page.locator(".modelPanel");
+    const menuItems = (page) => panel(page).evaluate((el) => [...el.querySelectorAll(".modelMenuName, .modelPanelKnob .segGroup > .uiBtn")]
+      .map((n) => n.textContent.trim())).catch(() => []);
+    // Until model-info answers, the panel offers the generic levels: wait for the model's own.
     const menuShows = (page, want, what) => until(async () => (await menuItems(page)).join() === want, { what });
+    // A knob's option, by the knob's heading; a knob changed leaves the panel open.
+    const option = (page, knob, name) => panel(page).getByRole("group", { name: knob, exact: true }).getByRole("button", { name, exact: true });
     // The pick is an account preference: wait for it to reach the profile
     // before the next page load reads it.
     const saved = (effort) => until(async () => ((await alice.api("/api/prefs/profile")).value?.chatEffort || "") === effort,
@@ -1133,8 +1137,10 @@ export async function chatNavigationScenarios(env) {
     try {
       await chip(page).click();
       await menuShows(page, "model,Default,low,medium,high,xhigh", "the model's own levels");
-      await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "xhigh" }).click();
+      await option(page, "Reasoning effort", "xhigh").click();
       await until(async () => (await chip(page).innerText()) === "model · xhigh", { what: "the chip names the effort" });
+      assertEq(await option(page, "Reasoning effort", "xhigh").getAttribute("aria-pressed"), "true", "the panel stays open on the pick");
+      await page.keyboard.press("Escape");
       assertEq((await send(page)).join(), "xhigh,", "the effort, and no speed tier to ask for");
       await page.locator(".chatMsgModel", { hasText: "model · xhigh" }).waitFor();
       await saved("xhigh");
@@ -1149,7 +1155,7 @@ export async function chatNavigationScenarios(env) {
       assertEq((await send(page)).join(), "high,");
       await page.locator(".chatMsgModel", { hasText: "model · high" }).waitFor();
       await chip(page).click();
-      await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "Default" }).click();
+      await option(page, "Reasoning effort", "Default").click();
       await until(async () => (await chip(page).innerText()) === "model", { what: "Default leaves the effort out" });
       await saved("");
       assertNoProblems(page);
@@ -1160,8 +1166,7 @@ export async function chatNavigationScenarios(env) {
     try {
       await chip(page).click();
       await menuShows(page, "model", "no effort levels to offer");
-      assertEq(await page.locator(".uiSelectMenu", { hasText: "Reasoning effort" }).count(), 0);
-      assertEq(await page.locator(".uiSelectMenu", { hasText: "Speed" }).count(), 0);
+      assertEq(await panel(page).locator(".modelPanelKnob").count(), 0, "neither knob");
       assertNoProblems(page);
     } finally { await ctx.close(); }
 
@@ -1171,14 +1176,14 @@ export async function chatNavigationScenarios(env) {
     ({ ctx, page } = await load(["low", "high"], ["flex", "fast"]));
     try {
       await chip(page).click();
-      await menuShows(page, "model,Default,low,high,Default,flex,fast", "effort then speed");
-      await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "fast" }).click();
+      await menuShows(page, "model,Default,low,high,Default,Flex,Fast", "effort then speed");
+      await option(page, "Speed", "Fast").click();
       await until(async () => (await chipSpeed(page)).join() === "1,Model, reasoning effort and speed (fast)",
         { what: "the chip carries the speed glyph" });
-      // Both knobs at once: the words are the model and effort, then the glyph.
-      await chip(page).click();
-      await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "high" }).click();
+      // Both knobs in one visit: the words are the model and effort, then the glyph.
+      await option(page, "Reasoning effort", "high").click();
       await until(async () => (await chip(page).innerText()) === "model · high", { what: "the chip names both" });
+      await page.keyboard.press("Escape");
       assertEq((await send(page)).join(), "high,fast");
       const foot = page.locator(".chatMsgModel", { hasText: "model · high" });
       await foot.waitFor();
@@ -1194,7 +1199,8 @@ export async function chatNavigationScenarios(env) {
     try {
       await until(async () => (await chipSpeed(page)).join() === "0,Model, reasoning effort and speed",
         { what: "no speed to ask for" });
-      assertEq(await page.locator(".uiSelectMenu", { hasText: "Speed" }).count(), 0);
+      await chip(page).click();
+      await menuShows(page, "model,Default,low,high", "no Speed knob");
       assertNoProblems(page);
     } finally { await ctx.close(); }
 
@@ -1202,8 +1208,7 @@ export async function chatNavigationScenarios(env) {
     try {
       await until(async () => (await chipSpeed(page))[0] === 1, { what: "the kept speed" });
       await chip(page).click();
-      // The second "Default" is the Speed section's (effort's comes first).
-      await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "Default" }).last().click();
+      await option(page, "Speed", "Default").click();
       await until(async () => (await chipSpeed(page))[0] === 0, { what: "Default drops the speed" });
       // Saved before the page closes: the groups after this one on the worker share alice.
       await until(async () => ((await alice.api("/api/prefs/profile")).value?.chatSpeed || "") === "",
@@ -1216,12 +1221,12 @@ export async function chatNavigationScenarios(env) {
   });
 
   // Two connections (docs/dev/ai.md "Models for each task"): every
-  // connection's models serve the chat. The chip lists the model in use and
-  // the favorites; "All models…" opens the menu of every connection's,
-  // grouped by connection (ai/ModelMenu.jsx), and a pick there is the
-  // account's chat model (PUT /api/ai/models/roles, whose rules are
-  // backend/tests/test_ai_model_roles.py's), which the next message names.
-  await step("chat navigation: All models… lists every connection's models by connection; a pick from another connection is the account's chat model and the next message's", async () => {
+  // connection's models serve the chat. The chip's panel lists them, the
+  // favorites first, then each connection's (ai/ModelMenu.jsx), and a pick
+  // there is the account's chat model (PUT /api/ai/models/roles, whose
+  // rules are backend/tests/test_ai_model_roles.py's), which the next
+  // message names.
+  await step("chat navigation: the model chip's panel lists every connection's models by connection; a pick from another connection is the account's chat model and the next message's", async () => {
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     const list = [
       { id: "firstAAA:one", provider: "firstAAA", provider_name: "First", model: "one", billing: "api" },
@@ -1265,16 +1270,14 @@ export async function chatNavigationScenarios(env) {
       const chip = page.locator(".chatModelChip .uiSelectBtn");
       await until(async () => (await chip.innerText()) === "one", { what: "the chip on the chat model, the first offered" });
       await chip.click();
-      assertEq((await page.locator(".uiSelectMenu [role=menuitemradio] .ctxMenuText").allInnerTexts()).join(), "one",
-        "the quick list: the model in use, no favorites yet");
-      await page.locator(".uiSelectMenu").getByRole("menuitem", { name: "All models…", exact: true }).click();
-      const all = page.getByRole("listbox", { name: "All models", exact: true });
+      const all = page.getByRole("listbox", { name: "Models", exact: true });
       await all.waitFor();
       const groups = await all.getByRole("group").evaluateAll((els) => els.map((g) =>
         `${g.querySelector(".modelMenuGroupName")?.textContent}: ${[...g.querySelectorAll(".modelMenuName")].map((n) => n.textContent).join(" ")}`));
       assertEq(groups.join(" | "), "First: one two | Second: three", "both connections' models, each under its connection");
       await all.getByRole("group", { name: /^Second/ }).getByRole("option", { name: /^three/ }).click();
       await until(async () => (await chip.innerText()) === "three", { what: "the chip on the pick" });
+      await page.locator(".modelPanel").waitFor({ state: "detached" }); // a model picked closes the panel
       assertEq(JSON.stringify(puts), JSON.stringify([{ chat: "secondBB:three" }]), "the account's chat model is the other connection's entry");
       await input.fill("Which model?");
       await input.press("Enter");
@@ -1352,7 +1355,9 @@ export async function chatNavigationScenarios(env) {
       assert((await chip.getAttribute("title")).includes(reason), "the chip names the reason");
       assert((await input.getAttribute("placeholder")).startsWith("Ask… "), "the plain chat's placeholder");
       await page.locator(".chatModelChip .uiSelectBtn").click();
-      assertEq(await page.locator(".uiSelectMenu [role=menuitemradio] .ctxMenuText").first().innerText(), "model · no tools");
+      const listed = page.locator(".modelPanel [role=option]").first();
+      assertEq(JSON.stringify([await listed.locator(".modelMenuName").innerText(), await listed.locator(".modelMenuTag").innerText()]),
+        JSON.stringify(["model", "no tools"]), "the panel tags the model");
       await page.keyboard.press("Escape");
       await chip.click();
       await until(() => !!checked, { what: "the check posted" });
@@ -1915,6 +1920,7 @@ export async function chatNavigationScenarios(env) {
       // 2. The conversation's grant rides along; a read set to ask is declined.
       await page.locator('[title^="Chat settings"]').click();
       const popover = page.locator(".chatSettingsPop");
+      await popover.getByRole("button", { name: /^Each tool/ }).click();
       await popover.getByRole("button", { name: "Fetch documents", exact: true }).click();
       await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Ask", exact: true }).click();
       await page.locator('[title^="Chat settings"]').click();

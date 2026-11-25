@@ -3951,13 +3951,20 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   flex-direction: column;
   overflow: hidden;
 }
-/* Chat settings popover (header ⚙): model, effort, context slider, tools.
-   Like every dock header action's popover it hangs from the whole header
-   (.dockHeaderPop), so a narrow chat dock cannot clip it. */
-.chatSettingsPop { width: min(340px, calc(100% - 16px)); min-width: 0; max-height: min(640px, var(--dock-pop-room, calc(100dvh - 100px))); overflow-y: auto; overscroll-behavior: contain; }
-.chatSettingsPop .setSlider { padding: 0 4px; width: 100%; }
+/* Chat settings popover (header ⚙): a title with All settings…, then one
+   band each for the context per page, the tools and the tokens, split by
+   hairlines. Like every dock header action's popover it hangs from the
+   whole header (.dockHeaderPop), so a narrow chat dock cannot clip it. */
+.chatSettingsPop { width: min(360px, calc(100% - 16px)); min-width: 0; max-height: min(640px, var(--dock-pop-room, calc(100dvh - 100px))); overflow-y: auto; overscroll-behavior: contain; padding: 0; gap: 0; }
+.chatSetHead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5); }
+.chatSetHead > .popoverTitle { padding: 0; }
+.chatSetSection { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border-top: 1px solid var(--border-subtle); }
+.chatSetSectionHead { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); }
+.chatSetSection .popoverSection, .chatSetSection .popoverHint { padding: 0; }
+.chatSetValue { font-size: var(--fs-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.chatSettingsPop .setSlider { width: 100%; }
 .chatSettingsPop .setRange { flex: 1; min-width: 0; }
-.chatToolPicker { padding: 2px 4px; }
+.chatSetSection .settingRow { padding: 0; }
 /* Chat history popover (header clock): search box over the bucket's earlier
    conversations; the active one leads, highlighted. Layout only — rows are
    plain hover rows with a menu each ("⋯", .rowMenuHost), rename is an
@@ -5089,7 +5096,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-family: inherit;
 }
 /* The model chip: a borderless pill naming the model (and effort), whose
-   menu opens upward with the reasoning effort as a second section; with a
+   panel opens upward (ModelChip.jsx, modelMenu.css .modelPanel); with a
    computer's agent the folder chip, the same pill naming where it works,
    leads the bar and gives way first. */
 .chatModelChip, .chatPlaceChip { min-width: 0; display: inline-flex; }
@@ -5104,15 +5111,22 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 :is(.chatModelChip, .chatPlaceChip) .uiSelectBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .chatPlaceChip .uiSelectBtn > svg { flex-shrink: 0; }
-/* The chip's label is a row: the agent while there are several, then the
-   model (with its effort), each ellipsized, the model giving way first,
-   then the speed tier's glyph. In a reply's foot the same glyph sits
-   inline. */
+/* The chip's label is a row: the model with its effort, ellipsized, then
+   the speed tier's glyph. In a reply's foot the same glyph sits inline. */
 .chatModelChip .uiSelectLabel { display: inline-flex; align-items: center; gap: 5px; overflow: hidden; }
-.chatModelChip .chatModelName { display: flex; min-width: 0; overflow: hidden; }
-.chatModelChip :is(.chatModelAgent, .chatModelText) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chatModelChip .chatModelAgent { flex: 0 1 auto; }
-.chatModelChip .chatModelText { flex: 0 100 auto; }
+.chatModelChip .chatModelText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Who answers (AgentPicker.jsx): a frameless pill leading the chat
+   header's buttons, the agent's icon before its name. It keeps its width
+   (a long name ellipsized at the cap); in a narrow header it is the icon
+   and the chevron alone, the name its tooltip, so the window's buttons
+   keep their place (dockHeader, above). */
+.chatAgentPicker { display: inline-flex; flex: none; min-width: 0; margin-right: var(--space-2); }
+.chatAgentPicker .uiSelectBtn { min-width: 0; max-width: 200px; color: var(--text-secondary); }
+.chatAgentPicker .uiSelectBtn > svg { flex-shrink: 0; }
+@container dockHeader (max-width: 27rem) {
+  .chatAgentPicker .uiSelectLabel { display: none; }
+  .chatAgentPicker .uiSelectBtn { gap: var(--space-1); padding-inline: var(--space-3); }
+}
 .chatSpeedGlyph { flex-shrink: 0; vertical-align: -2px; }
 .chatMsgModel .chatSpeedGlyph { margin-left: 4px; }
 .chatMentionInput { flex: 1; min-width: 0; display: flex; }
@@ -7057,12 +7071,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .ctxMenuItem.danger:hover:not(:disabled) .ctxMenuIcon { color: var(--danger); }
 .ctxMenuItem:disabled { opacity: 0.45; cursor: default; }
 
-/* Section label row inside a menu (MenuLabel). */
+/* Section label row inside a menu (MenuLabel); the first one heads the
+   menu, with no rule above it. */
 .ctxMenuLabel {
   padding: 6px 10px 2px;
   border-top: 1px solid var(--border-subtle);
   margin-top: 4px;
 }
+.ctxMenu > .ctxMenuLabel:first-child { border-top: none; margin-top: 0; }
 
 /* Trailing markers of an iconed row — the selected-choice check and the
    flyout chevron. Spacing is margin, never padding: with the global

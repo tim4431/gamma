@@ -131,20 +131,20 @@ export async function remoteChatScenarios(env) {
       await dock.waitFor();
       return dock;
     };
-    // The agents the composer's chip lists, by name (without a row's hint, "offline"), its menu closed again.
+    // The agents the header's picker lists, by name (without a row's hint, "offline"), its menu closed again.
     const agentsListed = async (page, dock) => {
-      await dock.locator(".chatModelChip .uiSelectBtn").click();
+      await dock.locator(".chatAgentPicker .uiSelectBtn").click();
       const names = await page.locator(".uiSelectMenu [role=group]").first().getByRole("menuitemradio").locator(".ctxMenuText").allInnerTexts();
       await page.keyboard.press("Escape");
       return names.map((s) => s.trim());
     };
-    // The chat's Codex side, picked in the composer's chip unless it shows
-    // already (no AI service: the agent is the chat's own), its strip shown.
+    // The chat's Codex side, picked in the header's agent picker unless it
+    // shows already (no AI service: the agent is the chat's own), its strip shown.
     const codexSide = async (page) => {
       const dock = await openChat(page);
-      await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+      await dock.locator(".chatAgentPicker .uiSelectBtn").waitFor();
       if (!(await dock.locator(".computerStrip").count())) {
-        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await dock.locator(".chatAgentPicker .uiSelectBtn").click();
         await page.getByRole("menuitemradio", { name: /^Codex on / }).click();
       }
       await dock.locator(".computerStrip").waitFor();
@@ -222,9 +222,9 @@ export async function remoteChatScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
-        await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+        await dock.locator(".chatAgentPicker .uiSelectBtn").waitFor();
         assertEq((await agentsListed(page, dock)).join("|"), `Gamma AI|Codex on ${name}`,
-          "the chip lists Gamma AI and the agent of the computer that keeps the folder");
+          "the picker lists Gamma AI and the agent of the computer that keeps the folder");
         await codexSide(page);
         const ready = `Codex on ${name}${folder ? ` · ${folder}` : ""}`;
         await until(async () => (await stripText(dock)) === ready, { what: `the strip reads ${ready}: ${await stripText(dock)}` });
@@ -418,7 +418,7 @@ export async function remoteChatScenarios(env) {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
         await sleep(800);
-        const listed = (await dock.locator(".chatModelChip").count()) ? await agentsListed(page, dock) : [];
+        const listed = (await dock.locator(".chatAgentPicker").count()) ? await agentsListed(page, dock) : [];
         assertEq(listed.filter((n) => n.startsWith("Codex")).length, 0, "no Codex to pick");
         assertEq(await dock.locator(".computerStrip").count(), 0, "no computer side");
         assertNoProblems(page);

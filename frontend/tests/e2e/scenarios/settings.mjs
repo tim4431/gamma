@@ -2951,12 +2951,11 @@ export async function settingsScenarios(env) {
       await until(async () => (await chatModel().innerText()) === "test-model-b", { what: "the row on the pick" });
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       // The model (with its reasoning effort and speed) is the composer's chip:
-      // the model in use and the favorites, then every connection's under All models….
+      // its panel lists the favorites, then every connection's models.
       const modelChip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
       assert((await modelChip.innerText()).includes("test-model-b"));
       await modelChip.click();
-      await page.locator(".uiSelectMenu").getByRole("menuitem", { name: "All models…", exact: true }).click();
-      await page.getByRole("listbox", { name: "All models", exact: true }).getByRole("option", { name: /^test-model-a/ }).click();
+      await page.getByRole("listbox", { name: "Models", exact: true }).getByRole("option", { name: /^test-model-a/ }).click();
       await until(async () => (await modelChip.innerText()).includes("test-model-a"), { what: "the chip on the pick" });
       await until(async () => (await user.api("/api/ai/models")).roles.chat.pick.endsWith(":test-model-a"), { what: "the account's chat model" });
       await page.locator('[title^="Chat settings"]').click();
@@ -3022,12 +3021,14 @@ export async function settingsScenarios(env) {
       await page.getByRole("listbox", { name: "Add a chat model", exact: true }).getByRole("option", { name: /^test-model-b/ }).click();
       await list.getByRole("listitem").filter({ hasText: "test-model-b" }).waitFor();      await until(async () => JSON.stringify(await favorites()) === JSON.stringify([b]), { what: "the account's chat models" });
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
-      // The chip offers the model in use and the chat models, a click apart.
+      // The chip's panel lists the chat models first, each model once, a click apart.
       const modelChip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
       await modelChip.click();
-      const offered = page.locator(".uiSelectMenu").getByRole("group", { name: "Model", exact: true }).locator(".ctxMenuText");
-      assertEq((await offered.allInnerTexts()).join(), "test-model-a,test-model-b", "the chip lists the one in use, then the chat models");
-      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: /test-model-b/ }).click();
+      const models = page.getByRole("listbox", { name: "Models", exact: true });
+      const offered = models.getByRole("group", { name: "Chat models", exact: true }).locator(".modelMenuName");
+      assertEq((await offered.allInnerTexts()).join(), "test-model-b", "the panel leads with the chat models");
+      assertEq((await models.locator(".modelMenuName").allInnerTexts()).join(), "test-model-b,test-model-a", "then the others, each once");
+      await offered.filter({ hasText: "test-model-b" }).click();
       await until(async () => (await modelChip.innerText()).includes("test-model-b"), { what: "the chip on the pick" });
       await until(async () => (await user.api("/api/ai/models")).roles.chat.pick === b, { what: "the account's chat model" });
       await openSettings(page);
@@ -3260,10 +3261,10 @@ export async function settingsScenarios(env) {
         assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), transcribe ? 1 : 0, `mic with transcribe=${transcribe}`);
         assertEq(await page.getByRole("button", { name: "PDF", exact: true }).count(), 0, "no PDF in the library's context");
         await chip.click();
-        await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "high", exact: true }).click();
+        const effort = page.locator(".modelPanel").getByRole("group", { name: "Reasoning effort", exact: true });
+        await effort.getByRole("button", { name: "high", exact: true }).click();
         await until(async () => (await chip.innerText()).includes("model · high"), { what: "the chip names the effort" });
-        await chip.click();
-        await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Default", exact: true }).click();
+        await effort.getByRole("button", { name: "Default", exact: true }).click();
         assertNoProblems(page);
       } finally { await ctx.close(); }
     }
