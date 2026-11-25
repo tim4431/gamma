@@ -16,7 +16,7 @@ import { SQUEEZE_HOLDS } from "../ink/pencilActions.js";
 import { nativeHost } from "../shared/lib/host.js";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
-import { EFFORT_ORDER, SPEED_LABELS, SPEED_ORDER } from "../chat/modelPrefs.js";
+import { EFFORT_ORDER, effortLabel } from "../chat/modelPrefs.js";
 import { showsLocalAgents } from "../chat/agents.js";
 import { useLocalAgents } from "../chat/useLocalAgents.js";
 import { AppearanceSettings } from "./SettingsAppearance";
@@ -949,19 +949,17 @@ function PromptsSettings({ value }) {
   );
 }
 
-// The chat's defaults (effort, speed, a follow-up while a reply runs, snapshots).
+// The chat's defaults (effort, Fast, a follow-up while a reply runs, snapshots).
 function ChatDefaults({ value, ai }) {
   return (
     <Section title={t("Chat")} scope="account" prefs={SECTION_PREFS.assistant["Chat"]}>
       <Row icon={ActivityIcon} label={t("Default reasoning effort")} hint={t("Each model gets the nearest level it takes")}>
         <MenuSelect label={t("Default reasoning effort")} value={ai.chatEffort} onChange={ai.setChatEffort}
-          options={[["", t("Default")], ...EFFORT_ORDER.map((v) => [v, v])]} />
+          options={[["", t("Default")], ...EFFORT_ORDER.map((v) => [v, effortLabel(v)])]} />
       </Row>
-      <Row icon={ZapIcon} label={t("Default speed")} hint={t("Only models whose provider offers that tier")}
-        title={t("Which service tier chats ask the provider for: \"fast\" buys its premium low-latency routing (Anthropic's fast mode, OpenAI's and Codex's Fast) at a higher price per token, \"flex\" trades latency for a lower one. A model whose provider offers neither is called as usual.")}>
-        <MenuSelect label={t("Default speed")} value={ai.chatSpeed} onChange={ai.setChatSpeed}
-          options={[["", t("Default")], ...SPEED_ORDER.map((v) => [v, t(SPEED_LABELS[v])])]} />
-      </Row>
+      <Toggle icon={ZapIcon} label={t("Fast")} hint={t("Only models whose provider offers it")}
+        title={t("Chats ask the provider for its premium low-latency routing (Anthropic's fast mode, OpenAI's and Codex's Fast), at a higher price per token. A model whose provider doesn't offer it is called as usual.")}
+        checked={ai.chatSpeed === "fast"} onChange={(on) => ai.setChatSpeed(on ? "fast" : "")} />
       <Row icon={CornerDownRightIcon} label={t("Follow-up while a reply runs")}
         hint={t("{key} does the other", { key: chordLabel("Mod-Enter") })}
         title={t("What Enter and Send do with a message you send while a reply is still running: Steer hands it to the reply at once, which takes it in at its next step; Queue keeps it until the reply ends and sends it then.")}>

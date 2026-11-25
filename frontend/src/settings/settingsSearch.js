@@ -131,7 +131,7 @@ const entries = [
   e("usage", t("By model"), t("Usage"), t("Calls, tokens and estimated cost of each model, sorted by any column"), "token usage per model connection cost sort filter task"),
   e("usage", t("By task"), t("Usage"), t("Tokens and cost of chat, translation, metadata and the other tasks"), "token usage per kind task chat translation metadata citations handwriting"),
   e("assistant", t("Default reasoning effort"), t("Chat"), t("Each model gets the nearest level it takes"), "chat thinking effort reasoning level"),
-  e("assistant", t("Default speed"), t("Chat"), t("Only models whose provider offers that tier"), "chat fast mode speed service tier priority flex latency"),
+  e("assistant", t("Fast"), t("Chat"), t("Only models whose provider offers it"), "chat fast mode default speed service tier priority latency"),
   e("assistant", t("Clear snapshots on click"), t("Chat"), t("A plain click in the PDF also drops pending snapshots"), "chat images selections"),
   e("assistant", t("Prompts"), null, t("Chat, metadata, citation and agent prompts"), "custom system prompt citation metadata agent"),
   e("assistant", t("Context size"), null, t("How much paper text a chat reads"), "context budget standard larger characters limits pages"),

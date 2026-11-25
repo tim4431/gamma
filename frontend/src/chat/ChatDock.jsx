@@ -15,7 +15,7 @@ import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import { IconSwap } from "../shared/ui/MotionWidgets";
 import ChatComposerInput from "./ChatComposerInput";
-import ChatTranscript, { SpeedGlyph, UsageLine, knobsLabel } from "./ChatTranscript";
+import ChatTranscript, { UsageLine, knobsLabel } from "./ChatTranscript";
 import ChatHistoryPop, { deleteQuestion, matchRows } from "./ChatHistoryPop";
 import GrantChip from "./GrantChip";
 import { refusalCopy, sendRevert } from "./AgentChanges";
@@ -60,7 +60,7 @@ import { PathLinkContext } from "../editor/pathLinkContext.js";
 import FileKindIcon from "../shared/ui/FileIcon.jsx";
 import { formatOf } from "../documents/formats.js";
 import ChipPreview from "./ChipPreview.jsx";
-import { effortFor, speedFor } from "./modelPrefs";
+import { effortFor, fastChoice, modelLabel } from "./modelPrefs";
 import { modelChoiceLabel } from "../ai/modelMenu.js";
 import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, EyeIcon, FileIcon,
   HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteMarkIcon, SearchIcon,
@@ -77,7 +77,7 @@ import { historyRows, lastTurnState, sessionRows, sessionsAway, sessionsDir, ses
 } from "./computer/computerChat.js";
 import ComputerStrip from "./computer/ComputerStrip.jsx";
 import AgentPicker, { agentIcon } from "./AgentPicker.jsx";
-import ModelChip, { effortKnob, speedKnob } from "./ModelChip.jsx";
+import ModelChip from "./ModelChip.jsx";
 import PlaceChip from "./computer/PlaceChip.jsx";
 import { GAMMA, agentChoice, agentLabel, asksNewChat, gammaAgent, newChatQuestion, pickAgent } from "./agents.js";
 import { canRecord, createRecorder, gestureContext } from "../recording/recorder.js";
@@ -600,12 +600,14 @@ export default function ChatDock({
   // must not default on, and turning it on by hand gets a warning, not silence.
   const activeModel = (aiInfo?.models || []).find((m) => m.id === chatModel) || null;
   // Every connection's models; a pick is the account's chat model, on
-  // every device (useAiModels setRole). The chip's panel lists them, the
-  // favorites first (ModelChip).
+  // every device (useAiModels setRole). The chip's panel lists the one in
+  // use and the chat models (the favorites), and opens the menu of all of
+  // them (ModelChip).
   const headerModels = aiInfo?.models || [];
   const headerModel = headerModels.find((m) => m.id === chatModel) || headerModels[0] || null;
   const setChatModel = (id) => aiModels?.setRole("chat", id);
   const favoriteModels = (aiModels?.favorites || []).map((id) => headerModels.find((m) => m.id === id)).filter(Boolean);
+  const quickModels = headerModel && !favoriteModels.includes(headerModel) ? [headerModel, ...favoriteModels] : favoriteModels;
   // The model can't call tools on its connection: its chats go without them,
   // which the composer's No tools chip says (a click checks it again, on an
   // own connection or by an administrator), and the agent's intro and
@@ -642,10 +644,10 @@ export default function ChatDock({
   // switch to a model without "xhigh" and back keeps it.
   const effortLevels = Array.isArray(modelInfo?.efforts) ? modelInfo.efforts : (aiInfo?.efforts || ["low", "medium", "high"]);
   const effort = effortFor(chatEffort, effortLevels);
-  // The service tiers this model can run at ([] = none, and none at all
-  // until model-info answers — a speed is never guessed, it costs money).
-  const speedTiers = Array.isArray(modelInfo?.speeds) ? modelInfo.speeds : [];
-  const speed = speedFor(chatSpeed, speedTiers);
+  // Whether this model runs fast (null: it can't, or model-info has not
+  // answered yet — a speed is never guessed, it costs money).
+  const fast = fastChoice(chatSpeed, modelInfo?.speeds);
+  const speed = fast?.on ? "fast" : "";
   const nativePdf = activeModel ? activeModel.native_pdf !== false : true;
   // The mic shows only when a connection can transcribe (an OpenAI-protocol
   // key — /api/ai/models `transcribe`); without one dictation can only fail.
@@ -2380,24 +2382,19 @@ export default function ChatDock({
     },
   ].filter(Boolean);
   // The composer's model chip (ModelChip), "Allowed in this chat" and Stop,
-  // for the agent shown: Gamma AI's models, efforts and speeds, or the
-  // computer agent's (useComputerSide). The chip words the model and its
-  // effort, the speed chosen its glyph; its panel lists every connection's
-  // models, the favorites first, and the knobs the model takes.
+  // for the agent shown: Gamma AI's models, effort and speed, or the
+  // computer agent's (useComputerSide).
   const shows = !aiOff && headerModel;
-  const chip = onComputer ? { ...side.chip, glyph: <SpeedGlyph speed={side.chip.speed} /> } : {
+  const chip = onComputer ? side.chip : {
     label: knobsLabel(speed),
-    text: shows ? [headerModel.model, effort].filter(Boolean).join(" · ") : "",
-    logo: shows ? headerModel.service || "" : "",
-    glyph: shows ? <SpeedGlyph speed={speed} /> : null,
-    picker: shows ? { models: headerModels, favorites: aiModels?.favorites || [], missing: aiModels?.aiInfo?.missing,
+    name: shows ? headerModel.model : "", logo: shows ? headerModel.service || "" : "",
+    models: shows ? quickModels.map((m) => ({ id: m.id, name: modelLabel(m), where: m.provider_name, service: m.service || "" })) : [],
+    model: headerModel?.id || "", onModel: setChatModel,
+    effort: shows && effortLevels.length ? { value: effort, levels: effortLevels, onChange: setChatEffort } : null,
+    fast: shows ? fast : null, onSpeed: setChatSpeed,
+    onReset: effort || speed ? () => { if (effort) setChatEffort(""); if (speed) setChatSpeed(""); } : null,
+    all: shows ? { models: headerModels, favorites: aiModels?.favorites || [], missing: aiModels?.aiInfo?.missing,
       value: headerModel.id, onPick: setChatModel, onToggleFavorite: aiModels?.canWrite ? aiModels.toggleFavorite : null } : null,
-    knobs: shows ? [
-      ...(effortLevels.length ? [effortKnob(effort, setChatEffort, effortLevels)] : []),
-      // Only what this model's provider actually offers: a tier it doesn't
-      // have would be refused upstream.
-      ...(speedTiers.length ? [speedKnob(speed, setChatSpeed, speedTiers)] : []),
-    ] : [],
     onManage: shows && openSettings ? () => openSettings("ai") : null,
   };
   const grants = onComputer ? side.grants : grantedHere.length && !aiOff ? {
@@ -2839,7 +2836,7 @@ export default function ChatDock({
               <BanIcon size={14} /><span className="chatGrantLabel">{checkingTools ? t("Checking…") : t("No tools")}</span>
             </button>
           ) : null}
-          {chip.picker || chip.models?.length ? <ModelChip guide="chat.model" {...chip} /> : null}
+          {chip.models.length ? <ModelChip guide="chat.model" {...chip} /> : null}
           {/* The mic, while a reply runs too: its transcript is sent, or
               queued, as a typed message would be. */}
           {dictation === "busy" ? (

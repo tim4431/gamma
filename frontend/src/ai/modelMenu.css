@@ -30,32 +30,45 @@
 .modelMenuGroupName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modelMenuBilling { margin-left: 0; flex-shrink: 0; }
 
-/* The chat's model panel (chat/ModelChip.jsx): the model menu's search box
-   and list (or a computer agent's models), then a band of knobs, each a
-   heading over a segmented control as wide as the panel, then Manage
-   models…. The list gives way first when the window is short. */
+/* The chat's model panel (chat/ModelChip.jsx). Its first view: the Fast
+   button, the effort over the model's name, and the reset, the middle one
+   centred between two icon buttons; then the effort's slider. Its second:
+   the models, each its logo, its name and its connection, then All models…
+   and Manage models…; the list gives way first when the window is short. */
 .ctxMenu.modelPanel {
-  width: min(400px, calc(100vw - 16px));
-  padding-bottom: 0;
+  width: min(320px, calc(100vw - 16px));
   display: flex;
   flex-direction: column;
   max-height: min(560px, calc(100dvh - 16px));
 }
-.ctxMenu.modelPanel:has(> .modelMenuSearch) { padding-top: 0; }
-.modelPanel .modelMenuList { flex: 0 1 auto; max-height: 300px; }
-.modelPanelList { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--space-2); }
-.modelPanelKnobs {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  padding: var(--space-5);
-  border-top: 1px solid var(--border-subtle);
+.ctxMenu.modelPanel:has(> .modelPanelKnobs) { width: min(280px, calc(100vw - 16px)); }
+.modelPanelKnobs { display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-4) var(--space-5) var(--space-5); }
+.modelPanelHead {
+  display: grid;
+  grid-template-columns: var(--ctl-icon-btn) minmax(0, 1fr) var(--ctl-icon-btn);
+  align-items: start;
+  justify-items: center;
+  gap: var(--space-3);
 }
-.modelPanelKnob { display: flex; flex-direction: column; gap: var(--space-3); }
-.modelPanelKnob .segGroup { display: flex; width: 100%; }
-.modelPanelKnob .segGroup > .uiBtn { flex: 1 1 auto; min-width: 0; justify-content: center; padding-inline: var(--space-2); }
-.modelPanelFoot { flex: none; padding: var(--space-2) 0; border-top: 1px solid var(--border-subtle); }
+.modelPanelPick.uiBtn {
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  padding: var(--space-2) var(--space-5);
+}
+.modelPanelEffort { font-size: var(--fs-md); font-weight: 600; color: var(--accent); }
+.modelPanelEffort.unset { color: var(--text-muted); }
+.modelPanelModel { display: flex; align-items: center; gap: var(--space-1); min-width: 0; max-width: 100%; font-size: var(--fs-xs); color: var(--text-muted); }
+.modelPanelModel > svg { flex: none; }
+.modelPanelModel > .modelMenuName { flex-shrink: 1; }
+.modelPanelList { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.modelPanelList > .ctxMenuLabel { border-top: none; margin-top: 0; }
+.modelPanelList .ctxMenuIcon { display: none; }
+.modelPanelList .ctxMenuText { display: flex; align-items: center; gap: var(--space-4); }
+.modelPanelList .modelMenuWhere { margin-left: auto; padding-left: var(--space-3); }
+.modelPanelFoot { flex: none; margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); }
 
 /* A row: the option, then its star. */
 .modelMenuRow { display: flex; align-items: center; }
@@ -63,7 +76,9 @@
 .modelMenuOption.active { background: var(--bg-hover); }
 .modelMenuOption .ctxMenuIcon { display: none; }
 .modelMenuOption .ctxMenuText { display: flex; align-items: baseline; gap: var(--space-3); }
-.modelMenuName { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The connection gives way before the model's name does, which is cut only
+   where it alone is wider than the row. */
+.modelMenuName { flex-shrink: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .modelMenuWhere { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--text-dim); }
 .modelMenuFacts {
   display: inline-flex;

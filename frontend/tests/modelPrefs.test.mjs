@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { effortFor, modelLabel, speedFor } from "../src/chat/modelPrefs.js";
+import { effortFor, fastChoice, modelLabel } from "../src/chat/modelPrefs.js";
 
 test("a model that can't call tools says so in the model menus", () => {
   assert.equal(modelLabel({ model: "gemma3", tools: false, tools_reason: "upstream 400: no tools" }), "gemma3 · no tools");
@@ -30,14 +30,19 @@ test("no preference, a model without levels or an unknown word sends nothing", (
   assert.equal(effortFor("turbo", ["low", "high"]), "");
 });
 
-test("a speed tier is sent only when the model has it — never a nearest one", () => {
-  assert.equal(speedFor("fast", ["flex", "fast"]), "fast");
-  assert.equal(speedFor("flex", ["flex", "fast"]), "flex");
-  // No cheaper or dearer substitute: a tier the model lacks sends nothing.
-  assert.equal(speedFor("flex", ["fast"]), "");
-  assert.equal(speedFor("fast", ["flex"]), "");
-  assert.equal(speedFor("fast", []), "");
-  assert.equal(speedFor("fast", null), "");
-  assert.equal(speedFor("", ["flex", "fast"]), "");
-  assert.equal(speedFor("turbo", ["flex", "fast"]), "");
+test("the Fast button turns fast on and off, and is there only for a model that has it", () => {
+  assert.deepEqual(fastChoice("", ["flex", "fast"]), { on: false, next: "fast" });
+  assert.deepEqual(fastChoice("fast", ["fast"]), { on: true, next: "" });
+  assert.equal(fastChoice("fast", ["flex"]), null);
+  assert.equal(fastChoice("fast", []), null);
+  assert.equal(fastChoice("fast", null), null);
+});
+
+test("an agent set up to run fast is on with nothing picked, and turned off by name", () => {
+  const tiers = ["standard", "fast"];
+  assert.deepEqual(fastChoice("", tiers, "fast"), { on: true, next: "standard" });
+  assert.deepEqual(fastChoice("standard", tiers, "fast"), { on: false, next: "" });
+  // one whose own speed is another is turned on by name, and off goes back to its own
+  assert.deepEqual(fastChoice("", tiers, "standard"), { on: false, next: "fast" });
+  assert.deepEqual(fastChoice("fast", tiers, "standard"), { on: true, next: "" });
 });

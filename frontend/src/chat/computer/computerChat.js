@@ -156,9 +156,9 @@ export function lastEnded(conversation) {
 // choice for it in this tab (`picked`), else what its newest turn ran with
 // (the agent's message keeps `model`, `effort` and `speed`, null for the
 // default; one from before it kept them says nothing), each kept only
-// while the agent still lists it; "" is the agent's default. `shown` is
-// the model the chip names: the one chosen, else the agent's default, else
-// its first.
+// while the agent still lists it, but for Flex, which the chat no longer
+// picks; "" is the agent's default. `shown` is the model the chip names:
+// the one chosen, else the agent's default, else its first.
 export function modelChoice(models, conversation = null, picked = null) {
   const listed = models || [];
   const ran = (conversation?.messages || []).findLast((m) => m.role === "agent"
@@ -167,13 +167,9 @@ export function modelChoice(models, conversation = null, picked = null) {
   const model = listed.some((m) => m.id === said?.model) ? said.model : "";
   const shown = listed.find((m) => m.id === model) || listed.find((m) => m.default) || listed[0] || null;
   const effort = said?.effort && (shown?.efforts || []).includes(said.effort) ? said.effort : "";
-  const speed = said?.speed && (shown?.speeds || []).includes(said.speed) ? said.speed : "";
+  const speed = said?.speed && said.speed !== "flex" && (shown?.speeds || []).includes(said.speed) ? said.speed : "";
   return { model, effort, speed, shown };
 }
-
-// What the model chip reads: the model's name and the effort chosen
-// ("GPT-5.5 · high").
-export const modelDisplay = (choice) => [choice?.shown?.label || choice?.shown?.id || "", choice?.effort || ""].filter(Boolean).join(" · ");
 
 // Whether the strip's menu offers Continue in a terminal: the server says
 // the conversation has a session a terminal can continue (`info.session`),

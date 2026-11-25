@@ -11,11 +11,10 @@
 //
 // The focus stays in the search box: the arrow keys move through the
 // rows, Enter picks, Escape closes (ContextMenu), and an input method's
-// Enter is its own; a finger's press leaves the box alone, so no on-screen
-// keyboard covers the list. The list is a listbox, its options drawn as
-// menu rows. ModelPicker is the search box and the list, for a surface of
-// the caller's (the chat's model panel, chat/ModelChip.jsx); ModelMenuList
-// is the two inside a ContextMenu, the open menu;
+// Enter is its own; opened by a finger it takes no focus, so no on-screen
+// keyboard covers the list. The list is a listbox inside a ContextMenu, its
+// options drawn as menu rows. ModelMenuList is the open menu, for a caller that
+// opens it from a control of its own (the chat's model chip);
 // TaskModelMenu is a task's, a MenuSelect that opens it (Settings → AI →
 // Models, Language & translation's Translate with). ChatModels is Settings
 // → AI → Models' list of the chat models. ModelFacts is a row's facts, the
@@ -56,15 +55,15 @@ const NONE_MISSING = {};
 // shown checked, `onPick(id)`, `onToggleFavorite(id)` (none: no stars),
 // `follow` the "Use chat model (X)" row's words (a task's menu), `engines`
 // the translation services, `task` the task ("ink" marks the models that
-// see no pictures), `label` the list's name, `onClose` what a pick closes,
-// `once` each model listed once, a favorite in the chat models alone.
-export function ModelPicker({ models, favorites = [], missing = NONE_MISSING, value = "", onPick, onClose,
-  onToggleFavorite = null, follow = "", engines = [], task = "", label, once = false }) {
+// see no pictures), `label` the list's name; the rest is the ContextMenu's
+// placement and dismissal.
+export function ModelMenuList({ x, y, anchorRight = false, anchorBottom = false, flipY, onClose, ignoreRef,
+  models, favorites = [], missing = NONE_MISSING, value = "", onPick, onToggleFavorite = null, follow = "", engines = [], task = "", label }) {
   const id = useId();
   const listRef = useRef(null);
   const [query, setQuery] = useState("");
-  const groups = useMemo(() => menuGroups(models, { favorites, query, value, follow: !!follow, engines, missing, once }),
-    [models, favorites, query, value, follow, engines, missing, once]);
+  const groups = useMemo(() => menuGroups(models, { favorites, query, value, follow: !!follow, engines, missing }),
+    [models, favorites, query, value, follow, engines, missing]);
   const rows = useMemo(() => pickableRows(groups), [groups]);
   const [active, setActive] = useState(() => Math.max(0, rows.findIndex((r) => r.id === value)));
   useEffect(() => { if (query) setActive(0); }, [query]);
@@ -136,7 +135,8 @@ export function ModelPicker({ models, favorites = [], missing = NONE_MISSING, va
     );
   };
   return (
-    <>
+    <ContextMenu x={x} y={y} anchorRight={anchorRight} anchorBottom={anchorBottom} flipY={flipY} onClose={onClose}
+      ignoreRef={ignoreRef} className="modelMenu" role="none">
       <label className="modelMenuSearch">
         <SearchIcon size={14} />
         <input className="aiKeyInput" type="text" role="combobox" aria-expanded="true" aria-controls={id}
@@ -158,17 +158,6 @@ export function ModelPicker({ models, favorites = [], missing = NONE_MISSING, va
         })}
         {!groups.length ? <div className="modelMenuEmpty">{query ? t("No model matches “{query}”.", { query }) : t("No models yet")}</div> : null}
       </div>
-    </>
-  );
-}
-
-// The model menu: ModelPicker in a ContextMenu, `x`… `ignoreRef` its
-// placement and dismissal; the rest is ModelPicker's.
-export function ModelMenuList({ x, y, anchorRight = false, anchorBottom = false, flipY, onClose, ignoreRef, ...picker }) {
-  return (
-    <ContextMenu x={x} y={y} anchorRight={anchorRight} anchorBottom={anchorBottom} flipY={flipY} onClose={onClose}
-      ignoreRef={ignoreRef} className="modelMenu" role="none">
-      <ModelPicker {...picker} onClose={onClose} />
     </ContextMenu>
   );
 }

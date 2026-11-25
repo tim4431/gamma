@@ -591,7 +591,7 @@ Preferences:
   asks for the model's lowest level; hidden while a translation service is
   picked, or with no AI connection), translation speed (Default / Flex /
   Fast, also hidden for services; the tiers' names are `SPEED_LABELS` in
-  `chat/modelPrefs.js`, which the chat's Default speed reads too), and
+  `chat/modelPrefs.js`), and
   parallel requests (1 to `TRANSLATE_PARALLEL_MAX`, the input's `max` and
   its hint's number). `translateSpeed`
   syncs with the account independently of chat speed; unsupported tiers use
@@ -793,7 +793,7 @@ AI:
   Connections and Check at login there, and Usage, Shared allowance, By
   model and By task here.
 - **Chat**: five sections. **Chat** holds the default reasoning effort,
-  the default speed, the follow-up while a reply runs (`chatFollowUpMode`,
+  Fast, the follow-up while a reply runs (`chatFollowUpMode`,
   a Steer / Queue `Segmented`, [ai.md](ai.md#queue-and-steer)) and the
   snapshot-clearing switch. The effort menu
   lists every level, since each model gets the nearest one it takes
@@ -1809,9 +1809,8 @@ the hook's `place(id, slot)`.
 ## Chat settings are global
 
 The chat's shortcuts edit the **same shared preferences** as Settings: the
-composer's model chip (model, reasoning effort and speed: a panel whose
-knobs list only the picked model's own levels and tiers,
-[ai.md](ai.md#the-model-chip)) and the header's ⚙ popover. The popover
+composer's model chip (model, reasoning effort and Fast: a panel that
+offers only what the picked model takes, [ai.md](ai.md#the-model-chip)) and the header's ⚙ popover. The popover
 is a title with **All settings…** (Settings → AI → Chat), then a band each,
 split by hairlines: the single-paper context budget, the Tools switch and
 the tool permissions, the token counts.

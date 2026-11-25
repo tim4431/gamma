@@ -1000,10 +1000,11 @@ steps").
   with ask's rule, which `--restricted` would not read from the person's
   settings. The agent's message records them. The composer's model chip
   (`chat/ModelChip.jsx`, Gamma AI's) lists the agent's models in its
-  panel, and the model's efforts and speeds as its knobs
-  (`useComputerSide`'s `chip`), each Default naming the model's own
-  where the agent says (*Default (fast)*), the speed chosen drawn as
-  Gamma AI's glyph; the choice is the conversation's.
+  panel, the model's efforts on the slider, which stands on the model's own
+  where the agent says it and none is picked, and the Fast button where the
+  model can run fast (`useComputerSide`'s `chip`; a model whose own speed
+  is fast starts on, and off is `standard`); the choice is the
+  conversation's, and Flex is not the chat's to pick.
 - **The reply as it is typed.** A turn's driver streams
   (`stream=True`): Codex keeps
   `item/agentMessage/delta`, Claude Code runs with
@@ -1984,9 +1985,9 @@ nobody else learns it exists), 403 for a token or the guest
   away and an amber "not ready" after one with a problem
   (`computerChat.agentHint`, the sentence the row's title; still
   pickable), then Manage agents…. The composer's model chip
-  (`chat/ModelChip.jsx`) is the picked one's models, efforts and speeds
-  (Gamma AI's and the computer agent's model's), reading "GPT-5.5 · high"
-  with a speed chosen its glyph after it; where a computer's agent works
+  (`chat/ModelChip.jsx`) is the picked one's models, effort and Fast
+  (Gamma AI's and the computer agent's alike), reading "GPT-5.5 High"
+  with a bolt before it while it runs fast; where a computer's agent works
   outside a synced folder is the bar's folder chip (below, "The strip"),
   in every bucket: a page, a folder, the library. A viewer has Gamma AI
   alone, and no picker. The agent shown is the bucket's
