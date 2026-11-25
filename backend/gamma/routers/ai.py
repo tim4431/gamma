@@ -1528,6 +1528,9 @@ class SignInComplete(BaseModel):
     provider_id: str = ""   # existing entry to reconnect; "" creates a new one
     name: str = ""
     models: str = ""
+    # A sign-in's own fields (Protocol.signin_fields), passed on to its
+    # flow's redeem only where the protocol takes them.
+    project: str = Field("", max_length=100)  # the Gemini sign-in's Google Cloud project
 
 
 def _same_machine(request: Request, claimed: bool) -> bool:
@@ -1566,15 +1569,23 @@ def signin_status(protocol: str, owner, state: str) -> dict:
     return signin_flow(protocol).status(owner, state)
 
 
-def redeem_signin(protocol: str, owner, state: str, callback: str) -> dict:
+def signin_fields(protocol: str, payload: SignInComplete) -> dict:
+    """The fields of a complete request a sign-in protocol takes beyond the
+    callback (``Protocol.signin_fields``: the Gemini sign-in's project)."""
+    proto = ai_protocols.PROTOCOLS.get(protocol)
+    return {name: getattr(payload, name) for name in getattr(proto, "signin_fields", ())}
+
+
+def redeem_signin(protocol: str, owner, state: str, callback: str, **fields) -> dict:
     """The tokens of a sign-in ``owner`` started (400 otherwise): the ones the
-    server caught, else the pasted redirect URL's code. The state belongs to
+    server caught, else the pasted redirect URL's code; ``fields`` the
+    protocol's own (``signin_fields``). The state belongs to
     whoever started it — another account, or the same admin's own-entry
     form, can't redeem it (and so can't attach that login's tokens
     elsewhere)."""
     flow = signin_flow(protocol)
     try:
-        return flow.redeem(owner, state, callback)
+        return flow.redeem(owner, state, callback, **fields)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1626,7 +1637,7 @@ def signin_wait(protocol: str, payload: SignInStatus, request: Request):
 @router.post("/ai/oauth/{protocol}/complete")
 def signin_complete(protocol: str, payload: SignInComplete, request: Request):
     user_id = require_key_owner(request)
-    oauth = redeem_signin(protocol, user_id, payload.state, payload.callback)
+    oauth = redeem_signin(protocol, user_id, payload.state, payload.callback, **signin_fields(protocol, payload))
     # Every write below is a read-modify-write of the list as it is THEN
     # (update_provider_entries): a key added in another tab during the
     # network calls stays.

@@ -37,6 +37,35 @@ sign-in anyway, so it is built with the warning on its card in the
 connect dialog, kept off the chat's setup card, and it never claims to be
 Gemini CLI (its user agent is `Gamma`).
 
+## Retired for individual accounts (found 2026-11-24)
+
+The first real sign-in, with the developer's own account, reached Google
+and was refused at setup. `loadCodeAssist` answered an ineligible tier
+whose reason reads "This client is no longer supported for Gemini Code
+Assist for individuals. To continue using Gemini, please migrate to the
+Antigravity suite of products: https://antigravity.google". Gemini CLI
+itself gets the same answer, so the survey above had missed the change:
+
+- On 2026-06-18 Gemini CLI and the Code Assist IDE extensions stopped
+  serving individual accounts: the free tier, Google AI Pro and Google AI
+  Ultra. Accounts with an active AI Pro plan get the same refusal
+  ([gemini-cli #28229](https://github.com/google-gemini/gemini-cli/issues/28229),
+  [Google AI forum](https://discuss.ai.google.dev/t/gemini-code-assist-entitlement-never-provisioned-for-active-google-ai-pro-account-not-eligible-for-gemini-code-assist-for-individuals-on-all-three-clients/185120),
+  [a guide to the error](https://gptprompts.ai/ai-errors-and-fixes/gemini-code-assist-client-no-longer-supported),
+  [a write-up of the shutdown](https://www.aibuilderclub.com/blog/google-kills-gemini-cli-june-18-2026)).
+  The sign-in is retired, not refused for a ban or a quota.
+- Organizations on Gemini Code Assist Standard or Enterprise keep access.
+  Those licenses live on a Google Cloud project the user names (Gemini
+  CLI's `GOOGLE_CLOUD_PROJECT`).
+- Google's replacement for individuals is Antigravity. Using Antigravity's
+  sign-in from another app is what the ban reports above were about, so
+  posing as that client is no way on.
+
+So the sign-in stays for an organization's license. It asks for the
+project, and Google's refusal of an individual account is explained in
+plain words with the two ways left: an organization's project, or a
+Gemini API key.
+
 ## The sign-in
 
 - **The client.** Gemini CLI's is a Google "Desktop app" OAuth client,
@@ -96,10 +125,9 @@ Gemini CLI (its user agent is `Gamma`).
 
 ## Still open
 
-- Nothing was run against Google: the tests fake the OAuth endpoints, the
-  setup calls, the stream and the quota. The first real sign-in is the
-  first check of the client, the scopes and the onboarding path.
+- The one real sign-in confirmed the client, the scopes and the code
+  exchange, and met the retirement at setup. No organization's license has
+  been tried: the project path (load and onboard with the project, the
+  stream, the quota) is checked against fakes only.
 - Whether the bucket `modelId`s are always valid `model` values (a
   variant suffix, say) is unchecked.
-- A Workspace account on the standard tier, which needs its own Cloud
-  project, gets an error, not a field for the project.

@@ -10,6 +10,7 @@ import sqlite3
 import time
 import zipfile
 from contextlib import closing
+from pathlib import Path
 
 import bcrypt
 import pytest
@@ -182,6 +183,30 @@ def test_an_admins_copies_restore_in_a_current_gamma(library):
         inner = bundle.read(f"alice-{spaces['alice']}.zip")
         r = c.post("/api/import-data?mode=replace", files={"file": ("inner.zip", inner, "application/zip")})
         assert r.status_code == 200, r.text
+
+
+def test_a_file_gone_while_a_workspace_is_measured_counts_as_nothing(library, monkeypatch):
+    """GET /api/standby measures each workspace's directory, every beat
+    while the page follows a copy, and the copy opens and closes each
+    pages.db: SQLite deletes pages.db-wal on the close, after the listing
+    named it. The read still answers (a failed one stopped the page
+    following the copy, and its download never came)."""
+    wal = config.WORKSPACES_DIR / library["spaces"]["alice"] / "pages.db-wal"
+    listed = Path.is_file
+
+    def closed_after_listing(self):
+        found = listed(self)
+        if self == wal:
+            self.unlink(missing_ok=True)
+        return found
+
+    with _standby() as c:
+        _signed_in(c, "alice", "alicepw1")
+        wal.write_bytes(b"frames")
+        monkeypatch.setattr(Path, "is_file", closed_after_listing)
+        r = c.get("/api/standby")
+        assert r.status_code == 200, r.text
+        assert len(r.json()["workspaces"]) == 3 and not wal.exists()
 
 
 def test_a_member_is_known_but_saves_nothing(library):

@@ -63,6 +63,23 @@ export function splitsGroup(before, bytes, count) {
   return before.strokes.length > 0 && (inkBytes(before) + bytes > GROUP_SPLIT_BYTES || before.strokes.length + count > MAX_STROKES);
 }
 
+// The group `count` strokes of `bytes` join on `page` (`size` its points),
+// and its strokes so far, read as they apply: the surface's current group
+// (currentGroup, `active` and `closed` its), its strokes its draft
+// (`draftOf(id)`, inkStore.draft), else its file (`fileOf(url)`, the
+// loaded drawing or null), else a fresh file when it names none. A group
+// naming a file that is not here (it failed to load, or the tree moved on
+// to one not loaded yet) is passed over, as is a full one (splitsGroup):
+// the strokes start a new group (`makeId()`), so they never replace
+// strokes that have not arrived. → {id, before}.
+export function pickGroup(active, page, size, bytes, count, { blocks, closed = () => false, draftOf, fileOf, makeId }) {
+  const existing = currentGroup(active, page, blocks, closed);
+  const url = existing?.properties?.ink_url || "";
+  const before = existing ? draftOf(existing.id)?.ink || (url ? fileOf(url) : freshInk(page, size)) : null;
+  if (!before || splitsGroup(before, bytes, count)) return { id: makeId(), before: freshInk(page, size) };
+  return { id: existing.id, before };
+}
+
 // A paste no group can hold: more strokes than MAX_STROKES, or more bytes
 // than a fresh group on `page` takes under MAX_BYTES.
 export function pasteTooBig(page, strokes, size) {

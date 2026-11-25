@@ -1,7 +1,8 @@
 """Gemini through a Google sign-in: Google's Code Assist backend
 (cloudcode-pa.googleapis.com/v1internal), reached with the tokens of Gemini
 CLI's OAuth flow (gamma/gemini_oauth.py). Usage counts against the account's
-Gemini CLI quota. The backend wraps Gemini's own generateContent request and
+Gemini Code Assist license (since June 2026 an organization's Standard or
+Enterprise one). The backend wraps Gemini's own generateContent request and
 answer (``{model, project, request}`` → ``{response}``), streams it as
 server-sent events, and lists no models: the account's quota buckets name
 the models it may use. Those contracts are Gemini CLI's, unofficial, and may
@@ -103,10 +104,13 @@ class GeminiSignIn(Protocol):
     auth = "oauth"
     oauth = gemini_oauth
     entry_name = "Gemini"
+    signin_fields = ("project",)  # the Google Cloud project of a Standard or Enterprise license
     streams_only = True
     has_account_usage = True
-    note = ("Google's terms forbid using Gemini CLI's sign-in in other apps, and accounts have been suspended "
-            "for it. A Gemini API key from Google AI Studio is the supported way.")
+    note = ("Since June 2026 Google serves this sign-in only to Gemini Code Assist Standard and Enterprise, "
+            "through your organization's Google Cloud project. Google's terms forbid using Gemini CLI's sign-in "
+            "in other apps, and accounts have been suspended for it. A Gemini API key from Google AI Studio is "
+            "the supported way.")
 
     def request(self, conf, messages, system, model, pdf_b64s=None, effort="",
                 max_tokens=8192, images=None, stream=False, tools=None, cache_key="", speed=""):

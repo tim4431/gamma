@@ -1,6 +1,8 @@
 import React from "react";
-import { t } from "../shared/i18n/i18n.js";
+import { T, t } from "../shared/i18n/i18n.js";
 import { MenuSelect } from "../shared/ui/Menus";
+import { Chevron } from "../shared/ui/MotionWidgets";
+import { IconChoices } from "./SettingsKit";
 import { BanIcon, BookIcon, CheckIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FileTextIcon, FolderIcon,
   FolderMinusIcon, FoldersIcon, GlobeIcon, HelpCircleIcon, HistoryIcon, ListIcon, LocateIcon, MessageSquareIcon, OutlineIcon,
   PagesIcon, PenIcon, PencilIcon, SearchIcon, ShapesIcon, ShieldIcon, SlashIcon, TrashIcon } from "../shared/ui/Icons";
@@ -62,26 +64,34 @@ export function changePermission(setPerms, kind, key, state) {
 // Journal sign-ins are part of fetching: nothing to choose while fetching is off.
 const needsFetch = (key, permissions) => key === "publisher_cookies" && permState(permissions, "web_read") === "off";
 
-function PermissionState({ kind, permKey, label, hint, perms, setPerms, disabled }) {
+function PermissionState({ kind, permKey, label, hint, perms, setPerms, disabled, ghost = false }) {
   const state = permState(perms?.[kind], permKey);
   const blocked = needsFetch(permKey, perms?.[kind]);
   return <span className={`agentPermState ${state}`} title={blocked ? t("Enable Fetch documents first") : hint}>
-    <MenuSelect value={state} label={label} disabled={disabled || blocked}
+    <MenuSelect value={state} label={label} disabled={disabled || blocked} ghost={ghost}
       options={STATE_OPTIONS.filter(([value]) => permStates(permKey).includes(value))}
       onChange={(next) => { if (!disabled) changePermission(setPerms, kind, permKey, next); }} />
   </span>;
 }
 
+// The presets (chatSettings.js presetPermissions), least first: what each
+// lets the assistant do, as the chat popover's tiles say it.
+const PRESETS = [
+  { value: "library", label: T("Read library"), hint: T("No web, no changes"), Icon: BookIcon },
+  { value: "read", label: T("Read & search"), hint: T("Adds the web, no changes"), Icon: GlobeIcon },
+  { value: "ask", label: T("Ask before changes"), hint: T("You approve each change"), Icon: HelpCircleIcon },
+  { value: "all", label: T("Allow all"), hint: T("Changes without asking"), Icon: CheckIcon },
+];
+
+const applyPreset = (setPerms, kind, preset) => setPerms((previous) => ({ ...previous,
+  [kind]: { ...previous?.[kind], ...presetPermissions(kind, preset) } }));
+
 function PermissionPreset({ kind, perms, setPerms, disabled }) {
   const value = permissionPreset(kind, perms?.[kind]);
   return <MenuSelect value={value} label={t("{kind} permissions", { kind: chatKindName(kind) })}
     display={value === "custom" ? t("Custom") : undefined} disabled={disabled}
-    options={[["library", t("Read library")], ["read", t("Read & search")],
-      ["ask", t("Ask before changes")], ["all", t("Allow all")]]}
-    onChange={(preset) => {
-      if (!disabled) setPerms((previous) => ({ ...previous,
-        [kind]: { ...previous?.[kind], ...presetPermissions(kind, preset) } }));
-    }} />;
+    options={PRESETS.map((p) => [p.value, p.label])}
+    onChange={(preset) => { if (!disabled) applyPreset(setPerms, kind, preset); }} />;
 }
 
 export function AgentToolMatrix({ perms, setPerms, disabled }) {
@@ -122,20 +132,33 @@ export function AgentToolMatrix({ perms, setPerms, disabled }) {
   </fieldset>;
 }
 
-// The narrow chat popover shows the same permissions as grouped, named rows.
+// The narrow chat popover shows the same permissions: the presets as
+// tiles, two to a row (none pressed while the tools are set one by one),
+// then Each tool, a disclosure that says how many tools stand in each state
+// and opens onto grouped, named rows; it starts open on a custom set.
 export function AgentToolPicker({ kind, perms, setPerms, disabled }) {
   const available = toolsForKind(kind);
+  const preset = permissionPreset(kind, perms?.[kind]);
+  const [each, setEach] = React.useState(preset === "custom");
+  const counts = STATE_OPTIONS.map(([state, label]) => [available.filter((key) => permState(perms?.[kind], key) === state).length, label])
+    .filter(([n]) => n).map(([n, label]) => `${n} ${label}`).join(" · ");
   return <fieldset className="agentToolPicker" disabled={disabled}>
     <legend className="srOnly">{t("Tool permissions")}</legend>
-    <PermissionPreset kind={kind} perms={perms} setPerms={setPerms} disabled={disabled} />
-    {GROUPS.map(([group, groupLabel]) => <div key={group}>
+    <IconChoices label={t("{kind} permissions", { kind: chatKindName(kind) })} value={preset} columns={2}
+      onChange={(next) => applyPreset(setPerms, kind, next)} options={PRESETS} />
+    <button type="button" className="uiBtn sm ghost agentToolEach" aria-expanded={each} onClick={() => setEach((v) => !v)}>
+      <Chevron open={each} dir="right" />
+      <span className="agentToolEachName">{preset === "custom" ? t("Custom: each tool") : t("Each tool")}</span>
+      <span className="agentToolEachCount">{counts}</span>
+    </button>
+    {each ? GROUPS.map(([group, groupLabel]) => <div key={group} className="agentToolGroupRows">
       <div className="popoverSection">{groupLabel}</div>
       {PERMISSIONS.filter(([key]) => permGroup(key) === group && available.includes(key))
         .map(([key, Icon, label, hint]) => <div key={key} className="chatToolPermRow select">
           <Icon size={14} /><span className="chatToolPermLabel">{label}</span>
           <PermissionState kind={kind} permKey={key} label={label} hint={hint}
-            perms={perms} setPerms={setPerms} disabled={disabled} />
+            perms={perms} setPerms={setPerms} disabled={disabled} ghost />
         </div>)}
-    </div>)}
+    </div>) : null}
   </fieldset>;
 }

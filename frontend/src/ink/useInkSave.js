@@ -16,10 +16,17 @@ import * as inkStore from "./inkStore";
 // blocksRef, setStatus, liveSaved: the saver's (inkSaver.js), taken once:
 // the ref is read when a flush runs, and both callbacks are stable.
 // keeps(id): the saver's too, the latest one asked when a flush runs.
+// treeApplied(): the open page's session's applied seq
+// (collabSession.js applied), which keeps a drawing this tab saved on
+// screen until the tree holds that save (inkStore.setTreeApplied).
 // → {flushInk, scheduleInk, pending}, the saver's.
-export function useInkSave({ focusedBlockId, blocksRef, setStatus, liveSaved, keeps = () => false }) {
+export function useInkSave({ focusedBlockId, blocksRef, setStatus, liveSaved, keeps = () => false, treeApplied = null }) {
   const keepsRef = useRef(keeps);
   keepsRef.current = keeps;
+  useEffect(() => {
+    inkStore.setTreeApplied(treeApplied);
+    return () => inkStore.setTreeApplied(null);
+  }, [treeApplied]);
   const saverRef = useRef(null);
   if (!saverRef.current) {
     saverRef.current = createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJson, API, keepaliveRoom,

@@ -27,13 +27,14 @@ export function matchesWords(query, ...fields) {
 //   stays, unavailable, so its star can be taken off;
 // - one group per connection, in the registry's order (the account's own
 //   first, then the shared ones), named by the connection with its billing
-//   and its service (for its logo);
+//   and its service (for its logo); with `once` its favorites are left to
+//   the favorites' group (the chat's model panel lists each model once);
 // - `engines`: the translation services (`engines`, [{id, label}]), for the
 //   translation task.
 // `query` keeps the rows matching every word typed, across every group;
 // a group left empty goes. `missing` is /api/ai/models' ({id: {model,
 // connection}}).
-export function menuGroups(models, { favorites = [], query = "", value = "", follow = false, engines = [], missing = {} } = {}) {
+export function menuGroups(models, { favorites = [], query = "", value = "", follow = false, engines = [], missing = {}, once = false } = {}) {
   const list = models || [];
   const starred = new Set(favorites || []);
   const byId = new Map(list.map((m) => [m.id, m]));
@@ -55,7 +56,7 @@ export function menuGroups(models, { favorites = [], query = "", value = "", fol
     if (!connections.has(m.provider)) {
       connections.set(m.provider, { key: `connection:${m.provider}`, label: m.provider_name || m.provider, billing: m.billing || "", service: m.service || "", rows: [] });
     }
-    connections.get(m.provider).rows.push(row(m));
+    if (!once || !starred.has(m.id)) connections.get(m.provider).rows.push(row(m));
   }
   for (const group of connections.values()) push(group);
   push({ key: "engines", rows: (engines || []).map((e) => ({ id: e.id, model: null, label: e.label, unavailable: false, favorite: false, engine: true })) });

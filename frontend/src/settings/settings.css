@@ -218,6 +218,16 @@
 .agentToolUnavailable { color: var(--text-dim); }
 .agentToolMobileLabel { display: none; }
 .agentToolNote { margin: var(--space-6) var(--space-4) 0; line-height: var(--lh-read); }
+/* The chat popover's picker: the preset tiles, two to a row with a smaller
+   glyph, then Each tool, a full-width disclosure saying how many tools
+   stand in each state, over the grouped rows. */
+.agentToolPicker { display: flex; flex-direction: column; gap: var(--space-3); }
+.agentToolPicker .setIconTiles { margin: 0; }
+.agentToolPicker .setTileIcon { flex-basis: 28px; width: 28px; height: 28px; }
+.agentToolEach.uiBtn { justify-content: flex-start; gap: var(--space-2); width: 100%; padding-inline: var(--space-2); }
+.agentToolEachName { font-weight: 600; }
+.agentToolEachCount { margin-left: auto; font-size: var(--fs-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.agentToolGroupRows > .popoverSection { padding: var(--space-2) var(--space-3) var(--space-1); }
 .agentToolPicker .chatToolPermRow { min-height: var(--ctl-btn-sm); }
 .agentToolPicker .chatToolPermRow.select { cursor: default; }
 .agentToolPicker .chatToolPermRow.select:hover { background: none; }

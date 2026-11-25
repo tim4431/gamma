@@ -3,8 +3,11 @@
 Instead of an API key, a provider entry can hold the tokens of a Google
 sign-in made with Gemini CLI's public OAuth client. Calls then go to Google's
 Code Assist backend (``ai_protocols/gemini.py``) and count against the
-account's Gemini CLI quota: the free tier, or a Google AI Pro or Ultra plan.
-Google's terms forbid that client in third-party software, and accounts have
+account's Gemini Code Assist license. Since June 2026 Google serves that
+client only to Gemini Code Assist Standard and Enterprise, an organization's
+license on a Google Cloud project the user names; individual accounts (free,
+Google AI Pro and Ultra) are refused at setup with a pointer to Antigravity.
+Google's terms forbid the client in third-party software, and accounts have
 been suspended for it (docs/research/gemini-signin.md). The connect dialog
 says so, and a Gemini API key is the supported way.
 
@@ -19,9 +22,11 @@ A sign-in in progress (``begin``) ends in one of two ways:
 The code is traded with the PKCE verifier and the client's secret, which
 Google doesn't treat as one for an installed app. gamma/cloud_oauth.py makes
 the OAuth calls, as for Drive. Then ``setup`` finds the account's Code
-Assist project the way Gemini CLI does (loadCodeAssist, and onboardUser the
-first time on the free tier), and its id rides on the entry as
-``account_id``. Google doesn't rotate refresh tokens. A refresh Google
+Assist project the way Gemini CLI does (loadCodeAssist with the project the
+user names, and onboardUser the first time), and its id rides on the entry
+as ``account_id``. The tokens wait in the sign-in until setup succeeds, so a
+project typed after Google's refusal needs no second sign-in. Google
+doesn't rotate refresh tokens. A refresh Google
 refuses ends the sign-in; one that gets no verdict raises
 RefreshUnavailable and the tokens are kept.
 """
@@ -29,6 +34,7 @@ RefreshUnavailable and the tokens are kept.
 import hashlib
 import http.server
 import json
+import re
 import secrets
 import threading
 import time
@@ -75,8 +81,15 @@ EXPIRED = "sign-in session expired — hit 'Open Google sign-in' again"
 CLIENT_METADATA = {"ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI"}
 ONBOARD_WAIT_S = 60
 ONBOARD_POLL_S = 5
-NEEDS_PROJECT = ("this Google account's Gemini plan needs a Google Cloud project of its own, which the "
-                 "sign-in doesn't set up; use a Gemini API key instead")
+NEEDS_PROJECT = ("this Google account's Gemini plan needs its Google Cloud project: enter the project's ID "
+                 "under Google Cloud project and connect again")
+# Google's answer to an individual account since June 2026 names no way on;
+# this says which ones are left.
+RETIRED = ("Google retired this sign-in for individual accounts (free, Google AI Pro and Ultra) in June 2026. "
+           "With Gemini Code Assist Standard or Enterprise, enter your organization's Google Cloud project and "
+           "connect again; otherwise use a Gemini API key")
+# A Google Cloud project ID (not its number, which Code Assist refuses).
+PROJECT_RE = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]")
 
 
 def _google(method: str, url: str, token: str, body: dict | None = None) -> dict:
@@ -119,49 +132,69 @@ def _ineligible(loaded: dict) -> str:
     return f"Google says this account can't use Gemini here: {'; '.join(reasons)}" if reasons else ""
 
 
-def setup(token: str) -> dict:
+def _refusal(loaded: dict, project: str) -> str:
+    """What to tell the user when no tier is open to them: Google's reasons,
+    and without a project the ways left (RETIRED), or that one is needed."""
+    said = _ineligible(loaded)
+    if project:
+        return said or f"Google offers no Gemini Code Assist tier through the project {project}"
+    return f"{said.rstrip('.')}. {RETIRED}" if said else NEEDS_PROJECT
+
+
+def setup(token: str, project: str = "") -> dict:
     """The account's Code Assist project and plan, ``{account_id, plan}``,
-    found as Gemini CLI finds them (setup.ts). Raises ValueError with what
-    to tell the user, "Gemini setup failed: …"."""
+    found as Gemini CLI finds them (setup.ts). ``project``: the Google Cloud
+    project a Gemini Code Assist Standard or Enterprise license is on, which
+    the user names (Gemini CLI's GOOGLE_CLOUD_PROJECT). Raises ValueError
+    with what to tell the user, "Gemini setup failed: …"."""
     try:
-        return _setup(token)
+        if project and not PROJECT_RE.fullmatch(project):
+            raise ValueError(f"{project!r} is no Google Cloud project ID: one looks like my-project-123 "
+                             "(its ID, not its number)")
+        return _setup(token, project)
     except (ValueError, CloudError) as e:  # Google's refusal, or no answer
         raise ValueError(f"Gemini setup failed: {e}") from e
 
 
-def _setup(token: str) -> dict:
-    """loadCodeAssist names the project and plan once the account is set up;
-    the first sign-in on the free tier sets it up with onboardUser, a
-    long-running operation polled for up to ONBOARD_WAIT_S."""
-    loaded = code_assist(token, "loadCodeAssist", {"metadata": CLIENT_METADATA})
+def _setup(token: str, project: str) -> dict:
+    """loadCodeAssist names the project and plan once the account is set up
+    (an organization's license may leave the project to the one named).
+    Otherwise the default tier is set up with onboardUser, a long-running
+    operation polled for up to ONBOARD_WAIT_S: on the named project for a
+    tier that needs the user's own, with none for the free tier, whose
+    project is Google's (naming one fails the call)."""
+    metadata = {**CLIENT_METADATA, **({"duetProject": project} if project else {})}
+    loaded = code_assist(token, "loadCodeAssist",
+                         {**({"cloudaicompanionProject": project} if project else {}), "metadata": metadata})
     current = loaded.get("currentTier") if isinstance(loaded.get("currentTier"), dict) else None
     paid = loaded.get("paidTier") if isinstance(loaded.get("paidTier"), dict) else {}
     if current:
-        project = _project_id(loaded.get("cloudaicompanionProject"))
-        if not project:
-            raise ValueError(_ineligible(loaded) or NEEDS_PROJECT)
-        return {"account_id": project, "plan": str(paid.get("name") or current.get("name") or "")}
+        found = _project_id(loaded.get("cloudaicompanionProject")) or project
+        if not found:
+            raise ValueError(_refusal(loaded, project))
+        return {"account_id": found, "plan": str(paid.get("name") or current.get("name") or "")}
     tiers = [t for t in loaded.get("ineligibleTiers") or [] if isinstance(t, dict)]
     check = next((t for t in tiers if t.get("reasonCode") == "VALIDATION_REQUIRED" and t.get("validationUrl")), None)
     if check:
         raise ValueError(f"Google asks to verify this account first: open {check['validationUrl']}, then sign in again")
     tier = next((t for t in loaded.get("allowedTiers") or [] if isinstance(t, dict) and t.get("isDefault")), None)
-    if not tier or not tier.get("id") or tier.get("userDefinedCloudaicompanionProject"):
-        raise ValueError(_ineligible(loaded) or NEEDS_PROJECT)
-    # The free tier's project is Google's own: naming one fails the call.
-    onboard = {"tierId": tier["id"], "metadata": CLIENT_METADATA}
+    own = bool(tier and tier.get("userDefinedCloudaicompanionProject"))
+    if not tier or not tier.get("id") or (own and not project):
+        raise ValueError(_refusal(loaded, project))
+    onboard = ({"tierId": tier["id"], "cloudaicompanionProject": project, "metadata": metadata} if own
+               else {"tierId": tier["id"], "metadata": CLIENT_METADATA})
     operation = code_assist(token, "onboardUser", onboard)
     deadline = time.time() + ONBOARD_WAIT_S
     while not operation.get("done"):
         if time.time() > deadline:
-            raise ValueError("Google is still setting up Gemini for this account; sign in again in a minute")
+            raise ValueError("Google is still setting up Gemini for this account; connect again in a minute")
         time.sleep(ONBOARD_POLL_S)
         name = str(operation.get("name") or "")
         operation = code_assist(token, name) if name.startswith("operations/") else code_assist(token, "onboardUser", onboard)
-    project = _project_id((operation.get("response") or {}).get("cloudaicompanionProject"))
-    if not project:
-        raise ValueError(_ineligible(loaded) or NEEDS_PROJECT)
-    return {"account_id": project, "plan": str(tier.get("name") or "")}
+    found = _project_id((operation.get("response") or {}).get("cloudaicompanionProject")) or project
+    if not found:
+        raise ValueError(_refusal(loaded, project))
+    return {"account_id": found, "plan": str(tier.get("name") or "")}
 
 
 def _email(token: str) -> str:
@@ -175,9 +208,10 @@ def _email(token: str) -> str:
 
 
 def exchange_code(code: str, verifier: str, redirect_uri: str) -> dict:
-    """Redeem an authorization code; returns the dict stored on the entry
-    ({access_token, refresh_token, expires_at, email, account_id, plan}).
-    Raises ValueError with what to tell the user when Google refuses."""
+    """Redeem an authorization code: the sign-in's tokens ({access_token,
+    refresh_token, expires_at, email}), which ``setup`` then completes into
+    the dict stored on the entry. Raises ValueError with what to tell the
+    user when Google refuses."""
     try:
         got = cloud_oauth.exchange_code(GOOGLE, CLIENT, code, verifier, redirect_uri)
     except (CloudError, CloudConfigError) as e:
@@ -185,9 +219,8 @@ def exchange_code(code: str, verifier: str, redirect_uri: str) -> dict:
     if got.get("state") != "done":
         raise ValueError("the sign-in didn't allow Gemini: sign in again and allow every permission Google asks for")
     token = got["access_token"]
-    oauth = {"access_token": token, "refresh_token": got["refresh_token"],
-             "expires_at": int(time.time()) + int(got["expires_in"]), "email": _email(token)}
-    return {**oauth, **setup(token)}
+    return {"access_token": token, "refresh_token": got["refresh_token"],
+            "expires_at": int(time.time()) + int(got["expires_in"]), "email": _email(token)}
 
 
 def refresh(oauth: dict) -> dict | None:
@@ -213,9 +246,14 @@ def refresh(oauth: dict) -> dict | None:
 
 
 # --- sign-ins in progress ------------------------------------------------------
-# state -> {"verifier", "redirect", "owner", "at", "local", "oauth", "error"},
-# in memory: a restart forgets them. `owner` is who may redeem it, as in
-# chatgpt_oauth; `oauth` holds the tokens once the listener caught them.
+# state -> {"verifier", "redirect", "owner", "at", "local", "tokens", "busy",
+# "error"}, in memory: a restart forgets them. `owner` is who may redeem it,
+# as in chatgpt_oauth. `tokens` holds the sign-in's tokens once the code is
+# traded (by the listener, or by the first redeem of a pasted one), and they
+# stay until ``setup`` succeeds: a setup Google refuses for want of a
+# project is tried again with one, without signing in again. `busy`: a
+# redeem under way, so a second one waits its turn rather than trade the
+# code twice.
 
 _PENDING: dict = {}
 _LOCK = threading.Lock()  # _PENDING and the callback listener
@@ -237,7 +275,7 @@ def begin(owner, *, local: bool = False, device: bool = False) -> dict:
     challenge = _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
     now = time.time()
     rec = {"verifier": verifier, "redirect": CODE_REDIRECT_URI, "owner": owner, "at": now, "local": local,
-           "oauth": None, "error": ""}
+           "tokens": None, "busy": False, "error": ""}
     # Waiting before the listener opens, so it never closes for want of one.
     with _LOCK:
         for k in [k for k, v in _PENDING.items() if not _live(v, now)]:
@@ -253,33 +291,48 @@ def begin(owner, *, local: bool = False, device: bool = False) -> dict:
 
 
 def status(owner, state: str) -> dict:
-    """{ready, error} of a sign-in ``owner`` started."""
+    """{ready, error} of a sign-in ``owner`` started: ready once the
+    listener has its tokens."""
     with _LOCK:
         rec = _PENDING.get(state)
         if not _live(rec, time.time()) or rec["owner"] != owner:
             return {"ready": False, "error": EXPIRED}
-        return {"ready": bool(rec["oauth"]), "error": "" if rec["oauth"] else rec["error"]}
+        return {"ready": bool(rec["tokens"]), "error": "" if rec["tokens"] else rec["error"]}
 
 
-def redeem(owner, state: str, callback: str = "") -> dict:
-    """End a sign-in ``owner`` started and return its tokens: those the
-    listener caught, else the pasted code (or the address the redirect
-    ended on) traded with the PKCE verifier. Raises ValueError with what to
-    tell the user; a paste that doesn't parse, or someone else's attempt,
-    leaves the sign-in waiting."""
-    callback = (callback or "").strip()
+def redeem(owner, state: str, callback: str = "", project: str = "") -> dict:
+    """End a sign-in ``owner`` started and return the dict stored on the
+    entry: its tokens (the listener's, else the pasted code, or the address
+    the redirect ended on, traded with the PKCE verifier) set up with the
+    account's Code Assist project (``setup``; ``project`` the one the user
+    names). Raises ValueError with what to tell the user. A paste that
+    doesn't parse, someone else's attempt and a setup that fails leave the
+    sign-in waiting, its tokens kept for the next try."""
+    callback, project = (callback or "").strip(), (project or "").strip()
     with _LOCK:
         rec = _PENDING.get(state)
         if not _live(rec, time.time()) or rec["owner"] != owner:
             raise ValueError(EXPIRED)
-        caught = rec["oauth"]
-        if not caught and not callback:
+        if rec["busy"]:
+            raise ValueError("the sign-in is being completed already")
+        tokens = rec["tokens"]
+        if not tokens and not callback:
             raise ValueError(rec["error"] or "not signed in yet — finish the sign-in, or paste the code Google shows")
-    code = "" if caught else parse_callback(callback, state)
+        code = "" if tokens else parse_callback(callback, state)
+        rec["busy"] = True
+    try:
+        if not tokens:
+            tokens = exchange_code(code, rec["verifier"], rec["redirect"])  # the code is spent now
+            with _LOCK:
+                rec["tokens"] = tokens
+        oauth = {**tokens, **setup(tokens["access_token"], project)}
+    finally:
+        with _LOCK:
+            rec["busy"] = False
     with _LOCK:
         if _PENDING.pop(state, None) is None:
-            raise ValueError(EXPIRED)  # redeemed meanwhile
-    return caught or exchange_code(code, rec["verifier"], rec["redirect"])
+            raise ValueError(EXPIRED)  # ran out meanwhile
+    return oauth
 
 
 # --- the redirect, caught on this machine --------------------------------------
@@ -293,22 +346,22 @@ def _capture(query: dict) -> tuple[bool, str]:
         if not _live(rec, time.time()) or not rec["local"]:
             return False, ("Gamma is not waiting for this sign-in. Start it again in Gamma, "
                            "or paste this page's address into the sign-in form.")
-        if rec["oauth"]:
+        if rec["tokens"]:
             return True, ""
     if query.get("error"):
         error = f"Google refused the sign-in: {query.get('error_description') or query['error']}"
     else:
         try:
-            oauth = exchange_code(query.get("code", ""), rec["verifier"], rec["redirect"])
+            tokens = exchange_code(query.get("code", ""), rec["verifier"], rec["redirect"])
             with _LOCK:
-                rec["oauth"] = oauth
+                rec["tokens"] = tokens
             return True, ""
         except ValueError as e:
             error = str(e)
         except Exception as e:
             error = f"token exchange failed: {e}"
     with _LOCK:
-        if not rec["oauth"]:
+        if not rec["tokens"]:
             rec["error"] = error
     return False, error
 
@@ -320,8 +373,8 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(404)
             return
         ok, message = _capture({k: v[0] for k, v in urllib.parse.parse_qs(parts.query).items()})
-        body = html_page.page("Signed in to Gemini" if ok else "The Google sign-in did not finish",
-                              message or "Gamma is connected. You can close this tab.").encode()
+        body = html_page.page("Signed in with Google" if ok else "The Google sign-in did not finish",
+                              message or "You can close this tab: Gamma finishes connecting in its own window.").encode()
         self.send_response(200 if ok else 400)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -360,7 +413,7 @@ def _serve(server) -> None:
         server.handle_request()
         with _LOCK:
             now = time.time()
-            if not any(r["local"] and not r["oauth"] and _live(r, now) for r in _PENDING.values()):
+            if not any(r["local"] and not r["tokens"] and _live(r, now) for r in _PENDING.values()):
                 _server = None
                 server.server_close()
                 return

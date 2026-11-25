@@ -480,7 +480,9 @@ def test_a_relocation_tells_the_link_once_its_job_reads_as_ended(me, made, fake,
     ws = _link(me)
     _sync(me, ws)
     page = _page_of(ws, item)
-    doc = _replace(ws, owner_id, page, pdf_bytes() + b"\n% the same paper, saved again\n", "saved-again.pdf")
+    content = pdf_bytes() + b"\n% the same paper, saved again\n"
+    doc = storage.content_digest(content)  # named before the relocation starts: it may end before _replace returns
+    assert _replace(ws, owner_id, page, content, "saved-again.pdf") == doc
     jobs.wait(jobs.latest(owner_id, pages_router.RELOCATE, f"{page}:{doc}")["id"])
     assert seen == ["done"]
     drop_pending(ws)

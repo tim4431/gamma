@@ -78,6 +78,14 @@ function setup({ drafts = [], blocks = null, reply = answer, room = 56 * KiB, ke
       return [...store.drafts.values()].filter((d) => d.dirty)
         .map(({ id, ink, base, baseIds, upload }) => ({ id, ink, base, baseIds, upload }));
     },
+    draft: (id) => store.drafts.get(id) || null,
+    journalTab: () => "tab",
+    behind: new Set(),   // the groups treeBehind answers for: the tree not caught up with their last save
+    treeBehind: (id) => store.behind.has(id),
+    dropListeners: [],
+    onDropDraft(fn) { store.dropListeners.push(fn); },
+    markDeleting(id) { log.push(`markDeleting ${id}`); },
+    unmarkDeleting(id) { log.push(`unmarkDeleting ${id}`); },
     markSending(id, url) { log.push(`markSending ${id} ${url}`); return store.sending || Promise.resolve(null); },
     markSaved(id, ink, url, stored) {
       log.push(`markSaved ${id} ${url} ${stored}`);
@@ -89,8 +97,9 @@ function setup({ drafts = [], blocks = null, reply = answer, room = 56 * KiB, ke
       if (store.drafts.get(id)?.ink === ink) store.drafts.get(id).dirty = false;
     },
   };
-  const apiJson = (url, init = {}, opts) => {
-    const req = { line: `${init.method} ${url}`, init, keepalive: opts?.keepalive ?? null };
+  const apiJson = (url, { signal, ...init } = {}, opts) => {
+    // `signal`: the save's timeout (inkSaver.js SAVE_TIMEOUT_MS), kept apart from what goes on the wire
+    const req = { line: `${init.method} ${url}`, init, signal, keepalive: opts?.keepalive ?? null };
     const promise = new Promise((resolve, reject) => { req.answer = resolve; req.fail = reject; });
     sent.push(req);
     log.push(req.line);
@@ -155,7 +164,8 @@ test("a flush: the upload, markSending (awaited), the block's PUT naming the upl
   assert.deepEqual(env.log, ["POST /api/upload-ink", "markSending g1 /api/uploads/u1.ink", "PUT /api/blocks/g1",
     "markSaved g1 /api/uploads/u1.ink /api/uploads/u1.ink", "liveSaved g1"]);
   assert.deepEqual(env.sent[1].init, { method: "PUT", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ properties: inkProps(ink, "/api/uploads/u1.ink"), base_properties: { ink_url: "/api/uploads/base.ink" }, base_ids: ["a1"] }) });
+    body: JSON.stringify({ properties: inkProps(ink, "/api/uploads/u1.ink"), base_properties: { ink_url: "/api/uploads/base.ink" }, base_ids: ["a1"],
+      batch: "ink-tab-1" }) });
   assert.deepEqual(env.statuses, [], "a save that merged nothing says nothing");
 
   // a draft with no base names none; the answer names another file: the server merged someone's strokes in
@@ -164,7 +174,7 @@ test("a flush: the upload, markSending (awaited), the block's PUT naming the upl
     reply: (req, next) => (req.init.method === "PUT" ? { properties: { ink_url: "/api/uploads/merged.ink" } } : answer(req, next)) });
   await merged.saver.flushInk();
   assert.equal(merged.sent[1].init.body,
-    JSON.stringify({ properties: inkProps(fresh, "/api/uploads/u1.ink"), base_properties: { ink_url: "" }, base_ids: [] }));
+    JSON.stringify({ properties: inkProps(fresh, "/api/uploads/u1.ink"), base_properties: { ink_url: "" }, base_ids: [], batch: "ink-tab-1" }));
   assert.deepEqual(merged.log.slice(3), ["markSaved g2 /api/uploads/u1.ink /api/uploads/merged.ink", "liveSaved g2"]);
 }));
 
@@ -207,7 +217,7 @@ test("a group erased empty with no caption and no notes is DELETEd, then markDel
   ]) {
     const gone = setup({ drafts: [{ id: "g1", ink: emptyDrawing(), base: "/api/uploads/old.ink" }], blocks });
     await gone.saver.flushInk();
-    assert.deepEqual(gone.log, ["DELETE /api/blocks/g1", `markDeleted g1 ${blocks.length ? "/api/uploads/old.ink" : ""}`], what);
+    assert.deepEqual(gone.log, ["markDeleting g1", "DELETE /api/blocks/g1", `markDeleted g1 ${blocks.length ? "/api/uploads/old.ink" : ""}`], what);
     assert.deepEqual(gone.sent[0].init, { method: "DELETE" }, "no body");
   }
   for (const over of [{ content: "A caption" }, { children: [block("n1", "", { properties: {} })] }]) {
@@ -225,7 +235,7 @@ test("a group with a comment thread erased empty keeps its block, saved as an em
   await env.saver.flushInk();
   assert.deepEqual(env.log.filter((line) => !line.startsWith("status")).sort(), [
     "DELETE /api/blocks/g2", "POST /api/upload-ink", "PUT /api/blocks/g1",
-    "markDeleted g2 /api/uploads/two.ink", "markSaved g1 /api/uploads/u1.ink /api/uploads/u1.ink", "markSending g1 /api/uploads/u1.ink",
+    "markDeleted g2 /api/uploads/two.ink", "markDeleting g2", "markSaved g1 /api/uploads/u1.ink /api/uploads/u1.ink", "markSending g1 /api/uploads/u1.ink",
     "liveSaved g1",
   ].sort());
   assert.equal(JSON.parse(env.sent.find((r) => r.init.method === "PUT").init.body).properties.ink_strokes, 0);
@@ -312,10 +322,10 @@ test("any other 4xx will not change on a retry: a sticky 'not saved' pill, the d
     assert.equal(env.saver.pending(), false);
   }
 
-  // a DELETE refused: the empty draft stays, unmarked
+  // a DELETE refused: the empty draft stays, and the group is no longer closed as going (it takes strokes again)
   const kept = setup({ drafts: [{ id: "g1", ink: emptyDrawing(), base: "/api/uploads/old.ink" }], reply: () => { throw httpError(403, "Forbidden"); } });
   await kept.saver.flushInk();
-  assert.deepEqual(kept.log, ["DELETE /api/blocks/g1", "status: Handwriting not saved: Forbidden"]);
+  assert.deepEqual(kept.log, ["markDeleting g1", "DELETE /api/blocks/g1", "unmarkDeleting g1", "status: Handwriting not saved: Forbidden"]);
   assert.equal(kept.store.drafts.get("g1").dirty, true);
 }));
 
@@ -323,7 +333,8 @@ test("keepalive: the groups planFlush fits into keepaliveRoom('low'), in order, 
   const ga = { id: "ga", ink: drawing("a1"), base: "/api/uploads/a0.ink", baseIds: ["a0"] }, gb = { id: "gb", ink: drawing("b1", "b2") };
   // what a group needs of the room: its upload's bytes and its PUT's, sized with an upload name's length while the upload is not named
   const needs = (d) => Buffer.byteLength(serializeInk(d.ink))
-    + Buffer.byteLength(JSON.stringify({ properties: inkProps(d.ink, ""), base_properties: { ink_url: d.base || "" }, base_ids: d.baseIds || [] })) + NAME;
+    + Buffer.byteLength(JSON.stringify({ properties: inkProps(d.ink, ""), base_properties: { ink_url: d.base || "" }, base_ids: d.baseIds || [],
+      batch: "ink-tab-000000" })) + NAME;   // sized with a batch id as long as a lane's (inkSaver.js batchLike)
   const env = setup({ drafts: [ga, gb], room: needs(ga), reply: () => HOLD });
   env.saver.flushInk({ keepalive: true });
   assert.deepEqual(env.sent.map((r) => [r.line, r.keepalive]), [["POST /api/upload-ink", "low"], ["POST /api/upload-ink", null]],
@@ -368,18 +379,102 @@ test("a keepalive request of a drawing still on its way is not sent again: a lat
   const del = setup({ drafts: [{ id: "gd", ink: empty, base: "/api/uploads/d.ink" }], reply: () => HOLD });
   del.saver.flushInk({ keepalive: true });
   del.saver.flushInk({ keepalive: true });
-  assert.deepEqual(del.log, ["DELETE /api/blocks/gd"], "its DELETE on its way: a second would be answered 404");
+  assert.deepEqual(del.log, ["markDeleting gd", "DELETE /api/blocks/gd"], "its DELETE on its way: a second would be answered 404");
   del.sent[0].fail(httpError(404));
   await settle();
   del.saver.flushInk({ keepalive: true });
-  assert.deepEqual(del.log, ["DELETE /api/blocks/gd", "status: Handwriting not saved yet: HTTP 404", "DELETE /api/blocks/gd"],
+  assert.deepEqual(del.log, ["markDeleting gd", "DELETE /api/blocks/gd", "status: Handwriting not saved yet: HTTP 404", "markDeleting gd", "DELETE /api/blocks/gd"],
     "settled, it goes again");
 
-  // only what went with keepalive is held: a plain request on its way stops nothing
+  // a plain save on its way holds the group too: the same drawing is not sent again
   const plain = setup({ drafts: [{ id: "g1", ink: drawing("a1") }], reply: () => HOLD });
   plain.saver.flushInk();
   plain.saver.flushInk();
-  assert.deepEqual(plain.log, ["POST /api/upload-ink", "POST /api/upload-ink"]);
+  assert.deepEqual(plain.log, ["POST /api/upload-ink"]);
+}));
+
+test("one save of a group on its way at a time: a newer drawing waits for its answer and then goes at once; going hidden, a save still uploading is superseded and one whose PUT is out sends that PUT again with keepalive", () => withMockTimers(async () => {
+  const first = drawing("a1"), newer = drawing("a1", "b2");
+  const env = setup({ drafts: [{ id: "g1", ink: first, base: "/api/uploads/base.ink" }], reply: () => HOLD });
+  const out = env.saver.flushInk();
+  env.store.drafts.get("g1").ink = newer;                   // drawn while the save is out
+  env.saver.flushInk();                                     // the timer's flush: it waits
+  assert.deepEqual(env.log, ["POST /api/upload-ink"]);
+  assert.equal(env.saver.pending(), true, "a drawing waits behind the save on its way");
+  env.sent[0].answer({ url: "/api/uploads/u1.ink" });
+  await settle();
+  assert.deepEqual(env.log, ["POST /api/upload-ink", "markSending g1 /api/uploads/u1.ink", "PUT /api/blocks/g1"]);
+  env.sent[1].answer({ properties: { ink_url: "/api/uploads/u1.ink" }, seq: 7, page_id: "p" });
+  await settle();
+  assert.deepEqual(env.log.slice(3, 6), ["markSaved g1 /api/uploads/u1.ink /api/uploads/u1.ink", "liveSaved g1", "POST /api/upload-ink"],
+    "the newer drawing goes as soon as the first is answered");
+  assert.equal(env.sent[2].init.body, serializeInk(newer));
+  env.sent[2].answer({ url: "/api/uploads/u2.ink" });
+  await settle();
+  env.sent[3].answer({ properties: { ink_url: "/api/uploads/u2.ink" } });
+  await out;
+  assert.notEqual(JSON.parse(env.sent[1].init.body).batch, JSON.parse(env.sent[3].init.body).batch, "each save its own batch");
+
+  // going hidden while the save is still uploading: the newest goes now with keepalive, and the old one sends no PUT
+  const hid = setup({ drafts: [{ id: "g1", ink: first }], reply: () => HOLD });
+  hid.saver.flushInk();
+  hid.store.drafts.get("g1").ink = newer;
+  hid.saver.flushInk({ keepalive: true });
+  assert.deepEqual(hid.sent.map((r) => [r.line, r.keepalive]), [["POST /api/upload-ink", null], ["POST /api/upload-ink", "low"]]);
+  hid.sent[0].answer({ url: "/api/uploads/u1.ink" });
+  await settle();
+  assert.equal(hid.sent.length, 2, "the superseded save sends no PUT");
+
+  // going hidden while the save's PUT is out: that PUT again, with keepalive, under its batch; the newest waits
+  const put = setup({ drafts: [{ id: "g1", ink: first }], reply: (req, next) => (req.init.method === "PUT" ? HOLD : answer(req, next)) });
+  put.saver.flushInk();
+  await settle();
+  put.store.drafts.get("g1").ink = newer;
+  put.saver.flushInk({ keepalive: true });
+  assert.deepEqual(put.sent.map((r) => [r.line, r.keepalive]),
+    [["POST /api/upload-ink", null], ["PUT /api/blocks/g1", null], ["PUT /api/blocks/g1", "low"]]);
+  assert.equal(put.sent[2].init.body, put.sent[1].init.body, "the same PUT, the same batch: whichever lands, the other is answered from the log");
+}));
+
+test("a PUT that may have landed with its answer lost is sent again first, the same body under its batch, and the newer drawing goes after its answer; a 404 on it ends it", () => withMockTimers(async () => {
+  const first = drawing("a1"), newer = drawing("a1", "b2");
+  let cut = 1;
+  const env = setup({ drafts: [{ id: "g1", ink: first, base: "/api/uploads/base.ink" }],
+    reply: (req, next) => { if (req.init.method === "PUT" && cut-- > 0) throw new TypeError("Failed to fetch"); return answer(req, next); } });
+  await env.saver.flushInk();
+  assert.deepEqual(env.log, ["POST /api/upload-ink", "markSending g1 /api/uploads/u1.ink", "PUT /api/blocks/g1", "status: Handwriting not saved yet: Failed to fetch"]);
+  assert.equal(env.saver.pending(), true);
+  env.store.drafts.get("g1").ink = newer;   // drawn before the retry
+  mock.timers.tick(2000);
+  await settle();
+  assert.deepEqual(env.log.slice(4, 11), ["PUT /api/blocks/g1", "markSaved g1 /api/uploads/u1.ink /api/uploads/u1.ink", "liveSaved g1",
+    "POST /api/upload-ink", "markSending g1 /api/uploads/u2.ink", "PUT /api/blocks/g1", "markSaved g1 /api/uploads/u2.ink /api/uploads/u2.ink"],
+    "the owed PUT, not a new upload of the newest drawing on the old base");
+  assert.equal(env.sent[2].init.body, env.sent[1].init.body);
+  assert.equal(env.saver.pending(), false);
+
+  // the block not there on the resend: the PUT did not land then either, and the newest drawing goes as usual
+  let gone = 1;
+  const lost = setup({ drafts: [{ id: "g1", ink: first }], reply: (req, next) => {
+    if (req.init.method === "PUT" && gone === 1) { gone = 2; throw new TypeError("Failed to fetch"); }
+    if (req.init.method === "PUT" && gone === 2) { gone = 3; throw httpError(404, "block not found"); }
+    return answer(req, next);
+  } });
+  await lost.saver.flushInk();
+  mock.timers.tick(2000);
+  await settle();
+  assert.deepEqual(lost.log.slice(4), ["PUT /api/blocks/g1", "markUnsent g1 /api/uploads/u1.ink", "status: Handwriting not saved yet: block not found"]);
+  mock.timers.tick(2000);
+  await settle();
+  assert.deepEqual(lost.log.slice(7, 9), ["POST /api/upload-ink", "markSending g1 /api/uploads/u2.ink"], "a fresh save, owing nothing");
+}));
+
+test("an empty group's DELETE answered 404 for a block the page no longer shows went (its answer was lost, or another took it): markDeleted, no retry", () => withMockTimers(async () => {
+  const env = setup({ drafts: [{ id: "g1", ink: emptyDrawing(), base: "/api/uploads/old.ink" }], blocks: [],
+    reply: () => { throw httpError(404, "block not found"); } });
+  await env.saver.flushInk();
+  assert.deepEqual(env.log, ["markDeleting g1", "DELETE /api/blocks/g1", "markDeleted g1 "]);
+  assert.equal(env.saver.pending(), false);
 }));
 
 test("the merge report on the pill, after markSaved and liveSaved: strokes of ours not applied, strokes someone erased that came back, or merged", () => withMockTimers(async () => {
@@ -428,4 +523,26 @@ test("pending(): a save waiting on its timer, set by an edit or a retry; a flush
   assert.equal(env.store.flushes, 2);
   assert.equal(env.saver.pending(), false, "the timer's own flush clears it");
   await settle();
+}));
+
+test("leaving while a plain save still uploads its named drawing: its PUT goes beside that upload with keepalive, under its batch; when its own upload then fails, that PUT is owed and goes again first with its upload", () => withMockTimers(async () => {
+  const ink = drawing("a1");
+  const upload = { body: serializeInk(ink), url: "/api/uploads/named.ink" };
+  const env = setup({ drafts: [{ id: "g1", ink, base: "/api/uploads/base.ink", upload }],
+    reply: (req, next) => (req.line === "POST /api/upload-ink" && req.keepalive === null && env.sent.length === 1 ? HOLD : answer(req, next)) });
+  env.saver.flushInk();                                   // the timer's flush: a plain upload, held
+  env.saver.flushInk({ keepalive: true, leaving: true }); // pagehide, into the back/forward cache
+  assert.deepEqual(env.sent.map((r) => [r.line, r.keepalive]),
+    [["POST /api/upload-ink", null], ["POST /api/upload-ink", "low"], ["PUT /api/blocks/g1", "low"]]);
+  const besideBody = env.sent[2].init.body;
+  env.sent[0].fail(new TypeError("Failed to fetch"));    // shown again: the plain upload was cut off
+  await settle();
+  assert.equal(env.saver.pending(), true);
+  mock.timers.tick(2000);
+  await settle();
+  const retried = env.sent.slice(3);
+  assert.deepEqual(retried.map((r) => r.line), ["POST /api/upload-ink", "PUT /api/blocks/g1"], "the upload again, then the same PUT");
+  assert.equal(retried[1].init.body, besideBody, "under the same batch: the server answers it from its log");
+  assert.ok(env.log.includes("markSaved g1 /api/uploads/named.ink /api/uploads/named.ink"));
+  assert.equal(env.saver.pending(), false);
 }));

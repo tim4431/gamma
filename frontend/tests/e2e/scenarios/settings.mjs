@@ -739,10 +739,12 @@ export async function settingsScenarios(env) {
   });
 
   // The Gemini sign-in (docs/dev/ai.md "The Gemini sign-in"): its card says
-  // Google's terms forbid it, and from a browser on another machine Google
-  // ends on a page showing a code, which connects once pasted. Google's side
-  // is faked as ChatGPT's is above.
-  await step("settings: the Gemini sign-in warns of Google's terms, and the code Google shows connects once pasted", async () => {
+  // Google serves it only to organizations' licenses now and that its terms
+  // forbid it; the license's Google Cloud project is typed first, and from a
+  // browser on another machine Google ends on a page showing a code, which
+  // connects once pasted, with the project. Google's side is faked as
+  // ChatGPT's is above.
+  await step("settings: the Gemini sign-in warns of Google's terms, and the code Google shows connects once pasted, with the organization's project", async () => {
     const { ctx, page } = await setup();
     try {
       await page.evaluate(() => {
@@ -752,9 +754,18 @@ export async function settingsScenarios(env) {
       await page.route("**/api/ai/oauth/gemini-signin/start", (route) => route.fulfill({ json: {
         auth_url: "https://accounts.google.com/o/oauth2/v2/auth?state=g-state", state: "g-state", local: false, device: null } }));
       await page.route("**/api/ai/oauth/gemini-signin/status", (route) => { waits++; return route.fulfill({ json: { ready: false, error: "" } }); });
-      let completed = null;
+      // The server's side: refused as an individual account without the
+      // project (gemini_oauth.RETIRED's words), connected with it.
+      const completes = [];
       await page.route("**/api/ai/oauth/gemini-signin/complete", async (route) => {
-        completed = route.request().postDataJSON();
+        const body = route.request().postDataJSON();
+        completes.push(body);
+        if (!body.project) {
+          await route.fulfill({ status: 400, json: { detail: "Gemini setup failed: Google says this account can't use Gemini here: "
+            + "This client is no longer supported for Gemini Code Assist for individuals. Google retired this sign-in for "
+            + "individual accounts (free, Google AI Pro and Ultra) in June 2026." } });
+          return;
+        }
         const info = await user.api("/api/ai/settings");
         info.providers.push({ id: "gemini-test", protocol: "gemini-signin", name: "Gemini", models: "gemini-test-pro",
           oauth_connected: true, quota: true, service: "gemini-signin", billing: "subscription" });
@@ -766,23 +777,30 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
       await dialog.getByRole("group", { name: "Sign in or subscription", exact: true }).getByRole("button", { name: "Gemini", exact: true }).click();
-      await dialog.getByText(/^Google's terms forbid using Gemini CLI's sign-in in other apps/).waitFor();
+      await dialog.getByText(/^Since June 2026 Google serves this sign-in only to Gemini Code Assist Standard and Enterprise.*Google's terms forbid/).waitFor();
       await dialog.getByText("Sign in with Google", { exact: true }).waitFor();
       await dialog.getByRole("button", { name: "Open Google sign-in", exact: true }).click();
       await until(() => page.evaluate(() => !!window.testSignInUrl));
       const code = dialog.getByRole("textbox", { name: /Authorization code/ });
-      await code.waitFor();      // Pasting Google's code connects: no Connect click, no waiting on the server.
+      await code.waitFor();
+      // Pasting Google's code connects: no Connect click, no waiting on the server.
       await code.evaluate((input, text) => {
         input.focus();
         const data = new DataTransfer();
         data.setData("text/plain", text);
         input.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
       }, "4/0AfakeGoogleCode12345");
+      // Refused without the project: Google's words and the way left; the
+      // project typed then connects the same sign-in with Connect.
+      await dialog.getByText(/Google retired this sign-in for individual accounts/).waitFor();
+      await dialog.getByRole("textbox", { name: /Google Cloud project/ }).fill("acme-gemini-01");
+      await dialog.getByRole("button", { name: "Connect", exact: true }).click();
       const edit = page.getByRole("dialog", { name: "Edit key", exact: true });
       await edit.getByRole("button", { name: "2 usable" }).waitFor();
-      assertEq(completed?.callback, "4/0AfakeGoogleCode12345", "the pasted code is redeemed");
+      assertEq(completes.map((c) => [c.callback, c.project || ""]).join(" | "),
+        "4/0AfakeGoogleCode12345, | 4/0AfakeGoogleCode12345,acme-gemini-01", "the same sign-in tried again with the project");
       assertEq(waits, 0, "nothing to wait for: the code comes from the person");
-      assertNoProblems(page);
+      assertNoProblems(page, [/^POST \/api\/ai\/oauth\/gemini-signin\/complete -> 400$/]);
     } finally { await ctx.close(); }
   });
 
@@ -2951,12 +2969,11 @@ export async function settingsScenarios(env) {
       await until(async () => (await chatModel().innerText()) === "test-model-b", { what: "the row on the pick" });
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       // The model (with its reasoning effort and speed) is the composer's chip:
-      // the model in use and the favorites, then every connection's under All models….
+      // its panel lists the favorites, then every connection's models.
       const modelChip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
       assert((await modelChip.innerText()).includes("test-model-b"));
       await modelChip.click();
-      await page.locator(".uiSelectMenu").getByRole("menuitem", { name: "All models…", exact: true }).click();
-      await page.getByRole("listbox", { name: "All models", exact: true }).getByRole("option", { name: /^test-model-a/ }).click();
+      await page.getByRole("listbox", { name: "Models", exact: true }).getByRole("option", { name: /^test-model-a/ }).click();
       await until(async () => (await modelChip.innerText()).includes("test-model-a"), { what: "the chip on the pick" });
       await until(async () => (await user.api("/api/ai/models")).roles.chat.pick.endsWith(":test-model-a"), { what: "the account's chat model" });
       await page.locator('[title^="Chat settings"]').click();
@@ -3022,12 +3039,14 @@ export async function settingsScenarios(env) {
       await page.getByRole("listbox", { name: "Add a chat model", exact: true }).getByRole("option", { name: /^test-model-b/ }).click();
       await list.getByRole("listitem").filter({ hasText: "test-model-b" }).waitFor();      await until(async () => JSON.stringify(await favorites()) === JSON.stringify([b]), { what: "the account's chat models" });
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
-      // The chip offers the model in use and the chat models, a click apart.
+      // The chip's panel lists the chat models first, each model once, a click apart.
       const modelChip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
       await modelChip.click();
-      const offered = page.locator(".uiSelectMenu").getByRole("group", { name: "Model", exact: true }).locator(".ctxMenuText");
-      assertEq((await offered.allInnerTexts()).join(), "test-model-a,test-model-b", "the chip lists the one in use, then the chat models");
-      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: /test-model-b/ }).click();
+      const models = page.getByRole("listbox", { name: "Models", exact: true });
+      const offered = models.getByRole("group", { name: "Chat models", exact: true }).locator(".modelMenuName");
+      assertEq((await offered.allInnerTexts()).join(), "test-model-b", "the panel leads with the chat models");
+      assertEq((await models.locator(".modelMenuName").allInnerTexts()).join(), "test-model-b,test-model-a", "then the others, each once");
+      await offered.filter({ hasText: "test-model-b" }).click();
       await until(async () => (await modelChip.innerText()).includes("test-model-b"), { what: "the chip on the pick" });
       await until(async () => (await user.api("/api/ai/models")).roles.chat.pick === b, { what: "the account's chat model" });
       await openSettings(page);
@@ -3260,10 +3279,10 @@ export async function settingsScenarios(env) {
         assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), transcribe ? 1 : 0, `mic with transcribe=${transcribe}`);
         assertEq(await page.getByRole("button", { name: "PDF", exact: true }).count(), 0, "no PDF in the library's context");
         await chip.click();
-        await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "high", exact: true }).click();
+        const effort = page.locator(".modelPanel").getByRole("group", { name: "Reasoning effort", exact: true });
+        await effort.getByRole("button", { name: "high", exact: true }).click();
         await until(async () => (await chip.innerText()).includes("model · high"), { what: "the chip names the effort" });
-        await chip.click();
-        await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Default", exact: true }).click();
+        await effort.getByRole("button", { name: "Default", exact: true }).click();
         assertNoProblems(page);
       } finally { await ctx.close(); }
     }

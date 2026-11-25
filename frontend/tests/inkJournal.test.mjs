@@ -194,6 +194,12 @@ test("inkStore journals a dirty draft until its upload lands, and a page open re
   const unnamedUrl = await nameOf(unnamed.bytes);
   unnamed.sent = [unnamedUrl];
   files.set(unnamedUrl, unnamed.bytes);
+  // a close that cut off a PUT after its upload landed (it was told to the journal, `sent`), a newer
+  // drawing waiting behind it: the block still names the entry's base, so nothing of `sent` landed
+  const cutUpload = serializeInk(file(A, S));
+  const cutUrl = await nameOf(cutUpload);
+  files.set(cutUrl, cutUpload);
+  const cut = entry(file(A, S, T), { base: "/api/uploads/f0.ink", baseIds: [A.id], sent: [cutUrl] });
   // the block's file changes while its restore runs: it is restored against the new one
   files.set("/api/uploads/slow.ink", serializeInk(F0));
   let release;
@@ -215,6 +221,7 @@ test("inkStore journals a dirty draft until its upload lands, and a page open re
     "ws1/twice/gone2": entry(file(A, T), { base: "/api/uploads/f0.ink", tab: "gone2" }),
     "ws1/race/gone": entry(file(A, S), { base: "/api/uploads/slow.ink" }),
     "ws1/unnamed/gone": unnamed,
+    "ws1/cut/gone": cut,
   };
   await new Promise((r) => { const req = idb.open("gamma-ink-journal"); req.onupgradeneeded = () => req.result.createObjectStore("drafts"); req.onsuccess = r; });
   for (const [key, value] of Object.entries(seed)) entries().set(key, value);
@@ -274,6 +281,7 @@ test("inkStore journals a dirty draft until its upload lands, and a page open re
     twice: { id: "twice", properties: { ink_url: "/api/uploads/f0.ink" } },
     race: { id: "race", properties: { ink_url: "/api/uploads/race1.ink" } },
     unnamed: { id: "unnamed", properties: { ink_url: "" } },
+    cut: { id: "cut", properties: { ink_url: "/api/uploads/f0.ink" } },
   };
   const show = () => Object.values(blocks).forEach((blk) => store.inkFor(blk));
   show();
@@ -282,7 +290,7 @@ test("inkStore journals a dirty draft until its upload lands, and a page open re
   blocks.race = { id: "race", properties: { ink_url: "/api/uploads/race2.ink" } };
   show();
   release();
-  await until(() => { show(); return restored.length >= 7 && !entries().has("ws1/gone/gone") && !entries().has("ws1/landed/gone"); }, "the restores");
+  await until(() => { show(); return restored.length >= 8 && !entries().has("ws1/gone/gone") && !entries().has("ws1/landed/gone"); }, "the restores");
   await new Promise((r) => setTimeout(r, 50));
   const draftIds = (id) => ids(store.draft(id)?.ink);
   assert.deepEqual(draftIds("same"), ["a1", "y1"], "restored as it was");
@@ -290,11 +298,14 @@ test("inkStore journals a dirty draft until its upload lands, and a page open re
   assert.deepEqual(draftIds("lost"), ["a1", "w1"], "the lost upload restored whole");
   assert.deepEqual(draftIds("unsent"), [A.id, T.id], "an upload no PUT followed: the block never named it, so it is restored");
   assert.deepEqual(draftIds("unnamed"), [A.id, S.id], "a PUT the block never took: the entry as it is");
+  assert.deepEqual(draftIds("cut"), [A.id, S.id, T.id],
+    "a PUT a close cut off after its upload landed: the block still names the base, so the entry comes back whole, the upload's strokes too");
   assert.equal(store.draft("landed"), null, "a PUT that landed unanswered: its stroke someone erased since stays erased");
   assert.deepEqual(draftIds("twice"), [A.id, S.id], "one closed tab's entry a visit");
   assert.deepEqual(draftIds("race"), [A.id, B.id, T.id, S.id], "restored again against the file saved while it ran");
   assert.deepEqual(restored.map((r) => [r.id, r.ids]).sort(),
-    [["lost", ["a1", "w1"]], ["moved", ["y1"]], ["race", [S.id]], ["same", ["y1"]], ["twice", [S.id]], ["unnamed", [A.id, S.id]], ["unsent", [T.id]]]);
+    [["cut", [S.id, T.id]], ["lost", ["a1", "w1"]], ["moved", ["y1"]], ["race", [S.id]], ["same", ["y1"]], ["twice", [S.id]], ["unnamed", [A.id, S.id]],
+      ["unsent", [T.id]]]);
   assert.deepEqual(restored.find((r) => r.id === "lost").prior.strokes, [], "Discard's target: the drawing the missing file showed, nothing");
   assert.deepEqual(ids(restored.find((r) => r.id === "moved").prior), ["a1", "x1"], "Discard's target: the file it was laid over");
   assert.deepEqual(ids(restored.find((r) => r.id === "race").prior), [A.id, B.id, T.id], "the file the block names now");
@@ -307,7 +318,7 @@ test("inkStore journals a dirty draft until its upload lands, and a page open re
   // closed tab's), another workspace's untouched and never read; a restored entry is this tab's now
   for (const id of ["gone", "old", "open", "mine", "stray"]) assert.equal(store.draft(id), null, `${id}: nothing restored`);
   assert.deepEqual([...entries().keys()].sort(), [
-    `ws1/lost/${TAB}`, `ws1/mine/${TAB}`, `ws1/moved/${TAB}`, "ws1/open/alive", `ws1/race/${TAB}`, `ws1/same/${TAB}`,
+    `ws1/cut/${TAB}`, `ws1/lost/${TAB}`, `ws1/mine/${TAB}`, `ws1/moved/${TAB}`, "ws1/open/alive", `ws1/race/${TAB}`, `ws1/same/${TAB}`,
     "ws1/stray/gone", `ws1/twice/${TAB}`, "ws1/twice/gone2", `ws1/unnamed/${TAB}`, `ws1/unsent/${TAB}`, "ws2/same/gone"].sort());
   assert.ok(idb.reads.every((keys) => keys.every((k) => k.startsWith("ws1/"))), "only this workspace's entries are read");
 });

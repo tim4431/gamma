@@ -14,11 +14,15 @@
 // upload's body and of its block PUT's; `beside` its PUT may go beside the
 // upload (on pagehide, the upload named by its hash, no merge pending);
 // `inFlight` what of this very drawing an earlier flush has on its way
-// with keepalive, 'upload', 'put' or 'delete', else null. `budget`: the
+// with keepalive, 'upload', 'put' or 'delete'; 'waits', the group's save
+// is on its way and nothing of it goes now (inkSaver.js's lane); 'resend',
+// that save's PUT goes again, alone; 'reupload', its upload goes again,
+// alone; else null. `budget`: the
 // body bytes keepalive may carry now (the ledger's available('low')).
 // → [{id, send, keepalive}] in the same order. `send`: 'delete'; 'both',
 // the upload and the PUT (side by side when `beside`, else the PUT after
 // the upload's answer); 'put', the PUT alone, beside the upload on its way;
+// 'upload', the upload alone;
 // or null — its DELETE or its PUT is on its way, or its upload is and the
 // PUT cannot go beside it (that flush sends the PUT if the page lives, and
 // the draft journal brings the drawing back if it does not). `keepalive`:
@@ -29,11 +33,14 @@
 export function planFlush(groups, budget) {
   let left = budget;
   return groups.map((g) => {
-    const send = g.remove ? (g.inFlight === "delete" ? null : "delete")
-      : g.inFlight === "put" ? null
-        : g.inFlight === "upload" ? (g.beside ? "put" : null)
-          : "both";
-    const bytes = send === "both" ? g.uploadBytes + g.putBytes : send === "put" ? g.putBytes : 0;
+    const send = g.inFlight === "waits" ? null
+      : g.remove ? (g.inFlight === "delete" ? null : "delete")
+        : g.inFlight === "put" ? null
+          : g.inFlight === "resend" ? "put"
+            : g.inFlight === "reupload" ? "upload"
+              : g.inFlight === "upload" ? (g.beside ? "put" : null)
+                : "both";
+    const bytes = send === "both" ? g.uploadBytes + g.putBytes : send === "put" ? g.putBytes : send === "upload" ? g.uploadBytes : 0;
     const keepalive = send !== null && bytes <= left;
     if (keepalive) left -= bytes;
     return { id: g.id, send, keepalive };

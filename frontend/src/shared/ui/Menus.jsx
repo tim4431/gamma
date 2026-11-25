@@ -360,14 +360,16 @@ const actionRow = (close) => ({ icon, label: lab, title, onClick, danger, disabl
 // plain rows (the composer's folder chip's Add folder…). `up` opens above the trigger, `start` from its left edge.
 // `disabled` greys the trigger out and keeps the menu shut.
 // `ghost` draws the trigger as a `uiBtn ghost` (no frame until hover), for a
-// choice inside a line of text. `listbox(at)` opens a listbox of the
+// choice inside a line of text. `listbox(at)` opens a surface of the
 // caller's own in place of the options, `at` its ContextMenu's placement
 // and dismissal ({x, y, anchorRight, anchorBottom, flipY, onClose,
 // ignoreRef}): a list the options can't be (the task model menu's search
-// over every connection's models), under the same trigger.
+// over every connection's models), under the same trigger; `popup` names
+// what it is for the trigger's aria-haspopup ("listbox", or "dialog" for a
+// panel of several controls: the chat's model chip).
 function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon, iconOnly = false,
   display, heading, sections = [], actions = [], locked = "", names = false, up = false, start = false, disabled = false,
-  ghost = false, listbox = null }) {
+  ghost = false, listbox = null, popup = "listbox" }) {
   const [menu, close, triggerProps, triggerRef] = useDropdown(up, start);
   const id = useId(); // the trigger's: it names the menu
   const say = names ? String : t;
@@ -389,7 +391,7 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
   const choices = (headingId, rows) => (headingId ? <div role="group" aria-labelledby={headingId}>{rows}</div> : rows);
   return (
     <>
-      <button type="button" id={id} aria-haspopup={listbox ? "listbox" : "menu"} aria-expanded={!!menu}
+      <button type="button" id={id} aria-haspopup={listbox ? popup : "menu"} aria-expanded={!!menu}
         className={`uiBtn sm uiSelectBtn ${block ? "block" : ""} ${ghost ? "ghost" : ""} ${TriggerIcon && iconOnly ? "iconSq" : ""}`}
         aria-label={title} title={title} disabled={disabled} {...triggerProps}>
         {TriggerIcon ? (

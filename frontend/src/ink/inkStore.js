@@ -3,7 +3,10 @@
 // here, ahead of (or between) uploads. A draft wins over the block's file
 // until the upload replaces the block's `ink_url` with the draft's; a
 // remote change of `ink_url` on a block with no unsaved strokes drops the
-// draft. A draft remembers its BASE, the file its strokes were edited
+// draft, once the page's tree has applied this tab's own last save of it
+// (its answer can come before its echo: setTreeApplied). A file that fails
+// to load is fetched again after a while (failures, below), and the group
+// keeps the drawing it showed meanwhile. A draft remembers its BASE, the file its strokes were edited
 // from, and that file's stroke ids: the save sends both along, so the
 // server merges these strokes into a drawing someone else changed
 // meanwhile instead of replacing it, by id even when the base file is gone
@@ -16,13 +19,14 @@
 // and a page open restores what a closed tab left unsaved — never a stroke
 // the server deleted since. Plain module state with a version counter —
 // React subscribes through useInkVersion (ink/InkLayer.jsx).
+import { retryableStatus } from "../collaboration/collabSession.js";
 import { API, apiJson, getCurrentWorkspace, sha256 } from "../shared/lib/utils";
 import { loadedInk, mergeInk, sameStroke, serializeInk } from "./ink.js";
 import * as journal from "./inkJournal.js";
 
 const files = new Map();     // url → ink | null (null: fetch failed)
 const loading = new Map();   // url → Promise
-const drafts = new Map();    // block id → {ink, dirty, url, base, baseIds, sent}
+const drafts = new Map();    // block id → {ink, dirty, url, base, baseIds, sent, savedAt, gen}
 const shown = new Map();     // block id → the drawing inkFor last gave for it (a reload adopts from it)
 const blockUrls = new Map(); // block id → its ink_url as inkFor was last asked (a restore reads it after its awaits)
 const listeners = new Set();
@@ -64,8 +68,14 @@ export function adoptStrokes(ink, known) {
 }
 
 // A stored file fetched by its `/api/uploads/…` URL (ink.js loadedInk
-// makes it a drawing).
-const fetchUpload = (url) => apiJson(`${API}${url.replace(/^\/api/, "")}`);
+// makes it a drawing), given up after FETCH_TIMEOUT_MS: a half-open
+// connection never answers, and a stroke may wait for this file.
+const FETCH_TIMEOUT_MS = 60000;
+function fetchUpload(url) {
+  const ctl = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS) : 0;
+  return apiJson(`${API}${url.replace(/^\/api/, "")}`, ctl ? { signal: ctl.signal } : {}).finally(() => clearTimeout(timer));
+}
 
 // `known()` (optional): the drawing the file replaces on screen, asked
 // when the file arrives, for adoptStrokes.
@@ -78,12 +88,74 @@ export function loadInk(url, known = null) {
       const file = loadedInk(ink);
       const before = file && typeof known === "function" ? known() : null;
       files.set(url, before ? adoptStrokes(file, before) : file);
+      failures.delete(url);
+      const waiting = file ? waiters.get(url) : null;
+      waiters.delete(url);
+      for (const fn of waiting || []) fn(files.get(url));
       return files.get(url);
     })
-    .catch(() => { files.set(url, null); return null; })
+    .catch((err) => { files.set(url, null); failed(url, err?.status || 0); return null; })
     .finally(() => { loading.delete(url); bump(); });
   loading.set(url, p);
   return p;
+}
+// Where a file stands here: 'loaded', 'loading', 'failed' (its fetch
+// failed; another is due later), 'gone' (failed with no more tries: a 404
+// three times, a 401 or 403) or 'unknown' (never asked for).
+export function fileState(url) {
+  if (loading.has(url)) return "loading";
+  if (!files.has(url)) return "unknown";
+  if (files.get(url)) return "loaded";
+  return Number.isFinite(failures.get(url)?.due) ? "failed" : "gone";
+}
+// The loaded drawing of a file, else null.
+export const fileOf = (url) => files.get(url) || null;
+
+// A fetch that failed is asked again later, not cached as missing for the
+// tab's life: a network blip, a server restarting, or a file whose upload
+// is still on its way (a peer's pagehide PUT went beside its upload). After
+// RETRY_MS, doubling to MAX_RETRY_MS, for what a retry may get past; a 404
+// FETCH_404_TRIES times (a file that is gone stays gone); never a 401 or
+// 403. One timer serves every failed url: it forgets the due ones (inkFor
+// fetches them again as it is next asked; a merged file a save is waiting
+// for is fetched here, waitLoad) and bumps once.
+const RETRY_MS = 2000;
+const MAX_RETRY_MS = 30000;
+const FETCH_404_TRIES = 3;
+const failures = new Map();   // url → {tries, due}
+const waiters = new Map();    // url → [fn]: called with the drawing once a later fetch loads it
+let retryTimer = 0;
+function failed(url, status) {
+  const tries = (failures.get(url)?.tries || 0) + 1;
+  const again = status === 404 ? tries < FETCH_404_TRIES : status !== 401 && status !== 403 && retryableStatus(status);
+  if (!again) { failures.set(url, { tries, due: Infinity }); waiters.delete(url); return; }
+  failures.set(url, { tries, due: Date.now() + Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** (tries - 1)) });
+  armRetry();
+}
+function armRetry() {
+  clearTimeout(retryTimer);
+  const next = Math.min(...[...failures.values()].map((f) => f.due));
+  if (!Number.isFinite(next)) { retryTimer = 0; return; }
+  retryTimer = setTimeout(() => {
+    retryTimer = 0;
+    const now = Date.now();
+    let forgot = false;
+    for (const [url, f] of failures) {
+      if (files.get(url)) { failures.delete(url); continue; }   // stored here meanwhile (a save of this tab's)
+      if (f.due > now || loading.has(url)) continue;
+      files.delete(url);
+      failures.set(url, { ...f, due: Infinity });   // the next fetch's failure sets the next try
+      forgot = true;
+      if (waiters.has(url)) loadInk(url);
+    }
+    armRetry();
+    if (forgot) bump();
+  }, Math.max(0, next - Date.now()));
+}
+// `fn(ink)` once `url` loads by a fetch after this one failed (markSaved's
+// merged file); dropped with nothing when its retries end.
+function waitLoad(url, fn) {
+  if (Number.isFinite(failures.get(url)?.due)) waiters.set(url, [...(waiters.get(url) || []), fn]);
 }
 
 // The strokes to show for a block: its draft, else its file (fetch kicked
@@ -104,8 +176,11 @@ export function inkFor(block, { restore = true } = {}) {
   if (d) {
     // A clean draft another file has replaced goes, but not for a view:
     // its tree is read once and can predate this tab's own save, whose
-    // drawing the draft still is.
-    if (!d.dirty && d.url !== url && restore) { drafts.delete(id); }
+    // drawing the draft still is. Nor while the tree has not applied that
+    // save yet (its answer came before its echo), nor for a tree naming
+    // no file (an overlay re-applying the group's insert): a group that
+    // named a file never names none again.
+    if (!d.dirty && d.url !== url && restore && (url || !d.url) && !behindSave(d)) { drafts.delete(id); }
     else return seen(id, d.ink);
   }
   if (!url) return null;
@@ -117,14 +192,36 @@ function seen(id, ink) {
   return ink;
 }
 // What a layer draws for a block: inkFor's drawing, or — while the file a
-// block now names is on its way (someone saved) — the one it showed last,
-// so a reload never blinks the group out. Edits read inkFor, never this:
-// they must wait for the file they change.
+// block now names is on its way (someone saved), or failed to load and is
+// fetched again later — the one it showed last, so a reload never blinks
+// the group out. Edits read inkFor, never this: they must wait for the
+// file they change.
 export function inkShown(block, opts) {
   const ink = inkFor(block, opts);
   if (ink || !block?.id) return ink;
   const url = block.properties?.ink_url || "";
-  return url && loading.has(url) ? shown.get(block.id) || null : null;
+  return url && (loading.has(url) || files.get(url) === null) ? shown.get(block.id) || null : null;
+}
+
+// The open page's tree, as far as its session has applied it: `fn()` →
+// {pageId, seq} (collabSession.js applied; usePageCollab registers it). A
+// save's answer names the batch's page and seq (markSaved `at`): until the
+// tree holds that seq it may still name the file the save replaced, and
+// the draft stays on screen.
+let treeApplied = null;
+export function setTreeApplied(fn) { treeApplied = fn || null; }
+function behindSave(d) {
+  if (!d?.savedAt || !treeApplied) return false;
+  const tree = treeApplied();
+  return tree?.pageId === d.savedAt.page && tree.seq < d.savedAt.seq;
+}
+// The tree has not applied this tab's last save of the group yet, and that
+// save stored the draft's base as sent (not a merge whose file is the
+// draft's base only once loaded here): the server holds the draft's base
+// while the tree still names an older file.
+export function treeBehind(id) {
+  const d = drafts.get(id);
+  return behindSave(d) && !!d.url && d.url === d.base;
 }
 
 export function draft(id) { return drafts.get(id) || null; }
@@ -138,7 +235,7 @@ export function setDraft(id, ink, base = "", erasing = false) {
   const prev = drafts.get(id);
   drafts.set(id, prev
     ? { ...prev, ink, dirty: true }
-    : { ink, dirty: true, url: "", base, baseIds: base && files.get(base) ? strokeIds(files.get(base)) : [], sent: [] });
+    : { ink, dirty: true, url: "", base, baseIds: base && files.get(base) ? strokeIds(files.get(base)) : [], sent: [], savedAt: null, gen: 0 });
   nameLater(ink);
   if (erasing) journalLater(id); else journalWrite(id);
   bump();
@@ -174,20 +271,27 @@ function nameLater(ink) {
 // the same file, or — another writer changed the drawing meanwhile — the
 // server's merge of both. Strokes added meanwhile keep the draft dirty,
 // based on `url`, the file they were drawn onto; once the merged file is
-// here it replaces the draft, with those strokes merged onto it. The PUTs
-// sent before this one are answered by it (their strokes are in `url`).
-export function markSaved(id, ink, url, stored = url) {
+// here it replaces the draft, with those strokes merged onto it (fetched
+// again after a failure, while the draft still names it and no later save
+// has been answered). The PUTs sent before this one are answered by it
+// (their strokes are in `url`). `at` {page, seq}: the batch the answer
+// names, which the draft stays on screen until the tree has applied
+// (inkFor); null from a server that does not say.
+export function markSaved(id, ink, url, stored = url, at = null) {
   const d = drafts.get(id);
   if (!d) return;
   files.set(url, ink);
-  const sent = d.sent || [], at = sent.indexOf(url);
-  drafts.set(id, { ...d, url: stored, base: url, baseIds: strokeIds(ink), dirty: d.ink !== ink, sent: at < 0 ? sent : sent.slice(at + 1) });
+  failures.delete(url);
+  const sent = d.sent || [], i = sent.indexOf(url), gen = (d.gen || 0) + 1;
+  drafts.set(id, { ...d, url: stored, base: url, baseIds: strokeIds(ink), dirty: d.ink !== ink, sent: i < 0 ? sent : sent.slice(i + 1),
+    savedAt: at, gen });
   if (d.ink === ink) journalDrop(id); else journalWrite(id);
   bump();
   if (stored === url) return;
-  loadInk(stored).then((loaded) => {
+  const adopt = (loaded) => {
     const cur = drafts.get(id);
-    if (!loaded || !cur || cur.url !== stored) return;
+    if (!cur || cur.url !== stored || cur.gen !== gen) return;
+    if (!loaded) { if (fileState(stored) === "failed") waitLoad(stored, adopt); return; }
     const merged = adoptStrokes(loaded, cur.ink);
     files.set(stored, merged);
     const drawn = cur.ink !== ink;   // strokes added meanwhile, merged onto the merged file
@@ -195,7 +299,8 @@ export function markSaved(id, ink, url, stored = url) {
       baseIds: strokeIds(merged) });
     if (drawn) journalWrite(id);
     bump();
-  });
+  };
+  loadInk(stored).then(adopt);
 }
 // The block's PUT naming `url`, the upload of the draft as it is or was,
 // is about to go. Until its answer comes (markSaved) or says it did not
@@ -236,14 +341,29 @@ export function markDeleted(id, ink, url) {
     journalDrop(id);
   }
 }
+// A group whose DELETE has gone (inkSaver.js): while its block is still on
+// the page (until the deletion's echo), a stroke starts a new group rather
+// than join one the deletion takes away (useInkStrokes.js), and an undo
+// that would fill it waits (useInkDocument.js). Unmarked when the DELETE
+// is known not to have landed, and by dropDraft.
+const deleting = new Set();
+export function markDeleting(id) { deleting.add(id); }
+export function unmarkDeleting(id) { deleting.delete(id); }
+export const isDeleting = (id) => deleting.has(id);
 // A block that comes back into the tree after its deletion (an undo of an
 // erasure, a cut, a merge) is a fresh block: its next draft starts from no
 // base. Left in place, the deleted draft's base (the old file) would make
 // the server merge the re-upload three ways against the new block's empty
-// drawing, and the strokes brought back would count as deleted there.
+// drawing, and the strokes brought back would count as deleted there. Its
+// listeners (onDropDraft: the saver, which forgets a PUT it owed the old
+// block) hear of it.
+const dropListeners = new Set();
+export function onDropDraft(fn) { dropListeners.add(fn); return () => dropListeners.delete(fn); }
 export function dropDraft(id) {
   drafts.delete(id);
+  deleting.delete(id);
   journalDrop(id);
+  for (const fn of dropListeners) fn(id);
 }
 // `upload`: the draft's bytes and name when they are worked out already
 // (nameLater), else null.
@@ -432,9 +552,14 @@ async function restore(block, { key, entry }) {
   // its save uploads it again. A block that names no file took none of
   // those PUTs, since one that lands names a file and nothing names none
   // again: they did not land (a group's first PUT that reached the server
-  // before the group's insert, answered 404 after its tab was gone).
+  // before the group's insert, answered 404 after its tab was gone). Nor
+  // did they when the block still names the entry's own base: a PUT that
+  // lands names its upload, and the base is not named again (but by a
+  // byte-identical revert). The upload may be stored all the same (the
+  // close cut the PUT off after it), and counting from it would take the
+  // strokes it added for strokes the server deleted.
   let baseUrl = entry?.base || "", base = null;
-  if (!lost) {
+  if (!lost && url !== baseUrl) {
     for (const sent of url && Array.isArray(entry?.sent) ? [...entry.sent].reverse() : []) {
       if (typeof sent !== "string" || !sent) continue;
       if (sent === url) { baseUrl = url; break; }

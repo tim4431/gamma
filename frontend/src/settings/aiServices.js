@@ -28,7 +28,7 @@ export const SIGN_INS = {
     paste: "address",
   },
   "gemini-signin": {
-    title: t("Sign in with Google"), billed: t("No API key — usage counts against your account's Gemini CLI quota."),
+    title: t("Sign in with Google"), billed: t("No API key — usage counts against your organization's Gemini Code Assist license."),
     open: t("Open Google sign-in"), reopen: t("Re-open Google sign-in"), plan: t("Google account"),
     unstarted: t("Open Google sign-in first."), unfinished: t("Finish the sign-in first, or paste the code Google shows."),
     paste: "code",

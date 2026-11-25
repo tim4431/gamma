@@ -152,9 +152,24 @@ def workspaces_of(account: dict) -> list[dict]:
         if ws in on_disk and (root / "pages.db").is_file():
             found.append({"id": ws, "name": name or "Workspace", "personal": kind == "personal",
                           "owner": owners.get(ws, ""),
-                          "size": sum(f.stat().st_size for f in root.rglob("*") if f.is_file())})
+                          "size": _size(root)})
     shared = sorted((w for w in found if not w["personal"]), key=lambda w: w["name"].lower())
     return [w for w in found if w["personal"]] + shared
+
+
+def _size(root: Path) -> int:
+    """The bytes under a workspace's directory. A copy being made opens and
+    closes its pages.db meanwhile, and SQLite deletes pages.db-wal on the
+    close, which may be after the listing named it: a file gone by its
+    turn counts as nothing."""
+    total = 0
+    for f in root.rglob("*"):
+        try:
+            if f.is_file():
+                total += f.stat().st_size
+        except FileNotFoundError:
+            continue
+    return total
 
 
 # --- an admin's copy -----------------------------------------------------------------------

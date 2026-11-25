@@ -7,7 +7,7 @@
 // `ActorAvatar` whoever wrote or did something, either one.
 import React, { useLayoutEffect, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
-import { agentKindIcon } from "../chat/AgentChip";
+import { agentKindIcon } from "../chat/AgentPicker";
 import { renderedCaretRect } from "../editor/clickToSource";
 import { scanMathSpans } from "../editor/mdScan";
 import { personColor } from "./personColor.js";

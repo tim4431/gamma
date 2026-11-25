@@ -10,8 +10,11 @@ import { wantsSheetAfter } from "../notebook/notebook.js";
 import { t, T } from "../shared/i18n/i18n.js";
 import { makeId } from "../shared/lib/utils";
 import { appendStroke, appendStrokes, strokeBounds, strokeBytes } from "./ink.js";
-import { currentGroup, freshInk, pasteTooBig, splitsGroup } from "./inkEdits.js";
+import { currentGroup, pasteTooBig, pickGroup } from "./inkEdits.js";
 import * as inkStore from "./inkStore";
+
+// How long a stroke waits for its group's file (readyFor).
+const READY_WAIT_MS = 3000;
 
 // focusedBlockId: the open page; leaving it, the next stroke starts a
 // fresh group. readOnly, and inkStale (the build fence, buildFence.js):
@@ -26,31 +29,53 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
   applyInk, addSheetAfter, noteSqueezeUse, undoableInkStatus, setStatus, closedGroup = () => false }) {
   // The group the next stroke on a surface joins ({page, id}).
   const inkActiveRef = useRef(null);
+  // The open page as it is now, for a stroke that waited (readyFor).
+  const focusedRef = useRef(focusedBlockId);
+  focusedRef.current = focusedBlockId;
   // Leaving a page: the next stroke starts a fresh group.
   useEffect(() => () => { inkActiveRef.current = null; }, [focusedBlockId]);
+  // A group with a comment thread takes no more strokes, nor does one whose
+  // empty-group DELETE has gone while its block is still on the page
+  // (inkStore.isDeleting): the deletion would take the stroke with it.
+  const closed = (id) => closedGroup(id) || inkStore.isDeleting(id);
+  // Waits for the file of the surface's current group when no draft holds
+  // it yet and it is on its way or not asked for (someone saved the group
+  // meanwhile), so the strokes join it rather than start another — for
+  // READY_WAIT_MS at most, so a slow or hung fetch never holds a stroke. A
+  // file that failed, or has not come by then, is not waited for: groupFor
+  // passes the group over.
+  async function readyFor(page) {
+    const g = currentGroup(inkActiveRef.current, page, blocksRef.current, closed);
+    const url = g?.properties.ink_url;
+    if (!g || inkStore.draft(g.id) || !url) return;
+    const state = inkStore.fileState(url);
+    if (state !== "unknown" && state !== "loading") return;
+    let timer = 0;
+    await Promise.race([inkStore.loadInk(url), new Promise((resolve) => { timer = setTimeout(resolve, READY_WAIT_MS); })]);
+    clearTimeout(timer);
+  }
   // The group `count` strokes of `bytes` join on `page` (`size` its
-  // {width, height} in points), with its strokes so far: the surface's
-  // current group while its block is on the page and it has no comment
-  // thread (inkEdits.js currentGroup), else a new one. Its strokes are its
-  // draft, else its file (loaded first — a stroke must never replace
-  // strokes that just have not arrived yet), else a fresh file. A group
-  // past the split budget (or full of strokes) is left as it is: the
-  // strokes start the page's next group, invisibly (inkEdits.js
-  // splitsGroup). → {id, before}.
-  async function groupFor(page, size, bytes, count) {
-    const existing = currentGroup(inkActiveRef.current, page, blocksRef.current, closedGroup);
-    let id = existing ? existing.id : makeId();
-    inkActiveRef.current = { page, id };
-    const loaded = !inkStore.draft(id) && existing?.properties.ink_url
-      ? await inkStore.loadInk(existing.properties.ink_url) : null;
-    const fresh = () => freshInk(page, size);
-    let before = inkStore.draft(id)?.ink || loaded || fresh();
-    if (splitsGroup(before, bytes, count)) {
-      id = makeId();
-      inkActiveRef.current = { page, id };
-      before = fresh();
-    }
-    return { id, before };
+  // {width, height} in points), with its strokes so far (inkEdits.js
+  // pickGroup): the surface's current group while its block is on the page
+  // and it is not closed, its draft, else its loaded file; else a new
+  // group — a stroke never replaces strokes that have not arrived, and a
+  // group past the split budget (or full of strokes) is left as it is: the
+  // strokes start the page's next group, invisibly. Called in the same run
+  // as the edit it feeds (no await between them), so strokes that waited
+  // for one file each land on the draft the one before made. → {id, before}.
+  function groupFor(page, size, bytes, count) {
+    const picked = pickGroup(inkActiveRef.current, page, size, bytes, count, { blocks: blocksRef.current, closed,
+      draftOf: inkStore.draft, fileOf: inkStore.fileOf, makeId });
+    inkActiveRef.current = { page, id: picked.id };
+    return picked;
+  }
+  // The group's file ready (readyFor); → false when the page changed while
+  // it waited, which leaves the strokes no page to land on. The caller then
+  // reads its group (groupFor) and applies in one run.
+  async function landed(page) {
+    const pageNow = focusedRef.current;
+    await readyFor(page);
+    return focusedRef.current === pageNow;
   }
   // `page`: a PDF page number, or a notebook sheet's id; `label` the
   // history entry's (the layer's finishStroke names a straight line or a
@@ -59,7 +84,8 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
     if (readOnly || !focusedBlockId || inkStale) return;
     // a stroke drawn while a squeeze holds its tool makes that squeeze no toggle
     noteSqueezeUse();
-    const { id, before } = await groupFor(page, size, strokeBytes(stroke), 1);
+    if (!(await landed(page))) return;
+    const { id, before } = groupFor(page, size, strokeBytes(stroke), 1);
     applyInk([{ id, page, before, after: appendStroke(before, stroke) }], { label });
     if (typeof page === "string") {
       // Writing into the last quarter of the page's last sheet adds the next
@@ -81,7 +107,8 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
       setStatus(t("Too much handwriting to paste into one note."));
       return null;
     }
-    const { id, before } = await groupFor(page, size, strokes.reduce((n, s) => n + strokeBytes(s), 0), strokes.length);
+    if (!(await landed(page))) return null;
+    const { id, before } = groupFor(page, size, strokes.reduce((n, s) => n + strokeBytes(s), 0), strokes.length);
     const { ink: after, ids } = appendStrokes(before, strokes);
     return applyInk([{ id, page, before, after }], { label, link }) ? { id, ids } : null;
   }

@@ -198,6 +198,10 @@ export async function textAnchorScenarios(env) {
     const openJsonWhen = (ready, what) => until(() => {
       try { const d = openJson(); return ready(d) ? d : null; } catch { return null; }
     }, { timeout: 10000, what });
+    // open.md likewise: the pass writes it after open.json, so open.json ready says nothing of it yet
+    const openMdWhen = (ready, what) => until(() => {
+      try { const md = openMd(); return ready(md) ? md : null; } catch { return null; }
+    }, { timeout: 10000, what });
 
     let main = null, hash1 = "";
     await step("text anchors: the work folder tracks main.tex, whose page opens in the code view", async () => {
@@ -306,7 +310,7 @@ export async function textAnchorScenarios(env) {
         assertEq(JSON.stringify([entry.source?.file, entry.source?.line, entry.source?.version]), JSON.stringify(["main.tex", 17, "current"]),
           "the file's own line is its source");
         assertEq(entry.picture, null, "no picture of a text file");
-        assert(openMd().includes(`Line 17 · “${needle}”`), "open.md heads it by its line");
+        await openMdWhen((md) => md.includes(`Line 17 · “${needle}”`), "open.md heading it by its line");
         assertNoProblems(page);
       } finally { await ctx.close(); }
     });
@@ -425,9 +429,8 @@ export async function textAnchorScenarios(env) {
         }
       }
       assertEq(entryOf(first.thread).where.line, 20, "the first thread at its new line");
-      const md = openMd();
-      assert(md.includes("- was: “"), "open.md says what a rough one was");
-      assert(md.includes("not found in the current version"), "and that a lost one is not found");
+      await openMdWhen((md) => md.includes("- was: “") && md.includes("not found in the current version"),
+        "open.md saying what a rough one was and that a lost one is not found");
     });
 
     await step("text anchors: a lost range takes its closest match from its menu, dashed at the new sentence, and Accept makes it solid", async () => {
