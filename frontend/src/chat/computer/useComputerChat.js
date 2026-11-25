@@ -18,6 +18,7 @@ import { askShellWatching } from "../../vault/useVault.js";
 import { stripFacts } from "../agents.js";
 import { readLocalAgents } from "../useLocalAgents.js";
 import { refreshSkills } from "../useSkills.js";
+import { effortKnob, speedKnob } from "../ModelChip.jsx";
 import { noteDirUsed, usedDirs } from "./usedDirs.js";
 import {
   AWAY_POLL_MS, POLL_MS, SOURCES_MAX, TEXT_MAX, answerBody, askPath, awayFrom, canSend, chatPath, emptyLine, isRemote,
@@ -327,8 +328,8 @@ const places = new Map();
 //               go now
 //   steering    the turn a queued message's Steer goes to: the one whose
 //               agent works now, "" for none (computerChat.js steeringTurn)
-//   chip        the model chip's props (chat/AgentChip.jsx: label, text,
-//               speed, models, model, onModel, sections): the agent's
+//   chip        the model chip's props (chat/ModelChip.jsx: label, text,
+//               speed, models, model, onModel, knobs): the agent's
 //               models, efforts and speeds, the choice the conversation's
 //   grants      the Allowed in this chat chip's props (GrantChip), null
 //               while nothing is allowed
@@ -448,8 +449,8 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], here =
       : shown ? t("This conversation is no longer one you can read.")
         : emptyLine(info, label, where, place, page), again: false } : null;
 
-  // The composer's model chip (chat/AgentChip.jsx): the agent's models, and
-  // the model's efforts and speeds as sections (each Default naming the
+  // The composer's model chip (chat/ModelChip.jsx): the agent's models, and
+  // the model's efforts and speeds as its knobs (each Default naming the
   // agent's own where it says: a Codex set up for priority runs Fast
   // unless Standard is picked), the choice the conversation's; `speed`
   // the one chosen, which ChatDock draws as Gamma AI's glyph.
@@ -460,17 +461,11 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], here =
     label: t("{agent}'s model", { agent: label }), text: modelDisplay(choice), speed: choice.speed,
     models: models.map((m) => [m.id, m.label || m.id]), model: choice.model || choice.shown?.id || "",
     onModel: (model) => pick({ model }),
-    sections: [
-      ...(efforts.length ? [{
-        label: t("Reasoning effort"), value: choice.effort, onChange: (effort) => pick({ effort }),
-        options: [["", choice.shown.effort ? t("Default ({effort})", { effort: choice.shown.effort }) : t("Default")],
-          ...efforts.map((ef) => [ef, ef])],
-      }] : []),
-      ...(speeds.length ? [{
-        label: t("Speed"), value: choice.speed, onChange: (speed) => pick({ speed }),
-        options: [["", choice.shown.speed ? t("Default ({speed})", { speed: choice.shown.speed }) : t("Default")],
-          ...speeds.map((tier) => [tier, tier])],
-      }] : []),
+    knobs: [
+      ...(efforts.length ? [effortKnob(choice.effort, (effort) => pick({ effort }), efforts,
+        choice.shown.effort ? t("Default ({effort})", { effort: choice.shown.effort }) : t("Default"))] : []),
+      ...(speeds.length ? [speedKnob(choice.speed, (speed) => pick({ speed }), speeds,
+        choice.shown.speed ? t("Default ({speed})", { speed: choice.shown.speed }) : t("Default"))] : []),
     ],
   };
   // The commands allowed in this chat (Gamma AI's GrantChip), null for none.

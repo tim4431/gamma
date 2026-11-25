@@ -446,8 +446,8 @@ export function workPlace(info, conversation, dirs = [], picked = null, used = [
   return { pick, value, options: known ? options : [...options, [value, text]], text };
 }
 
-// The composer chip's hint on an agent of its menu that cannot answer now
-// (chat/AgentChip.jsx): {text, problem, title}, "offline" for another
+// The agent picker's hint on an agent of its menu that cannot answer now
+// (chat/AgentPicker.jsx): {text, problem, title}, "offline" for another
 // computer that is away, "not ready" (amber: `problem`) for an agent with a
 // problem, the whole of it as the row's title; null for one that can. The
 // row stays pickable: the chat then says why.

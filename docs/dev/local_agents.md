@@ -998,9 +998,9 @@ steps").
   `default` entry), `--effort` and the `fastMode` setting (`true` for
   fast, `false` for standard) in its one `--settings`, beside a turn
   with ask's rule, which `--restricted` would not read from the person's
-  settings. The agent's message records them. The composer's chip
-  (`chat/AgentChip.jsx`, Gamma AI's) lists the agent's models, and the
-  model's efforts and speeds and where it works as sections
+  settings. The agent's message records them. The composer's model chip
+  (`chat/ModelChip.jsx`, Gamma AI's) lists the agent's models in its
+  panel, and the model's efforts and speeds as its knobs
   (`useComputerSide`'s `chip`), each Default naming the model's own
   where the agent says (*Default (fast)*), the speed chosen drawn as
   Gamma AI's glyph; the choice is the conversation's.
@@ -1977,18 +1977,19 @@ nobody else learns it exists), 403 for a token or the guest
 - **The picker.** App passes the list to ChatDock (`agents`, with this
   computer's listing as `localAgents`: the offered directories, and the
   agents found that the setup card offers, each tile led by its agent's
-  icon). The composer's chip (`chat/AgentChip.jsx`,
-  a `MenuSelect`) lists the agents first, by their icon and where they
-  run ("Codex", "Codex on TIM-PC"), a muted "offline" after another
-  computer that is away and an amber "not ready" after one with a problem
+  icon). The chat header's agent picker (`chat/AgentPicker.jsx`, a
+  `MenuSelect` pill before the header's buttons, reading "Codex on
+  TIM-PC") lists the agents by their icon and where they run ("Codex",
+  "Codex on TIM-PC"), a muted "offline" after another computer that is
+  away and an amber "not ready" after one with a problem
   (`computerChat.agentHint`, the sentence the row's title; still
-  pickable), then the picked one's models and
-  efforts and speeds (Gamma AI's and the computer agent's model's); where a computer's agent works outside a
-  synced folder is the bar's folder chip (below, "The strip"), in every
-  bucket: a page, a folder, the library. The chip reads the agent, then its model and effort ("Codex on
-  TIM-PC · GPT-5.5 · high", the model ellipsized first, a speed chosen its
-  glyph after them), named "Agent, model and reasoning effort" (with a
-  speed, "Agent, model, reasoning effort and speed (fast)"). A viewer has Gamma AI alone. The agent shown is the bucket's
+  pickable), then Manage agents…. The composer's model chip
+  (`chat/ModelChip.jsx`) is the picked one's models, efforts and speeds
+  (Gamma AI's and the computer agent's model's), reading "GPT-5.5 · high"
+  with a speed chosen its glyph after it; where a computer's agent works
+  outside a synced folder is the bar's folder chip (below, "The strip"),
+  in every bucket: a page, a folder, the library. A viewer has Gamma AI
+  alone, and no picker. The agent shown is the bucket's
   pick for the tab's life (`chatSide.js` `useChatAgent`, beside
   `showInChat`, which the Background tasks rows and a thread's *Open in
   chat* call, so the first screen does not load the side's state), else
@@ -2151,7 +2152,7 @@ nobody else learns it exists), 403 for a token or the guest
   deleted; opening it takes that agent on again), and each agent's current conversation while another
   agent is shown (Gamma AI's, or the computer's `active`), which picking
   that agent shows. Each row leads with its agent's icon while the chat
-  has several agents (`AgentChip.agentIcon`). A row opens with its agent
+  has several agents (`AgentPicker.agentIcon`). A row opens with its agent
   picked: Gamma AI's swaps with its current one, a computer agent's is
   opened (`POST /chat/history/{id}/open`), and while that agent's turn is
   to end its rows are greyed and titled "Stop Codex or wait for it to

@@ -203,8 +203,8 @@ sync never copies it, and only the two writes below change it:
   own `""` is the first model offered, the account's own before the
   server's.
 - **`favorites`**: the chat models, at most 50: the models the chat's
-  chip offers beside the one in use, which Settings → AI → Models lists
-  as Chat models ("The model menu").
+  chip lists first, which Settings → AI → Models lists as Chat models
+  ("The model menu").
 - **`chat_migrated`**: the chat pick is still the one migration step 71
   wrote from the old one-connection pref, `ai-provider` (that entry's first
   model).
@@ -347,13 +347,14 @@ add a connection."
 
 ### The model menu
 
-`ai/ModelMenu.jsx` is the one model menu: `ModelMenuList` (the open menu,
-for the chat's chip) and `TaskModelMenu` (a task's row in Settings → AI →
-Models, and "Translate with" in Settings → Language & translation, the same
-`translate` task). `TaskModelMenu` is a `MenuSelect` that opens
-`ModelMenuList` through its `listbox` slot (`shared/ui/Menus.jsx`). Its
-groups, in order (`menuGroups` in `ai/modelMenu.js`,
-`tests/modelMenu.test.mjs`):
+`ai/ModelMenu.jsx` is the one model menu: `ModelPicker` (its search box
+and list, on a surface of the caller's: the chat's model panel),
+`ModelMenuList` (the two in a `ContextMenu`, the open menu) and
+`TaskModelMenu` (a task's row in Settings → AI → Models, and "Translate
+with" in Settings → Language & translation, the same `translate` task).
+`TaskModelMenu` is a `MenuSelect` that opens `ModelMenuList` through its
+`listbox` slot (`shared/ui/Menus.jsx`). Its groups, in order (`menuGroups`
+in `ai/modelMenu.js`, `tests/modelMenu.test.mjs`):
 
 - the current pick when it is no longer offered, marked unavailable;
 - a task's "Use chat model (X)" ("Default: Microsoft (free)" for
@@ -361,13 +362,15 @@ groups, in order (`menuGroups` in `ai/modelMenu.js`,
 - the chat models (the favorites), in the order they were added, under
   "Chat models" (one no longer offered stays, so its star can come off);
 - one group per connection, in the registry's order, under its logo and
-  named with its billing tag;
+  named with its billing tag (a favorite in it too, unless `once`: the
+  chat's panel lists each model once, a favorite in the chat models alone);
 - for translation, the services.
 
 A search box filters every group by each word typed (the model, its
 connection, its id; `matchesWords` in `modelMenu.js`, the one filter the
 connect dialog's searches use too). The focus stays in it: the arrow keys move through the
-rows, Enter picks, Escape closes. A row shows a "no tools" tag (the model's
+rows, Enter picks, Escape closes. Opened by a finger's press it takes no
+focus (`touchTyping`), so no on-screen keyboard covers the list. A row shows a "no tools" tag (the model's
 own check, its reason on hover), for the handwriting task "can't convert to
 text" on a model that sees no pictures (Redraw as shapes still works with
 it), an eye for pictures, the context window ("200k") and, on a connection
@@ -388,22 +391,39 @@ starts its fetch for the next read; `price` only for billing `api`). No
 model name or price is written in the code, and an unknown fact is left
 out.
 
-The chat's model chip (`AgentChip`) lists the model in use, then the chat
-models, each with its connection, so switching between them is one click;
-"All models…" opens the menu above the chip for any other. Naming the
-model alone (no other agent leading it), the chip starts with the logo of
-the model's connection, where one is drawn. A pick there sets the
-account's chat model, so every device follows. Agent selection, effort
-and speed are as before.
-
 Settings → AI → Models has a **Chat models** row under Chat (`ChatModels`
-in `ai/ModelMenu.jsx`), which builds that list. Each model is a chip with
-its connection's logo and a remove button. One no longer offered stays,
+in `ai/ModelMenu.jsx`): the models the chat's model chip lists first.
+Each model is a chip with its connection's logo and a remove button. One no longer offered stays,
 marked unavailable, until it is removed. "Add model…" opens the model
 menu: a pick adds the model and closes the menu, and a star adds or
 removes a model and leaves the menu open. Both writes are
 `favorites_add` / `favorites_remove` ("Models for each task"). The Chat
 row above it is still the one model a new chat starts with.
+
+### The model chip
+
+The composer's model chip (`chat/ModelChip.jsx`) reads the model and its
+effort ("GPT-5 · high"), led by the logo of the model's connection where
+one is drawn and followed by the speed's glyph. A press opens one panel
+above it (a `MenuSelect` whose `listbox` slot is the panel, `popup`
+"dialog"), in three bands:
+
+- **the models**: for Gamma AI the model menu's `ModelPicker` with `once`:
+  the search box, the chat models first, each with its connection, then
+  every connection's others, a star adding one to the chat models; for a
+  computer's agent its own models, a row each. A pick sets the account's
+  chat model (Gamma AI's, so every device follows) and closes the panel;
+- **the knobs** the picked model takes, each a heading over a `Segmented`
+  as wide as the panel: Reasoning effort (Default, then the model's
+  levels) and Speed (Default, then the tiers its provider sells, each with
+  its glyph). A computer agent's Default names its own ("Default (high)").
+  A knob changed leaves the panel open, so effort and speed are set in one
+  visit; a model without levels or tiers has no such band
+  (`effortKnob` / `speedKnob` build both sides' knobs);
+- **Manage models…** (Gamma AI's): Settings → AI → Models.
+
+Who answers is not the chip's: that is the header's agent picker ("The
+picker").
 
 ### Other services
 
@@ -1313,7 +1333,7 @@ lowest first, looked up live like its context window
 `supported_reasoning_levels`), else models.dev's `reasoning_options`
 (`{type: "effort", values}`; a model that doesn't reason or only takes a
 token budget has none). `[]` means the model has no effort control: the
-chip's menu drops its effort section and nothing is sent. A model no source
+chip's panel drops its effort knob and nothing is sent. A model no source
 knows gets `/api/ai/models`' generic `efforts` (low / medium / high). The
 preference itself never changes with the model: `effortFor` in
 `chat/modelPrefs.js` sends it as it is when the model takes it, else the
@@ -1329,7 +1349,7 @@ effort, speed, tools}}` line (after `{context}`) is saved on the reply as
 `model`, `effort` and `speed`. A chat whose model can't call tools carries
 `tools_off` there too, the reason, saved as `toolsOff` ("Models that can't
 call tools"). The reply's foot shows "gpt-5.5 · high" before the
-token line, with the speed as its glyph (`SPEED_ICONS` in `chat/ChatDock.jsx`
+token line, with the speed as its glyph (`SPEED_ICONS` in `chat/ChatTranscript.jsx`
 — a bolt for `fast`, a clock for `flex`, nothing for the usual routing; the
 tooltip names the tier, since the glyph carries no text). The line comes a
 second time, corrected, when the provider's report says the turn ran at
@@ -1363,7 +1383,7 @@ spelling:
 (`ai_catalog.speed_tiers`): the entry's own listing first (the Codex
 backend's `service_tiers`, `[{id, name}]` — source `"provider"`), else what
 the wire itself can ask for (`"protocol"`). `[]` means no speed control and
-the chip's menu drops its Speed section. Anthropic's listing carries no
+the chip's panel drops its Speed knob. Anthropic's listing carries no
 speed facts, so its answer is wire-wide: fast mode is offered for every
 model that endpoint serves. A model that doesn't take it (fast mode is the
 Opus line only) is refused upstream with the provider's own message; the
@@ -1486,31 +1506,30 @@ model's window when the window fit shrank the budget (`budget` below
 
 ### The picker
 
-The chat talks to one agent at a time, picked in the composer's model chip
-(`chat/AgentChip.jsx`): Gamma AI, and the agents of the account's
-computers (`chat/agents.js` `chatAgents`: Codex and Claude Code this
-computer runs that the account turned on in Settings → AI → Local agents, and
-each agent on of each of the account's other computers shown to the
-server, "Codex on TIM-PC", one entry per computer, those that keep the
-page's work folder first, an offline one's listed offline). With more than one, the chip's menu lists them first,
-each by its icon, then the picked one's models and reasoning effort
-(Gamma AI's speed too): who, then how. Gamma AI's models there are the
-favorites and the one in use, with "All models…" for the rest ("The model
-menu"). Where a computer's agent works is
-the folder chip at the bar's other end (local_agents.md "The chat's
-computer side"). A row of an agent that cannot answer now ends in a
-hint (`computerChat.agentHint`, a `MenuSelect` option's `trailing`): a
-muted "offline" for another computer that is away, an amber "not ready"
-(`.agentProblem`) for one with a problem, the whole sentence its title; it
-stays pickable, and the chat then says why. The chip then reads the agent
-first, "Codex on TIM-PC · GPT-5.5 · high" or "Gamma AI · GPT-5 · high"
-(`agentChoice`, then the model and effort, the model ellipsized first, the
-speed chosen its glyph after them, a computer agent's as Gamma AI's),
-named "Agent, model and reasoning effort"; with Gamma AI alone it is the
-model chip it always was ("GPT-5 · high", "Model, reasoning effort and
-speed"). It is shown in every bucket (a page, a folder, the library) and even when
-Gamma AI is off or unset, as long as there is an agent to pick. A viewer
-of the workspace has Gamma AI alone.
+The chat talks to one agent at a time: Gamma AI, and the agents of the
+account's computers (`chat/agents.js` `chatAgents`: Codex and Claude Code
+this computer runs that the account turned on in Settings → AI → Local
+agents, and each agent on of each of the account's other computers shown
+to the server, "Codex on TIM-PC", one entry per computer, those that keep
+the page's work folder first, an offline one's listed offline). With more
+than one, the chat window's header leads its buttons with the agent
+picker (`chat/AgentPicker.jsx`, `data-guide="chat.agent"`): a frameless
+`MenuSelect` pill naming the one picked by its icon and `agentChoice`
+("Codex on TIM-PC"); in a header narrower than 27rem it is the icon and
+its chevron alone, the name its tooltip, so the window's buttons keep
+their place. Its menu lists the agents, each by its icon, and ends with
+Manage agents… (Settings → AI → Local agents). A row of an agent that
+cannot answer now ends in a hint (`computerChat.agentHint`, a
+`MenuSelect` option's `trailing`): a muted "offline" for another computer
+that is away, an amber "not ready" (`.agentProblem`) for one with a
+problem, the whole sentence its title; it stays pickable, and the chat
+then says why. How the picked agent answers is the composer's model chip
+("The model chip"), and where a computer's agent works is the folder chip
+at the bar's other end (local_agents.md "The chat's computer side"): who
+at the top, how and where by Send. The picker is shown in every bucket (a
+page, a folder, the library) and even when Gamma AI is off or unset, as
+long as there is another agent to pick. A viewer of the workspace has
+Gamma AI alone, and no picker.
 
 The bucket's pick lasts the tab's life (`chat/computer/chatSide.js`
 `useChatAgent`), as a computer agent's model, effort and speed do; a bucket never
@@ -1543,9 +1562,9 @@ failed), and what a row offers comes from the handlers it passes (editing
 a sent message, reporting a reply and reverting a change are Gamma AI's).
 The composer is the same box with what such an agent takes (the message
 and the PDF passages, each noting its source line), its model chip the
-agent's models, efforts and where it works, the strip in the provider
-strip's slot (`ComputerStrip`), and the header Export, Find, History and
-New chat.
+agent's models, efforts and speeds, the folder chip where it works, the
+strip in the provider strip's slot (`ComputerStrip`), and the header the
+agent picker, Export, Find, History and New chat.
 History lists every agent's conversations of the bucket together
 ([chat_history.md](chat_history.md) "Every agent's conversations").
 

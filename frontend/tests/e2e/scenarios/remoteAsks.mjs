@@ -149,13 +149,13 @@ export async function remoteAskScenarios(env) {
       await dock.waitFor();
       return dock;
     };
-    // The chat's Codex side, picked in the composer's chip unless it shows
-    // already (no AI service: the agent is the chat's own).
+    // The chat's Codex side, picked in the header's agent picker unless it
+    // shows already (no AI service: the agent is the chat's own).
     const codexSide = async (page) => {
       const dock = await openChat(page);
-      await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+      await dock.locator(".chatAgentPicker .uiSelectBtn").waitFor();
       if (!(await dock.locator(".computerStrip").count())) {
-        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await dock.locator(".chatAgentPicker .uiSelectBtn").click();
         await page.getByRole("menuitemradio", { name: /^Codex on / }).click();
       }
       await dock.locator(".computerStrip").waitFor();
@@ -411,9 +411,10 @@ export async function remoteAskScenarios(env) {
         await waitForPdf(page, 1);
         await page.getByRole("button", { name: "AI chat", exact: true }).click();
         const dock = page.locator(".phonePanel:not(.phonePanelHidden) .chatPanel");
-        await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+        const picker = page.locator(".phonePanel:not(.phonePanelHidden) .chatAgentPicker .uiSelectBtn");
+        await picker.waitFor();
         if (!(await dock.locator(".computerStrip").count())) {
-          await dock.locator(".chatModelChip .uiSelectBtn").click();
+          await picker.click();
           await page.getByRole("menuitemradio", { name: /^Codex on / }).click();
         }
         await until(async () => (await stripLine(dock)) === `Codex on ${name}`, { what: `the strip names the computer: ${await stripText(dock)}` });
