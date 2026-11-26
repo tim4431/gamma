@@ -6,9 +6,9 @@ formats that cite it split it: the Zotero RDF export into Zotero's two name
 fields (``zotero_export``), RIS into ``Last, First`` and CSL JSON into
 ``family``/``given`` or a ``literal`` (``citations``). One splitter serves
 them all, so a name splits the same way in every file. BibTeX takes the
-string as it is and splits it itself (``bibtex``; an organisation goes in
-braces), and the default citation key reads the last word of the surname
-part (``bibtex.default_key``, ``joined_family``).
+string as it is and splits it itself (``bibtex_names``; an organisation
+goes in braces), and the default citation key reads the last word of the
+surname part (``bibtex_keys.default_key``, ``joined_family``).
 
 A source that keeps a name in two fields (Zotero's first and last name, a
 registry's given and family name) is joined by ``join_name``: "First Last"
@@ -185,10 +185,10 @@ def joined_family(name: str) -> str | None:
     """The surname of a name ``join_name`` writes with a comma ("Pereira
     Campos" of "Pereira Campos, Jorge Fernando", "King" of "King, Jr.,
     Martin Luther"); None for any other, which the default citation key reads
-    as it always has, by its last word (``bibtex.default_key``). A name
+    as it always has, by its last word (``bibtex_keys.default_key``). A name
     stored in that form before release 72 ("Pereira Campos, Jorge Fernando"
     typed, keyed "fernando") keeps its key through its cached entry
-    (``bibtex.rebuilt_key``, gamma/migrations.py ``_v72_keyed``)."""
+    (``bibtex_keys.rebuilt_key``, gamma/migrations.py ``_v72_keyed``)."""
     if "," not in str(name or ""):
         return None
     last, given, suffix, comma = _read(name)

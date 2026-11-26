@@ -4,8 +4,9 @@ How a page's paper record becomes a citation: a formatted reference in a
 CSL style, a citation in the text, a BibLaTeX, RIS or CSL JSON entry beside
 the BibTeX one, and the copies and files the app makes of them. The server
 keeps the data side (`gamma/citations.py`, `gamma/meta_fields.py`,
-`gamma/names.py`, the bibliography builders in `gamma/routers/export.py`,
-the style store in `gamma/routers/citations.py`); the browser renders every
+`gamma/names.py`, `gamma/bibtex_format.py`, the bibliography builders in
+`gamma/routers/export.py`, the style store in `gamma/routers/citations.py`);
+the browser renders every
 style (`frontend/src/citations/`). What Zotero does and why Gamma took what
 it took: [research/citations.md](../research/citations.md). The record
 itself and how it is looked up: [paper_metadata.md](paper_metadata.md);
@@ -111,7 +112,7 @@ Zotero's own would. The code is the reference; in outline:
   - `PY` the year, and `DA` the date as `YYYY/MM/DD/` (`2021///` for a
     year alone, `///in press` for a year that is no number);
   - pages as `SP`/`EP`, a range split at `-`, `--` or any other dash
-    (`bibtex.PAGE_RANGE_RE`, which the CSL `page` and BibTeX's `--` read
+    (`bibtex_format.PAGE_RANGE_RE`, which the CSL `page` and BibTeX's `--` read
     too);
   - `J2` the abbreviation, `ID` the citation key.
 
@@ -119,8 +120,8 @@ Zotero's own would. The code is the reference; in outline:
   Zotero reads an `M1` back as a journal article's issue. Its `UR` and
   `DO` name it. Lines end in CR LF and a record in `ER  - `; a file is the
   records a blank line apart.
-- **BibLaTeX** (`biblatex_entry`, written by `bibtex.format_entry` with the
-  `bibtex.BIBLATEX` dialect): `@article` with `journaltitle`,
+- **BibLaTeX** (`biblatex_entry`, written by `bibtex_format.format_entry`
+  with the `bibtex_format.BIBLATEX` dialect): `@article` with `journaltitle`,
   `shortjournal` and the issue as `number`; an arXiv preprint `@online`
   with `eprinttype = arxiv`; `@thesis` and `@report` with their `type`
   and `institution`; a conference paper, a chapter and a book as in BibTeX,
@@ -139,7 +140,7 @@ Zotero's own would. The code is the reference; in outline:
   export braces a single-field name; bare, BibTeX takes "Collaboration"
   for a surname and splits a name at an `and` of its own); a cached entry
   gets the braces when it is printed.
-- **Case** (both dialects, `bibtex.protect_case`): a word of a `title`,
+- **Case** (both dialects, `bibtex_case.protect_case`): a word of a `title`,
   `booktitle`, `shorttitle` or `series` with a capital after its first
   letter is braced, `{GI}-type`, `{KiDS}`, `{eBOSS}`, `$\Lambda$ {CDM}`,
   Zotero's BibLaTeX rule, so plainnat or biblatex's sentence case keeps
@@ -233,7 +234,7 @@ order asked**, which a numeric style numbers by, and `text` is those
 entries in that order laid out as the format's file (a `.bib` without its
 head comment, an `.ris`'s records, one CSL JSON array). The keys are made
 unique over the pages' key-sorted list; with `key_folder`, over that
-folder's papers first (`bibtex.unique_keys`), so a copy made inside a
+folder's papers first (`bibtex_keys.unique_keys`), so a copy made inside a
 folder carries the keys the folder's `.bib` has, and an asked page outside
 the folder is keyed after them and around them: a key pinned on it that
 one of the folder's papers holds takes the suffix.

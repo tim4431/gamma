@@ -38,7 +38,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 
 from . import item_types
-from .bibtex import clean_key
+from .bibtex_keys import clean_key
 from .names import join_name
 from .note_markup import LINK_PARTS
 from .zotero_notes import _href, block_elements, note_tree, title_text

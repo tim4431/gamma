@@ -37,7 +37,7 @@ from difflib import SequenceMatcher
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import ai_usage, item_types, jobs, meta_fields, server_options, storage, web_page
+from .. import ai_usage, bibtex_keys, item_types, jobs, meta_fields, server_options, storage, web_page
 from .. import bibtex as bibtex_mod
 from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
@@ -1756,11 +1756,11 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", fo
     # A citation key pinned on the page outranks both the generated key and
     # the registrar's own (doi.org renders BibTeX keyed its own way), and it
     # survives this refetch: the user's .tex files cite it.
-    cite_key = bibtex_mod.clean_key(props.get("cite_key") or "")
+    cite_key = bibtex_keys.clean_key(props.get("cite_key") or "")
     if not bibtex:
-        bibtex = bibtex_mod.build_entry(meta, bibtex_mod.rebuilt_key(props, meta, cite_key))
+        bibtex = bibtex_mod.build_entry(meta, bibtex_keys.rebuilt_key(props, meta, cite_key))
     elif cite_key:
-        bibtex = bibtex_mod.with_key(bibtex, cite_key)
+        bibtex = bibtex_keys.with_key(bibtex, cite_key)
     # Stored with the record so every surface can say what tied it to the
     # document, and warn before it is cited when nothing confirmed did (an
     # id or a title the text only names may be a cited work's; AI output may
@@ -2090,12 +2090,12 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
                 new["kind"] = kind
         new["at"] = page_now()  # when it was edited, as a lookup stamps when it looked
         # An unsent cite_key leaves the page's pin as it is; "" unpins.
-        cite_key = (bibtex_mod.clean_key(payload.cite_key) if payload.cite_key is not None
-                    else bibtex_mod.clean_key(current.get("cite_key") or ""))
+        cite_key = (bibtex_keys.clean_key(payload.cite_key) if payload.cite_key is not None
+                    else bibtex_keys.clean_key(current.get("cite_key") or ""))
         if not registrar:
-            bibtex = bibtex_mod.build_entry(new, bibtex_mod.rebuilt_key(current, new, cite_key))
+            bibtex = bibtex_mod.build_entry(new, bibtex_keys.rebuilt_key(current, new, cite_key))
         else:
-            bibtex = bibtex_mod.with_key(registrar, cite_key) if cite_key else registrar
+            bibtex = bibtex_keys.with_key(registrar, cite_key) if cite_key else registrar
         saved.update(meta=new, bibtex=bibtex, cite_key=cite_key)
         updates = {"meta": new, "bibtex": bibtex}
         if cite_key:

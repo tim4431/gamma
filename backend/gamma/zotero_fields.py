@@ -59,7 +59,7 @@ import re
 from pathlib import Path
 
 from . import item_types
-from .bibtex import clean_key
+from .bibtex_keys import clean_key
 from .names import given_first, join_name, split_name
 from .zotero_import import _ARXIV_DOI_RE, _ARXIV_LINE_RE, _ARXIV_UNCLASSED_RE, _ARXIV_URL_RE, _CITATION_KEY_RE
 
@@ -262,7 +262,7 @@ def meta_from_item(data: dict) -> dict:
 def cite_key_from_item(data: dict) -> str:
     """The citation key pinned on an item: its ``citationKey``, else the
     ``Citation Key:`` line Better BibTeX keeps in Extra (read as the RDF
-    import reads it), cleaned by ``bibtex.clean_key``; "" for none."""
+    import reads it), cleaned by ``bibtex_keys.clean_key``; "" for none."""
     key = clean_key(data.get("citationKey") or "")
     m = None if key else _CITATION_KEY_RE.search(str(data.get("extra") or ""))
     return clean_key(m.group(1)) if m else key

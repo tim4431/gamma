@@ -16,8 +16,8 @@ writer (its internals and the shared typesetting engine are in
 `gamma/goodnotes_write.py`, `gamma/rtf.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/notion_export.py`, `gamma/export_walk.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
-`gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/picture.py`, `gamma/bibtex.py`, `gamma/citations.py`,
-`gamma/routers/export.py`; frontend dialogs in
+`gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/picture.py`, `gamma/bibtex.py` and its parts
+`gamma/bibtex_*.py`, `gamma/citations.py`, `gamma/routers/export.py`; frontend dialogs in
 [ImportExport.jsx](../../frontend/src/transfers/ImportExport.jsx), which
 [App.jsx](../../frontend/src/app/App.jsx) loads on first use (`lazySurface`),
 and the Export dialog's Bibliography review in
@@ -2782,7 +2782,7 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
   metadata lookup cached (a registrar's own BibTeX when doi.org served one,
   else `bibtex.build_entry` over `properties.meta`). A page that has a record
   but no rendering — an older page, a hand-made one — is rendered on the
-  spot (here, in the Markdown and Obsidian exports, in a cached
+  spot (here, in the Markdown, Obsidian and Notion exports, in a cached
   `/metadata/fetch` answer and in the AI `cite` tool alike).
   A page with no metadata at all is skipped with "page has no paper
   metadata" and named in the finished export; a set where no page has any
@@ -2814,13 +2814,14 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
   without those fields gives the entry of before them, byte for byte
   ([paper_metadata.md](paper_metadata.md#metadata-fetch--edit--cite)).
 - **Every printed entry is valid BibTeX.** Every entry leaves through
-  `bibtex.format_entry`: `build_entry` writes through it, and `page_entry` reads
-  a stored entry back (`normalize_entry`, a small parser for any layout:
+  `bibtex_format.format_entry`: `build_entry` writes through it, and
+  `page_entry` reads a stored entry back (`normalize_entry` over
+  `bibtex_parse.parse_entry`, a small parser for any layout:
   doi.org's one-line rendering, an entry an older Gamma cached, one restored
   from a Markdown export) and writes it again. So the export, its review,
-  the share popover's Copy BibTeX, `cite` and the Markdown and Obsidian
-  exports all print the same text, whatever was stored. The rules:
-  - Text values are ASCII LaTeX (`bibtex.latex_text`). An accented letter
+  the share popover's Copy BibTeX, `cite` and the Markdown, Obsidian and
+  Notion exports all print the same text, whatever was stored. The rules:
+  - Text values are ASCII LaTeX (`bibtex_latex.latex_text`). An accented letter
     becomes BibTeX's special character (`F{\"o}sel`, which classic BibTeX
     sorts and abbreviates right), a Greek letter or math symbol `$\alpha$`,
     registry markup a macro (`<i>` → `\emph{}`, `<sub>` →
@@ -2832,24 +2833,25 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
   - Braces balance in every value; an unmatched one is dropped, since
     BibTeX counts every brace and one stray brace breaks the file.
   - An organisation author is braced whole (`{DES Collaboration}`, a
-    word of `names._ORG_RE` in it), in a built entry and in a cached one:
+    word of `names._ORG_RE` in it; `gamma/bibtex_names.py`), in a built
+    entry and in a cached one:
     bare, BibTeX takes its last word for a surname ("D. Collaboration")
     and splits it at an `and` of its own.
   - A word of a title (`title`, `booktitle`, `shorttitle`, `series`) with a
     capital after its first letter is braced, `{GI}-type`, `{KiDS}`
-    (`bibtex.protect_case`, Zotero's BibLaTeX rule), and one of letters and
+    (`bibtex_case.protect_case`, Zotero's BibLaTeX rule), and one of letters and
     digits with a capital (`{Y3}`, `{3D}`), so plainnat's sentence case
     keeps it; what is braced already, math and command names stay as they
     are.
   - The month is a standard macro (`month = sep`); doi.org writes `Sept`,
     `June` and `July`, which no style defines. A page range takes `--`,
-    whatever dash it was written with (`bibtex.PAGE_RANGE_RE`).
+    whatever dash it was written with (`bibtex_format.PAGE_RANGE_RE`).
   - The entry type is one every style defines, and a type whose venue
     field is missing (`@article` without `journal`, `@inproceedings`
     without `booktitle`, a thesis without `school`, a report without
     `institution`) is written as `@misc`: apsrev4-2 fails on an `@article`
     with no journal.
-  - The key is ASCII (`bibtex.clean_key` spells `Fösel` as `Fosel`):
+  - The key is ASCII (`bibtex_keys.clean_key` spells `Fösel` as `Fosel`):
     pdflatex cannot `\cite` a key holding a UTF-8 letter.
   - Identifiers and links (`doi`, `url`, `eprint`, `isbn`, `issn`) are
     written raw, since `\url` and `\doi` read their argument verbatim. A
@@ -2872,7 +2874,7 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
   pdflatex, and CJK needs XeLaTeX or LuaLaTeX. What the registries really
   return: [research/registry-records.md](../research/registry-records.md).
 - **Citation keys**: generated as first author's surname + year
-  (`bibtex.default_key`: the last word of the name, and of a name
+  (`bibtex_keys.default_key`: the last word of the name, and of a name
   `names.join_name` writes with a comma the last word of its surname
   (`names.joined_family`), so "Pereira Campos, Jorge Fernando" keys
   `campos` as "Jorge Fernando Pereira Campos" always did and "King, Jr.,
@@ -2882,10 +2884,10 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
   comma form before release 72 ("Den Hengst, Floris", typed or imported)
   keyed by its last word (`floris`), so an entry built again (a hand edit,
   a refetch, a Zotero pull) keeps the key its cached entry carries while
-  the first author and the year stay (`bibtex.rebuilt_key`), and step 72
+  the first author and the year stay (`bibtex_keys.rebuilt_key`), and step 72
   gave such a record with no cached entry the entry it was cited by
   (`migrations._v72_keyed`). Two papers by one author in one year would collide in a
-  bibliography, so `bibtex.unique_keys` suffixes clashes `a`, `b`, … `z`,
+  bibliography, so `bibtex_keys.unique_keys` suffixes clashes `a`, `b`, … `z`,
   `aa` — Better BibTeX's convention. Clashes are found case-insensitively
   (classic BibTeX treats `Smith2020` and `smith2020` as one entry). Pinned
   keys are assigned first, so the key a user chose is never the one that
@@ -2899,11 +2901,11 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
   *beside* `meta`, not inside it, because a refetch replaces the record and
   must not take the key with it: the user's `.tex` files cite that key. It
   outranks both the generated key and a registrar's own, is cleaned of what
-  BibTeX breaks on (`bibtex.clean_key`: whitespace, `, { } ( ) = \ " # % ~`),
+  BibTeX breaks on (`bibtex_keys.clean_key`: whitespace, `, { } ( ) = \ " # % ~`),
   and clearing the record clears the pin too. The metadata lookup and a
   hand edit write it into the cached entry; every surface that prints the
-  entry — this export, the AI `cite` tool, the Markdown and Obsidian
-  exports — goes through `bibtex.page_entry`, which applies the pin to a
+  entry — this export, the AI `cite` tool, the Markdown, Obsidian and
+  Notion exports — goes through `bibtex.page_entry`, which applies the pin to a
   cached entry that predates it or carries a registrar's own key, so the
   chat and the `.bib` file never disagree on a key.
   A Zotero import brings one along when Better BibTeX left a

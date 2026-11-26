@@ -23,7 +23,7 @@ has none of its own. Pure, standard library only.
 import json
 import re
 
-from . import bibtex, item_types, meta_fields, names
+from . import bibtex_format, item_types, meta_fields, names
 
 # Zotero's item types as CSL's (zotero-schema ``csl.types``); a preprint is
 # an ``article``.
@@ -202,7 +202,7 @@ def csl_item(rec: dict, key: str) -> dict:
     of a journal article with pages out) is the renderer's choice, never
     the file's."""
     work = _work(rec)
-    pages = bibtex.PAGE_RANGE_RE.sub(r"\1-\2", work["pages"])
+    pages = bibtex_format.PAGE_RANGE_RE.sub(r"\1-\2", work["pages"])
     # A meeting under both its names: CSL 1.0.2's `event-title` and the
     # `event` it replaced, which older styles still read (APSA and ASA
     # among the bundled ones; citeproc-js 2.4 maps neither to the other).
@@ -258,7 +258,7 @@ def ris_entry(rec: dict, key: str) -> str:
         tags["DA"] = [f"///{work['year']}"]  # the date's "other" part: Zotero reads it back as the date
     # A preprint's arXiv number has no tag, as in Zotero's export: RIS
     # readers take M1 for an issue. UR and DO name the preprint.
-    first, _, last = bibtex.PAGE_RANGE_RE.sub(r"\1\n\2", work["pages"]).partition("\n")
+    first, _, last = bibtex_format.PAGE_RANGE_RE.sub(r"\1\n\2", work["pages"]).partition("\n")
     tags.update(DO=[work["doi"]], VL=[work["volume"]], IS=[work["issue"]], SP=[first], EP=[last],
                 J2=[work["abbr"]], PB=[work["publisher"]], SN=[work["isbn"]], UR=[work["url"]], ID=[key])
     lines = [f"{tag}  - {_text(value)}" for tag in _RIS_ORDER for value in tags.get(tag, ()) if _text(value)]
@@ -286,9 +286,10 @@ def _bib_name(name: str) -> str:
 
 
 def biblatex_entry(rec: dict, key: str) -> str:
-    """The record as a BibLaTeX entry, written by ``bibtex.format_entry`` with
-    BibLaTeX's own types, venue fields and order (``bibtex.BIBLATEX``),
-    as Zotero's BibLaTeX export maps it: a journal article is an
+    """The record as a BibLaTeX entry, written by
+    ``bibtex_format.format_entry`` with BibLaTeX's own types, venue fields
+    and order (``bibtex_format.BIBLATEX``), as Zotero's BibLaTeX export
+    maps it: a journal article is an
     ``@article`` (``journaltitle``, its abbreviation ``shortjournal``, the
     issue as ``number``); a preprint on arXiv an ``@online`` with
     ``eprinttype = arxiv``; a thesis and a report ``@thesis`` and
@@ -343,4 +344,4 @@ def biblatex_entry(rec: dict, key: str) -> str:
     # The record's own DOI and address: an arXiv preprint's derived ones
     # (``_work``) would print beside its eprint.
     fields.update(doi=_text(rec.get("doi")), url=meta_fields.clean_url(rec.get("url")))
-    return bibtex.format_entry(entry, key, fields, bibtex.BIBLATEX)
+    return bibtex_format.format_entry(entry, key, fields, bibtex_format.BIBLATEX)

@@ -176,7 +176,16 @@ note_app_import.py what the Notability and GoodNotes imports share: the run over
 rtf.py             the RTF Cocoa writes (a GoodNotes text box), read as spans
 obsidian_export.py an Obsidian vault export
 import_*.py        the reviewed library imports: staged uploads, preview and selection, the guarded zip walk
-bibtex.py          BibTeX entries and bibliographies, every printed entry valid BibTeX
+bibtex.py          a page's BibTeX entry (built from its record, or its stored one made valid) and the .bib file
+bibtex_format.py   an entry written out valid, in BibTeX's dialect or BibLaTeX's: each one's types, venue fields and field order
+bibtex_parse.py    a stored entry read as BibTeX reads it; the issue and month an @article gives its record
+bibtex_keys.py     citation keys: cleaned, generated, kept through a rebuild, pinned, unique in a bibliography
+bibtex_names.py    the authors as a BibTeX name list, an organisation braced whole
+bibtex_latex.py    a field value as ASCII LaTeX: registry markup as macros, MathML as math, accented letters, escapes
+bibtex_case.py     the capitals of a title a sentence-case style must keep, braced by Zotero's BibLaTeX rule
+citations.py       a paper record as CSL JSON, RIS and BibLaTeX, as Zotero maps it
+names.py           an author's name split for the formats that split it, joined from two fields, compared by the Zotero link
+meta_fields.py     the record fields a citation needs beyond the year: issue, journal abbreviation, full date, address
 item_types.py      what a paper record describes (meta.kind), in Zotero's item-type names
 mathml.py          MathML in registry titles, as LaTeX math or as plain text
 

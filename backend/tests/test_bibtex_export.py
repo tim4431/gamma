@@ -1,8 +1,9 @@
 """The BibTeX bibliography: the entry builder and its citation keys
-(gamma/bibtex.py), the `?mode=bibtex` export of a page and of a folder, the
-pinned key that survives a refetch, and the share-link URL a LaTeX editor
-refreshes a folder's .bib from; the same bibliography as BibLaTeX, RIS and
-CSL JSON under the same keys, and a selection's (POST /api/bibliography).
+(gamma/bibtex.py, gamma/bibtex_keys.py), the `?mode=bibtex` export of a
+page and of a folder, the pinned key that survives a refetch, and the
+share-link URL a LaTeX editor refreshes a folder's .bib from; the same
+bibliography as BibLaTeX, RIS and CSL JSON under the same keys, and a
+selection's (POST /api/bibliography).
 """
 
 import json
@@ -10,7 +11,7 @@ import json
 import pytest
 
 from conftest import login, make_folder, make_page, make_user
-from gamma import bibtex
+from gamma import bibtex, bibtex_keys
 
 
 @pytest.fixture(scope="module")
@@ -44,31 +45,31 @@ def _share(c, path):
 # --- the entry and its key ---------------------------------------------------
 
 def test_default_key_is_surname_and_year():
-    assert bibtex.default_key({"authors": ["Ada Lovelace"], "year": "1843"}) == "lovelace1843"
-    assert bibtex.default_key({"authors": [], "year": "1999"}) == "paper1999"
-    assert bibtex.default_key({}) == "paper"
+    assert bibtex_keys.default_key({"authors": ["Ada Lovelace"], "year": "1843"}) == "lovelace1843"
+    assert bibtex_keys.default_key({"authors": [], "year": "1999"}) == "paper1999"
+    assert bibtex_keys.default_key({}) == "paper"
 
 
 def test_clean_key_drops_what_bibtex_breaks_on():
-    assert bibtex.clean_key("  smith:2020-attention ") == "smith:2020-attention"
-    assert bibtex.clean_key("a b,c{d}e=f") == "abcdef"
-    assert bibtex.clean_key("   ") == ""
+    assert bibtex_keys.clean_key("  smith:2020-attention ") == "smith:2020-attention"
+    assert bibtex_keys.clean_key("a b,c{d}e=f") == "abcdef"
+    assert bibtex_keys.clean_key("   ") == ""
 
 
 def test_entry_key_round_trips_through_with_key():
     entry = bibtex.build_entry({"title": "T", "authors": ["Ada Lovelace"], "year": "1843"})
-    assert bibtex.entry_key(entry) == "lovelace1843"
-    moved = bibtex.with_key(entry, "pinned:1")
-    assert bibtex.entry_key(moved) == "pinned:1"
+    assert bibtex_keys.entry_key(entry) == "lovelace1843"
+    moved = bibtex_keys.with_key(entry, "pinned:1")
+    assert bibtex_keys.entry_key(moved) == "pinned:1"
     assert "title = {T}" in moved          # only the key changed
-    assert bibtex.with_key(entry, "") == entry  # nothing to pin
+    assert bibtex_keys.with_key(entry, "") == entry  # nothing to pin
 
 
 def test_pinned_keys_are_assigned_before_generated_ones():
     def rec(title, pinned):
         return {"text": f"@article{{lovelace1843,\n  title = {{{title}}}\n}}",
                 "key": "lovelace1843", "pinned": pinned, "title": title}
-    keys = [r["key"] for r in bibtex.unique_keys([rec("A", False), rec("B", True), rec("C", False)])]
+    keys = [r["key"] for r in bibtex_keys.unique_keys([rec("A", False), rec("B", True), rec("C", False)])]
     # The pin keeps the bare key wherever it sits in the order; the generated
     # clashes move out of its way, in input order.
     assert keys == ["lovelace1843a", "lovelace1843", "lovelace1843b"]
@@ -77,7 +78,7 @@ def test_pinned_keys_are_assigned_before_generated_ones():
 
 def test_suffixes_pass_z():
     records = [{"text": "@article{k,\n}", "key": "k", "pinned": False} for _ in range(28)]
-    keys = [r["key"] for r in bibtex.unique_keys(records)]
+    keys = [r["key"] for r in bibtex_keys.unique_keys(records)]
     assert keys[:3] == ["k", "ka", "kb"]
     assert keys[26:] == ["kz", "kaa"]
     assert len(set(keys)) == 28
@@ -85,7 +86,7 @@ def test_suffixes_pass_z():
 
 def test_bibliography_has_no_timestamp():
     entry = bibtex.build_entry({"title": "T", "authors": ["Ada Lovelace"], "year": "1843"})
-    records = bibtex.unique_keys([{"text": entry, "key": "lovelace1843", "pinned": False}])
+    records = bibtex_keys.unique_keys([{"text": entry, "key": "lovelace1843", "pinned": False}])
     text = bibtex.bibliography(records, "Optics")
     assert text.startswith("% 1 entry from Optics, exported from Gamma")
     assert text == bibtex.bibliography(records, "Optics")  # byte-identical re-export

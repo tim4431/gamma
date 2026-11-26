@@ -75,7 +75,7 @@ const keysOf = (keys) => [...new Set((keys || []).map((key) => String(key ?? "")
 
 // The command that cites `keys` in `format` ("latex" | "pandoc" | "typst"),
 // "" when there is no key. Keys come from the bibliography answer, already
-// cleaned to what BibTeX carries (bibtex.clean_key); the characters a
+// cleaned to what BibTeX carries (bibtex_keys.clean_key); the characters a
 // command would break on are still removed here, so nothing pasted can end
 // the command early.
 export function keyCommand(format, keys) {

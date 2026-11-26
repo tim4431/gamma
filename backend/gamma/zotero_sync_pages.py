@@ -20,7 +20,7 @@ from typing import NamedTuple
 
 from . import zotero_fields, zotero_local, zotero_merge
 from . import zotero_remote as zr
-from .bibtex import pinned_key
+from .bibtex_keys import pinned_key
 from .blocks_store import FOLDERS, LABELS, write_lock
 from .db import connect_pages_db, page_now, parse_stamp
 from .ops import OpError

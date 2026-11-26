@@ -2426,7 +2426,7 @@ def test_v72_caches_the_entry_a_record_without_one_was_cited_by_where_its_key_wo
     until 72, by its surname from then: it gets the entry with the key it
     had, in the library and in a mirror's bases. A pinned key, a record
     with an entry and a name keyed alike either way are left as they are."""
-    from gamma import bibtex
+    from gamma import bibtex, bibtex_keys
 
     conn = sqlite3.connect(":memory:")
     _pages_71(conn)
@@ -2441,7 +2441,7 @@ def test_v72_caches_the_entry_a_record_without_one_was_cited_by_where_its_key_wo
                  (json.dumps(base),))
     migrations._v72_citation_fields("ws", conn, None)
     got = {r[0]: json.loads(r[1]) for r in conn.execute("SELECT id, properties FROM unified_blocks")}
-    assert bibtex.default_key(comma) == "campos2021"
+    assert bibtex_keys.default_key(comma) == "campos2021"
     assert got["comma"] == {"meta": comma, "bibtex": bibtex.build_entry(comma, "fernando2021")}
     assert bibtex.page_entry(got["comma"]).startswith("@article{fernando2021,")
     assert got["pinned"] == rows["pinned"] and got["plain"] == rows["plain"]
