@@ -18,8 +18,11 @@ writer (its internals and the shared typesetting engine are in
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
 `gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/picture.py`, `gamma/bibtex.py`, `gamma/citations.py`,
 `gamma/routers/export.py`; frontend dialogs in
-[ImportExport.jsx](../../frontend/src/transfers/ImportExport.jsx), imported directly by
-[App.jsx](../../frontend/src/app/App.jsx). Exports and library imports run as
+[ImportExport.jsx](../../frontend/src/transfers/ImportExport.jsx), which
+[App.jsx](../../frontend/src/app/App.jsx) loads on first use (`lazySurface`),
+and the Export dialog's Bibliography review in
+[BibliographyReview.jsx](../../frontend/src/transfers/BibliographyReview.jsx).
+Exports and library imports run as
 background jobs, which the dialogs follow ([tasks.md](tasks.md)). The
 Export… row carries the `page.export` guide anchor: a hint beside it offers
 the export once a page has five highlights of the user's own
@@ -2947,7 +2950,8 @@ from it ([citations.md](citations.md#the-bibliography-answer)).
 The dialog's review is the two panes the Zotero import review uses
 (`.bibColumns`, the same shape as `.importReviewColumns` with its own
 classes), under a **Format** row (`BibliographyReview` in
-`ImportExport.jsx`): the papers on the left, each with the citation key
+`transfers/BibliographyReview.jsx`, whose `useBibliographyStep` holds the
+state the dialog's footer reads too): the papers on the left, each with the citation key
 underneath and a pin mark when that key is pinned, the pages that cannot be
 cited listed under them with the reason. The right pane holds whichever
 paper is picked: its entry in the chosen format with a copy button, or for
@@ -2956,7 +2960,7 @@ scrolled to, the box's button copying that entry. The footer's "Copy all" takes 
 bibliography and appears only when there is more than one. The modal
 widens for this step only (`transferModalWide`). Export is held while the
 review loads, when it fails and when nothing is citable. When "Include
-pages inside" ([above](#the-export-dialog)), under the columns, is on, the
+pages inside" ([above](#the-export-dialog)), under the Format row, is on, the
 review asks for the page with the pages inside it
 (`bibliographyPreviewUrl`'s `subPages`) and asks again when the switch
 changes, so it holds what the file will. The summary is built from whole

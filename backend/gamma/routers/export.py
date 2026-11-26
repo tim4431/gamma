@@ -1367,7 +1367,7 @@ class _CitationBuilder(_Builder):
         selection's keyed ``records``, those in their order, the file
         without a .bib's head comment; and ``name``, the export's file name
         without its suffix, which a Formatted bibliography's download takes
-        (ImportExport.jsx). An empty bibliography is data here
+        (transfers/BibliographyReview.jsx). An empty bibliography is data here
         rather than the refusal ``save`` raises, so the dialog can show the
         pages it could not cite instead of an error."""
         whole = records is None
