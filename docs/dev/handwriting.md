@@ -2753,7 +2753,7 @@ reach.
     `{keepalive: 'low'}`), asking again when it starts. A `PUT` waiting
     for its upload's answer may find the room gone and go plain.
   - It holds by drawing, until each settles, the upload, the `PUT` and the
-    `DELETE` it has on their way with keepalive (`inkFlightRef`).
+    `DELETE` it has on their way with keepalive (`flight`).
   - A group that does not fit goes as plain fetches, and a smaller one
     after it may still fit.
   - The bytes are the ledger's `bodyBytes` ([collab.md](collab.md)

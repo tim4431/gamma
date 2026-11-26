@@ -21,7 +21,7 @@ import * as ocrState from "../pdf/ocrState.js";
 import * as ocrRuns from "../pdf/ocrRuns.js";
 import { discardApplied, discardOutcome, discardStep, discardUndone, noteSummary, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { canJoin, joinHighlights, takesParts, withPart } from "../shared/model/highlightParts.js";
-import { waitingFor } from "../pdf/highlightWait.js";
+import { WAIT_BANNERS, waitingFor } from "../pdf/highlightWait.js";
 import { useHighlightWait } from "../pdf/useHighlightWait.js";
 import { basePixels } from "../pdf/pageRaster";
 import { DEFAULT_HIGHLIGHT, LINK_COLOR, highlightColor, normalizeColor } from "../shared/model/palette.js";
@@ -8565,7 +8565,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Another page, or another file on this one, ends a move or an extension.
   // The commands are stable, so BlockRow's memo holds.
   const hlWait = useHighlightWait(`${focusedBlockId || ""}\n${docId || ""}\n${doc?.url || ""}`);
-  const attachModeBlockId = waitingFor(hlWait.wait, "attach");
   const moveHighlightId = waitingFor(hlWait.wait, "move");
   const extendHighlightId = waitingFor(hlWait.wait, "extend");
   const { startAttach: startAttachMode, startMove: startHighlightMove, startExtend: startHighlightExtend, startReviewMove } = hlWait;
@@ -14184,24 +14183,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onRemove={lib.organize && openRules.trash ? deleteOpenPage : null}
           onDismiss={vault.dismissBanner} />
       ) : null}
-      {attachModeBlockId && (
-        <div className="attachModeBanner">
-          {t("Click a PDF highlight to link it")}
+      {hlWait.wait ? (
+        <div className="attachModeBanner" data-move-highlight={moveHighlightId || undefined} data-extend-highlight={extendHighlightId || undefined}>
+          {t(WAIT_BANNERS[hlWait.wait.kind])}
           <button onClick={hlWait.end}>{t("Cancel")}</button>
         </div>
-      )}
-      {moveHighlightId && (
-        <div className="attachModeBanner" data-move-highlight={moveHighlightId}>
-          {t("Select the text where this highlight belongs")}
-          <button onClick={hlWait.end}>{t("Cancel")}</button>
-        </div>
-      )}
-      {extendHighlightId && (
-        <div className="attachModeBanner" data-extend-highlight={extendHighlightId}>
-          {t("Select text to add to this highlight, or press another highlight on its page to join them")}
-          <button onClick={hlWait.end}>{t("Cancel")}</button>
-        </div>
-      )}
+      ) : null}
       {transMenu && (
         <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)} aria-label={t("Translate")}>
           {translateRows(() => setTransMenu(null))}
