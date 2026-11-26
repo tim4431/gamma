@@ -1701,9 +1701,9 @@ row: Enter keeps, Escape leaves it) and Move up / down.
   (`enterKey.js` `othersOnEnter`) the other (`followUpSteers`), as in
   Codex; the box's placeholder ("Steer the reply…", "Queue a follow-up…")
   and the button's title say which. A message that cannot steer stays
-  queued. The preference replaced `chatFollowUp` (Queue by default) under a
-  name and key of its own, since a first load stores a preference's default
-  too: every account moved to Steer once, and a choice made since stays.
+  queued. Its key, `gamma-chat-follow-up-mode`, is not the older
+  Queue-by-default preference's: a first load stores a preference's default,
+  so a stored "queue" there said nothing of a choice.
   The stream's head ends with `{"steer": id}` (`gamma/ai_steer.py`: an
   inbox per streamed reply, in memory, bound to its account, closed when
   the stream ends). `POST /api/ai/chat/steer/{id}` carries the text, the
@@ -2378,8 +2378,8 @@ In the chat, a model with a "no tools" verdict shows a **No tools** chip
 before the model chip while the chat would use tools, with the reason on
 hover. A click checks it again: Test with `tools_model`, on an own
 connection or by an administrator; anyone else is told an administrator can
-check it in Settings → Server. The chip's quick list reads "model · no
-tools" (`modelLabel` in `chat/modelPrefs.js`), the model menu tags the row
+check it in Settings → Server. The model chip's panel lists it as "model ·
+no tools" (`modelLabel` in `chat/modelPrefs.js`), the model menu tags the row
 "no tools" ("The model menu"), and the agent's intro and
 placeholder give way to the plain chat's. A reply that brings a verdict the
 registry didn't have reads `/api/ai/models` again, so the chip shows at once.
