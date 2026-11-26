@@ -433,11 +433,9 @@ with "the Google account's storage is full"; a token Google no longer
 honours (revoked by the person, or unused for six months) fails with
 "connect Google Drive again". Because `drive.file` reaches only the
 client's own files, a new server finds the copies (the way back after a
-lost disk) only when connected through the same client. Against Google
-itself, Gamma's clients were tried once by hand: Google gave a code for the
-TV client; connecting on Google's page at 127.0.0.1 worked, and a backup
-task's copy went to Drive, was listed, restored as a new workspace,
-deleted, and the access revoked.
+lost disk) only when connected through the same client. What was tried
+against Google itself is in
+[google-drive-backup.md](../research/google-drive-backup.md#still-open).
 
 #### OneDrive
 
@@ -487,15 +485,10 @@ retention prunes sits in the recycle bin until it empties. Retries honour
 Graph's `Retry-After`. A full OneDrive fails the copy with "the Microsoft
 account's storage is full"; a token Microsoft no longer honours
 (`invalid_grant`, `interaction_required`: the app removed, unused for 90
-days, a password reset) fails with "connect OneDrive again".
-
-Against Microsoft itself, with a personal account, on 2026-11-22: Gamma's
-app gave a code and its polling answered "pending"; connecting on
-Microsoft's page at 127.0.0.1 came back to `localhost` and connected; Test
-read the OneDrive; a backup task's copy went there, was listed, downloaded
-whole and restored as a new workspace; 23 MiB went up in three 10 MiB
-chunks and came back whole; deletes fell back to the recycle bin as above;
-Disconnect forgot the token. A work or school account was not tried.
+days, a password reset) fails with "connect OneDrive again". What was
+tried against Microsoft itself, and what was not (a work or school
+account), is in
+[onedrive-icloud-backup.md](../research/onedrive-icloud-backup.md#still-open).
 
 #### The off-site rounds
 
@@ -1089,17 +1082,12 @@ them out as workers free up), and a CI runner is slower than this machine,
 so a test that depends on either passes here and fails there now and then.
 Run unpinned, this machine gives each worker several times a runner's CPU
 (32 fast threads for 32 pytest workers or 6 browser workers, where a runner
-has 4 slower vCPU for 4 or 3), and from 13 to 19 November 2026 every merge
-to `main` but one met at least one race CI lost and this machine never
-showed, each a PR round of 30-40 minutes. `tools/ci_local.sh` runs the
-slow jobs at CI's pace instead: the backend suite on both Pythons with
-`-n 4` and the browser suite's three shards at `--jobs 3`, each job pinned
-to one core and its SMT sibling (`taskset`), which times them about as a
-runner does, all five at once in about ten minutes. Its first runs here,
-and the pinned reruns after them, turned up six failures CI can meet, the
-causes of two Known flakes among them, and one of those a real bug (a
-collaborator's screen left on stale text, [collab.md](collab.md) "The
-client"). The `merge` skill's local step runs it; a fix of a race is rerun
+has 4 slower vCPU for 4 or 3), so a race CI loses may never show here.
+`tools/ci_local.sh` runs the slow jobs at CI's pace instead: the backend
+suite on both Pythons with `-n 4` and the browser suite's three shards at
+`--jobs 3`, each job pinned to one core and its SMT sibling (`taskset`),
+which times them about as a runner does, all five at once in about ten
+minutes. The `merge` skill's local step runs it; a fix of a race is rerun
 at the same pace (`taskset -c <core>,<sibling>`, several runs side by
 side).
 
@@ -1109,7 +1097,7 @@ bash tools/ci_local.sh e2e             # the three browser shards
 GAMMA_CI_CPUS=4 bash tools/ci_local.sh # two cores a job: faster than CI
 ```
 
-What releasing 0.4.0 and the merges after it met, and what each needs:
+The races CI has met, and what each needs:
 
 - **A token on the shared client.** `client` carries the last login's
   cookie, and `auth.py` takes a session cookie before a bearer, so a token

@@ -113,7 +113,8 @@ search/            the document text index (text_fts in data.db): index (schema,
 pdf_meta.py        a PDF's manifest for the viewer: bytes, page count, page sizes (data.db)
 pdf_text.py        PDF reading through PyMuPDF: text, glyphs, labels, a page as pixels (page_raster, page_rasters); a recognized page's words in place of its layer
 pdf_scan.py        scanned pages: a page told a scan (an invisible OCR layer) or a picture, and a layer's words put back in visual rows
-pdf_ocr.py         text recognized from a stored PDF's scanned pages: the store every reader reads through, the runs (server, window), forgetting it (docs/dev/documents.md "Recognized text")
+pdf_ocr.py         text recognized from a stored PDF's scanned pages: the store, and the view every reader reads it through (docs/dev/documents.md "Recognized text")
+ocr_run.py         the runs that recognize it (on the server, in a window) and the forget that drops it: the page rules, the plan, the finishing steps
 ocr_engine.py      the recognition engine (Tesseract through tesserocr, backend/tessdata's models): where text is recognized, the engines lent a page at a time
 ocr_auto.py        the automatic recognition of a scan uploaded with no text: the markers, one file at a time, yielding to a person's run
 textnorm.py        search text normalization and fuzzy matching (both indexes, block search)
@@ -129,10 +130,13 @@ json_response.py   OrjsonResponse: large JSON answers encoded in the handler's w
 # AI: providers, the agent and its reach
 ai_protocols/      one adapter per AI wire protocol (request, stream, usage, models, quota)
 ai_client.py       provider-agnostic AI transport (open, read, stream, errors)
-ai_catalog.py      live model listings + context windows (provider, then models.dev)
+ai_catalog.py      live model listings, context windows and prices (provider, then models.dev)
 ai_settings.py     AI provider entries (GUI-managed keys): each account's own, the server's shared ones
+ai_roles.py        the model each task uses (the ai-models pref) and the model a request runs on
 chatgpt_oauth.py   ChatGPT subscription sign-in (OAuth PKCE, the flow Codex CLI uses)
-ai_usage.py        token usage per AI call (users.db ai_usage) and the summary Settings → AI shows
+gemini_oauth.py    Gemini through a Google sign-in (the flow Gemini CLI uses) and its Code Assist setup
+oauth_callback.py  the loopback listener both sign-ins catch their redirect on
+ai_usage.py        token usage and estimated cost per AI call (users.db ai_usage), the summary Settings → AI → Usage shows
 ai_context.py      PDF attachments, extraction, and chat context assembly
 ai_pictures.py     the chat's pictures: one size, the store, the budget, the label lines
 chat_export.py     a chat conversation as Markdown with its pictures (docs/dev/chat_history.md)
