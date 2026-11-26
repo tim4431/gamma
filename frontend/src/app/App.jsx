@@ -48,11 +48,11 @@ import {
   DockBar,
   DockWindow,
   GammaNavContext,
-  OpenTabs,
   PopoverAnchor,
   useCopied,
   useTextScale,
 } from "../shared/ui/Widgets";
+import { OpenTabs } from "../workspace/OpenTabs.jsx";
 import { BlockTree, _dragState } from "../editor/BlockTree";
 import { MentionClock, MentionContext } from "../editor/MentionMenu";
 import { REF_RE, refIdsOf, refLabelOf, refLabelsByBlock } from "../editor/refLabels.js";

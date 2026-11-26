@@ -416,9 +416,10 @@ sign-in live in the settings feature (`useProviderEditor`,
 results and the login check.
 
 Split `shared/ui/Widgets.jsx` by ownership: generic controls stay shared;
-workspace docks (`DockWindow`, `OpenTabs`) and chat/editor rendering
+workspace docks (`DockWindow`) and chat/editor rendering
 (`ChatMarkdown`, `GammaLinkCard`, `BlockDropIndicator`) belong with their
-feature. The transfer dialogs already live in `transfers/`.
+feature. The transfer dialogs already live in `transfers/`, and the tab
+strip (`OpenTabs`) in `workspace/`.
 The colour palette is `shared/model/palette.js` (its React context
 `shared/ui/paletteContext.js`) and the zoom limits are
 `shared/model/zoom.js`, so neither the block editor nor the notebook viewer
