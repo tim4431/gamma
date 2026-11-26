@@ -35,6 +35,31 @@ const CLIENT = (() => {
 })();
 export const windowClient = () => CLIENT;
 
+// The spans this window was hidden, [from, to] (ms; `to` null while it
+// is), the last HIDDEN_KEPT of them: a run read here stops while a phone or
+// a tablet locks or shows another app, so its pace in Background tasks
+// (tasks/taskKinds.js, kind `ocr-tab`) leaves that time out. In a browser
+// the document's visibility tells them from the module's first load;
+// `noteHidden` is what it calls.
+const HIDDEN_KEPT = 64;
+const hiddenSpans = [];
+export function noteHidden(hidden, at = Date.now()) {
+  const last = hiddenSpans.at(-1);
+  if (hidden && (!last || last[1] !== null)) hiddenSpans.push([at, null]);
+  else if (!hidden && last && last[1] === null) last[1] = at;
+  if (hiddenSpans.length > HIDDEN_KEPT) hiddenSpans.shift();
+}
+if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+  if (document.visibilityState === "hidden") noteHidden(true);
+  document.addEventListener("visibilitychange", () => noteHidden(document.visibilityState === "hidden"));
+}
+// How long this window was hidden between `since` and `now` (ms).
+export function hiddenSince(since, now = Date.now()) {
+  let ms = 0;
+  for (const [from, to] of hiddenSpans) ms += Math.max(0, Math.min(to ?? now, now) - Math.max(from, since));
+  return ms;
+}
+
 // docId → its run: {docId, pageId, title, tasks, capability, meta, load,
 // controller, status, promise, resolve, jobId, stopping (asked to stop),
 // stoppedJob (the job its stop went to), row (its own row in Background

@@ -814,7 +814,7 @@ async function recognitionSteps({ server, browser, alice, step, until, assert, a
 }
 
 // A second account's tab on a shared workspace's scan, while the file's
-// recognized text changes elsewhere (gamma/pdf_ocr.py announce,
+// recognized text changes elsewhere (gamma/ocr_run.py announce,
 // collab.publish_file; collaboration/collabSession.js onOcr): the job is
 // another account's, so the tab hears of it from its page's socket alone.
 async function otherTabSteps({ server, browser, alice, bob, step, until, assert, assertEq, assertNoProblems, openPage }) {

@@ -39,6 +39,7 @@ import threading
 import zlib
 from collections import OrderedDict
 from contextlib import contextmanager
+from functools import cache
 from statistics import median
 from typing import NamedTuple
 
@@ -270,13 +271,7 @@ def _text(page) -> str:
     the plain text is kept."""
     textpage = page.get_textpage(flags=_TEXT_FLAGS)
     text = page.get_text("text", textpage=textpage) or ""
-    read = []  # the text dictionary, built once if the scan check needs it
-
-    def blocks():
-        if not read:
-            read.append(page.get_text("dict", textpage=textpage)["blocks"])
-        return read[0]
-
+    blocks = cache(lambda: page.get_text("dict", textpage=textpage)["blocks"])  # built once, if the scan check needs it
     if not text or not pdf_scan.is_scan_page(page, blocks):
         return text
     lines, boxes = [], []
@@ -307,13 +302,6 @@ def _ocr_view(src):
     from . import pdf_ocr  # local: pdf_ocr imports this module
 
     return pdf_ocr.view_of(src)
-
-
-def _ocr_arg(ocr: bool) -> dict:
-    """``ocr`` as a keyword for ``iter_page_texts``, given only when it is
-    off: tests stand in for iter_page_texts with a function of the
-    arguments it had before recognized text."""
-    return {} if ocr else {"ocr": False}
 
 
 # --- The page-text cache -----------------------------------------------------
@@ -546,14 +534,9 @@ def page_kinds(src, max_pages: int = MAX_PAGES):
 
 
 def _page_kind(page) -> str:
-    """``page_kinds``'s read of one page."""
-    read = []
-
-    def blocks():
-        if not read:
-            read.append(page.get_text("dict", flags=0)["blocks"])
-        return read[0]
-
+    """``page_kinds``'s read of one page: one text dictionary for both
+    rules, built only when one needs it."""
+    blocks = cache(lambda: page.get_text("dict", flags=0)["blocks"])
     if pdf_scan.is_scan_page(page, blocks):
         return "scan"
     return "picture" if pdf_scan.is_picture_page(page, blocks) else ""
@@ -582,7 +565,7 @@ def layer_texts(src, page_nos):
 def extract_pages(src, max_pages: int = MAX_PAGES, cache: bool = True, ocr: bool = True) -> list[str]:
     """All page texts as a list (the search indexer's shape); ``ocr`` as
     for ``iter_page_texts``."""
-    return list(iter_page_texts(src, max_pages, cache=cache, **_ocr_arg(ocr)))
+    return list(iter_page_texts(src, max_pages, cache=cache, ocr=ocr))
 
 
 def extract_text(src, char_limit: int, empty_page_cap: int = 50,
@@ -611,7 +594,7 @@ def extract_text_pages(src, char_limit: int, empty_page_cap: int = 50,
     start_page, empty pages included) — what the chat's coverage report
     tells the user: "pages 1–9 of 22"."""
     parts, total, empties, pages = [], 0, 0, 0
-    for t in iter_page_texts(src, start_page=start_page, **_ocr_arg(ocr)):
+    for t in iter_page_texts(src, start_page=start_page, ocr=ocr):
         pages += 1
         if t.strip():
             empties = 0
@@ -1157,6 +1140,9 @@ class GlyphPages:
             return None
 
 
+_NO_BOX = (0.0, 0.0, 0.0, 0.0)  # a line break's box, and that of the space parting two words
+
+
 def _glyphs(page) -> list:
     """``GlyphPages``'s read of one page: the chars of MuPDF's raw text
     dictionary (blocks of text, their lines, their spans, their chars; the
@@ -1183,11 +1169,8 @@ def _glyphs(page) -> list:
             for char in span["chars"]:
                 box = mupdf.Rect(char["bbox"]) * to_user  # normalized: bottom < top
                 out.append((char["c"], (box.x0, box.y0, box.x1, box.y1)))
-        out.append((" " if k < len(same_row) and same_row[k] else "\n", (0.0, 0.0, 0.0, 0.0)))
+        out.append((" " if k < len(same_row) and same_row[k] else "\n", _NO_BOX))
     return out
-
-
-_NO_BOX = (0.0, 0.0, 0.0, 0.0)
 
 
 def _recognized_glyphs(lines, frame) -> list:

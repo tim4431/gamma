@@ -338,21 +338,22 @@ export function reset() {
 
 // --- the Document menu -------------------------------------------------------
 
-// The jobs that change a stored file's recognized text (gamma/jobs.py
+// Whether `job` changes a stored file's recognized text (gamma/ocr_run.py
 // OCR_KINDS, one of them at a time per file): a run on the server, one read
-// in a window, and a forget.
+// in a window, or a forget.
 const OCR_KINDS = new Set(["ocr", "ocr-tab", "ocr-drop"]);
+export const isOcrJob = (job) => OCR_KINDS.has(job?.kind);
 // Which jobs are those of the stored file `docId` (any workspace's): what
 // the tasks store looks for when the page's socket says the file's
 // recognized text changed (App's onOcr, useTasks' expectEnd).
-export const fileJobs = (docId) => (job) => OCR_KINDS.has(job?.kind) && job.params?.doc_id === docId;
+export const fileJobs = (docId) => (job) => isOcrJob(job) && job.params?.doc_id === docId;
 
 // The OCR job of the stored file `docId` in this workspace that waits or
 // runs, among `jobs` (the tasks store's: the account's own, and the
 // workspace's automatic run), or null.
 function activeJob(jobs, docId) {
   const ws = net.workspace() || "";
-  return jobs.find((job) => OCR_KINDS.has(job.kind) && isActive(job) && job.params?.doc_id === docId
+  return jobs.find((job) => isOcrJob(job) && isActive(job) && job.params?.doc_id === docId
     && (!job.workspace || !ws || job.workspace === ws)) || null;
 }
 

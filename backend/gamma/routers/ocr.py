@@ -1,14 +1,14 @@
-"""Text recognized on a stored PDF's scanned pages (gamma/pdf_ocr.py,
-gamma/ocr_engine.py): the jobs that recognize it and the one that forgets
-it, the window's half of a run in a window, and what the viewer reads of
-it.
+"""Text recognized on a stored PDF's scanned pages (gamma/ocr_run.py,
+gamma/pdf_ocr.py, gamma/ocr_engine.py): the jobs that recognize it and the
+one that forgets it, the window's half of a run in a window, and what the
+viewer reads of it.
 
 - ``POST /api/jobs/ocr`` ``{page_id, window?}``: start the ``ocr`` job for
   the page's stored PDF (the Document menu's Recognize text in this PDF, a
   background task's Try again), or, with ``window``, the ``ocr-tab`` job
   whose pages the window that asks reads (a server that reads no text
   itself: ocr_engine ``capability``). One of the OCR kinds at a time for a
-  workspace's file (``pdf_ocr.OCR_KINDS``), whoever starts it.
+  workspace's file (``ocr_run.OCR_KINDS``), whoever starts it.
 - ``POST /api/jobs/ocr-drop`` ``{page_id}``: the ``ocr-drop`` job, which
   forgets what was recognized on the page's stored PDF (the Document menu's
   Forget the recognized text…).
@@ -37,7 +37,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from .. import jobs, ocr_auto, ocr_engine, pdf_ocr, pdf_text, ratelimit, server_options
+from .. import jobs, ocr_auto, ocr_engine, ocr_run, pdf_ocr, pdf_text, ratelimit, server_options
 from ..auth import read_body, require_personal_user_id, require_user_id, require_ws, resolve_ws, share_scope
 from ..blocks_store import load_props
 from ..db import connect_pages_db
@@ -177,7 +177,7 @@ def start_ocr(payload: OcrRequest, request: Request):
     CPU on a demo server; a token gets 403 too, as for every job) and edits
     the workspace.
 
-    - Without ``window``: the ``ocr`` job (gamma/pdf_ocr.py ``run``), its
+    - Without ``window``: the ``ocr`` job (gamma/ocr_run.py ``run``), its
       scanned pages' words read from their pictures here, applied at once
       when it ends. 503 with a plain sentence when this server recognizes
       no text itself (turned off, no engine or models, an engine that does
@@ -187,7 +187,7 @@ def start_ocr(payload: OcrRequest, request: Request):
       file's automatic recognition, when one waits for it, and gives the
       next one its turn (gamma/ocr_auto.py ``ended``).
     - With ``window`` ``{doc_id, engine, langs, ver, client}``: the
-      ``ocr-tab`` job (``pdf_ocr.window_run``), which waits while that
+      ``ocr-tab`` job (``ocr_run.window_run``), which waits while that
       window reads the pages and sends their words (the routes below). 409
       ``ITSELF`` where the server recognizes text itself, 503 where no text
       is recognized; 409 ``STALE`` for another engine, languages or
@@ -196,11 +196,11 @@ def start_ocr(payload: OcrRequest, request: Request):
       window's CPU does the reading: jobs ``AT_ONCE``). Its params
       ``{page_id, doc_id, title, window}``, its title "Reading the text of
       “{title}” in a window". The caller's own one going for the file goes
-      on in this window (``pdf_ocr.window_take``: a reloaded window), even
+      on in this window (``ocr_run.window_take``: a reloaded window), even
       when its job has not begun waiting for pages yet.
 
     One of the OCR kinds at a time for the workspace's file
-    (``pdf_ocr.OCR_KINDS``), the look for one and the start in one turn of
+    (``ocr_run.OCR_KINDS``), the look for one and the start in one turn of
     the jobs' lock (``jobs.start``'s ``exclusive``), whoever starts it:
     ``busy_job`` says what a start beside one gets. A start that finds the
     file's automatic run is that run, promoted, unless it gave way already:
@@ -217,7 +217,7 @@ def start_ocr(payload: OcrRequest, request: Request):
             raise HTTPException(status_code=503, detail=reason)
 
         def run(job):
-            return pdf_ocr.run(ws, doc_id, src, actor=user_id, progress=job.progress)
+            return ocr_run.run(ws, doc_id, src, actor=user_id, progress=job.progress)
 
         def ended(state):  # the file's automatic run settled, if one waits, and the next one's turn
             ocr_auto.ended(ws, doc_id, state)
@@ -234,7 +234,7 @@ def start_ocr(payload: OcrRequest, request: Request):
             raise HTTPException(status_code=409, detail=REPLACED)
 
         def run(job):
-            return pdf_ocr.window_run(ws, doc_id, src, actor=user_id, client=window.client, progress=job.progress,
+            return ocr_run.window_run(ws, doc_id, src, actor=user_id, client=window.client, progress=job.progress,
                                       job_id=job.id)
 
         kind, title, params = OCR_TAB, f"Reading the text of “{name}” in a window", {"window": window.model_dump()}
@@ -244,13 +244,13 @@ def start_ocr(payload: OcrRequest, request: Request):
             # exclusive: whoever owns the job going for this file, found in the same turn of the lock as the start
             return jobs.start(kind, owner=user_id, ws=ws, key=key, title=title,
                               params={"page_id": payload.page_id, "doc_id": doc_id, "title": name, **params},
-                              run=run, writes=True, exclusive=pdf_ocr.OCR_KINDS, ended=ended)
+                              run=run, writes=True, exclusive=ocr_run.OCR_KINDS, ended=ended)
         except jobs.Busy as busy:
             job = busy_job(busy, user_id, kind)
             if job is None:
                 continue
             if window is not None:
-                pdf_ocr.window_take(ws, doc_id, job["id"], user_id, window.client)
+                ocr_run.window_take(ws, doc_id, job["id"], user_id, window.client)
             return job
     raise HTTPException(status_code=409, detail=STOPPING)
 
@@ -272,7 +272,7 @@ def start_forget(payload: ForgetRequest, request: Request):
     before 15, recognition turned off since) forgets too. 400
     ``NOTHING_RECOGNIZED`` when no page reads recognized text. Not
     stoppable (it updates from its start), outside the lane. One of the OCR
-    kinds at a time for the workspace's file (``pdf_ocr.OCR_KINDS``):
+    kinds at a time for the workspace's file (``ocr_run.OCR_KINDS``):
     ``busy_job`` says what a start beside one gets (the caller's own
     forgetting going is answered). Its params ``{page_id, doc_id,
     title}``, its title "Forgetting the recognized text of “{title}”". →
@@ -285,13 +285,13 @@ def start_forget(payload: ForgetRequest, request: Request):
         raise HTTPException(status_code=400, detail=NOTHING_RECOGNIZED)
 
     def run(job):
-        return pdf_ocr.forget_recognized(ws, doc_id, actor=user_id, progress=job.progress)
+        return ocr_run.forget_recognized(ws, doc_id, actor=user_id, progress=job.progress)
 
     try:
         return jobs.start(OCR_DROP, owner=user_id, ws=ws, key=f"{ws}:{doc_id}",
                           title=f"Forgetting the recognized text of “{name}”",
                           params={"page_id": payload.page_id, "doc_id": doc_id, "title": name}, run=run,
-                          writes=True, exclusive=pdf_ocr.OCR_KINDS)
+                          writes=True, exclusive=ocr_run.OCR_KINDS)
     except jobs.Busy as busy:
         return busy_job(busy, user_id, OCR_DROP)
 
@@ -322,8 +322,8 @@ def _window_writer(request: Request, doc_id: str) -> tuple[str, str]:
 
 def _failed_now(ws: str, doc_id: str) -> frozenset:
     """The pages the run in a window going for the file found no result on
-    (``pdf_ocr.window``), which its plan leaves out; none without one."""
-    found = pdf_ocr.window(ws, doc_id)
+    (``ocr_run.window``), which its plan leaves out; none without one."""
+    found = ocr_run.window(ws, doc_id)
     return found["failed"] if found else frozenset()
 
 
@@ -355,9 +355,9 @@ def ocr_state(doc_id: str, request: Request):
     page's own words); ``engine`` what read them (" + " between two);
     ``scanned`` how many pages are scans or pictures (null until a run
     read them), ``pages`` the file's count; ``good_layer`` whether a run
-    found the file's own text reads well (pdf_ocr ``reads_well``);
+    found the file's own text reads well (ocr_run ``reads_well``);
     ``pending`` whether the last apply's finishing steps are still due;
-    ``todo`` how many pages a run would read now (pdf_ocr ``plan_of``,
+    ``todo`` how many pages a run would read now (ocr_run ``plan_of``,
     null until a run read which pages are scans or pictures); ``staged``
     how many recognized pages a stopped run left to apply. A file never
     recognized: the same with ``stamp`` "", ``rev`` 0, ``scanned`` and
@@ -368,10 +368,10 @@ def ocr_state(doc_id: str, request: Request):
             "kept": [], "at": "", "pending": False, "good_layer": False, "todo": None, "staged": 0}
     if found is not None:
         body.update({key: found[key] for key in ("stamp", "rev", "engine", "langs", "pages", "scanned", "recognized",
-                                                 "kept", "at", "pending")}, good_layer=pdf_ocr.reads_well(found),
+                                                 "kept", "at", "pending")}, good_layer=ocr_run.reads_well(found),
                     staged=len(found["staged"]))
         if found["kinds"] is not None:
-            body["todo"] = len(pdf_ocr.plan_of(found, found["kinds"], _failed_now(ws, doc_id))["todo"])
+            body["todo"] = len(ocr_run.plan_of(found, found["kinds"], _failed_now(ws, doc_id))["todo"])
     return JSONResponse(body, headers=_NO_STORE)
 
 
@@ -379,7 +379,7 @@ def ocr_state(doc_id: str, request: Request):
 def ocr_plan(doc_id: str, request: Request):
     """What a run in a window reads of the stored PDF ``doc_id`` now, for
     a session account that is no guest and edits the workspace: ``{todo,
-    sample, done, good_layer, render, limits}``, pdf_ocr ``plan_of`` over
+    sample, done, good_layer, render, limits}``, ocr_run ``plan_of`` over
     the pages its job found scanned and those the window going found no
     result on; ``render`` how to draw a page (``{dpi, max_pixels,
     max_side}``, the server engine's), ``limits`` the most a page's words
@@ -391,7 +391,7 @@ def ocr_plan(doc_id: str, request: Request):
     found = pdf_ocr.state(ws, doc_id)
     if found is None or found["kinds"] is None:
         raise HTTPException(status_code=409, detail=UNREADY)
-    plan = pdf_ocr.plan_of(found, found["kinds"], _failed_now(ws, doc_id))
+    plan = ocr_run.plan_of(found, found["kinds"], _failed_now(ws, doc_id))
     return JSONResponse({**plan, "render": RENDER, "limits": LIMITS}, headers=_NO_STORE)
 
 
@@ -441,7 +441,7 @@ async def ocr_put_page(doc_id: str, request: Request, page: int = Path(ge=1, le=
     past it, 422 off its shape), from the account's own window that runs
     it. Each word loses what no engine reads off a page (``clean_word``),
     then the page rules judge it against the page's own text, read here,
-    and stage it (pdf_ocr ``window_page``). → ``{outcome, shared, todo,
+    and stage it (ocr_run ``window_page``). → ``{outcome, shared, todo,
     done, total}``: "recognized", "kept", "empty", "failed", or "skipped"
     for a page the run no longer reads (its sample's verdict moved on);
     a page sent again gets its first answer. 409 ``STOPPED`` when no run
@@ -462,7 +462,7 @@ def _live_window(ws: str, doc_id: str) -> dict:
     """The file's ``ocr-tab`` job, going and not stopping, else 409
     ``STOPPED``: a page sent after a Stop lands nowhere."""
     job = jobs.live(OCR_TAB, f"{ws}:{doc_id}")
-    found = pdf_ocr.window(ws, doc_id)
+    found = ocr_run.window(ws, doc_id)
     if job is None or job.get("stopping") or found is None or found["job_id"] != job["id"]:
         raise HTTPException(status_code=409, detail=STOPPED)
     return job
@@ -483,8 +483,8 @@ def _put_page(request: Request, doc_id: str, page: int, body: bytes) -> JSONResp
     lines = None if words.lines is None else [[[clean_word(text), *rest] for text, *rest in line]
                                               for line in words.lines]
     try:
-        answer = pdf_ocr.window_page(ws, doc_id, page, lines, account=user_id, client=words.client, src=src)
-    except pdf_ocr.WindowRefusal as refusal:
+        answer = ocr_run.window_page(ws, doc_id, page, lines, account=user_id, client=words.client, src=src)
+    except ocr_run.WindowRefusal as refusal:
         status, detail = _REFUSALS[refusal.reason]
         raise HTTPException(status_code=status, detail=detail)
     except (ValueError, sqlite3.Error, OSError):  # data.db not read or written now: the window sends it again
@@ -499,13 +499,13 @@ class WindowDone(BaseModel):
 @router.post("/ocr/{doc_id}/done")
 def ocr_window_done(doc_id: str, payload: WindowDone, request: Request):
     """The window ``client`` read what its run in a window would: the run
-    applies what it staged at its next report (pdf_ocr ``window_done``). The
+    applies what it staged at its next report (ocr_run ``window_done``). The
     account's own window that runs it; 409 as for a page. → the job."""
     user_id, ws = _window_writer(request, doc_id)
     job = _live_window(ws, doc_id)
     try:
-        pdf_ocr.window_done(ws, doc_id, account=user_id, client=payload.client)
-    except pdf_ocr.WindowRefusal as refusal:
+        ocr_run.window_done(ws, doc_id, account=user_id, client=payload.client)
+    except ocr_run.WindowRefusal as refusal:
         status, detail = _REFUSALS[refusal.reason]
         raise HTTPException(status_code=status, detail=detail)
     return jobs.get(job["id"])

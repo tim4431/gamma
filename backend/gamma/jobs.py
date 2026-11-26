@@ -79,7 +79,7 @@ MAX_ACTIVE_PER_ACCOUNT = 20      # queued + running: past it, starting another i
 KIND_LIMITS = {"ocr": lambda: server_options.get("ocr_workers")}
 # The kinds whose work is done elsewhere, their job only waiting for it and
 # keeping it (``ocr-tab``: a window recognizes a PDF's pages and sends their
-# words, gamma/pdf_ocr.py ``window_run``): they start at once, held by
+# words, gamma/ocr_run.py ``window_run``): they start at once, held by
 # neither MAX_RUNNING, an account's running jobs nor a lane, and count toward
 # MAX_ACTIVE_PER_ACCOUNT like any.
 AT_ONCE = frozenset({"ocr-tab"})
@@ -827,10 +827,8 @@ def _forget_stopped_shares() -> None:
 def sweep(now: float | None = None) -> int:
     """Remove the jobs that finished more than ``RETENTION_S`` ago with
     their files, the jobs of shares that are gone, job directories no row
-    names, and uploads no job took; then start the automatic text
-    recognitions left waiting (gamma/ocr_auto.py ``resume``: at startup, the
-    ones a restart cut short, which ``recover`` failed). Returns how many
-    finished jobs went for their age."""
+    names, and uploads no job took. Returns how many finished jobs went
+    for their age."""
     now = time.time() if now is None else now
     _forget_stopped_shares()
     cutoff = format_stamp(datetime.fromtimestamp(now - RETENTION_S, timezone.utc))
@@ -850,9 +848,6 @@ def sweep(now: float | None = None) -> int:
                     shutil.rmtree(entry, ignore_errors=True)
             except OSError:
                 continue
-    from . import ocr_auto  # local: it starts its jobs through this module
-
-    ocr_auto.resume()
     return len(ids)
 
 

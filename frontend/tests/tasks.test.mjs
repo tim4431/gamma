@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { addLocalRow, afterFollow, followed, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished,
   progressFraction, remainingMs, sortTasks, trayBadge, waitsForYou } from "../src/tasks/taskModel.js";
-import { TASK_KINDS, byteProgress, bytesInfo, canOpen, exportAgain, fmtRemaining, hiddenSince, kindOf, noteHidden, ocrAutoSummary,
+import { TASK_KINDS, byteProgress, bytesInfo, canOpen, exportAgain, fmtRemaining, kindOf, ocrAutoSummary,
   ocrDropSummary, ocrEnding, ocrSummary, progressCounts, progressText, quietKinds, relocationSummary, relocationSuperseded, retryOf,
   stopPath, taskActions, taskInfo, taskTime, taskTitle, turnShown } from "../src/tasks/taskKinds.js";
+import { hiddenSince, noteHidden } from "../src/pdf/ocrRuns.js";
 
 const at = (minutes) => new Date(Date.UTC(2026, 8, 29, 12, minutes)).toISOString();
 const job = (fields) => ({ kind: "export", state: "running", params: {}, progress: {}, error: "", artifact: null,
