@@ -106,7 +106,7 @@ test("APA: the journal article with its issue and DOI, the list sorted, the entr
   assert.ok(indent("margin-left") > 0 && indent("text-indent") === -indent("margin-left"), "Zotero's hanging indent");
   assert.equal(body.style.getPropertyValue("line-height"), "2", "and its double spacing");
   assert.match(html, /<i>Nature<\/i>, <i>614<\/i>\(7949\), 676–681\. <a href="https:\/\/doi\.org\/10\.1038\/s41586-022-05434-1">/);
-  const cite = await render({ items: [ARTICLE, PREPRINT], style: "apa", mode: "citation", output: "text", locators: [{ id: "smith2023", locator: "347", label: "page" }] });
+  const cite = await render({ items: [ARTICLE, PREPRINT], style: "apa", mode: "citation", output: "text", locators: { smith2023: "347" } });
   assert.equal(cite.output, "(Smith & Doe, 2023, p. 347; Vaswani & Shazeer, 2017)");
   assert.equal(cite.styleClass, "in-text");
 });
@@ -126,7 +126,7 @@ test("IEEE numbers in the order given, with Zotero's label column", async () => 
 });
 
 test("a note style cites in a note, with the page", async () => {
-  const cite = await render({ items: [ARTICLE], style: "chicago-notes-bibliography", mode: "citation", output: "text", locators: { smith2023: { locator: "347" } } });
+  const cite = await render({ items: [ARTICLE], style: "chicago-notes-bibliography", mode: "citation", output: "text", locators: { smith2023: "347" } });
   assert.equal(cite.styleClass, "note");
   assert.equal(cite.output, "Jane Smith and John Doe, “Quantum Error Correction: Below the Surface Code Threshold,” Nature 614, no. 7949 (2023): 347, https://doi.org/10.1038/s41586-022-05434-1.");
 });
@@ -257,12 +257,11 @@ test("key commands cite each key once and keep every key inside its command", ()
 });
 
 test("a quote cites its page label, else the printed page, else the PDF page", () => {
-  assert.equal(pageLocator({ pageIndex: 2, labels: ["i", "ii", "iii", "1"], metaPages: "676-681", pageCount: 4 }), "iii");
-  assert.equal(pageLocator({ pageIndex: 2, labels: null, metaPages: "676–681", pageCount: 6 }), "678");
-  assert.equal(pageLocator({ pageNumber: 3, metaPages: "676-681", pageCount: 6 }), "678", "a highlight's 1-based page");
-  assert.equal(pageLocator({ pageIndex: 2, metaPages: "676-681", pageCount: 8 }), "3", "pages that are not the PDF's length");
-  assert.equal(pageLocator({ pageIndex: 2, labels: ["", "", ""], metaPages: "e1234", pageCount: 3 }), "3");
-  assert.equal(pageLocator({ pageIndex: null }), null, "no page");
+  assert.equal(pageLocator({ pageNumber: 3, labels: ["i", "ii", "iii", "1"], metaPages: "676-681", pageCount: 4 }), "iii");
+  assert.equal(pageLocator({ pageNumber: 3, labels: null, metaPages: "676–681", pageCount: 6 }), "678");
+  assert.equal(pageLocator({ pageNumber: 3, metaPages: "676-681", pageCount: 8 }), "3", "pages that are not the PDF's length");
+  assert.equal(pageLocator({ pageNumber: 3, labels: ["", "", ""], metaPages: "e1234", pageCount: 3 }), "3");
+  assert.equal(pageLocator({ pageNumber: null }), null, "no page");
   assert.equal(pageLocator({}), null);
 });
 

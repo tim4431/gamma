@@ -36,17 +36,28 @@ const LABELS = Object.fromEntries(QUICK_COPY_OPTIONS);
 export const formatName = (format) => LABELS[format] || format;
 export const formatLabel = (format) => t(formatName(format));
 
+// The command a key command's Copy row names.
+const COMMANDS = { latex: "\\cite{…}", pandoc: "[@…]", typst: "@…" };
+
 // The label of the Copy bibliography row (and command) for a Quick Copy
 // format: "Copy bibliography" for the style, else what it copies.
 export function quickCopyLabel(format) {
-  switch (format) {
-    case "bibtex": case "biblatex": case "ris": case "csljson":
-      return t("Copy as {format}", { format: LABELS[format] });
-    case "latex": return t("Copy {command}", { command: "\\cite{…}" });
-    case "pandoc": return t("Copy {command}", { command: "[@…]" });
-    case "typst": return t("Copy {command}", { command: "@…" });
-    default: return t("Copy bibliography");
-  }
+  if (FILE_FORMATS.includes(format)) return t("Copy as {format}", { format: LABELS[format] });
+  if (COMMANDS[format]) return t("Copy {command}", { command: COMMANDS[format] });
+  return t("Copy bibliography");
+}
+
+// The formats a Copy as menu offers, every Quick Copy format but the style
+// and `except`, in two groups: the files the export writes, and the key
+// commands. [{label (untranslated), formats}], an empty group left out.
+// The menus' Copy as ▸, the share popover's Copy as ▾ (BibTeX has a box
+// of its own there) and Settings' Quick Copy read it.
+export function copyAsGroups(except = []) {
+  const formats = QUICK_COPY_FORMATS.filter((format) => format !== "style" && !except.includes(format));
+  return [
+    { label: T("Formats"), formats: formats.filter((format) => FILE_FORMATS.includes(format)) },
+    { label: T("Cite keys"), formats: formats.filter((format) => !FILE_FORMATS.includes(format)) },
+  ].filter((group) => group.formats.length);
 }
 
 // --- Key commands ---------------------------------------------------------------
@@ -91,18 +102,18 @@ export function keyCommand(format, keys) {
 
 // The page a quote from a PDF cites, as a string for a CSL locator (label
 // "page"), or null when there is no page (a lost or unplaced highlight).
-// `pageIndex` is the PDF page, counted from 0 (or `pageNumber`, from 1, as
-// a highlight's position holds it); `labels` the PDF's page labels
-// (pdf.js getPageLabels(), null without); `metaPages` the record's pages;
+// `pageNumber` is the PDF page, counted from 1 as a highlight's position
+// and a selection hold it; `labels` the PDF's page labels (pdf.js
+// getPageLabels(), null without); `metaPages` the record's pages;
 // `pageCount` the PDF's. In order:
 // - the page's label, when the PDF has labels ("iv", "347");
 // - else, when the record's pages are a numeric range exactly as long as
 //   the PDF, the printed page: a journal article's PDF starting at 676
 //   cites its third page as 678;
 // - else the PDF page number.
-export function pageLocator({ pageIndex, pageNumber, labels = null, metaPages = "", pageCount = 0 } = {}) {
-  const index = Number.isInteger(pageIndex) ? pageIndex : Number.isInteger(pageNumber) ? pageNumber - 1 : -1;
-  if (index < 0) return null;
+export function pageLocator({ pageNumber, labels = null, metaPages = "", pageCount = 0 } = {}) {
+  if (!Number.isInteger(pageNumber) || pageNumber < 1) return null;
+  const index = pageNumber - 1;
   const label = labels?.[index];
   if (typeof label === "string" && label.trim()) return label.trim();
   const range = /^\s*(\d+)\s*[-‐‑‒–—]+\s*(\d+)\s*$/.exec(String(metaPages || ""));

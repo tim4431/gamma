@@ -36,9 +36,8 @@ import { copyPayload } from "../shared/lib/utils";
 import { bibliographyFor, bibliographyPreview } from "../transfers/exportApi";
 import { loadStyles, styleList, subscribeStyles } from "./citationApi.js";
 import { DEFAULT_STYLE, isBundledStyle } from "./bundledStyles.js";
-import { styleLabel } from "./CitationChoices";
 import { FILE_FORMATS, formatLabel, keyCommand, pageLocator } from "./formats.js";
-import { preloadCitations, renderPair, styleMeta } from "./render.js";
+import { preloadCitations, renderPair, styleLabel, styleMeta } from "./render.js";
 import { copyPlan, inListOrder, quotePayload, quoteStyle, skippedNote, styleInUse } from "./citeRules.js";
 
 // --- Bibliography answers -----------------------------------------------------------

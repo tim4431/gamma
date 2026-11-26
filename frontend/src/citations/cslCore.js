@@ -259,15 +259,11 @@ function engineFor(style, locale, output) {
 
 // --- Rendering ------------------------------------------------------------------
 
-// Locators by item: an array of {id, locator, label} or an object
-// {id: "347" | {locator, label}}; the label defaults to "page".
+// An item's page in a citation, from `locators` ({id: "347"}, by the
+// item's own id).
 function locatorOf(locators, id) {
-  if (!locators || id == null) return null;
-  const found = Array.isArray(locators) ? locators.find((entry) => entry?.id === id) : locators[id];
-  if (found == null || found === "") return null;
-  const value = typeof found === "object" ? found : { locator: found };
-  const locator = String(value.locator ?? "").trim();
-  return locator ? { locator, label: value.label || "page" } : null;
+  const locator = String(locators?.[id] ?? "").trim();
+  return locator ? { locator, label: "page" } : null;
 }
 
 const OUTPUTS = new Set(["html", "text", "rtf"]);

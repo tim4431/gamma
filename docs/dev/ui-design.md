@@ -632,8 +632,9 @@ and speed, the Style menu's brushes, a strip highlighter's colour groups,
 a `Segmented` inside a menu). A
 `MenuSelect` with headings puts each set of radios in a `group` named by
 its heading, and a heading over action rows heads a `group` of them as
-well (`MenuGroup`: an `ActionMenu`'s `{heading}` items, the Copy as ▸
-flyout's Formats, Cite keys and styles). In Move to folder (a page's) and Move to (a folder's) a check
+well. Both are a `MenuGroup`: a `MenuSelect`'s heading and sections, an
+`ActionMenu`'s `{heading}` items, the Copy as ▸ flyout's Formats, Cite
+keys and styles. In Move to folder (a page's) and Move to (a folder's) a check
 marks the folder it is in. That is no state the row sets, so the row stays
 a `menuitem`, and its title says so.
 

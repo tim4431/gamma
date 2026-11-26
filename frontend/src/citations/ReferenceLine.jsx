@@ -12,8 +12,7 @@ import React, { useEffect, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { CopyBox, useCopied } from "../shared/ui/Widgets";
 import { CitationHtml } from "./CitationHtml";
-import { styleLabel } from "./CitationChoices";
-import { preloadCitations, styleMeta } from "./render.js";
+import { preloadCitations, styleLabel, styleMeta } from "./render.js";
 
 // `cite` is useCitations' answer; `pageId` the open page, `pageBibtex` its
 // stored entry and `meta` its record as saved: a save changes them, and the

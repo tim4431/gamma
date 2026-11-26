@@ -14,41 +14,7 @@ import { Row } from "../settings/SettingsKit";
 import { isBundledStyle } from "./bundledStyles.js";
 import { loadStyles, styleList, subscribeStyles } from "./citationApi.js";
 import { styleKindLabel, styleSections } from "./citeRules.js";
-import { citationLocales, styleLocale, styleMeta } from "./render.js";
-
-// A bundled style as a trigger names it: the name and edition its title
-// leads with, and the variant that tells two of a family apart (Chicago's
-// notes from its author-date), where the full title would be cut off
-// before saying it. Names, not interface text. The menus' rows keep the
-// full titles.
-const SHORT_NAMES = {
-  apa: "APA 7th",
-  "american-chemical-society": "ACS",
-  "american-medical-association": "AMA 11th",
-  "american-physics-society": "APS",
-  "american-political-science-association": "APSA",
-  "american-sociological-association": "ASA",
-  "chicago-author-date": "Chicago 18th (author-date)",
-  "chicago-notes-bibliography": "Chicago 18th (notes)",
-  "chicago-shortened-notes-bibliography": "Chicago 18th (short notes)",
-  "elsevier-harvard": "Elsevier Harvard",
-  "harvard-cite-them-right": "Cite Them Right 12th",
-  ieee: "IEEE",
-  "mhra-notes": "MHRA 4th (notes)",
-  "modern-language-association": "MLA 9th",
-  nature: "Nature",
-  "nlm-citation-sequence": "NLM/Vancouver",
-};
-// The longest title shown whole; a longer added style goes by its CSL
-// title-short, when it has one.
-const TITLE_SHOWN = 28;
-
-// A style's short name (a trigger's, a pill's, the Quick Copy row's).
-export function styleLabel(id) {
-  if (SHORT_NAMES[id]) return SHORT_NAMES[id];
-  const meta = styleMeta(id);
-  return meta.title.length > TITLE_SHOWN && meta.short && meta.short.length < meta.title.length ? meta.short : meta.title;
-}
+import { citationLocales, styleLabel, styleLocale, styleMeta } from "./render.js";
 
 // The account's added styles as citationApi holds them ({loaded, styles,
 // limit, downloads, own, error, missing}), read while `active`: once for

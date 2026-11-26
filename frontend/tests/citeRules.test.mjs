@@ -43,10 +43,9 @@ test("the pill counts the pages left out, and says so when none could be cited",
   assert.equal(skippedNote(1, 1), "This page has no paper metadata to cite.");
 });
 
-test("Copy as ▸ lists the formats, then the default and the added styles, then the other bundled ones", () => {
+test("Copy as ▸ lists the default and the added styles, then the other bundled ones", () => {
   const added = [{ id: "zeitschrift-x", title: "Zeitschrift X", kind: "note" }, { id: "acta-y", title: "Acta Y", kind: "numeric" }];
-  const { formats, mine, others } = copyAsRows({ style: "ieee", added });
-  assert.deepEqual(formats, ["bibtex", "biblatex", "ris", "csljson", "latex", "pandoc", "typst"]);
+  const { mine, others } = copyAsRows({ style: "ieee", added });
   assert.deepEqual(mine.map((s) => s.id), ["ieee", "acta-y", "zeitschrift-x"]);
   assert.ok(!others.some((s) => s.id === "ieee") && others.some((s) => s.id === "apa"));
   assert.equal(others.length, 15);

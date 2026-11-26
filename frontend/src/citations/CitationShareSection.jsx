@@ -15,9 +15,9 @@
 //   service connected, a line saying so and Set up AI….
 // - BibTeX: the entry the .bib export prints.
 // The section's action, Copy as ▾, copies the page in the other formats
-// (BibLaTeX, RIS, CSL JSON and the key commands, in CitationMenuRows'
-// groups). The record's provenance, and the red "!" of an unverified one,
-// sit by the Reference, where it gets copied.
+// (BibLaTeX, RIS, CSL JSON and the key commands, in the menus' groups).
+// The record's provenance, and the red "!" of an unverified one, sit by
+// the Reference, where it gets copied.
 import React, { useEffect, useState } from "react";
 import { T, t } from "../shared/i18n/i18n.js";
 import { ChatMarkdown, CopyBox, useCopied } from "../shared/ui/Widgets";
@@ -27,12 +27,11 @@ import { IconSwap } from "../shared/ui/MotionWidgets";
 import { Section } from "../settings/SettingsKit";
 import { CitationHtml } from "./CitationHtml";
 import { styleMenuProps } from "./CitationChoices";
-import { copyAsGroups } from "./CitationMenuRows";
-import { QUICK_COPY_FORMATS, formatName } from "./formats.js";
+import { copyAsGroups, formatName } from "./formats.js";
 
-// What Copy as ▾ offers here: every format but the style's and BibTeX's,
-// which have their boxes, under the menus' group labels.
-const COPY_AS = copyAsGroups(QUICK_COPY_FORMATS.filter((format) => format !== "style" && format !== "bibtex"));
+// What Copy as ▾ offers here: every format but BibTeX's, which has its
+// box, under the menus' group labels.
+const COPY_AS = copyAsGroups(["bibtex"]);
 
 // `cite` is useCitations' answer (its shareEntry the page's); `pageBibtex`
 // the stored entry; `pptCite`, `pptCiteBusy`, `onRegenerate` the slide
