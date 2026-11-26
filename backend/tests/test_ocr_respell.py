@@ -1,5 +1,5 @@
 """The highlights of a PDF whose scanned pages' text was recognized
-(highlight_relocate ``respell_quotes``, run by gamma/pdf_ocr.py once the
+(highlight_relocate ``respell_quotes``, run by gamma/ocr_run.py once the
 text goes live): each keeps its place and takes the recognized words under
 its rectangles as its quote when its quote is what the layer read there
 and the two readings agree; a corrected quote, a rectangle off its text,
