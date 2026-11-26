@@ -20,7 +20,7 @@ const SERVICE_TILES = {
 // a signed-in connection's row. `paste` is what a sign-in made in a browser
 // on another machine hands back: ChatGPT's redirect address, which fails
 // to load ("address"), or the code Google's page shows ("code").
-export const SIGN_INS = {
+const SIGN_INS = {
   chatgpt: {
     title: t("Sign in with ChatGPT"), billed: t("No API key — usage is billed to your ChatGPT subscription."),
     open: t("Open ChatGPT sign-in"), reopen: t("Re-open ChatGPT sign-in"), plan: t("ChatGPT subscription"),

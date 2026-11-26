@@ -76,7 +76,7 @@ export function modelName(info, id) {
 
 // The connection a model goes through, by name: an offered one's, else
 // the entry `missing` names ("" once the entry itself is gone).
-export function connectionName(info, id) {
+function connectionName(info, id) {
   const offered = (info?.models || []).find((m) => m.id === id);
   return offered ? offered.provider_name || offered.provider : info?.missing?.[id]?.connection || "";
 }
