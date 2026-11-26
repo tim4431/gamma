@@ -209,7 +209,7 @@ test("a page's record: Document, Paper record and Filing, a dangling folder show
   assert.equal(row(sections, "doc.hash").label, "Stored copy");
   assert.deepEqual(row(sections, "doc.hash").nav, { action: "openPdf", url: `/api/uploads/${"d".repeat(24)}.pdf`, label: "Open PDF" });
   assert.equal(row(sections, "meta.title").display.text, "Ramsey fringes");
-  assert.equal(row(sections, "meta.authors").display.text, "A. Author, B. Author");
+  assert.equal(row(sections, "meta.authors").display.text, "A. Author; B. Author");  // a "Last, First" name holds a comma
   assert.equal(row(sections, "meta.doi").display.url, "https://doi.org/10.1103/PhysRevLett.1");
   assert.equal(row(sections, "cite_key").display.text, "Automatic: ramsey2024");
   assert.equal(row(sections, "bibtex").type, "code");

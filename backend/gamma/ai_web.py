@@ -36,7 +36,7 @@ from urllib.parse import quote, urlsplit
 
 from fastapi import HTTPException
 
-from . import openalex, paper_links, publisher_sessions, web_fetch
+from . import names, openalex, paper_links, publisher_sessions, web_fetch
 from .net_guard import browsing_session
 from .web_fetch import (BROWSER_HEADERS, WALLS, DocCache, FetchError, access_wall, entry, get, page_document,
                         pdf_document, read_bounded, refusal, uri)
@@ -247,7 +247,7 @@ def format_records(records: list[dict], *, first_sight=None) -> str:
             lines.append(f'- "{_clip(rec.get("title", ""), 120)}" — listed earlier in this reply')
             continue
         authors = [a for a in rec.get("authors") or [] if a]
-        who = ", ".join(authors[:3]) + (f" (+{len(authors) - 3})" if len(authors) > 3 else "")
+        who = names.author_list(authors, 3, f" (+{len(authors) - 3})")
         title = rec.get("title", "")
         url = (f"https://doi.org/{quote(rec['doi'], safe='/')}" if rec.get("doi") else
                f"https://arxiv.org/abs/{quote(rec['arxiv_id'], safe='/')}" if rec.get("arxiv_id") else "")

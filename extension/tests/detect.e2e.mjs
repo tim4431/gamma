@@ -163,8 +163,8 @@ try {
   await thesis.popup.locator("#existing:not(.hidden)").waitFor();
   assert.deepEqual([clips[2].folder, clips[2].labels], ["f-lab", ["theses"]]);
   assert.deepEqual(clips[2].record, {
-    title: "Trapped ions in optical cavities", authors: ["Ada Lovelace"], year: "2019", venue: "", volume: "",
-    pages: "", publisher: "Example University", isbn: "", kind: "thesis",
+    title: "Trapped ions in optical cavities", authors: ["Lovelace, Ada"], year: "2019", date: "2019/05/03", venue: "",
+    journal_abbr: "", volume: "", issue: "", pages: "", publisher: "Example University", isbn: "", kind: "thesis",
   });
   // Undo takes that save back: the page it made goes to Recently deleted and
   // the form comes back, ready to save again somewhere else.
@@ -181,7 +181,7 @@ try {
   await article.popup.locator("#existing:not(.hidden)").waitFor();
   const clip = clips.at(-1);
   assert.deepEqual([clip.doi, clip.doi_from_text, clip.record.kind, clip.record.venue, clip.record.authors],
-    ["10.5555/article.7", false, "journalArticle", "Journal of Things", ["Charles Babbage"]]);
+    ["10.5555/article.7", false, "journalArticle", "Journal of Things", ["Babbage, Charles"]]);
 
   // An arXiv PDF tab (no content script: what its URL says) whose paper the
   // library has under its journal DOI. The look-up waits on the server, and

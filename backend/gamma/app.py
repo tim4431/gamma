@@ -34,6 +34,7 @@ from .routers import (
     blocks,
     backup_tasks,
     chats,
+    citations as citations_router,
     clip,
     collab,
     comments as comments_router,
@@ -390,6 +391,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp_oauth_router)
     app.router.routes.append(mcp.route())
     app.include_router(metadata.router)
+    app.include_router(citations_router.router)
     app.include_router(search.router)
     app.include_router(shares.router)
     app.include_router(pdf.router)

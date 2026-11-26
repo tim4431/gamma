@@ -27,7 +27,7 @@ import posixpath
 import re
 from urllib.parse import quote
 
-from . import bibtex as bibtex_mod
+from . import bibtex as bibtex_mod, names
 from .documents.model import page_document
 from .export_walk import walk
 from .markdown_export import UPLOAD_RE
@@ -134,7 +134,7 @@ def _head(props: dict, title: str, links: PageLinks, tags, body: list) -> list:
         head.append(Block("code", attrs={"text": entry, "language": "bibtex"}))
     meta = props.get("meta") if isinstance(props.get("meta"), dict) else {}
     authors = meta.get("authors")
-    authors = ", ".join(map(str, authors)) if isinstance(authors, list) else authors
+    authors = names.author_list(authors) if isinstance(authors, list) else authors
     record = [("DOI", meta.get("doi")), ("Authors", authors), ("Year", meta.get("year")),
               ("Tags", ", ".join(dict.fromkeys(tags)))]
     head += [_text(f"{key}: {value}") for key, value in record if value]

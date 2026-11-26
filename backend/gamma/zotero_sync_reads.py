@@ -18,7 +18,7 @@ gamma/zotero_sync_rows.py.
 import json
 from typing import NamedTuple
 
-from . import storage, zotero_local, zotero_merge
+from . import storage, zotero_fields, zotero_local, zotero_merge
 from . import zotero_remote as zr
 from .bibtex import pinned_key
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, TRASH, block_to_dict, existing_in, filed_folders, filing,
@@ -193,6 +193,18 @@ def gamma_note(side: Side, inverse: dict) -> dict:
 
 def zotero_note(r: Round, data: dict, live) -> dict:
     return {**zotero_standalone(r, data, live, title=False), "note": note_hash(str(data.get("note") or ""))}
+
+
+def names_moved(side: Side, row: dict) -> bool:
+    """Whether an item's page splits its authors otherwise than when it
+    last synced (``detail.names``, gamma/zotero_sync_items.py
+    ``_Unit._names``), which its compared form (``gamma_item``) reads
+    alike: a change of Gamma's all the same. False while the page's split
+    as synced is not known (a backup restored over the row, whose blanked
+    ``gbase`` makes the page read as changed anyway)."""
+    names = row["detail"].get("names")
+    return (row["kind"] == "item" and isinstance(names, dict) and "g" in names
+            and zotero_fields.page_splits(side.props.get("meta") or {}) != names["g"])
 
 
 def flat_fields(projection) -> dict:

@@ -7,7 +7,7 @@ import { workFolderOf } from "../documents/library.js";
 import { pageDocument, sourceAddress } from "../documents/pageDocument.js";
 import { listedOf } from "../explorer/knownPages.js";
 import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
-import { itemTypeOf } from "../shared/lib/itemTypes.js";
+import { itemTypeOf, metaDate } from "../shared/lib/itemTypes.js";
 
 // How a folder's path reads: its names from the top, joined (the server's
 // blocks_store.PATH_SEP). A name may hold any character, "/" and ","
@@ -514,20 +514,30 @@ export function defaultPageTitle(doc) {
 }
 
 // The metadata popover's editable copy of a record. `kind` is the item type
-// the Type row shows: the record's own, or the one its fields imply.
+// the Type row shows: the record's own, or the one its fields imply. `date`
+// is the Date row: the full date when the record holds one of its year,
+// else the year (metaDate); the save sends it in place of the year, and the
+// server parses it into both (routers/metadata.py _edited_record). The
+// Authors row joins the names with "; ", which a "Last, First" name does
+// not hold, so the save splits it back at each semicolon (authorsFromRow).
+// Every field goes with the save, the ones a type does not show too, so a
+// blank one clears what it held.
 export function metadataToDraft(metadata) {
   return {
     kind: itemTypeOf(metadata),
     title: metadata?.title || "",
-    authors: (metadata?.authors || []).join(", "),
+    authors: (metadata?.authors || []).join("; "),
     venue: metadata?.venue || "",
-    year: metadata?.year || "",
+    journal_abbr: metadata?.journal_abbr || "",
+    date: metaDate(metadata),
     volume: metadata?.volume || "",
+    issue: metadata?.issue || "",
     pages: metadata?.pages || "",
     doi: metadata?.doi || "",
     arxiv_id: metadata?.arxiv_id || "",
     publisher: metadata?.publisher || "",
     isbn: metadata?.isbn || "",
+    url: metadata?.url || "",
   };
 }
 
@@ -576,6 +586,54 @@ export function findPageForUrl(url, pages) {
   return null;
 }
 
+// An author's surname word, as a match against a reference's text reads
+// it (scorePaperMatch): the last word of the name before any comma, so
+// "Lovelace, Ada" and "Ada Lovelace" are both "Lovelace" and "Pereira
+// Campos, Jorge Fernando" is "Campos", not "Fernando".
+export function authorSurname(name) {
+  return String(name || "").split(",")[0].trim().split(/\s+/).pop() || "";
+}
+
+// Lowercase particles that start a surname ("Jan van der Berg"), and a
+// generational suffix, as backend gamma/names.py reads them.
+const NAME_PARTICLES = new Set("van von der de la du da di del della den ter ten le zu bin al".split(" "));
+const NAME_SUFFIX = /(,?\s+)(Jr\.?|Sr\.?|II|III|IV)$/;
+
+// The surname a reference prints for an author, the label a person reads
+// (a citation pill's short name): the part before the comma of "Pereira
+// Campos, Jorge Fernando", else the name from its first lowercase particle
+// on ("van der Berg") or its last word, a suffix left off; backend
+// names.family_name, which also keeps an organisation's whole name.
+export function familyName(name) {
+  const clean = String(name || "").replace(/\s+/g, " ").trim().replace(NAME_SUFFIX, "");
+  if (clean.includes(",")) return clean.split(",")[0].trim();
+  const words = clean.split(" ");
+  const at = words.slice(0, -1).findIndex((w) => NAME_PARTICLES.has(w));
+  return words.slice(at < 0 ? words.length - 1 : at).join(" ");
+}
+
+// Names as one line of text, "; " between them, since a "Last, First"
+// name holds a comma; with `limit`, the first `limit` of them and "et al."
+// when there are more (backend names.author_list).
+export function authorList(names, limit) {
+  const all = (names || []).map((n) => String(n || "").trim()).filter(Boolean);
+  const shown = limit ? all.slice(0, limit) : all;
+  return shown.join("; ") + (limit && all.length > limit ? " et al." : "");
+}
+
+// The popover's Authors row as the save sends it: split at its semicolons
+// (metadataToDraft joins the names with "; "), a row of one comma and no
+// semicolon one "Last, First" name; any other row as typed, which the
+// server splits at its commas and "and"s, keeping the record's own names
+// whole (routers/metadata.py _split_authors).
+export function authorsFromRow(row) {
+  const text = String(row || "");
+  if (text.includes(";")) return text.split(";").map((n) => n.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const name = text.replace(/\s+/g, " ").trim();
+  if ((name.match(/,/g) || []).length === 1 && !/\sand\s/i.test(name)) return [name];
+  return text;
+}
+
 // How well a library page matches a reference's text (the link dialog's
 // best match first): a DOI or arXiv id weighs most, then author surnames,
 // then title words, the year and the volume, then venue words.
@@ -588,7 +646,7 @@ export function scorePaperMatch(text, page) {
   if (metadata.doi && normalizedText.includes(String(metadata.doi).toLowerCase())) score += 20;
   if (metadata.arxiv_id && normalizedText.includes(metadata.arxiv_id)) score += 20;
   for (const author of (metadata.authors || [])) {
-    const lastName = String(author).trim().split(/\s+/).pop().toLowerCase();
+    const lastName = authorSurname(author).toLowerCase();
     if (lastName.length > 2 && normalizedText.includes(lastName)) score += 4;
   }
   for (const word of String(metadata.title || page.content || "").toLowerCase().split(/[^a-z0-9]+/)) {

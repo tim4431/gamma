@@ -297,7 +297,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       const props = (await account.api(`/api/blocks/${pageId}`)).properties;
       return props.meta?.kind === "conferencePaper" ? props : null;
     }, { what: "the item type saved" });
-    assert(saved.bibtex.startsWith("@inproceedings{he2016,") && saved.bibtex.includes("booktitle = {2016 IEEE CVPR}"),
+    // (its capitalised words braced, as Zotero's BibTeX export braces a booktitle's)
+    assert(saved.bibtex.startsWith("@inproceedings{he2016,") && saved.bibtex.includes("booktitle = {2016 {IEEE} {CVPR}}"),
       `entry: ${saved.bibtex}`);
     // the hand edit is stamped, and the popover says when
     await until(async () => (await keys()).includes("Edited"), { what: "the Edited row" });

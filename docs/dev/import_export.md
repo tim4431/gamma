@@ -3,7 +3,8 @@
 The View menu's (≡) Import…/Export… dialogs and every pipeline behind them: embedded
 PDF annotations, Logseq graphs, Zotero libraries, Markdown notes (Obsidian
 vaults, Notion exports), Notability notes and GoodNotes notebooks both ways, Markdown, Obsidian vault and Notion export, the notes
-typeset as their own PDF, the BibTeX bibliography, and the annotated-PDF
+typeset as their own PDF, the bibliography (BibTeX, BibLaTeX, RIS, CSL JSON
+or a formatted reference list), and the annotated-PDF
 writer (its internals and the shared typesetting engine are in
 [pdf_typesetting.md](pdf_typesetting.md)). Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
 `gamma/zotero_export.py`, `gamma/zotero_notes.py`, `gamma/logseq_import.py`, `gamma/markdown_import.py`,
@@ -15,7 +16,7 @@ writer (its internals and the shared typesetting engine are in
 `gamma/goodnotes_write.py`, `gamma/rtf.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/notion_export.py`, `gamma/export_walk.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
-`gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/picture.py`, `gamma/bibtex.py`,
+`gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/picture.py`, `gamma/bibtex.py`, `gamma/citations.py`,
 `gamma/routers/export.py`; frontend dialogs in
 [ImportExport.jsx](../../frontend/src/transfers/ImportExport.jsx), imported directly by
 [App.jsx](../../frontend/src/app/App.jsx). Exports and library imports run as
@@ -2298,7 +2299,7 @@ gives a sub-page its top's folders, its own `folders` passed by. A folder
 export takes the pages inside its pages (`pages_in_folder`), each after its
 parent. A page's export takes the pages inside it, at any depth, only with
 `sub_pages` (the job's `sub_pages`, `sub_pages=1` on `/pages/{id}/export`,
-`/pages/{id}/export-pdf` and `/api/bibliography`; `_page_ids`,
+`/pages/{id}/export-pdf` and `GET /api/bibliography`; `_page_ids`,
 `with_sub_pages`), each after its parent, and a job reads them again when
 it runs. A share that reaches the page reaches every page inside it
 (`ShareScope.allows_page`), so they need no check of their own; a page the
@@ -2313,7 +2314,7 @@ folder (`_Builder.directory`): the page's file is at the zip's top and each
 page inside it in its parent's directory (`Filing.parent_dir`). The vault
 keeps the page under its folders, as it does alone (`<folder>/<Title>.md`,
 the pages inside in `<folder>/<Title>/`), the readable files nest from the
-zip's top, and the formats without directories (notes-PDF, BibTeX, Logseq,
+zip's top, and the formats without directories (notes-PDF, the bibliographies, Logseq,
 Zotero, Gamma) hold every page as a folder export does.
 It walks the selected pages exactly once (subtree
 fetch, `build_tree`, a progress report) and feeds each page to a per-format
@@ -2594,7 +2595,8 @@ default (Settings → Toolbars › Page header); the View menu keeps its row
 either way, and a pane beside it while pages are side by side draws the
 button too, a press making that page live.
 Step one is a format card, in rows (`CATEGORIES`): This paper holds
-Annotated PDF and BibTeX (a folder's Papers row, its PDFs and its .bib),
+Annotated PDF and Bibliography (a folder's Papers row, its PDFs and its
+bibliography),
 Notes PDF, Markdown and Notion, Handwriting apps Notability and GoodNotes,
 and Library Obsidian, Logseq, Zotero and Gamma. The two handwriting apps'
 cards say what each keeps, since that is what tells them apart: GoodNotes
@@ -2620,9 +2622,11 @@ they are read as the dialog opens. Gamma, Notability and GoodNotes have fixed co
 PDF without a stored copy can only be the original file, so these export
 straight from step one, Gamma, Notability and GoodNotes unless the page has pages
 inside it (below). Logseq
-shows only the bundle switch. BibTeX has no switches but still gets a step:
-it previews the real bibliography
-([below](#bibtex-bibliography)). `hasReviewStep` answers that question for
+shows only the bundle switch. Bibliography has no switches but still gets a
+step: it picks the file's format and previews the real bibliography
+([below](#bibliography)). An older saved choice or a preset naming
+`bibtex`, `biblatex`, `ris`, `csljson` or `formatted` opens this card with
+that format. `hasReviewStep` answers that question for
 the setup and the job step together, so their breadcrumbs agree. The
 breadcrumb returns to the cards without losing edits, from the job's last
 step too. There `onLeaveJob` (App's `leaveExportJob`) drops the dialog's
@@ -2649,11 +2653,11 @@ page's descendants in the listing (`pageDescendants`) or the open page's
 family's pages right inside when those are more. A page share's view lists
 no pages (the page is not in `pageBlocks`, `subPagesDirect`), so there the
 hint and the summary name no number. With the switch on, the summary adds
-"The {n} pages inside it are exported with it." (BibTeX says instead that
+"The {n} pages inside it are exported with it." (a bibliography says instead that
 the pages without paper metadata are left out), a PDF with every other
 switch off is exported by the server rather than downloaded as the viewer's
 file, and the
-BibTeX review and its link take the pages inside too
+bibliography's review and its link take the pages inside too
 ([below](#the-review-step)). The job step's breadcrumb counts a review
 step for a job whose params carry `sub_pages`, or whose page is still the
 open one and offers the switch.
@@ -2662,7 +2666,8 @@ Export starts the export as a background job ([tasks.md](tasks.md)).
 `exportJobBody` turns the payload into the job's body: the page or folder,
 the server's mode for the format (each format's `mode`: `annotated-pdf`,
 `notes-pdf`, `readable`, `notability`, `notion`, `obsidian`, `logseq-graph`,
-`zotero-rdf`, `bibtex`, `gamma`)
+`zotero-rdf`, `gamma`, and for the Bibliography card its format's,
+`bibtex`, `biblatex`, `ris` or `csljson`, the payload's `bibFormat`)
 and the three flags, for a page `sub_pages`, and for an annotated PDF `comments` and `notes_at`. The dialog then shows its last step, the job's
 (`ExportJobStep`). While the job runs it shows its progress (pages, then
 the packing of the zip) with Stop, and says the window may close. The job
@@ -2675,7 +2680,9 @@ the button then reads "Download again"), counts the pages, lists the
 pages left out with the reason, what the file could not keep of a page
 (the result's `warnings`, a Notability note's or a Notion zip's page's), and
 says what to do next: Zotero's steps, Obsidian's unzip-into-a-vault, Gamma's
-Import → Gamma export, BibTeX's beside-your-.tex, Notability's open-it-there,
+Import → Gamma export, a bibliography's by its file (a .bib beside the
+.tex or `\addbibresource`, an .ris through a reference manager's File →
+Import, CSL JSON to Pandoc's `--bibliography`), Notability's open-it-there,
 Notion's Settings → Import → ZIP. A failed or
 stopped export offers Start again, with the job's params (`sub_pages`,
 `comments` and `notes_at` included); one that wrote the viewer's
@@ -2693,7 +2700,8 @@ The switches mean, per endpoint:
 `render_readable` in `markdown_export.py`; dropping highlights keeps a
 highlight block's own text as a plain bullet; the front matter carries the
 page's folder path relative to the exported folder so the zip re-imports
-into the same tree; the files sit at the zip's top, `<Title>-<id12>.md`,
+into the same tree, and a paper's `doi`, `authors` (a block list: a "Last,
+First" name holds the comma a string's items are split at) and `year`; the files sit at the zip's top, `<Title>-<id12>.md`,
 but a sub-page's sits in a directory named for its parent, beside the
 parent's file (`Top-x.md`, `Top-x/Child-y.md`, Notion's layout), its
 `folder:` its top's path and its front matter naming the parent's file as
@@ -2728,18 +2736,44 @@ exists behind the proxy).
 The dialog can also target a whole folder: opened from home with a folder open
 (the View menu's Export…) or from a folder card's context menu (`exportFolder`
 state in App.jsx), it exports every page filed there or below, in any
-format. There Annotated PDF and BibTeX sit in their own "Papers" row: each
+format. There Annotated PDF and Bibliography sit in their own "Papers" row: each
 paper's annotated PDF, with the Highlights, Notes and Comments switches and the notes' place, in one zip
 whose directories are the subfolders; pages without a PDF are left out and
-listed once it is done. BibTeX is one `.bib` for every paper in the folder.
+listed once it is done. Bibliography is one file for every paper in the
+folder.
 
-## BibTeX bibliography
+## Bibliography
 
-`?mode=bibtex` on both export endpoints (`_BibtexBuilder`, entries from
-`gamma/bibtex.py`): one `.bib` file, never a zip — a page's own citation
-entry (with `sub_pages`, one bibliography for the page and every page
-inside it), or one bibliography for every paper in a folder. This is what a LaTeX
-document cites, so the export has no switches and no bundling.
+The Export dialog's Bibliography card (`transferFormats.js` card id
+`bibliography`) writes one file, never a zip: a page's own entry (with
+`sub_pages`, the page and every page inside it), or every paper in a
+folder. Its review step picks the format (`BIBLIOGRAPHY_FORMATS`, built
+from `citations/formats.js` `FILE_FORMATS` and their names under File
+formats, plus Reference list under In a citation style; the payload's
+`bibFormat`, `formatted` for the list):
+
+| Format | Export mode | File | For |
+|---|---|---|---|
+| BibTeX | `bibtex` | `.bib`, `application/x-bibtex` | LaTeX with BibTeX or natbib |
+| BibLaTeX | `biblatex` | `.bib`, `application/x-bibtex` | LaTeX with biblatex and Biber |
+| RIS | `ris` | `.ris`, `application/x-research-info-systems` | EndNote, Mendeley, Zotero and other reference managers |
+| CSL JSON | `csljson` | `.json`, `application/vnd.citationstyles.csl+json` | Pandoc and other tools that read CSL |
+| Reference list | none | `.html`, `.rtf` or `.txt` | a reference list in a citation style, made in the browser |
+
+The four server formats are modes of both export endpoints, one builder
+with a subclass each (`_CitationBuilder` in `routers/export.py`: the
+records, their keys and their order are shared, so the review cannot
+disagree with any file). Every format is keyed by the BibTeX entry's key,
+so a document cites one key from any of them. The BibLaTeX, RIS and CSL
+JSON mappings are Zotero's and live in `gamma/citations.py`
+([citations.md](citations.md#the-formats)); the BibTeX entry, below, is the
+one every surface prints. A reference list is rendered by the
+browser's citation engine ([citations.md](citations.md#rendering)) and
+needs no job ([below](#the-review-step)). This is what a document cites, so
+the export has no switches and no bundling. A page export of a note's id
+answers 404 (`_checked_page`), as one of a page in Recently deleted does.
+
+### BibTeX bibliography
 
 - **Where an entry comes from**: `properties.bibtex`, the rendering the
   metadata lookup cached (a registrar's own BibTeX when doi.org served one,
@@ -2758,21 +2792,26 @@ document cites, so the export has no switches and no bundling.
   | Item type | Entry | Venue and publisher as |
   |---|---|---|
   | `journalArticle`, `preprint` | `@article` | `journal` |
-  | `conferencePaper` | `@inproceedings` | `booktitle`, `publisher` |
-  | `bookSection` | `@incollection` | `booktitle`, `publisher`, `isbn` |
-  | `book` | `@book` | `publisher`, `isbn` |
+  | `conferencePaper` | `@inproceedings` | `booktitle`, `volume`, `publisher`, `isbn` |
+  | `bookSection` | `@incollection` | `booktitle`, `volume`, `publisher`, `isbn` |
+  | `book` | `@book` | `volume`, `publisher`, `isbn` |
   | `thesis` | `@phdthesis` | `school` |
   | `report` | `@techreport` | `institution` |
-  | `presentation`, `document` | `@misc` | `howpublished` |
+  | `presentation`, `document` | `@misc` | `howpublished` (the venue, else the publisher) |
 
   An article or preprint whose venue is only arXiv's is
   `journal = {arXiv preprint arXiv:<id>}`. Zotero writes a preprint as
   `@misc`; Gamma keeps this form because every cached arXiv entry already
   has it. An article with neither a venue nor an arXiv id is `@misc` too (an
   `@article` without a journal is a BibTeX warning). An arXiv id always adds `eprint`/`archivePrefix`, so a published
-  paper read from arXiv cites the journal and keeps the preprint.
+  paper read from arXiv cites the journal and keeps the preprint. An
+  `@article` carries the record's issue as `number`, every entry the month
+  of an agreeing date as `month` (as Zotero writes it); `@misc`, `@phdthesis` and `@techreport` carry
+  the record's own address as `url` (not the page's `web_url`). A record
+  without those fields gives the entry of before them, byte for byte
+  ([paper_metadata.md](paper_metadata.md#metadata-fetch--edit--cite)).
 - **Every printed entry is valid BibTeX.** Every entry leaves through
-  `bibtex._format`: `build_entry` writes through it, and `page_entry` reads
+  `bibtex.format_entry`: `build_entry` writes through it, and `page_entry` reads
   a stored entry back (`normalize_entry`, a small parser for any layout:
   doi.org's one-line rendering, an entry an older Gamma cached, one restored
   from a Markdown export) and writes it again. So the export, its review,
@@ -2789,8 +2828,19 @@ document cites, so the export has no switches and no bundling.
     a Unicode engine.
   - Braces balance in every value; an unmatched one is dropped, since
     BibTeX counts every brace and one stray brace breaks the file.
+  - An organisation author is braced whole (`{DES Collaboration}`, a
+    word of `names._ORG_RE` in it), in a built entry and in a cached one:
+    bare, BibTeX takes its last word for a surname ("D. Collaboration")
+    and splits it at an `and` of its own.
+  - A word of a title (`title`, `booktitle`, `shorttitle`, `series`) with a
+    capital after its first letter is braced, `{GI}-type`, `{KiDS}`
+    (`bibtex.protect_case`, Zotero's BibLaTeX rule), and one of letters and
+    digits with a capital (`{Y3}`, `{3D}`), so plainnat's sentence case
+    keeps it; what is braced already, math and command names stay as they
+    are.
   - The month is a standard macro (`month = sep`); doi.org writes `Sept`,
-    `June` and `July`, which no style defines. A page range takes `--`.
+    `June` and `July`, which no style defines. A page range takes `--`,
+    whatever dash it was written with (`bibtex.PAGE_RANGE_RE`).
   - The entry type is one every style defines, and a type whose venue
     field is missing (`@article` without `journal`, `@inproceedings`
     without `booktitle`, a thesis without `school`, a report without
@@ -2819,14 +2869,28 @@ document cites, so the export has no switches and no bundling.
   pdflatex, and CJK needs XeLaTeX or LuaLaTeX. What the registries really
   return: [research/registry-records.md](../research/registry-records.md).
 - **Citation keys**: generated as first author's surname + year
-  (`bibtex.default_key`; it must not change, because cached entries carry
-  it). Two papers by one author in one year would collide in a
+  (`bibtex.default_key`: the last word of the name, and of a name
+  `names.join_name` writes with a comma the last word of its surname
+  (`names.joined_family`), so "Pereira Campos, Jorge Fernando" keys
+  `campos` as "Jorge Fernando Pereira Campos" always did and "King, Jr.,
+  Martin Luther" keys `king` as Zotero's "Martin Luther, Jr. King" did;
+  any other name keys as before, a typed "Lovelace, Ada" `ada`). A key must
+  not move under a .tex file that cites it: a name stored in join_name's
+  comma form before release 72 ("Den Hengst, Floris", typed or imported)
+  keyed by its last word (`floris`), so an entry built again (a hand edit,
+  a refetch, a Zotero pull) keeps the key its cached entry carries while
+  the first author and the year stay (`bibtex.rebuilt_key`), and step 72
+  gave such a record with no cached entry the entry it was cited by
+  (`migrations._v72_keyed`). Two papers by one author in one year would collide in a
   bibliography, so `bibtex.unique_keys` suffixes clashes `a`, `b`, … `z`,
   `aa` — Better BibTeX's convention. Clashes are found case-insensitively
   (classic BibTeX treats `Smith2020` and `smith2020` as one entry). Pinned
   keys are assigned first, so the key a user chose is never the one that
   moves; two pins that collide are still made distinct rather than writing
-  a broken file.
+  a broken file. `unique_keys(records, taken)` keys records around keys
+  already given out: a copy's pages outside its `key_folder` are keyed
+  after the folder's and yield to them, a pin of theirs too
+  ([citations.md](citations.md#the-bibliography-answer)).
 - **A pinned key** is `properties.cite_key`, set in the metadata popover's
   Cite key row (empty shows the generated key as its placeholder). It lives
   *beside* `meta`, not inside it, because a refetch replaces the record and
@@ -2850,40 +2914,82 @@ document cites, so the export has no switches and no bundling.
   names the folder but carries no timestamp — so a `.bib` kept in a
   repository or refreshed from a link shows a diff only when the metadata
   changed.
-- **Only page roots are read.** `_BibtexBuilder.roots_only` tells the driver
+- **Only page roots are read.** `_CitationBuilder.roots_only` tells the driver
   to hand over the page's own row instead of walking its subtree, so a whole
   library's bibliography is one query per page rather than a tree fetch each.
   That is what lets the dialog preview it synchronously.
 
 ### The review step
 
-`GET /api/bibliography?page_id=|folder=` (a folder id; `sub_pages=1` with
-`page_id`, the pages inside it too) answers what the export *would*
-write, as data: `entries` (per citable page: `page_id`, the page `title`, the
-`key` the file will use, `pinned`, and the entry `text`), `skipped` (the
-pages left out, with the reason) and `text` (the file). It runs the same
-builder as the download — `keyed_records()` and `text()` serve both — so the
-review cannot disagree with the file, and `preview()` returns an empty
-bibliography as data where `save` would refuse, so the dialog can show the
-pages it could not cite instead of an error. The share popover's Copy
-BibTeX asks it too (`?page_id=`) when it opens, so the entry it copies is
-the one the file carries, not the stored text.
+`GET /api/bibliography?page_id=|folder=&format=` (a folder id; `sub_pages=1`
+with `page_id`, the pages inside it too; `format` one of the four modes,
+`bibtex` by default, 400 for another) answers what that export *would*
+write, as data: `format`, `entries` (per citable page: `page_id`, the page
+`title`, the `key` the file will use, `pinned`, the entry in that format as
+`text`, CSL JSON's a one-item array, and `csl`, its CSL JSON item),
+`skipped` (the pages left out, with the reason) and `text`, the file,
+byte-identical to that mode's download. It runs the same builder as the
+downloads — `keyed_records()` serves both — so the review cannot disagree
+with the file, and `preview()` returns an empty bibliography as data where
+`save` would refuse, so the dialog can show the pages it could not cite
+instead of an error. The review reads one format at a time, as it is
+picked, and keeps the last answer on screen while the next loads; the
+right pane shows the picked entry's `text`, "Copy all" the answer's. The
+share popover asks it too (`?page_id=`) when it opens, so the entry it
+copies is the one the file carries, not the stored text.
 
-The dialog's BibTeX step is the two panes the Zotero import review uses
+`POST /api/bibliography` answers the same for a selection, `{page_ids,
+key_folder?, format?}`, in the order asked, its `text` those entries laid
+out as the format's file without a `.bib`'s head comment, with the keys of
+`key_folder`'s `.bib` when it is named: the page and selection menus copy
+from it ([citations.md](citations.md#the-bibliography-answer)).
+
+The dialog's review is the two panes the Zotero import review uses
 (`.bibColumns`, the same shape as `.importReviewColumns` with its own
-classes): the papers on the left, each with the citation key underneath and a
-pin mark when that key is pinned, the pages that cannot be cited listed under
-them with the reason. The right pane holds whichever
-paper is picked, with a copy button for that one entry; the footer's "Copy
-all" takes the whole bibliography and appears only when there is more than
-one. The modal widens for this step only (`transferModalWide`). Export is
-held while the review loads, when it fails and when nothing is citable.
-When "Include pages inside" ([above](#the-export-dialog)), under the
-columns, is on, the review asks for the page with the pages inside it
+classes), under a **Format** row (`BibliographyReview` in
+`ImportExport.jsx`): the papers on the left, each with the citation key
+underneath and a pin mark when that key is pinned, the pages that cannot be
+cited listed under them with the reason. The right pane holds whichever
+paper is picked: its entry in the chosen format with a copy button, or for
+a reference list the whole list with that paper's entry tinted and
+scrolled to, the box's button copying that entry. The footer's "Copy all" takes the whole
+bibliography and appears only when there is more than one. The modal
+widens for this step only (`transferModalWide`). Export is held while the
+review loads, when it fails and when nothing is citable. When "Include
+pages inside" ([above](#the-export-dialog)), under the columns, is on, the
+review asks for the page with the pages inside it
 (`bibliographyPreviewUrl`'s `subPages`) and asks again when the switch
-changes, so it holds what the `.bib` will.
+changes, so it holds what the file will. The summary is built from whole
+sentences: what the file holds, then for a list how the keys are kept
+apart and that pages without a record stay out.
 
-### Keeping a .bib up to date
+**Reference list** adds three rows: Style (the account's added styles,
+then the bundled ones in sections by class, its class as the row's hint),
+Language (disabled with "Set
+by the style" when the style has its own locale) and File (HTML, RTF or
+Plain text, `FORMATTED_FILES`). They start from the account's style and
+language (Settings → Citations; `ExportDialog`'s `citationStyle` and
+`citationLocale`) and are kept with the dialog's other choices in
+`gamma-export-opts` (`bibFormat`, `citeStyle`, `citeLocale`, `citeFile`);
+a style no longer on this server is the default style (`citeRules.styleInUse`
+over citationApi's list, the rule every citation follows). The Style and
+Language rows are the ones Settings → Citations has
+(`citations/CitationChoices.jsx`). The preview is one
+render of the whole list in the review's order (`useFormatted`), so a
+numeric style numbers it so and 2020a/2020b hold across it; the right pane
+shows that list as the file will hold it (its order, numbering and
+spacing), the picked paper's entry marked in it (`CitationHtml`'s
+`mark`), or says above it that the style leaves the paper out of its
+bibliography. A reference list finishes in the
+review step, with no export job: **Download** renders the list in the
+file's format and saves it (`saveBlob`; `formattedFile` makes the HTML a
+UTF-8 page of its own, titled by the folder or the page; the file is named
+"Bibliography"), then reads "Download again"; **Copy all** puts the HTML and the
+text on the clipboard in the click (`copyPayload`). A refused copy or a
+failed save shows a `FormNotice`, since the dialog has no status pill. The
+engine's chunk is fetched as the card is picked.
+
+### Keeping a bibliography up to date
 
 The export endpoint answers the *current* bibliography on every request and
 accepts a share token, so a folder share link doubles as a fixed URL:
@@ -2895,12 +3001,17 @@ accepts a share token, so a folder share link doubles as a fixed URL:
 That is what Overleaf's Upload → From External URL (and its Refresh button),
 a Makefile or a cron'd `curl` can pull, which is the job Better BibTeX's
 auto-export does in Zotero — without a file watcher, because the server
-renders on demand. The token names the workspace, so the URL carries neither
-a session nor a `ws=`. The BibTeX step shows the link under "Keep this .bib
-up to date" when the page or folder is already shared (a page's link with
-`&sub_pages=1` while "Include pages inside" is on), and otherwise points
-at Share: creating the link publishes the pages, and that choice (with its
-audience) belongs to the share popover, not to an export dialog.
+renders on demand. `mode=biblatex`, `ris` and `csljson` serve those files
+the same way (`bibliographyUrl`'s `mode`). The token names the workspace,
+so the URL carries neither a session nor a `ws=`. The review shows the link
+for the format chosen when the page or folder is already shared (a page's
+link with `&sub_pages=1` while "Include pages inside" is on), and otherwise
+points at Share: creating the link publishes the pages, and that choice
+(with its audience) belongs to the share popover, not to an export dialog.
+A `.bib` (BibTeX or BibLaTeX) gets it under "Keep this .bib up to date"
+with Overleaf's steps (the `transfer.bibLink` anchor, the `bibtex.shown`
+guide event); RIS and CSL JSON under "Keep this file up to date" with the
+link alone. A reference list has none.
 
 ## Obsidian vault export
 

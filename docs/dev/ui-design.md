@@ -245,9 +245,9 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `aiKeyInput` | every text/number/password input in dialogs and settings; in a settings row one width, and a list or a pair of fields on a line of its own (`Row wide`, [settings.md](settings.md#settings-primitives)) |
 | `Palette` ([shared/ui/Palette.jsx](../../frontend/src/shared/ui/Palette.jsx)) / `PagePicker` ([library/PagePicker.jsx](../../frontend/src/library/PagePicker.jsx)) | every dialog that picks one thing from a long list by typing: a field near the top of the window, the options in sections under it (↑↓ go round, Enter takes, Esc closes), a line saying what a pick does and the keys, led by the `note` when the list cannot say it (quick open's file search under way, failed, or matching nothing). Quick open (Ctrl+P and the command palette) is one; `PagePicker` is the palette over library pages, with quick open's rows (`PageOption`, a sub-page naming the pages it is in) and its ranking: Move to page, Move into page, the PDF's link dialog. A new page picker is a `PagePicker`, never a list of its own |
 | `switch` / `switchTrack` | every on/off toggle |
-| `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`; a glyph for the choice goes in its options (`[value, label, Icon]`), never in `display`; an option's fourth element is its row's `trailing` hint after the label (the chat picker's muted "offline", amber "not ready") and its fifth the row's title, the row still pickable; `locked`, a sentence, shows the choice and takes none, the sentence each row's title (the composer's folder chip once the conversation has a turn); `actions` end the menu after a rule as plain rows (the folder chip's *Add folder…*); `start` opens it from the trigger's left edge, for a trigger at a bar's start; `ghost` draws the trigger frameless for a choice inside a line of text or a header (the chat's agent picker); `listbox(at)` opens a surface of the caller's at the menu's place instead of the checkmarked rows (the trigger then says `aria-haspopup` with `popup`, `"listbox"` by default): `TaskModelMenu` opens the model menu through it, a search box over a `ModelMenuList` whose star is a `ctlBtn` sized to `--ctl-icon-btn-xs` ([ai.md](ai.md#the-model-menu)), and the chat's model chip its panel, a `"dialog"` ([ai.md](ai.md#the-model-chip)). A choice no longer available turns the trigger amber (`--warn`), as a task row's missing model does (`.aiTaskMissing .uiSelectBtn`). No native `<select>` anywhere |
+| `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`; a glyph for the choice goes in its options (`[value, label, Icon]`), never in `display`; an option's fourth element is its row's `trailing` hint after the label (the chat picker's muted "offline", amber "not ready") and its fifth the row's title, the row still pickable; `locked`, a sentence, shows the choice and takes none, the sentence each row's title (the composer's folder chip once the conversation has a turn); `actions` end the menu after a rule as plain rows (the folder chip's *Add folder…*), and an `ActionMenu` item that is `{heading}` alone heads a group of the rows after it (`MenuGroup`; the share popover's Copy as); `start` opens it from the trigger's left edge, for a trigger at a bar's start; `ghost` draws the trigger frameless for a choice inside a line of text or a header (the chat's agent picker); `listbox(at)` opens a surface of the caller's at the menu's place instead of the checkmarked rows (the trigger then says `aria-haspopup` with `popup`, `"listbox"` by default): `TaskModelMenu` opens the model menu through it, a search box over a `ModelMenuList` whose star is a `ctlBtn` sized to `--ctl-icon-btn-xs` ([ai.md](ai.md#the-model-menu)), and the chat's model chip its panel, a `"dialog"` ([ai.md](ai.md#the-model-chip)). A choice no longer available turns the trigger amber (`--warn`), as a task row's missing model does (`.aiTaskMissing .uiSelectBtn`). No native `<select>` anywhere |
 | `useMenuTrigger` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | the menus a toolbar's buttons open on the press, one at a time per toolbar: the recording player's mode and speed, the tool strip's More, Tool and Style, the selection menu's Style and Convert, a dock window header's actions and its "⋯" ([below](#menus-and-submenus), [Dock windows](#dock-windows)) |
-| `MenuItem` / `MenuLabel` / `MenuDivider` / `SubMenuItem` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every row inside a menu, context or popover: icon column + ellipsizing label (+ `danger`, `trailing`, `keys`); `MenuDivider` between groups. `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded; a popover menu hosts one through `MenuScope` |
+| `MenuItem` / `MenuLabel` / `MenuGroup` / `MenuDivider` / `SubMenuItem` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every row inside a menu, context or popover: icon column + ellipsizing label (+ `danger`, `trailing`, `keys`); `MenuGroup` a `MenuLabel` over the rows it heads, in a `group` it names; `MenuDivider` between groups. `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded; a popover menu hosts one through `MenuScope` |
 | `StopSlider` ([shared/ui/StopSlider.jsx](../../frontend/src/shared/ui/StopSlider.jsx)) | a choice of one among a few ordered steps (the chat's reasoning effort, [ai.md](ai.md#the-model-chip)): a thick rounded track filled up to a thumb a little larger than it, which glides to the stop picked, with a dot on each stop ahead; with none picked the track is bare. The control is a native range over the paint, so a press, a drag, a finger and the arrow keys work, and it says the stop's name; the thumb takes its focus ring. An unordered choice is a `Segmented`, a number a `CharSlider` or `Stepper` |
 | `categoryTag`, `uiTag` | chips and small badges |
 | `StateTag` ([shared/ui/StateTag.jsx](../../frontend/src/shared/ui/StateTag.jsx)) | a `uiTag` whose state changes while it is shown, a thread's turn of an agent (`comments.js` `turnChip`, on the thread and in the Comments window) and a work folder's agent at work in the page chip's card (`vaultState.js` `agentLine`), and a synced folder's keeper and sync on its row, card, Files window root and folder view heading (`vaultState.js` `folderKeeper`, `.keeperTag`): a spinner and `.shimmerText` while work is under way, its label through `MorphText`. `StateDetail` puts the state's `detail` (the agent's progress, why it failed, red then) on a line under what the tag is on, so nothing waits behind the tag's hover title. An agent at work is worded once, `vaultState.js` `agentWorking` ("Codex is working…", "Codex is working: Editing intro.tex"), which the desktop sync panel copies; an agent that cannot run is `.agentProblem` (`--warn`) wherever it is said, only the chosen agent's, but for the chat picker's "not ready" on each agent's row |
@@ -540,7 +540,12 @@ is a `MenuItem` (icon column, ellipsizing label, optional `trailing` node or
 `danger` for destructive actions). Groups of rows are separated by
 `MenuDivider`; `menuGroups(...groups)` drops empty groups and puts one
 divider between the rest, so a menu a viewer sees half of has no doubled
-rule. Popover menus use the same rows: the topbar's account, View and Add
+rule. A menu or flyout none of whose rows has a glyph keeps no empty icon
+column (one rule in app.css): its labels start at the rows' own padding.
+A flyout drawn inline in the phone's sheet keeps the column the sheet's
+rows have, so its rows stay indented under their row's label (the account
+menu's Tours). A `MenuSelect` longer than it can show opens
+scrolled to its checked row, in its middle (a style far down its class). Popover menus use the same rows: the topbar's account, View and Add
 menus and the page header's Document popover. The account, View and
 Document menus render their panel as a `MenuScope` (the flyout state and
 the menu role a `ContextMenu` carries), so the account menu's **Tours** is
@@ -562,6 +567,21 @@ only the dropdown. A `ContextMenu` rendered inside another one's rows
 (the handwriting selection menu's Style picker and its Convert button
 each open one) is a part of that menu: a press in it never dismisses the
 menu it came from, and Escape closes it first (`NestCtx` in Menus.jsx).
+
+A page's citation rows are one group of the page menu (`menuGroups`),
+shown only where an acted-on page has a record, after Copy to workspace
+and before Copy link (`citations/CitationMenuRows.jsx`,
+[citations.md](citations.md#the-menus-and-the-commands)): Copy citation
+(only while Quick Copy is the style), Copy bibliography under the Quick
+Copy format's label, then a Copy as flyout in labelled groups (Formats,
+Cite keys, Your styles with the default marked, Other styles). Copy
+citation and every surface that makes or sets a citation take the
+quotation-mark glyph (`QuoteMarkIcon`); a quote block takes the lines
+and bar (`TextQuoteIcon`). The rows carry the commands' chords where
+they act on what the commands do: opened on the library's own rows, whose
+selection the commands copy. A folder's menu has the same group, without
+Copy citation, after its Export… group, where a paper filed in the folder
+or below it has a record.
 
 A menu a toolbar's button opens comes from `useMenuTrigger({side})`
 (Menus.jsx). It opens on the button's press, as a native menu does, not on
@@ -611,7 +631,9 @@ More's Ruler, Shapes and Zoom window). One of a set is a `menuitemradio`
 and speed, the Style menu's brushes, a strip highlighter's colour groups,
 a `Segmented` inside a menu). A
 `MenuSelect` with headings puts each set of radios in a `group` named by
-its heading. In Move to folder (a page's) and Move to (a folder's) a check
+its heading, and a heading over action rows heads a `group` of them as
+well (`MenuGroup`: an `ActionMenu`'s `{heading}` items, the Copy as ▸
+flyout's Formats, Cite keys and styles). In Move to folder (a page's) and Move to (a folder's) a check
 marks the folder it is in. That is no state the row sets, so the row stays
 a `menuitem`, and its title says so.
 
@@ -926,9 +948,30 @@ waiting, tagged *pending*, with the same toggle and a withdraw), General access
 Invited only — and, as the section's action, one View / Edit `Segmented`,
 disabled under Invited only; one summary sentence under the tiles is the
 only prose, amber `.shareWarn` when a link is editable without sign-in).
-Below them the page's Citation section (App.jsx owns it: a `citeHead`
-label line, then a `CopyBox` — text with the copy button pinned top-right —
-for the slide citation and for BibTeX; the section's action regenerates).
+Below them the page's Citation section (`citations/CitationShareSection.jsx`,
+which App hands the popover; [citations.md](citations.md#the-share-popover)).
+Its action is **Copy as ▾**, a labelled `ActionMenu` whose `{heading}`
+items group BibLaTeX, RIS and CSL JSON under Formats and the key commands
+under Cite keys. Then three parts, each under a `citeHead` label line,
+all at the section's one left edge (the line wraps on a phone, its
+control under the label): **Reference**, its line carrying the record's
+provenance tag (the registry's name, or a red "!" and the hint under the
+line when nothing tied the record to the document) and, at its end, the
+style picker (a `MenuSelect` with `citations/CitationChoices.jsx`
+`styleMenuProps`, the account's styles first and then the classes,
+ending, for an account, in the More styles… action; its trigger names the
+style short, "APA 7th", the full title on hover), over a `CopyBox` — text with the copy button
+pinned top-right — holding the reference as the style renders it
+(`.citeRefPreview`, "Formatting…" while it renders; the no-metadata hint
+when the page's answer has no entry), and under that a `uiBtn sm` **Copy
+citation** (the quotation-mark glyph, a tick once copied) with the in-text
+citation beside it on two lines at most (`.citeInText`; none for a
+numeric style or a page with nothing to cite); **Slide citation**, its line
+ending in the regenerate `uiBtn sm iconSq`, over its `CopyBox` (with no
+AI service connected, a line saying one writes it and a ghost Set up
+AI…); and
+**BibTeX**, a `CopyBox` of the entry the `.bib` prints, when the page has
+one.
 On a server with cloud sign-in a *Gamma Cloud* section sits above the
 citation (`PublishSection`): Publish, or the published link with Copy and
 an inline-confirmed Unpublish, the sync state line with Sync now, and the

@@ -148,7 +148,7 @@ All state is SQLite + files on disk under a data directory (env
     (`zotero_app`: `{client_key, client_secret}`, the secret encrypted the
     same way, "" once removed; [zotero_sync.md](zotero_sync.md)) and the
     server options of Settings (`options`: `{guest_max, metadata_lookup,
-    model_catalog, vault_keep_mb, searxng_url, openalex_key}` as JSON, only
+    model_catalog, citation_styles, vault_keep_mb, searxng_url, openalex_key}` as JSON, only
     those saved, the OpenAlex key encrypted the same way;
     `gamma/server_options.py`), the
     network proxy (`proxy`: `{mode, server, username, password, bypass,
@@ -157,6 +157,19 @@ All state is SQLite + files on disk under a data directory (env
   - `publisher_sessions` — encrypted publisher cookie snapshots per
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));
+  - `citation_styles` — the CSL styles each account added beside the
+    bundled ones (additive, no step; `gamma/routers/citations.py`,
+    [citations.md](citations.md#settings--citations-and-the-style-store)),
+    keyed `(user_id, style_id)`: the style's own id (the last segment of
+    its `<id>`), what its `<info>` says (`title`, `short_title`, `kind`:
+    author-date, numeric, note, label or author; `locale`, its
+    default-locale or `''`), `parent` (a dependent style's bundled parent,
+    `''` otherwise), the `xml`, `parent_xml` (a dependent's parent fetched
+    from the CSL repository when it is no bundled one, `''` otherwise),
+    `source` (`repository` or `file`) and `added_at`. At most 50 an
+    account, each XML 512 KB at most; on this server only (the profile
+    carries just the default style's id), and they go with their account
+    (`workspaces.delete_account_workspaces`);
   - `integration_tokens` — hashed assistant tokens per account, each of one
     workspace (with a `scope` — `read`, `write`, `computer`, a
     computer's channel to this server, which opens nothing else

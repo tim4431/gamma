@@ -5,7 +5,8 @@ finishStroke.test.mjs, notebook.test.mjs, mentions.test.mjs, textBox.test.mjs,
 picture.test.mjs, shapes.test.mjs, shapeTool.test.mjs, itemTypes.test.mjs,
 palette.test.mjs, linkName.test.mjs, personColor.test.mjs,
 passageBudget.test.mjs, libraryUtils.test.mjs, blockOps.test.mjs,
-textLoad.test.mjs, textAnchors.test.mjs and gammaLinks.test.mjs; a case
+textLoad.test.mjs, textAnchors.test.mjs, gammaLinks.test.mjs and
+citations.test.mjs; a case
 added here fails whichever side drifts. Other pytest modules read the rest
 (blockkind.json test_block_columns.py, pastemath.json test_paste_math.py,
 slug.json test_publish.py, zoterotext.json and zoteroshown.json the text box
@@ -767,6 +768,32 @@ def test_item_type_normalize(case):
 def test_item_type_of_a_record(case):
     from gamma import item_types
     assert item_types.item_type(case["meta"]) == case["type"]
+
+
+def test_bundled_citation_styles():
+    """The styles the frontend carries (citations/bundledStyles.js and its
+    .csl files) are the ones the style store names as a dependent style's
+    parent rather than fetching it, of the class a dependent that names
+    none takes (gamma/routers/citations.py)."""
+    from gamma.routers import citations
+    styles = _load("citationstyles.json")
+    assert {s["id"]: s["kind"] for s in styles} == citations.BUNDLED and len(styles) == len(citations.BUNDLED)
+    assert set(citations.BUNDLED.values()) <= set(citations.KINDS)
+
+
+CITATIONDATES = _load("citationdates.json")
+
+
+@pytest.mark.parametrize("case", CITATIONDATES["date_agrees"], ids=[c["note"] for c in CITATIONDATES["date_agrees"]])
+def test_a_records_date_while_it_agrees_with_its_year(case):
+    from gamma import meta_fields
+    assert meta_fields.date_agrees(case["meta"]) == case["date"]
+
+
+@pytest.mark.parametrize("case", CITATIONDATES["parse_date"], ids=[c["note"] for c in CITATIONDATES["parse_date"]])
+def test_a_written_date_as_a_year_and_an_iso_date(case):
+    from gamma import meta_fields
+    assert meta_fields.parse_date(case["in"]) == (case["year"], case["date"])
 
 
 COLORS = _load("colors.json")

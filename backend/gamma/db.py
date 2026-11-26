@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 71
+SCHEMA_VERSION = 72
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -529,6 +529,31 @@ USERS_SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_inbox_user ON inbox_items(user_id, at)",
     "CREATE INDEX IF NOT EXISTS idx_inbox_unread ON inbox_items(user_id) WHERE read_at IS NULL AND archived_at IS NULL",
     "CREATE INDEX IF NOT EXISTS idx_inbox_comment ON inbox_items(comment_id) WHERE comment_id != ''",
+    # citation_styles = the CSL styles an account added beside the bundled
+    # ones (gamma/routers/citations.py): the style's own id (the
+    # last segment of its <id>), what its <info> says of it (title, short
+    # title, kind: the citation format, author-date / numeric / note /
+    # label / author; the default-locale, '' for none), a dependent style's
+    # bundled parent ('' for none), the XML, a dependent style's parent
+    # fetched from the repository when none of the bundled ones is it
+    # ('' otherwise), where it came from (repository / file) and when. At
+    # most 50 an account, each XML 512 KB at most. They go with the account
+    # (workspaces.delete_account_workspaces). Additive: no step
+    # (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS citation_styles (
+        user_id TEXT NOT NULL,
+        style_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        short_title TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL DEFAULT '',
+        locale TEXT NOT NULL DEFAULT '',
+        parent TEXT NOT NULL DEFAULT '',
+        xml TEXT NOT NULL,
+        parent_xml TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT '',
+        added_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, style_id)
+    )""",
     # Server-wide admin-tunable settings (see gamma/server_settings.py) — a
     # tiny KV, global because limits like upload size apply to every user.
     """CREATE TABLE IF NOT EXISTS settings (

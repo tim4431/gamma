@@ -773,6 +773,103 @@ once the signature changed (`detail.rejected`).
 | Annotation | `zotero_annotations.projection`: `{type, color, comment, text, position}` | the same of the block's item (`to_items`) |
 | Collection | `{name, parent}` (`collection_projection`) | the folder's name and its parent folder's collection key (`folder_projection`) |
 
+#### Names
+
+An item's creator reaches a page's record as "First Last", or as "Last,
+First" where that would not split back to its surname ("Pereira Campos,
+Jorge Fernando", `names.join_name`: a page made from the item, and
+Zotero's authors pulled into one, `_apply`), and a record's author goes
+out split as the RDF export splits it (`names.split_name`). A name
+compares given name first as it splits: Zotero's creator its two fields
+joined "First Last", as every base stored before release 72 holds it, read
+so (`names.given_first`); a page's name the creator it goes out as, read
+back the same way (`names.sent_form`, which `normalized` gives as it
+writes the record out and reads it back). So "Pereira Campos, Jorge
+Fernando" and "Jorge Fernando Pereira Campos" (a page read before
+`join_name`) compare as the item's "Pereira Campos" / "Jorge Fernando"
+alike, "Abbott, T. M. C." typed here compares as the "T. M. C." / "Abbott"
+it makes, and a page made from an item compares equal to it however its
+record writes a name. That matters where the two sides are compared with
+no base between them: a workspace restored from a backup, a force, a first
+link (a name that read apart there would decide a push with nothing to
+write, and leave the base blank, so a later trash in Zotero would bounce).
+Step 72 moved every stored base to these forms (`migrations._v72_zotero_names`:
+`given_first` for `zbase` and an open `zotero_field` row's Zotero side,
+`sent_form` for `gbase` and for the item a create whose answer was lost
+was sent as, `detail.sent`, which its confirmation takes as both bases),
+since a base that read as changed decides a trash, a restore and a
+removal wrongly.
+
+How a name splits is kept beside its compared form, in the row's
+`detail.names` (`{z: zotero_fields.item_splits, g: page_splits}`, each
+author `[surname, given name]`), and merged as a field of its own
+(`_Unit._names`):
+
+- **One side split a name anew.** A split only one side changed goes to
+  the other ("Pereira Campos, Jorge Fernando" typed here for the item's
+  "Campos" / "Jorge Fernando Pereira" is sent; a split made anew in
+  Zotero comes into the page as the record writes it). A split moved here
+  makes the page dirty (`zotero_sync_reads.names_moved`, read by
+  `_page_dirty`, by `items_gone`, whose page then stays, and by
+  `_zotero_trashed`, whose page is kept and its item restored with the
+  split), and one moved in Zotero is an edit of the item that beats a
+  trash here (`_zotero_changed`). On a receive-only round a split of the
+  page's waits as a field does: `names.g` keeps its base until the split
+  goes (`_rows_tx` reads the page's split again only once the round wrote
+  its authors).
+- **Both sides.** Both split names anew apart, or Zotero changed the
+  authors (a co-author added, the list reordered) while the page split one
+  of them anew: the authors changed on both sides, so Gamma's go and a
+  `zotero_field` row keeps Zotero's, as for any edit of the authors here.
+  Zotero's split made the same way as the page's is no conflict. The merge
+  is of the whole list: two different names split anew, one on each side,
+  are both sides changing the authors too.
+- **A backup restore** blanks Gamma's base (`zotero_sync._own_library`),
+  and a name Zotero split anew since the backup reads as split anew here
+  too, so the restored page's split goes back, with Zotero's in a
+  conflict row, as the restored fields do.
+- **A first link's pair** takes both sides' splits as they are. A
+  **force** takes the forced side's: a force pull writes Zotero's names
+  where its record writes them otherwise, a force push sends a split the
+  page moved since it last synced (and only that: a page read before
+  `join_name` holds a name given name first, which says nothing of how
+  Zotero splits it).
+- **A row stored before 72** kept no split. Step 72 gives it the page's
+  as it last synced (`names.g`, `page_splits` of the old `gbase`'s authors,
+  the page's names as synced), so a split made here after the upgrade goes
+  like any other; Zotero's is not known (no `z`) and reads as unchanged.
+  A page that holds the item's names as a sync read them before
+  `join_name` ("Jorge Fernando Pereira Campos" for "Jorge Fernando" /
+  "Pereira Campos") takes them as the record writes them the next time a
+  round reads its item (any change on either side, a force pull;
+  `_Unit._old_join`), with nothing sent; until then it cites the surname
+  as before ("Campos"). A row with no `names` at all (a create 71 sent and
+  never confirmed, a backup 71 restored) reads Gamma's split as changed
+  where it differs from the item's, and a push keeps every creator the
+  page holds as read from it.
+
+A push keeps the item's creator for a name the page holds as read from
+it, or split alike, while that name's split is the one it last synced with
+(`_creators`), so Zotero's own split ("Frank van" / "Harmelen") is not
+written again for a co-author added here.
+
+The arXiv id is read from an Extra line with its primary class or without
+("arXiv:1002.2136 [astro-ph]", as Zotero's arXiv translator writes it), on
+both sides and in the record. A row stored before 72 (no `z` in
+`detail.names`) read such a line as no id. While the item still reads so
+by the old rule (`zotero_fields.unclassed_arxiv_id`), the merge reads its
+`zbase` with the id as read now (`_Unit._lifted`), and a page that took
+no id from it takes the id as Zotero's (one record write, nothing sent: a
+backup restored over the row would otherwise read the page's blank as a
+change of Gamma's and delete the line in Zotero). Deciding a trash, it is
+no edit of Zotero's while the item is at the version the row last
+synced; a classed line Zotero added since is one.
+
+A push that has nothing to write (the item already holds what Gamma's
+change would make it, read Zotero's own way) is settled as it is: both
+bases take the values both sides hold, rather than Gamma's change being
+sent again each round with nothing to send.
+
 Tags compare as names trimmed and lower-cased (`fold_tag`, as Gamma finds
 a label); automatic tags take part only with `auto_tags`. Collections take
 part only while their row is live and their folder exists
@@ -943,14 +1040,20 @@ is kept with. `reconcile` runs it start to end:
    whose record now earns a parent item (`_page_work`).
 
 **The record.** Zotero's changed fields go into the page's `meta` through
-`zotero_local.record_op`: only those fields; `source` stays the page's
-(`zotero` for a page that had none); `cite_key` pinned or unpinned; the
+`zotero_local.record_op`: only those fields, but for a full `date` the
+pulled year disagrees with, which goes (the popover's Date row would show
+it and, saved again, set the year back; [citations.md](citations.md#the-record-a-citation-reads));
+`source` stays the page's (`zotero` for a page that had none); `cite_key` pinned or unpinned; the
 BibTeX entry built again; the stale slide citation and a failed lookup's
 `meta_error` dropped. The page's title follows the record's while it is
 the old record's title, automatic or empty. Gamma's changed fields go as
 `zotero_fields.patch_for`: a PATCH of the changed fields where the item's
 type has them, the other creators, a full date in Gamma's year and Extra's
-other lines left as they are; a PUT for a retype.
+other lines left as they are; a PUT for a retype. The record's issue,
+journal abbreviation, full date and URL, which citations read, are not
+synced either way: the compared projections decide trash, restore and
+deletion, so adding fields to them needs versioned bases first
+([research/citations.md](../research/citations.md#what-was-left-and-why)).
 
 **Tags and labels.** Zotero's tags come in as labels by name (new labels
 are made in the same transaction, `zotero_local.filing_ops`), spelled as
@@ -1028,10 +1131,10 @@ beats a delete both ways ([home_library.md](home_library.md#recently-deleted)):
 | The page… | Zotero's item… | What happens |
 |---|---|---|
 | live | trashed, page unchanged since it synced | the page to Recently deleted (`ops.trash_page`); what Zotero changed with the trash keeps reading as changed (its base stays), so a restore on either side takes it |
-| live, changed here since it synced (or restored from a backup) | trashed | kept, and the item restored in Zotero with Gamma's changes; `zotero_deleted_edited` |
+| live, changed here since it synced, a name's split too (or restored from a backup) | trashed | kept, and the item restored in Zotero with Gamma's changes; `zotero_deleted_edited` |
 | live, after coming back here (an undo) | trashed | the item restored in Zotero |
 | in Recently deleted | live, unchanged | the item to Zotero's trash |
-| in Recently deleted | changed in Zotero since (a field, a note, an annotation, its PDF, a new child) | the page restored here (`zotero_deleted_edited`) |
+| in Recently deleted | changed in Zotero since (a field, a name's split, a note, an annotation, its PDF, a new child) | the page restored here (`zotero_deleted_edited`) |
 | in Recently deleted | restored in Zotero after both were in their trash | the page restored here |
 | purged from Recently deleted | live, unchanged since it synced | the item to Zotero's trash; the link never removes an item for good |
 | purged | restored or edited in Zotero since | the page made anew from the item, its rows pointed at it |
@@ -1907,7 +2010,9 @@ resolver needs and Zotero's side as the row held it once the unit was done
 (`zbase`):
 
 - `zotero_field`: `{theirs: {field: value}, zbase: {field: value}}`
-  (`field_base`);
+  (`field_base`; the authors in `theirs`, and in both lines, as each
+  side's record writes them, which "theirs" takes as they are, where
+  `zbase` holds them as compared, [Names](#names));
 - `zotero_note`: `{key, note: Zotero's HTML, zbase}`; `zotero_annotation`:
   `{key, z: Zotero's projection, field, zbase}` (`_synced_side` refreshes
   `zbase` once the unit's writes land);
@@ -2106,8 +2211,8 @@ start over, so both sides are listed whole, and `adopt` is the forced side
 under way until it is spent ([Finishing](#finishing)). `queue_changes`
 lists a row marked `first` even at its version, so every pair is decided
 again, receive only included. A force then decides each pair as a first
-link does, with the forced side winning, and takes that side's trash
-across:
+link does, with the forced side winning (how names split too,
+[Names](#names)), and takes that side's trash across:
 
 - a **pull** sends to Recently deleted the pages whose items are in
   Zotero's trash (kept there 30 days, as any page), deletes from their
@@ -2186,7 +2291,10 @@ The next round (`_own_library`) handles the stamp once (`status.restore_seen`):
 - this library's rows: the restored pages win their differences, and
   Zotero's values stay in the conflicts for "Take Zotero's". The records,
   folders and standalone PDFs read as changed here (their `gbase` blanked:
-  their projections are exact, so only a real difference goes). Notes,
+  a page made from its item, or one whose item Gamma made, reads as the
+  item does, [Names](#names), so only a real difference goes, and a push
+  with nothing to write settles; a name Zotero split anew since the backup
+  reads so too, its split kept beside, `detail.names`). Notes,
   note pages and annotations keep their bases and carry `detail.restore`:
   what Zotero changed since the backup reads as changed here too, so a
   mapping Gamma reads lossily (a note's HTML, a sticky note's colour) never
@@ -2811,6 +2919,7 @@ that leaked the key would fail its test).
 | `test_zotero_sync_folders.py` | collections ↔ folders |
 | `test_sub_pages_zotero.py` | a page inside another page: filed in Zotero where its top is, refiled with it, Zotero's collections answered with its top's, a new one created in them |
 | `test_zotero_sync_items.py` | first fill, records, retypes, trash and removals, both-sides and field conflicts, lost creates, re-parenting, the change-feed skip |
+| `test_zotero_sync_names.py` | how names split across the link: a split made anew on either side, with Zotero changing the authors, on a receive-only link, against a trash, a backup restore and a force; a link stored by release 71 after step 72 (its trashes and removals, a split made since, its names in the record's form, a force push, a classed arXiv line, a create pending across the upgrade) |
 | `test_zotero_sync_pdfs.py` | downloads, uploads, both sides replaced (in place and beside, with and without a copy, a lost answer, Take Zotero's back on Zotero's PDF), kept copies and the upload GC, full storage (a download it holds still counted when its item changes again), hashing, transfers, the wait while highlights are placed (stubbed and the real relocate job) and going in place once they are, a new attachment decided afresh, standalone PDFs removed for good |
 | `test_zotero_sync_first_link.py` | the first link of an existing workspace, its records and PDFs, force |
 | `test_zotero_sync_link.py` | a first link or force spent with PDFs held by full storage (here and Zotero's), a pair refused or held keeping its side, a force pull after a push, a log line per round, an annotated PDF in a push, a read edited between two of its pages (items and notes), an emptied publication forgotten, a reattach keeping a first link's side |

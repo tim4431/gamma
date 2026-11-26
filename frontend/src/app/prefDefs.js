@@ -17,6 +17,8 @@
 // breaks the app. Plain strings need no codec.
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
 import { PERMISSION_KEYS, defaultPerm, normalizePerm } from "../chat/chatSettings.js";
+import { DEFAULT_STYLE } from "../citations/bundledStyles.js";
+import { QUICK_COPY_FORMATS } from "../citations/formats.js";
 import { normalizeTourProgress } from "../guide/triggers.js";
 import { CHORD_MODES } from "../ink/fingerChords.js";
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
@@ -64,6 +66,12 @@ const json = (normalize) => ({
   parse: (raw) => { try { return normalize(JSON.parse(raw)); } catch { return undefined; } },
   serialize: JSON.stringify,
 });
+
+// A citation style's id (a repository slug, or what an uploaded style's
+// own <id> gave) and a CSL locale tag (en-US, sr-Latn-RS).
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it refuses
+const STYLE_ID = { parse: (raw) => (raw && raw.length <= 200 && !/[\u0000-\u001f\u007f]/.test(raw) ? raw : undefined) };
+const CSL_LOCALE = { parse: (raw) => (/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(raw) ? raw : undefined) };
 
 // AI context-size preferences (chars of extracted PDF text).
 const CONTEXT_CHARS = intIn(100, 1000000);
@@ -234,6 +242,18 @@ export const PREFS = {
   // where it lies, inside *Opened files*; on, it is added to the library (the
   // shell reads it from the profile, desktop/lib/systemFiles.js addsToLibrary).
   openAddsToLibrary: flag("gamma-open-adds-to-library", ACCOUNT, false),
+
+  // --- Citations (Settings → Citations; docs/dev/citations.md) ---
+  // The style citations and bibliographies are made in: a bundled style's
+  // id (citations/bundledStyles.js) or one the account added on a server.
+  // Styles are kept per server, so a profile synced from another may name
+  // one this server lacks; the citations then use APA and say so. The
+  // language of a style's terms and dates (a CSL locale; a style with a
+  // default-locale keeps its own). What Copy bibliography and its shortcut
+  // give (citations/formats.js QUICK_COPY_FORMATS).
+  citationStyle: pref("gamma-citation-style", ACCOUNT, DEFAULT_STYLE, STYLE_ID),
+  citationLocale: pref("gamma-citation-locale", ACCOUNT, "en-US", CSL_LOCALE),
+  quickCopyFormat: pref("gamma-quick-copy", ACCOUNT, "style", oneOf(QUICK_COPY_FORMATS)),
 
   // --- Highlights after a replaced PDF (Settings → Reading › Replacing a
   // PDF; docs/dev/highlight_relocation.md) ---

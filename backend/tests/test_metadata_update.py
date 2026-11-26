@@ -1,6 +1,10 @@
 """POST /api/metadata/update — hand-edited paper metadata."""
 
-from conftest import doc_props, make_page
+import json
+import sqlite3
+from contextlib import closing
+
+from conftest import doc_props, guest_name, make_page, workspace_of
 
 
 def test_update_saves_meta_and_rebuilds_bibtex(guest):
@@ -289,3 +293,138 @@ def test_clearing_the_record_unpins_too(guest):
     assert r.status_code == 200
     assert r.json()["cite_key"] == ""
     assert "cite_key" not in guest.get(f"/api/blocks/{page['id']}").json()["properties"]
+
+
+# --- the fields a citation needs (gamma/meta_fields.py) ------------------------
+
+CITED = {**PRL, "issue": "22", "journal_abbr": "Phys. Rev. Lett.", "date": "2019-06-04",
+         "url": "https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.122.223203"}
+
+
+def test_an_edit_from_a_tab_of_before_the_new_fields_keeps_them(guest):
+    """A tab whose popover has no Issue, Journal abbr., Date or URL row
+    sends none of them: the stored ones stay (the date while the year it
+    sends is the date's), and the entry is built with them."""
+    page = make_page(guest, "Older tab", properties={"meta": CITED})
+    r = guest.post("/api/metadata/update", json={
+        "block_id": page["id"], "meta": _draft(CITED, title="Near-unitary spin squeezing")})
+    assert r.status_code == 200, r.text
+    meta = guest.get(f"/api/blocks/{page['id']}").json()["properties"]["meta"]
+    assert meta["title"] == "Near-unitary spin squeezing" and meta["source"] == "manual"
+    assert {k: meta.get(k) for k in ("issue", "journal_abbr", "date", "url")} == {
+        k: CITED[k] for k in ("issue", "journal_abbr", "date", "url")}
+    # The year alone sent, another one: the date of the year before goes, the rest stays.
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": _draft(CITED, year="2020")})
+    meta = r.json()["meta"]
+    assert meta["year"] == "2020" and "date" not in meta and meta["issue"] == "22"
+
+
+def test_the_date_row_sets_the_year_and_the_date(guest):
+    """The Date row takes a year, a month or a day (slashes too) and sets
+    the year from it; anything else is the year as typed, with no date.
+    A blank field sent clears its value; an address that is no http(s) one
+    is not kept."""
+    page = make_page(guest, "Dates", properties={"meta": CITED})
+
+    def save(**fields):
+        r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": _draft(CITED, **fields)})
+        assert r.status_code == 200, r.text
+        return r.json()["meta"]
+
+    meta = save(date="2021/3/5")
+    assert (meta["year"], meta["date"]) == ("2021", "2021-03-05")
+    meta = save(date="2021-03")
+    assert (meta["year"], meta["date"]) == ("2021", "2021-03")
+    meta = save(date="August 1, 2020")  # as a Zotero item dates it (the oracle's 4989025-RCS6CG6Z)
+    assert (meta["year"], meta["date"]) == ("2020", "2020-08-01")
+    meta = save(date="in press")
+    assert meta["year"] == "in press" and "date" not in meta
+    meta = save(date="2021", issue="", url="javascript:alert(1)")
+    assert meta["year"] == "2021" and "date" not in meta and "issue" not in meta and "url" not in meta
+    assert meta["journal_abbr"] == "Phys. Rev. Lett."  # not sent: kept
+
+
+def test_a_save_keeps_a_last_first_name_whole(guest):
+    """The Authors row joins the names with commas. A name kept "Last,
+    First" (a Zotero item's "Pereira Campos" / "Jorge Fernando") or an
+    organisation's with an "and" in it survives a save that leaves it
+    alone, beside a name typed in; one typed so is split as it always was."""
+    meta = {**PRL, "authors": ["Pereira Campos, Jorge Fernando", "Dark Energy Survey and Kilo-Degree Survey "
+                               "Collaboration", "Den Hengst, Floris"]}
+    page = make_page(guest, "Comma names", properties={"meta": meta})
+    draft = _draft(meta, title="Renamed")
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": draft})
+    assert r.status_code == 200, r.text
+    assert r.json()["meta"]["authors"] == meta["authors"]
+    assert "author = {Pereira Campos, Jorge Fernando and {Dark Energy Survey" in r.json()["bibtex"]
+    draft = _draft(meta, authors=draft["authors"].replace("Den Hengst, Floris", "Ada Lovelace, Babbage, Charles"))
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": draft})
+    assert r.json()["meta"]["authors"] == [*meta["authors"][:2], "Ada Lovelace", "Babbage", "Charles"]
+    # The row as the popover writes it now, "; "-joined: a "Last, First"
+    # name typed in is one author.
+    draft = _draft(meta, authors="Pereira Campos, Jorge Fernando;  Babbage, Charles; ;Ada Lovelace")
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": draft})
+    assert r.json()["meta"]["authors"] == ["Pereira Campos, Jorge Fernando", "Babbage, Charles", "Ada Lovelace"]
+
+
+def test_an_edit_keeps_the_key_a_stored_comma_name_was_cited_by(guest):
+    """A record stored before release 72 with "Den Hengst, Floris" first,
+    whose cached entry was keyed "floris2020" by the name's last word: a
+    title edit builds the entry again with that key, which a .tex file
+    cites (``bibtex.rebuilt_key``); a new first author is keyed anew."""
+    meta = {**PRL, "authors": ["Den Hengst, Floris"], "year": "2020"}
+    old = "@article{floris2020,\n  title = {Old},\n  author = {Den Hengst, Floris},\n  year = {2020}\n}"
+    page = make_page(guest, "Stored", properties={"meta": meta, "bibtex": old})
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": _draft(meta, title="Renamed")})
+    assert r.status_code == 200, r.text
+    assert r.json()["meta"]["authors"] == ["Den Hengst, Floris"] and r.json()["bibtex"].startswith("@article{floris2020,")
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": _draft(
+        meta, authors="Pereira Campos, Jorge Fernando")})
+    assert r.json()["bibtex"].startswith("@article{campos2020,")
+
+
+def test_a_clear_is_judged_on_the_fields_sent_and_takes_the_new_ones(guest):
+    """Every sent field blank clears the record, though the stored one
+    holds an issue and an address the tab did not send."""
+    page = make_page(guest, "Clear cited", properties={"meta": CITED, "bibtex": "@article{x}"})
+    blank = {k: "" for k in ("kind", "title", "authors", "venue", "year", "volume", "pages", "doi", "arxiv_id")}
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": blank})
+    assert r.status_code == 200 and r.json()["meta"] is None
+    assert "meta" not in guest.get(f"/api/blocks/{page['id']}").json()["properties"]
+
+
+def test_a_typed_doi_keeps_none_of_the_old_papers_fields(guest, monkeypatch):
+    """The registry's record replaces the old paper's: its issue, date and
+    address do not ride along onto the new one."""
+    _registry(monkeypatch, {PRL["doi"]: PRL})
+    old = {**WRONG, "issue": "1", "date": "2019-01-28", "url": "https://journals.aps.org/pra/abstract/x"}
+    page = make_page(guest, "Wrong paper", properties={"meta": old})
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": _draft(old, doi=PRL["doi"])})
+    assert r.status_code == 200, r.text
+    meta = r.json()["meta"]
+    assert meta["title"] == PRL["title"] and not {"issue", "date", "url"} & set(meta)
+
+
+def test_the_edit_is_merged_with_what_the_page_holds_when_it_is_written(guest, monkeypatch):
+    """A field the edit does not send is taken from the record as it
+    stands when the edit is written, not as it was read before the lookup
+    the edit waited on: an issue a Zotero pull wrote meanwhile stays."""
+    from gamma.db import ws_db_path
+    from gamma.routers import metadata
+
+    page = make_page(guest, "Merged late", properties={"meta": {**PRL, "issue": "21"}})
+    looked_up = metadata._typed_identifier_record
+
+    def slow_lookup(meta, old):
+        with closing(sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db"))) as conn:
+            props = json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
+                                            (page["id"],)).fetchone()[0])
+            props["meta"]["issue"] = "22"
+            conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps(props), page["id"]))
+            conn.commit()
+        return looked_up(meta, old)
+    monkeypatch.setattr(metadata, "_typed_identifier_record", slow_lookup)
+    r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": _draft(PRL, title="Edited")})
+    assert r.status_code == 200, r.text
+    assert r.json()["meta"]["issue"] == "22"
+    assert guest.get(f"/api/blocks/{page['id']}").json()["properties"]["meta"]["issue"] == "22"

@@ -1,0 +1,775 @@
+<?xml version="1.0" encoding="utf-8"?>
+<locale xmlns="http://purl.org/net/xbiblio/csl" version="1.0" xml:lang="sr-Cyrl-RS">
+  <info>
+    <translator>
+      <name>Nikola N. Grubor</name>
+      <email>nikola.n.grubor@med.bg.ac.rs</email>
+      <uri>https://nikola-grubor.github.io/</uri>
+    </translator>
+    <translator>
+      <name>Marko Galjak</name>
+      <email>galjak@gmail.com</email>
+      <uri>https://galjak.com/</uri>
+    </translator>
+    <rights license="http://creativecommons.org/licenses/by-sa/3.0/">This work is licensed under a Creative Commons Attribution-ShareAlike 3.0 License</rights>
+    <updated>2026-10-19T07:40:19+00:00</updated>
+  </info>
+  <style-options punctuation-in-quote="false"/>
+  <date form="text">
+    <date-part name="day" form="numeric" suffix=". "/>
+    <date-part name="month" suffix=" "/>
+    <date-part name="year" suffix="."/>
+  </date>
+  <date form="numeric">
+    <date-part name="year"/>
+    <date-part name="month" form="numeric-leading-zeros" prefix="-" range-delimiter="/"/>
+    <date-part name="day" form="numeric-leading-zeros" prefix="-" range-delimiter="/"/>
+  </date>
+  <terms>
+    <!-- LONG GENERAL TERMS -->
+    <term name="accessed">приступљено</term>
+    <term name="advance-online-publication">претходно електронско објављивање</term>
+    <term name="album">албум</term>
+    <term name="and">и</term>
+    <term name="and others">и остали</term>
+    <term name="anonymous">анонимно</term>
+    <term name="at">на</term>
+    <term name="audio-recording">аудио-запис</term>
+    <term name="available at">доступно на</term>
+    <term name="by">ауторство:</term>
+    <term name="circa">око</term>
+    <term name="cited">цитирано</term>
+    <term name="et-al">и др.</term>
+    <term name="film">филм</term>
+    <term name="forthcoming">у припреми</term>
+    <term name="from">са</term>
+    <term name="henceforth">у даљем тексту</term>
+    <term name="ibid">ibid.</term>
+    <term name="in">у</term>
+    <term name="in press">у штампи</term>
+    <term name="internet">интернет</term>
+    <term name="letter">писмо</term>
+    <term name="loc-cit">loc. cit.</term> <!-- like ibid., the abbreviated form is the regular form  -->
+    <term name="no date">без датума</term>
+    <term name="no-place">без места издања</term>
+    <term name="no-publisher">без издавача</term> <!-- sine nomine -->
+    <term name="on">на</term>
+    <term name="online">на интернету</term>
+    <term name="op-cit">op. cit.</term> <!-- like ibid., the abbreviated form is the regular form  -->
+    <term name="original-work-published">оригинално дело објављено</term>
+    <term name="personal-communication">лична комуникација</term>
+    <term name="podcast">подкаст</term>
+    <term name="podcast-episode">епизода подкаста</term>
+    <term name="preprint">препринт</term>
+    <term name="presented at">представљено на</term>
+    <term name="radio-broadcast">радио-емисија</term>
+    <term name="radio-series">радио-серијал</term>
+    <term name="radio-series-episode">епизода радио-серијала</term>
+    <term name="reference">
+      <single>референца</single>
+      <multiple>референце</multiple>
+    </term>
+    <term name="retrieved">преузето</term>
+    <term name="review-of">приказ</term>
+    <term name="scale">размер</term>
+    <term name="special-issue">тематски број</term>
+    <term name="special-section">тематски одељак</term>
+    <term name="television-broadcast">телевизијска емисија</term>
+    <term name="television-series">телевизијска серија</term>
+    <term name="television-series-episode">епизода телевизијске серије</term>
+    <term name="video">видео</term>
+    <term name="working-paper">радна верзија рада</term>
+
+    <!-- SHORT GENERAL TERMS -->
+    <term name="advance-online-publication" form="short">претходно електронско објављивање</term>
+    <term name="anonymous" form="short">анон.</term>
+    <term name="audio-recording" form="short">аудио-запис</term>
+    <term name="available at" form="short">доступно на</term>
+    <term name="circa" form="short">око</term>
+    <term name="cited" form="short">цит.</term>
+    <term name="film" form="short">филм</term>
+    <term name="from" form="short">са</term>
+    <term name="letter" form="short">писмо</term>
+    <term name="no date" form="short">б. д.</term>
+    <term name="no-place" form="short">б. м.</term>
+    <term name="no-publisher" form="short">б. и.</term>
+    <term name="original-work-published" form="short">оригинално дело објављено</term>
+    <term name="personal-communication" form="short">лична комуникација</term>
+    <term name="podcast-episode" form="short">еп. подкаста</term>
+    <term name="radio-broadcast" form="short">радио-емисија</term>
+    <term name="radio-series" form="short">радио-серијал</term>
+    <term name="radio-series-episode" form="short">еп. радио-серијала</term>
+    <term name="reference" form="short">
+      <single>реф.</single>
+      <multiple>реф.</multiple>
+    </term>
+    <term name="retrieved" form="short">преузето</term>
+    <term name="review-of" form="short">прик.</term>
+    <term name="scale" form="short">размер</term>
+    <term name="special-issue" form="short">тем. број</term>
+    <term name="special-section" form="short">тем. одељак</term>
+    <term name="television-broadcast" form="short">ТВ емисија</term>
+    <term name="television-series" form="short">ТВ серија</term>
+    <term name="television-series-episode" form="short">еп. ТВ серије</term>
+    <term name="video" form="short">видео</term>
+    <term name="working-paper" form="short">радна верзија рада</term>
+
+    <!-- SYMBOLIC GENERAL FORMS -->
+
+    <!-- LONG ITEM TYPE FORMS -->
+    <term name="article">препринт</term>
+    <term name="article-journal">чланак из часописа</term>
+    <term name="article-magazine">чланак из магазина</term>
+    <term name="article-newspaper">новински чланак</term>
+    <term name="bill">предлог закона</term>
+    <!-- book is in the list of locator terms -->
+    <term name="broadcast">емисија</term>
+    <!-- chapter is in the list of locator terms -->
+    <term name="classic">класично дело</term>
+    <term name="collection">архивска збирка</term>
+    <term name="dataset">скуп података</term>
+    <term name="document">документ</term>
+    <term name="entry">одредница</term>
+    <term name="entry-dictionary">речничка одредница</term>
+    <term name="entry-encyclopedia">енциклопедијска одредница</term>
+    <term name="event">догађај</term>
+    <!-- figure is in the list of locator terms -->
+    <term name="graphic">графички приказ</term>
+    <term name="hearing">саслушање</term>
+    <term name="interview">интервју</term>
+    <term name="legal_case">судски предмет</term>
+    <term name="legislation">закон</term>
+    <term name="manuscript">рукопис</term>
+    <term name="map">карта</term>
+    <term name="motion_picture">видео-запис</term>
+    <term name="musical_score">партитура</term>
+    <term name="pamphlet">брошура</term>
+    <term name="paper-conference">конференцијски рад</term>
+    <term name="patent">патент</term>
+    <term name="performance">извођење</term>
+    <term name="periodical">периодична публикација</term>
+    <term name="personal_communication">лична комуникација</term>
+    <term name="post">објава</term>
+    <term name="post-weblog">објава на блогу</term>
+    <term name="regulation">пропис</term>
+    <term name="report">извештај</term>
+    <term name="review">приказ</term>
+    <term name="review-book">приказ књиге</term>
+    <term name="software">софтвер</term>
+    <term name="song">аудио-запис</term>
+    <term name="speech">излагање</term>
+    <term name="standard">стандард</term>
+    <term name="thesis">теза</term>
+    <term name="treaty">међународни уговор</term>
+    <term name="webpage">веб-страница</term>
+
+    <!-- SHORT ITEM TYPE FORMS -->
+    <term name="article-journal" form="short">чл. из часописа</term>
+    <term name="article-magazine" form="short">чл. из магазина</term>
+    <term name="article-newspaper" form="short">новински чл.</term>
+    <term name="broadcast" form="short">емисија</term>
+    <term name="classic" form="short">клас. дело</term>
+    <term name="collection" form="short">арх. збирка</term>
+    <!-- book is in the list of locator terms -->
+    <!-- chapter is in the list of locator terms -->
+    <term name="document" form="short">док.</term>
+    <term name="entry-dictionary" form="short">речн. одредница</term>
+    <term name="entry-encyclopedia" form="short">енцикл. одредница</term>
+    <!-- figure is in the list of locator terms -->
+    <term name="graphic" form="short">граф. приказ</term>
+    <term name="interview" form="short">интервју</term>
+    <term name="legal_case" form="short">суд. предмет</term>
+    <term name="legislation" form="short">закон</term>
+    <term name="manuscript" form="short">рук.</term>
+    <term name="motion_picture" form="short">видео-запис</term>
+    <term name="musical_score" form="short">партитура</term>
+    <term name="pamphlet" form="short">брошура</term>
+    <term name="paper-conference" form="short">конф. рад</term>
+    <term name="patent" form="short">патент</term>
+    <term name="performance" form="short">извођење</term>
+    <term name="personal_communication" form="short">лична комуникација</term>
+    <term name="regulation" form="short">пропис</term>
+    <term name="report" form="short">изв.</term>
+    <term name="review" form="short">прик.</term>
+    <term name="review-book" form="short">прик. књ.</term>
+    <term name="software" form="short">софтвер</term>
+    <term name="song" form="short">аудио-запис</term>
+    <term name="standard" form="short">стандард</term>
+    <term name="thesis" form="short">теза</term>
+    <term name="webpage" form="short">веб-страница</term>
+
+    <!-- LONG VERB ITEM TYPE FORMS -->
+    <term name="hearing" form="verb">сведочење:</term>
+    <term name="review" form="verb">приказ:</term>
+    <term name="review-book" form="verb">приказ књиге:</term>
+
+    <!-- SHORT VERB ITEM TYPE FORMS -->
+    <term name="hearing" form="verb-short">сведоч.</term>
+    <term name="review" form="verb-short">прик.</term>
+    <term name="review-book" form="verb-short">прик. књ.</term>
+
+    <!-- HISTORICAL ERA TERMS -->
+    <term name="ad"> н. е.</term>
+    <term name="bc"> п. н. е.</term>
+    <term name="bce"> п. н. е.</term>
+    <term name="ce"> н. е.</term>
+
+    <!-- PUNCTUATION -->
+    <term name="open-quote">„</term>
+    <term name="close-quote">“</term>
+    <term name="open-inner-quote">‚</term>
+    <term name="close-inner-quote">‘</term>
+    <term name="page-range-delimiter">–</term>
+    <term name="colon">:</term>
+    <term name="comma">,</term>
+    <term name="semicolon">;</term>
+
+    <!-- ORDINALS -->
+    <term name="ordinal">.</term>
+    <term name="ordinal-01">.</term>
+    <term name="ordinal-02">.</term>
+    <term name="ordinal-03">.</term>
+    <term name="ordinal-11">.</term>
+    <term name="ordinal-12">.</term>
+    <term name="ordinal-13">.</term>
+
+    <!-- LONG ORDINALS -->
+    <term name="long-ordinal-01">први</term>
+    <term name="long-ordinal-02">други</term>
+    <term name="long-ordinal-03">трећи</term>
+    <term name="long-ordinal-04">четврти</term>
+    <term name="long-ordinal-05">пети</term>
+    <term name="long-ordinal-06">шести</term>
+    <term name="long-ordinal-07">седми</term>
+    <term name="long-ordinal-08">осми</term>
+    <term name="long-ordinal-09">девети</term>
+    <term name="long-ordinal-10">десети</term>
+
+    <!-- LONG LOCATOR FORMS -->
+    <term name="act">
+      <single>чин</single>
+      <multiple>чинови</multiple>
+    </term>
+    <term name="appendix">
+      <single>прилог</single>
+      <multiple>прилози</multiple>
+    </term>
+    <term name="article-locator">
+      <single>члан</single>
+      <multiple>чланови</multiple>
+    </term>
+    <term name="book">
+      <single>књига</single>
+      <multiple>књиге</multiple>
+    </term>
+    <term name="canon">
+      <single>канон</single>
+      <multiple>канони</multiple>
+    </term>
+    <term name="chapter">
+      <single>поглавље</single>
+      <multiple>поглавља</multiple>
+    </term>
+    <term name="column">
+      <single>стубац</single>
+      <multiple>ступци</multiple>
+    </term>
+    <term name="elocation">
+      <single>локација</single>
+      <multiple>локације</multiple>
+    </term>
+    <term name="equation">
+      <single>једначина</single>
+      <multiple>једначине</multiple>
+    </term>
+    <term name="figure">
+      <single>слика</single>
+      <multiple>слике</multiple>
+    </term>
+    <term name="folio">
+      <single>фолио</single>
+      <multiple>фолији</multiple>
+    </term>
+    <term name="issue">
+      <single>број</single>
+      <multiple>бројеви</multiple>
+    </term>
+    <term name="line">
+      <single>ред</single>
+      <multiple>редови</multiple>
+    </term>
+    <term name="note">
+      <single>напомена</single>
+      <multiple>напомене</multiple>
+    </term>
+    <term name="opus">
+      <single>опус</single>
+      <multiple>опуси</multiple>
+    </term>
+    <term name="page">
+      <single>страница</single>
+      <multiple>странице</multiple>
+    </term>
+    <term name="paragraph">
+      <single>параграф</single>
+      <multiple>параграфи</multiple>
+    </term>
+    <term name="part">
+      <single>део</single>
+      <multiple>делови</multiple>
+    </term>
+    <term name="rule">
+      <single>правило</single>
+      <multiple>правила</multiple>
+    </term>
+    <term name="scene">
+      <single>сцена</single>
+      <multiple>сцене</multiple>
+    </term>
+    <term name="section">
+      <single>одељак</single>
+      <multiple>одељци</multiple>
+    </term>
+    <term name="sub-verbo">
+      <single>sub verbo</single>
+      <multiple>sub verbis</multiple>
+    </term>
+    <term name="supplement">
+      <single>суплемент</single>
+      <multiple>суплементи</multiple>
+    </term>
+    <term name="table">
+      <single>табела</single>
+      <multiple>табеле</multiple>
+    </term>
+    <term name="timestamp">
+      <!-- generally blank -->
+      <single/>
+      <multiple/>
+    </term>
+    <term name="title-locator">
+      <single>наслов</single>
+      <multiple>наслови</multiple>
+    </term>
+    <term name="verse">
+      <single>стих</single>
+      <multiple>стихови</multiple>
+    </term>
+    <term name="volume">
+      <single>том</single>
+      <multiple>томови</multiple>
+    </term>
+
+    <!-- SHORT LOCATOR FORMS -->
+    <term name="appendix" form="short">
+      <single>прил.</single>
+      <multiple>прил.</multiple>
+    </term>
+    <term name="article-locator" form="short">
+      <single>чл.</single>
+      <multiple>чл.</multiple>
+    </term>
+    <term name="book" form="short">књ.</term>
+    <term name="canon" form="short">
+      <single>кан.</single>
+      <multiple>кан.</multiple>
+    </term>
+    <term name="chapter" form="short">погл.</term>
+    <term name="column" form="short">ступ.</term>
+    <term name="elocation" form="short">
+      <single>лок.</single>
+      <multiple>лок.</multiple>
+    </term>
+    <term name="equation" form="short">
+      <single>једн.</single>
+      <multiple>једн.</multiple>
+    </term>
+    <term name="figure" form="short">сл.</term>
+    <term name="folio" form="short">фол.</term>
+    <term name="issue" form="short">бр.</term>
+    <term name="line" form="short">р.</term>
+    <term name="note" form="short">нап.</term>
+    <term name="opus" form="short">оп.</term>
+    <term name="page" form="short">
+      <single>стр.</single>
+      <multiple>стр.</multiple>
+    </term>
+    <term name="paragraph" form="short">пар.</term>
+    <term name="part" form="short">део</term>
+    <term name="rule" form="short">
+      <single>прав.</single>
+      <multiple>прав.</multiple>
+    </term>
+    <term name="scene" form="short">
+      <single>сц.</single>
+      <multiple>сц.</multiple>
+    </term>
+    <term name="section" form="short">од.</term>
+    <term name="sub-verbo" form="short">
+      <single>s.v.</single>
+      <multiple>s.vv.</multiple>
+    </term>
+    <term name="supplement" form="short">
+      <single>супл.</single>
+      <multiple>супл.</multiple>
+    </term>
+    <term name="table" form="short">
+      <single>таб.</single>
+      <multiple>таб.</multiple>
+    </term>
+    <term name="title-locator" form="short">
+      <single>насл.</single>
+      <multiple>насл.</multiple>
+    </term>
+    <term name="verse" form="short">
+      <single>ст.</single>
+      <multiple>ст.</multiple>
+    </term>
+    <term name="volume" form="short">
+      <single>том</single>
+      <multiple>том</multiple>
+    </term>
+
+    <!-- SYMBOLIC LOCATOR FORMS -->
+    <term name="paragraph" form="symbol">
+      <single>¶</single>
+      <multiple>¶¶</multiple>
+    </term>
+    <term name="section" form="symbol">
+      <single>§</single>
+      <multiple>§§</multiple>
+    </term>
+
+    <!-- LONG NUMBER VARIABLE FORMS -->
+    <term name="chapter-number">
+      <single>поглавље</single>
+      <multiple>поглавља</multiple>
+    </term>
+    <term name="citation-number">
+      <single>цитат</single>
+      <multiple>цитати</multiple>
+    </term>
+    <term name="collection-number">
+      <single>број</single>
+      <multiple>бројеви</multiple>
+    </term>
+    <term name="edition">
+      <single>издање</single>
+      <multiple>издања</multiple>
+    </term>
+    <term name="first-reference-note-number">
+      <single>напомена</single>
+      <multiple>напомене</multiple>
+    </term>
+    <term name="number">
+      <single>број</single>
+      <multiple>бројеви</multiple>
+    </term>
+    <term name="number-of-pages">
+      <single>страница</single>
+      <multiple>страница</multiple>
+    </term>
+    <term name="number-of-volumes">
+      <single>том</single>
+      <multiple>томова</multiple>
+    </term>
+    <term name="page-first">
+      <single>страница</single>
+      <multiple>странице</multiple>
+    </term>
+    <term name="printing">
+      <single>доштампавање</single>
+      <multiple>доштампавања</multiple>
+    </term>
+    <term name="version">верзија</term>
+
+    <!-- SHORT NUMBER VARIABLE FORMS -->
+    <term name="chapter-number" form="short">
+      <single>погл.</single>
+      <multiple>погл.</multiple>
+    </term>
+    <term name="citation-number" form="short">
+      <single>цит.</single>
+      <multiple>цит.</multiple>
+    </term>
+    <term name="collection-number" form="short">
+      <single>бр.</single>
+      <multiple>бр.</multiple>
+    </term>
+    <term name="edition" form="short">изд.</term>
+    <term name="first-reference-note-number" form="short">
+      <single>нап.</single>
+      <multiple>нап.</multiple>
+    </term>
+    <term name="number" form="short">
+      <single>бр.</single>
+      <multiple>бр.</multiple>
+    </term>
+    <term name="number-of-pages" form="short">
+      <single>стр.</single>
+      <multiple>стр.</multiple>
+    </term>
+    <term name="number-of-volumes" form="short">
+      <single>т.</single>
+      <multiple>т.</multiple>
+    </term>
+    <term name="page-first" form="short">
+      <single>стр.</single>
+      <multiple>стр.</multiple>
+    </term>
+    <term name="printing" form="short">
+      <single>дошт.</single>
+      <multiple>дошт.</multiple>
+    </term>
+    <term name="version" form="short">верз.</term>
+
+    <!-- LONG ROLE FORMS -->
+    <term name="author"/> <!-- generally blank -->
+    <term name="chair">
+      <single>председавајући</single>
+      <multiple>председавајући</multiple>
+    </term>
+    <term name="collection-editor">
+      <single>уредник</single>
+      <multiple>уредници</multiple>
+    </term>
+    <term name="compiler">
+      <single>приређивач</single>
+      <multiple>приређивачи</multiple>
+    </term>
+    <term name="composer"/> <!-- generally blank -->
+    <term name="container-author"/> <!-- generally blank -->
+    <term name="contributor">
+      <single>сарадник</single>
+      <multiple>сарадници</multiple>
+    </term>
+    <term name="curator">
+      <single>кустос</single>
+      <multiple>кустоси</multiple>
+    </term>
+    <term name="director">
+      <single>редитељ</single>
+      <multiple>редитељи</multiple>
+    </term>
+    <term name="editor">
+      <single>уредник</single>
+      <multiple>уредници</multiple>
+    </term>
+    <term name="editor-translator">
+      <single>уредник и преводилац</single>
+      <multiple>уредници и преводиоци</multiple>
+    </term>
+    <term name="editortranslator">
+      <single>уредник и преводилац</single>
+      <multiple>уредници и преводиоци</multiple>
+    </term>
+    <term name="editorial-director">
+      <single>уредник</single>
+      <multiple>уредници</multiple>
+    </term>
+    <term name="executive-producer">
+      <single>извршни продуцент</single>
+      <multiple>извршни продуценти</multiple>
+    </term>
+    <term name="guest">
+      <single>гост</single>
+      <multiple>гости</multiple>
+    </term>
+    <term name="host">
+      <single>водитељ</single>
+      <multiple>водитељи</multiple>
+    </term>
+    <term name="illustrator">
+      <single>илустратор</single>
+      <multiple>илустратори</multiple>
+    </term>
+    <term name="interviewer"/> <!-- generally blank -->
+    <term name="narrator">
+      <single>наратор</single>
+      <multiple>наратори</multiple>
+    </term>
+    <term name="organizer">
+      <single>организатор</single>
+      <multiple>организатори</multiple>
+    </term>
+    <term name="original-author"/> <!-- generally blank -->
+    <term name="performer">
+      <single>извођач</single>
+      <multiple>извођачи</multiple>
+    </term>
+    <term name="producer">
+      <single>продуцент</single>
+      <multiple>продуценти</multiple>
+    </term>
+    <term name="recipient"/> <!-- generally blank -->
+    <term name="reviewed-author"/> <!-- generally blank -->
+    <term name="script-writer">
+      <single>сценариста</single>
+      <multiple>сценаристи</multiple>
+    </term>
+    <term name="series-creator">
+      <single>аутор серије</single>
+      <multiple>аутори серије</multiple>
+    </term>
+    <term name="translator">
+      <single>преводилац</single>
+      <multiple>преводиоци</multiple>
+    </term>
+
+    <!-- SHORT ROLE FORMS -->
+    <term name="collection-editor" form="short">
+      <single>ур.</single>
+      <multiple>ур.</multiple>
+    </term>
+    <term name="compiler" form="short">
+      <single>прир.</single>
+      <multiple>прир.</multiple>
+    </term>
+    <term name="contributor" form="short">
+      <single>сарад.</single>
+      <multiple>сарад.</multiple>
+    </term>
+    <term name="curator" form="short">
+      <single>куст.</single>
+      <multiple>куст.</multiple>
+    </term>
+    <term name="director" form="short">
+      <single>ред.</single>
+      <multiple>ред.</multiple>
+    </term>
+    <term name="editor" form="short">
+      <single>ур.</single>
+      <multiple>ур.</multiple>
+    </term>
+    <term name="editor-translator" form="short">
+      <single>ур. и прев.</single>
+      <multiple>ур. и прев.</multiple>
+    </term>
+    <term name="editortranslator" form="short">
+      <single>ур. и прев.</single>
+      <multiple>ур. и прев.</multiple>
+    </term>
+    <term name="editorial-director" form="short">
+      <single>ур.</single>
+      <multiple>ур.</multiple>
+    </term>
+    <term name="executive-producer" form="short">
+      <single>извр. прод.</single>
+      <multiple>извр. прод.</multiple>
+    </term>
+    <term name="illustrator" form="short">
+      <single>илус.</single>
+      <multiple>илус.</multiple>
+    </term>
+    <term name="narrator" form="short">
+      <single>нар.</single>
+      <multiple>нар.</multiple>
+    </term>
+    <term name="organizer" form="short">
+      <single>орг.</single>
+      <multiple>орг.</multiple>
+    </term>
+    <term name="performer" form="short">
+      <single>изв.</single>
+      <multiple>изв.</multiple>
+    </term>
+    <term name="producer" form="short">
+      <single>прод.</single>
+      <multiple>прод.</multiple>
+    </term>
+    <term name="script-writer" form="short">
+      <single>сцен.</single>
+      <multiple>сцен.</multiple>
+    </term>
+    <term name="series-creator" form="short">
+      <single>аутор сер.</single>
+      <multiple>аутори сер.</multiple>
+    </term>
+    <term name="translator" form="short">
+      <single>прев.</single>
+      <multiple>прев.</multiple>
+    </term>
+
+    <!-- VERB ROLE FORMS -->
+    <term name="chair" form="verb">председавање:</term>
+    <term name="collection-editor" form="verb">уредништво:</term>
+    <term name="compiler" form="verb">приређивање:</term>
+    <term name="composer" form="verb">музика:</term>
+    <term name="container-author" form="verb">ауторство:</term>
+    <term name="contributor" form="verb">сарадња:</term>
+    <term name="curator" form="verb">кустоски рад:</term>
+    <term name="director" form="verb">режија:</term>
+    <term name="editor" form="verb">уредништво:</term>
+    <term name="editor-translator" form="verb">уредништво и превод:</term>
+    <term name="editortranslator" form="verb">уредништво и превод:</term>
+    <term name="editorial-director" form="verb">уредништво:</term>
+    <term name="executive-producer" form="verb">извршна продукција:</term>
+    <term name="guest" form="verb">гостовање:</term>
+    <term name="host" form="verb">вођење:</term>
+    <term name="illustrator" form="verb">илустрације:</term>
+    <term name="interviewer" form="verb">интервјуисање:</term>
+    <term name="narrator" form="verb">нарација:</term>
+    <term name="organizer" form="verb">организација:</term>
+    <term name="original-author" form="verb">ауторство:</term>
+    <term name="performer" form="verb">извођење:</term>
+    <term name="producer" form="verb">продукција:</term>
+    <term name="recipient" form="verb">прималац:</term>
+    <term name="reviewed-author" form="verb">ауторство:</term>
+    <term name="script-writer" form="verb">сценарио:</term>
+    <term name="series-creator" form="verb">ауторство серије:</term>
+    <term name="translator" form="verb">превод:</term>
+
+    <!-- SHORT VERB ROLE FORMS -->
+    <term name="collection-editor" form="verb-short">ур.</term>
+    <term name="compiler" form="verb-short">прир.</term>
+    <term name="composer" form="verb-short">муз.</term>
+    <term name="curator" form="verb-short">куст.</term>
+    <term name="director" form="verb-short">реж.</term>
+    <term name="editor" form="verb-short">ур.</term>
+    <term name="editor-translator" form="verb-short">ур. и прев.</term>
+    <term name="editortranslator" form="verb-short">ур. и прев.</term>
+    <term name="editorial-director" form="verb-short">ур.</term>
+    <term name="executive-producer" form="verb-short">извр. прод.</term>
+    <term name="illustrator" form="verb-short">илус.</term>
+    <term name="narrator" form="verb-short">нар.</term>
+    <term name="organizer" form="verb-short">орг.</term>
+    <term name="performer" form="verb-short">изв.</term>
+    <term name="producer" form="verb-short">прод.</term>
+    <term name="script-writer" form="verb-short">сцен.</term>
+    <term name="translator" form="verb-short">прев.</term>
+
+    <!-- LONG MONTH FORMS -->
+    <term name="month-01">јануар</term>
+    <term name="month-02">фебруар</term>
+    <term name="month-03">март</term>
+    <term name="month-04">април</term>
+    <term name="month-05">мај</term>
+    <term name="month-06">јун</term>
+    <term name="month-07">јул</term>
+    <term name="month-08">август</term>
+    <term name="month-09">септембар</term>
+    <term name="month-10">октобар</term>
+    <term name="month-11">новембар</term>
+    <term name="month-12">децембар</term>
+
+    <!-- SHORT MONTH FORMS -->
+    <term name="month-01" form="short">јан.</term>
+    <term name="month-02" form="short">феб.</term>
+    <term name="month-03" form="short">март</term>
+    <term name="month-04" form="short">апр.</term>
+    <term name="month-05" form="short">мај</term>
+    <term name="month-06" form="short">јун</term>
+    <term name="month-07" form="short">јул</term>
+    <term name="month-08" form="short">авг.</term>
+    <term name="month-09" form="short">сеп.</term>
+    <term name="month-10" form="short">окт.</term>
+    <term name="month-11" form="short">нов.</term>
+    <term name="month-12" form="short">дец.</term>
+
+    <!-- SEASONS -->
+    <term name="season-01">пролеће</term>
+    <term name="season-02">лето</term>
+    <term name="season-03">јесен</term>
+    <term name="season-04">зима</term>
+  </terms>
+</locale>

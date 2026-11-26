@@ -60,7 +60,7 @@ def math_command(ch: str) -> str:
         return ""
     letter = m.group(2).lower()
     if m.group(1) == "CAPITAL":
-        title = letter.title()
+        title = ("lambda" if letter == "lamda" else letter).title()  # Unicode spells it LAMDA
         return f"\\{title}" if title in _GREEK_CAPITALS else _GREEK_LATIN.get(title, "")
     letter = _GREEK_NAMES.get(letter, letter)
     if letter == "omicron":

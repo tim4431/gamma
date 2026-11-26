@@ -12,7 +12,7 @@ paper's venue, volume and DOI live on a standalone ``bib:Journal`` record
 referenced via ``dcterms:isPartOf``, a chapter's book title and ISBN on a
 ``bib:Book``; a publisher (a thesis's university, a report's institution) is
 a ``dc:publisher`` ``foaf:Organization``. Authors are ``foaf:Person``s split
-into Zotero's two name fields (``split_name``). Attachments are
+into Zotero's two name fields (``names.split_name``). Attachments are
 ``z:Attachment`` elements linked by ``link:link`` with the file path in
 ``z:path``, or a web link's URL (exactly what Zotero's own export writes; an
 ``rdf:resource`` *element* is an RDF/XML syntax term — Zotero's parser happens to tolerate one,
@@ -61,6 +61,7 @@ import xml.etree.ElementTree as ET
 
 from . import item_types, zotero_import, zotero_notes
 from .highlights import page_of
+from .names import split_name
 from .picture import is_picture, markdown_of, picture_page
 from .text_box import box_page
 
@@ -179,43 +180,6 @@ def standalone_note_html(title: str, children, resolve_image=None, resolve_ref=N
 
 
 # --- names ------------------------------------------------------------------
-
-# Lowercase particles that start a surname: "Jan van der Berg" is surname
-# "van der Berg", given name "Jan".
-_PARTICLES = frozenset("van von der de la du da di del della den ter ten le zu bin al".split())
-# A generational suffix stays with the surname, its comma too.
-_SUFFIX_RE = re.compile(r"(,?\s+)(Jr\.?|Sr\.?|II|III|IV)$")
-# A word that makes a name an organisation's.
-_ORG_RE = re.compile(
-    r"\b(?:Collaboration|Consortium|Group|Team|Committee|Organi[sz]ation|Institute|University|Association|"
-    r"Society|Council|Agency|Foundation|Network|Project|Initiative|Cent(?:er|re)|Laboratory|Inc|Ltd)\b", re.I)
-
-
-def split_name(name: str) -> tuple[str, str]:
-    """An author as Zotero's two name fields, ``(surname, given name)``: a
-    ``Last, First`` name at its comma, else the surname from the first
-    lowercase particle on ("van der Berg") or the last word, a trailing
-    Jr., Sr., II, III or IV kept with it. An organisation ("ATLAS
-    Collaboration") or a single word is a surname alone, which Zotero reads
-    as a single-field name. Gamma keeps an author as one string, so this is
-    where it becomes Zotero's two."""
-    name = " ".join(str(name).split())
-    if " " not in name or _ORG_RE.search(name):
-        return name, ""
-    suffix = _SUFFIX_RE.search(name)
-    if suffix:
-        name = name[:suffix.start()]
-    if "," in name:
-        last, _, given = name.partition(",")
-        last, given = last.strip(), given.strip()
-    else:
-        words = name.split(" ")
-        at = next((i for i, w in enumerate(words[:-1]) if w in _PARTICLES), len(words) - 1)
-        last, given = " ".join(words[at:]), " ".join(words[:at])
-    if suffix:
-        last += (", " if "," in suffix.group(1) else " ") + suffix.group(2)
-    return last, given
-
 
 def _person(seq, name: str):
     surname, given = split_name(name)

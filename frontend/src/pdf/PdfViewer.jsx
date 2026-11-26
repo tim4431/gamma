@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 // most of a warm reopen.
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { BookIcon, CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, OutlineIcon } from "../shared/ui/Icons";
+import { BookIcon, CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, OutlineIcon, QuoteMarkIcon } from "../shared/ui/Icons";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { inkPenDown } from "../ink/InkLayer";
@@ -641,7 +641,12 @@ export async function openPdfDocument(url, { ranged = false } = {}) {
 // that one and opens its card (the Document menu's Review, `follow`; App
 // after a move started from the card, `done` what it did and scroll
 // false).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onPenSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateSelection = null, onTranslateBrief, onTranslateLookup, translateRecall = null, translateKeeps = true, onAddTerm = null, translateCtlRef, onTranslateState, onParagraphContext, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, extendId = "", onJoinHighlight, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, anchors = null, marginRef = null, onMarginLost, onPageInView, pageFlow = "down", zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
+// citeQuote: the selection popup's Copy with citation, {copy(text,
+// pageNumber), hint (its title)}, or null for none (a share view);
+// labelsRef.current() then answers the document's {labels, pageCount},
+// the page a quote is cited at (docs/dev/citations.md).
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onPenSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateSelection = null, onTranslateBrief, onTranslateLookup, translateRecall = null, translateKeeps = true, onAddTerm = null, translateCtlRef, onTranslateState, onParagraphContext, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, extendId = "", onJoinHighlight, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, anchors = null, marginRef = null, onMarginLost, onPageInView, pageFlow = "down", zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null,
+  citeQuote = null, labelsRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   // Which way the pages run (pdf/pageLayout.js; Settings → Reading › PDFs ›
@@ -1121,6 +1126,19 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       if (v && pagesInView(v, runSizes(), scale, across ? v.scrollLeft : v.scrollTop, across).some(showsKept)) onPagePainted();
     }
   }, [pdfDoc]);
+
+  // The host's way to the document's page labels ("iv", "347": pdf.js
+  // getPageLabels, null without) and its length, which a quote's citation
+  // reads its page from (citations/formats.js pageLocator): a getter,
+  // asking the document once.
+  useEffect(() => {
+    if (!labelsRef) return undefined;
+    let asked = null;
+    const get = pdfDoc ? () => (asked ||= pdfDoc.getPageLabels().catch(() => null)
+      .then((labels) => ({ labels, pageCount: pdfDoc.numPages }))) : null;
+    labelsRef.current = get;
+    return () => { if (labelsRef.current === get) labelsRef.current = null; };
+  }, [pdfDoc, labelsRef]);
 
   // The document currently on screen. Kept visible while the next one loads —
   // swapping only when the new doc is fully laid out is what prevents the
@@ -2531,6 +2549,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             // the system's Copy, where the host turns its menu off for this popup:
             // what was selected, the translation's words over a translation
             copy={nativeHost()?.editMenu && selPopup.kind !== "area" ? (selPopup.copy ?? selPopup.text) : null}
+            // the passage (the original's words, over a translation too) with the paper's citation
+            cite={citeQuote && selPopup.kind !== "area" && selPopup.text && !moveMode && !extendId
+              ? { hint: citeQuote.hint, copy: () => citeQuote.copy(selPopup.text, selPopup.pageNumber) } : null}
             // the paragraph menu, on a page that shows its translation
             menu={selPopup.para && !moveMode && !extendId && onParagraphContext && onTranslate
               ? (e) => openParaMenu({ ...selPopup.para, x: e.clientX, y: e.clientY }) : null}
@@ -3361,10 +3382,11 @@ const SEL_TRANSLATE_MAX = 5000;
 // onConfirm("", swatch, {style}). The tools are the shared ones
 // (shared/ui/SelectionTip.jsx), as the code view's and a picture's. `copy`:
 // the selection's text, for a Copy button (where the host's own menu,
-// which has one, is off). `menu`: the opener of the paragraph menu of a
+// which has one, is off). `cite`: Copy with citation, {copy(), hint}.
+// `menu`: the opener of the paragraph menu of a
 // page that shows its translation, for the ⋯ that is a finger's and a
 // pen's way to it (MenuButton): their hold selects.
-function PlainTip({ onConfirm, onLink, onComment, translate, onMove, onExtend = null, copy = null, menu = null, recolor = false, onRestyle = null, area = false, onDismiss = null,
+function PlainTip({ onConfirm, onLink, onComment, translate, onMove, onExtend = null, copy = null, cite = null, menu = null, recolor = false, onRestyle = null, area = false, onDismiss = null,
   own = null, onSave = null, onRemove = null }) {
   const [trans, setTrans] = useState(null); // {status: "loading"|"done"|"error", text, open}
   const ctlRef = useRef(null);
@@ -3401,13 +3423,21 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, onExtend = 
         onSave={onSave} onRemove={onRemove}
         onMark={({ color, style }) => onConfirm("", color, { style })} tools={<>
         {/* the colours, then the tools */}
-        {copy || onComment || onLink || translate || menu ? <TipDivider /> : null}
+        {copy || cite || onComment || onLink || translate || menu ? <TipDivider /> : null}
         {copy ? <TipCopy text={copy} /> : null}
         {onComment ? <TipComment onComment={onComment} /> : null}
         {onLink ? (
           <TipTool label={t("Link this reference to a paper (DOI / arXiv / existing PDF)")} onPress={onLink}>
             <LinkIcon size={14} />
           </TipTool>
+        ) : null}
+        {/* after Comment and Link, which stay the first tools; on the click,
+            as Copy: WebKit lets the clipboard be written in a click */}
+        {cite ? (
+          <button type="button" className="colorBtn linkTipBtn" title={cite.hint} aria-label={t("Copy with citation")}
+            onMouseDown={keepSelection} onClick={cite.copy}>
+            <QuoteMarkIcon size={14} />
+          </button>
         ) : null}
         {translate ? (
           <TipTool label={t("Translate selection")} title={t("Translate the selected text into {lang}", { lang: translate.langLabel })}

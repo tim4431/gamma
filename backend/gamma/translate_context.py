@@ -26,6 +26,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
+from . import names
 from .ai_client import CallRefused
 from .db import connect_pages_db, safe_doc_id
 from .documents.model import page_document, pdf_file_hash, stored_name
@@ -331,7 +332,7 @@ def _about(meta) -> str:
     if not isinstance(meta, dict):
         return ""
     authors = [str(a).strip() for a in (meta.get("authors") or []) if str(a).strip()]
-    bits = [", ".join(authors[:6]) + (" et al." if len(authors) > 6 else "")] if authors else []
+    bits = [names.author_list(authors, 6)] if authors else []
     bits += [str(meta[k])[:120] for k in ("year", "venue") if meta.get(k)]
     return "; ".join(bits)
 
