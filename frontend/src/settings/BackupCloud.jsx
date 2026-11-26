@@ -90,7 +90,7 @@ function PageDialog({ store, endpoint, status, onStatus, onClose, onConnected })
     <SubDialog title={t("Connect {store}", { store: STORE[store].title() })} onClose={onClose}>
       <p className="settingsPaneHint">{cloud.lead()}</p>
       {url && !error ? (
-        <a className="uiBtn primary driveOpenGoogle" href={url} target="_blank" rel="noopener noreferrer" onClick={() => setOpened(true)}>
+        <a className="uiBtn primary cloudOpenPage" href={url} target="_blank" rel="noopener noreferrer" onClick={() => setOpened(true)}>
           {t("Continue with {company}", { company: cloud.company })}<ExternalLinkIcon size={14} />
         </a>
       ) : null}
@@ -166,7 +166,7 @@ function CodeDialog({ store, endpoint, status, onStatus, onClose, onConnected })
         <Field group label={t("Your code")}>
           <CopyField label={t("Your code")} value={pending.user_code} action={t("Copy the code")} rows={1} />
         </Field>
-        <a className="uiBtn primary driveOpenGoogle" href={pending.verification_url} target="_blank" rel="noopener noreferrer"
+        <a className="uiBtn primary cloudOpenPage" href={pending.verification_url} target="_blank" rel="noopener noreferrer"
           onClick={() => { copyText(pending.user_code).then((ok) => setCopied(!!ok)); }}>
           {t("Copy the code and open {company}", { company })}<ExternalLinkIcon size={14} />
         </a>

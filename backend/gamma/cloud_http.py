@@ -23,14 +23,18 @@ honours raises ``CloudConfigError``, a ``StoreConfigError``.
 from __future__ import annotations
 
 import json
+import os
 import random
+import secrets
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime
 from http.client import HTTPException
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 from . import net_proxy
 from .backup_store import StoreConfigError, StoreError
@@ -199,6 +203,42 @@ def call(method: str, url: str, auth, *, attempts: int = ATTEMPTS, params: dict 
             if not retried(resp) or attempt >= attempts:
                 return resp
         sleep(pause(attempt - 1, resp))
+
+
+def mtime(stamp: str) -> float:
+    """A service's ISO 8601 time (``2026-11-22T10:00:00Z``) as a POSIX
+    timestamp; 0 for none or one that does not read."""
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except (AttributeError, ValueError):
+        return 0.0
+
+
+def download(path, fetch: Callable[..., Response], fail: Callable[[Response], Exception]) -> bool:
+    """Download into ``path`` what ``fetch(f)`` (a call with ``sink=f``)
+    answers, written whole: a dot-named temp file beside it, flushed and
+    renamed over it. False on a 404 (the temp file closed before it is
+    deleted, which Windows needs); ``fail(resp)`` raised for any other
+    answer but a 200."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.part")
+    try:
+        with open(tmp, "xb") as f:
+            resp = fetch(f)
+            if resp.status == 200:
+                f.flush()
+                os.fsync(f.fileno())
+        if resp.status == 404:
+            tmp.unlink(missing_ok=True)
+            return False
+        if resp.status != 200:
+            raise fail(resp)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return True
 
 
 def label(folder: str) -> str:

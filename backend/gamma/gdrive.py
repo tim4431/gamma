@@ -44,10 +44,8 @@ import io
 import json
 import os
 import re
-import secrets
 import threading
 import urllib.parse
-from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -88,13 +86,6 @@ def _upload_api(path: str) -> str:
 def _q(value: str) -> str:
     """A string literal in a Drive query."""
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
-def _mtime(stamp: str) -> float:
-    try:
-        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
-    except (AttributeError, ValueError):
-        return 0.0
 
 
 class Client:
@@ -287,25 +278,10 @@ class Client:
         _parent, _name, found = self._file(key)
         if found is None:
             return False
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.part")
-        try:
-            with open(tmp, "xb") as f:
-                resp = self._call("GET", _api(f"/files/{found['id']}"), params={"alt": "media"}, sink=f)
-                if resp.status == 200:
-                    f.flush()
-                    os.fsync(f.fileno())
-            if resp.status == 404:  # gone since it was found; closed first, which Windows needs to delete it
-                tmp.unlink(missing_ok=True)
-                return False
-            if resp.status != 200:
-                raise self._fail(f"GET {key}", resp)
-            os.replace(tmp, path)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
-        return True
+        # a 404 now: gone since it was found
+        return cloud_http.download(
+            path, lambda f: self._call("GET", _api(f"/files/{found['id']}"), params={"alt": "media"}, sink=f),
+            lambda resp: self._fail(f"GET {key}", resp))
 
     def get_bytes(self, key: str) -> bytes | None:
         """A small file's bytes, read whole; None when there is no such
@@ -346,7 +322,7 @@ class Client:
                 except ValueError:
                     continue  # nothing a key names (a name with a backslash)
                 if "size" in item:  # Google's own documents have none
-                    out.append((key, int(item["size"]), _mtime(str(item.get("modifiedTime") or ""))))
+                    out.append((key, int(item["size"]), cloud_http.mtime(str(item.get("modifiedTime") or ""))))
         return sorted(out)
 
     def delete_object(self, key: str) -> None:
