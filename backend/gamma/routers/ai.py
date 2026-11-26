@@ -1958,9 +1958,7 @@ def ai_revert_change(payload: AIRevert, request: Request):
         return ai_revert.revert_change(ws, payload.kind, payload.block_id, payload.revert,
                                        force=payload.force, redo=payload.redo, actor=actor_of(request))
     except ai_revert.RevertError as e:
-        return JSONResponse(status_code=e.status, content={
-            "detail": e.detail, **({"conflict": e.conflict} if e.conflict else {}),
-            **({"preview": e.preview} if e.preview else {})})
+        return JSONResponse(status_code=e.status, content=e.body())
 
 
 class AIChatContextRequest(AIChatRequest):

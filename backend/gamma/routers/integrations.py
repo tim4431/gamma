@@ -205,9 +205,7 @@ def undo_token_change(token_id: str, change_id: str, payload: ChangeUndo, reques
     try:
         return mcp_changes.undo(ws, change, actor=actor_of(request), force=payload.force)
     except RevertError as e:
-        return JSONResponse(status_code=e.status, content={
-            "detail": e.detail, **({"conflict": e.conflict} if e.conflict else {}),
-            **({"preview": e.preview} if e.preview else {})})
+        return JSONResponse(status_code=e.status, content=e.body())
 
 
 @router.delete("/tokens/{token_id}")
