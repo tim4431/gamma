@@ -1483,8 +1483,8 @@ reach.
     - Otherwise the save's own requests go again with keepalive: its
       `PUT` or `DELETE`, and its upload while that is not answered. The
       newest drawing waits for the answer, and the journal keeps it.
-    - On `pagehide` a save still uploading a drawing named by its hash
-      sends its `PUT` beside that upload.
+      - On `pagehide` such a save, still uploading a drawing named by its
+        hash, sends its `PUT` beside that upload.
     - From then on what the save sends goes with keepalive.
     - When the save's own upload is cut off after a `PUT` went beside it,
       that `PUT` is owed with its upload, whatever it answered.

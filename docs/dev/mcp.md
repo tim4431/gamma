@@ -736,10 +736,10 @@ way and not the client's own prompt or a step-up sign-in:
   `after` or `first`, `picture_count` and `file_count`: "Claude Code wants
   to add 7 notes to “Paper”, under “Methods”, after “We measured…”. It adds
   23 lines, 1 picture and 1 file." (or "at the top"). Its lines are the
-  blocks' texts, indented two spaces a level. Every line names a stored
-  upload, `[picture: caption]` or `[file: name]`, rather than showing its
-  URL (`_UPLOAD_LINK`, `_stored`). Other links on an added or removed line
-  stay as written. Its one field,
+  blocks' texts, indented two spaces a level. In every line a stored
+  upload is named, `[picture: caption]` or `[file: name]`, rather than
+  shown as its URL (`_UPLOAD_LINK`, `_stored`). Other links on an added or
+  removed line stay as written. Its one field,
   `remember`, is "Don't ask again for this connection" ("You can turn
   asking back on in Gamma: Settings → AI → Integrations"). Accept runs the call with the preview's digest
   (`run_agent_tool(approved=)`), as the chat's gate does; accept with
@@ -823,10 +823,11 @@ instead (`gamma/mcp_changes.py`, SDK-free like `mcp_export.py`).
 - **What is kept.** Each write prunes the table to the newest
   `KEEP_PER_CONNECTION` (500) per connection, none older than `KEEP_DAYS`
   (30 days).
-  - The table is each account's own and of this server only, since a
-    revert record names blocks of this one database. It is in
+  - The table is each account's own and of this server only. It is in
     `ws_backup.PRIVATE_TABLES`, so a backup carries none and a restore keeps
     the live rows, and no mirror or Gamma export carries it.
+  - A revert record names blocks of this one database, so it means nothing
+    elsewhere.
 - **`list_changes(limit?)`** lists this connection's own changes, newest
   first (20 by default, at most 100), across the workspaces it edits or the
   one `workspace` names.
@@ -841,7 +842,7 @@ instead (`gamma/mcp_changes.py`, SDK-free like `mcp_export.py`).
   - It takes back only this connection's own changes (`_change_of` looks in
     the workspaces it still edits), each once. A redo is the change made
     again.
-  - A page it made goes to Recently deleted only while it is empty
+  - A page it made goes to Recently deleted while it is empty
     (`ai_revert._plan_made`), so its notes are undone first. When several
     changes touch one note, the latest is undone first.
   - When someone's work since would be lost (409 `filled`, `changed` or
