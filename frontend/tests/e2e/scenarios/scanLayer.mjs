@@ -19,8 +19,9 @@
 //   request does (the server checks a stored file's opening pages itself).
 // The translate endpoints are answered locally ("译:" + each text).
 //
-// Then the server's text recognition (docs/dev/pdf_loading.md, gamma/pdf_ocr.py,
-// pdf/ocrState.js, pdf/ocrText.js), with the real engine: a printed scan
+// Then the server's text recognition (docs/dev/pdf_loading.md, gamma/ocr_run.py
+// for the run, gamma/pdf_ocr.py for the store and the view the text readers
+// take, pdf/ocrState.js, pdf/ocrText.js), with the real engine: a printed scan
 // whose invisible layer a poor OCR garbled (backend/tests/ocr_fixtures.py
 // printed_scan_pdf, built through the backend's Python), read through the
 // Document menu's "Recognize text in this PDF":
