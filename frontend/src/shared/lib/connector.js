@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 // Is Gamma Connector in this browser? The extension's content script
 // (extension/bridge.js) answers a "connector-hello" posted on the Gamma
 // page's own origin, and its worker answers only the app of the server the
@@ -37,6 +39,27 @@ export function askConnectorHere({ tries = [0, 1500, 3000], timeout = 4500 } = {
     const timers = tries.map((ms) => setTimeout(ask, ms));
     timers.push(setTimeout(() => done(false), timeout));
   });
+}
+
+// The Connector's "Open in Gamma", sent to the Gamma tab used last rather
+// than a new one (extension/worker.js openApp, through bridge.js). `open(url)`
+// (the latest render's) says whether this tab takes the link; a yes is
+// answered, a no is not, and the Connector then loads the link in the tab
+// itself.
+export function useConnectorOpen(open) {
+  const latest = useRef(open);
+  latest.current = open;
+  useEffect(() => {
+    const origin = window.location.origin;
+    const onMessage = (e) => {
+      const d = e.data;
+      if (e.source !== window || e.origin !== origin || d?.source !== "gamma-connector"
+          || d.type !== "app-open" || typeof d.url !== "string") return;
+      if (latest.current(d.url)) window.postMessage({ source: "gamma-app", type: "app-opened", id: d.id }, origin);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
 }
 
 // Ask the Connector to open ("open", `background` for an unfocused tab),

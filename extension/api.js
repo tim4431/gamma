@@ -15,6 +15,7 @@ export const DEFAULTS = {
   allowOa: true,       // open-access fallback behind paywalls
   saveCopy: true,      // store the PDF server-side
   autoRefreshSessions: true,  // re-import a connected publisher's cookies when its page is visited
+  reuseAppTab: true,   // "Open in Gamma" opens in a Gamma tab already open rather than a new one
   webClip: "article",  // how a page naming no paper saves: "article" or "link" (the popup's last choice)
 };
 

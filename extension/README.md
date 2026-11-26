@@ -62,6 +62,10 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
   picked there; to save a paper that is already in one library into
   another, pick the other one. Each server remembers its own choice, and
   each library its own default folder.
+- *Open in Gamma* uses a Gamma tab you already have open: the page opens
+  there without reloading it, and the tab comes forward. With no Gamma tab
+  open it opens a new one. To always open a new tab, turn off *Open in
+  Gamma uses a Gamma tab that's already open* in options.
 - On a paper's landing page or PDF tab the icon shows **PDF / arX / DOI**;
   click it, pick a folder and labels, **Save to Gamma**. The folder field
   opens your folders as a tree: a folder's arrow shows what is inside it, its

@@ -57,6 +57,11 @@ reporter's switches were in their default state, all on, where the only
 difference on the pen's path is the fix. Whether 0.4.10 was enough for them,
 and whether iPadOS was updated meanwhile, was not said.
 
+**2026-11-25, with the switches on and off.** A user reports that the app
+works well either way. On is the result that counts: every native piece is
+there, and nothing freezes. Off says no more about the cause, since each
+piece can be done without.
+
 **The developer's iPad:** an iPad Pro 11-inch (M2) with an Apple Pencil
 (2nd generation). It hovers too, and nothing freezes there. Its iPadOS
 version is not recorded.
@@ -144,8 +149,8 @@ pieces of its own reach the page's web view: the content view's class,
 swapped at run time for one without the keyboard's accessory bar
 (`WebShell.hideKeyboardAccessoryBar`), and `UIPencilInteraction` on the
 container, which puts a `UIHoverGestureRecognizer` there. The fix ended the
-freeze with both in place, so neither makes it by itself. The switches for the three
-(7628a652), which nobody needed, are gone again.
+freeze with both in place, so neither makes it by itself. The switches for
+the three (7628a652, in 0.4.10 to 0.4.12) are gone again.
 
 ## The touch report
 
