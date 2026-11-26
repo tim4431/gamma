@@ -21,7 +21,7 @@ words, so the viewer and the server agree on which pages are scans and how
 their words make lines. Change a threshold in both.
 
 A third rule picks the pages text recognition reads with no layer to
-compare against (gamma/pdf_ocr.py): ``is_picture_page(page)``, a scan
+compare against (gamma/ocr_run.py): ``is_picture_page(page)``, a scan
 nobody ran OCR on. Only the server applies it; the viewer notes a page
 without text instead.
 

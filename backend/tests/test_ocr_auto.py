@@ -333,7 +333,9 @@ def test_an_automatic_run_stopped_while_it_waits_is_declined(amy, monkeypatch):
     assert jobs.latest(jobs.WORKSPACE, "ocr", f"{ws}:{doc}")["id"] == auto["id"], "never started again"
 
 
-def test_the_periodic_resume_starts_what_a_restart_left_queued(amy):
+def test_the_jobs_round_starts_what_a_restart_left_queued(amy):
+    from gamma.app import sweep_jobs
+
     ws, me = workspace_of("oau_amy"), account_of("oau_amy")
     _page, doc = scan_page(amy, scan(1))
     key = f"{ws}:{doc}"
@@ -347,7 +349,7 @@ def test_the_periodic_resume_starts_what_a_restart_left_queued(amy):
                      "'gone', ?, ?)", (old, ws, key, jobs.INTERRUPTED, page_now(), page_now()))
         conn.commit()
     ocr_auto.reset()  # a process that knows of no queue yet
-    ocr_auto.resume()  # the app's round, at startup and every jobs.SWEEP_INTERVAL_S
+    sweep_jobs()  # the app's round, at startup and every jobs.SWEEP_INTERVAL_S
     job = automatic(ws, doc)
     assert job is not None and job["state"] == "done" and job["result"]["recognized"] == 1
     assert jobs.get(old) is None, "the interrupted row goes: it would read as failed beside the run that went on"

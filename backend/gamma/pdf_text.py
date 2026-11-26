@@ -518,7 +518,7 @@ def page_kinds(src, max_pages: int = MAX_PAGES):
     (1-based): "scan" for a scanned picture under an invisible OCR layer
     (``pdf_scan.is_scan_page``), "picture" for one without a layer
     (``pdf_scan.is_picture_page``), "" for any other page. What a text
-    recognition run reads first (gamma/pdf_ocr.py). One page a turn of the
+    recognition run reads first (gamma/ocr_run.py). One page a turn of the
     lock, with one text dictionary for both rules, built only when one
     needs it. Raises as ``_open`` does when the file will not open."""
     pdf = _open(src)
@@ -549,7 +549,7 @@ def layer_texts(src, page_nos):
     the file opened once, at the first page, and those pages alone read,
     one a turn of the lock, past the page-text cache. What a text
     recognition run compares each page it recognizes with
-    (gamma/pdf_ocr.py), the pages of a book in one walk. Raises as
+    (gamma/ocr_run.py), the pages of a book in one walk. Raises as
     ``_open`` does when the file will not open."""
     pdf = _open(src)
     try:

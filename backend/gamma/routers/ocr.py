@@ -263,7 +263,7 @@ class ForgetRequest(BaseModel):
 @router.post("/jobs/ocr-drop")
 def start_forget(payload: ForgetRequest, request: Request):
     """Start forgetting the text recognized on the page's stored PDF
-    (``stored_pdf``), the ``ocr-drop`` job (gamma/pdf_ocr.py
+    (``stored_pdf``), the ``ocr-drop`` job (gamma/ocr_run.py
     ``forget_recognized``), by a session account that is no guest (403
     ``FORGET_GUESTS``) and edits the workspace: every page of it reads the
     PDF's own text again, for everyone in the workspace, and its

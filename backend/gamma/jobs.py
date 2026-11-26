@@ -69,7 +69,7 @@ MAX_RUNNING = 4                  # account jobs running at once on the server
 MAX_RUNNING_PER_ACCOUNT = 2      # one account's; the others wait queued
 MAX_ACTIVE_PER_ACCOUNT = 20      # queued + running: past it, starting another is refused
 # The kinds that run in a lane of their own, each to the limit its function
-# reads when asked: a text recognition (gamma/pdf_ocr.py) keeps a core busy
+# reads when asked: a text recognition (gamma/ocr_run.py) keeps a core busy
 # for seconds a page, hours for a book, so the server runs as many at once
 # as the ``ocr_workers`` option says (Settings → Server → Text
 # recognition, gamma/server_options.py), whoever starts them. A lane's jobs count toward
