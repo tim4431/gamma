@@ -245,7 +245,7 @@ import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../col
 import { modelList, useProviderEditor } from "../settings/providerEditor.js";
 import { useGuide } from "../guide/useGuide";
 import { guideEvents } from "../guide/events";
-import { askConnectorHere, IS_DESKTOP } from "../shared/lib/connector.js";
+import { askConnectorHere, IS_DESKTOP, useConnectorOpen } from "../shared/lib/connector.js";
 import { Empty, Section, StorageRing } from "../settings/SettingsKit";
 import { LazyBoundary, lazySurface, useLatch, whenIdle } from "../shared/ui/lazy";
 import { libraryAccess } from "../library/libraryAccess";
@@ -8892,14 +8892,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // fetch-vs-browser.
   async function handleDocLink(url) {
     const gl = parseGammaLink(url, window.location.origin);
-    if (gl) {
-      const place = await gammaLinkPlace(gl);
-      if (place) {
-        if (isSourceLink(gl)) openPageLink(gl.pageId, gl);
-        else openLinkTarget(place);
-        return;
-      }
-    }
+    if (gl && await openGammaLinkHere(gl)) return;
     const pid = findPageForUrl(url, homeBlocks);
     if (pid) {
       setStatus(t("Already in your library — opening."));
@@ -8908,6 +8901,40 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     setLinkPrompt(url);
   }
+
+  // A Gamma link opened at its place in this library: a PDF passage or a
+  // file's lines there, a highlight or note through openLinkTarget. False
+  // when its block or page is not here.
+  async function openGammaLinkHere(gl) {
+    const place = await gammaLinkPlace(gl);
+    if (!place) return false;
+    if (isSourceLink(gl)) openPageLink(gl.pageId, gl);
+    else openLinkTarget(place);
+    return true;
+  }
+
+  // Gamma Connector's "Open in Gamma", sent to this tab rather than a new one
+  // (shared/lib/connector.js useConnectorOpen): a link into this library opens
+  // in place, as a note's link does; one naming another workspace, or not
+  // found in this one, loads as an address, the way a workspace switch does.
+  // The open waits for the yes to be posted, so a load cannot unload the page
+  // before the Connector hears it and loads the link a second time. A share
+  // view, or a tab with no library signed in yet, leaves the link to the
+  // Connector, which loads it in the tab.
+  function openFromConnector(url) {
+    if (shareMode || !authUser?.user || !wsReady) return false;
+    const gl = parseGammaLink(url, window.location.origin);
+    if (!gl || gl.foreign) return false;
+    const ws = new URL(url, window.location.origin).searchParams.get("ws") || "";
+    setTimeout(async () => {
+      const here = (!ws || ws === wsId) && await openGammaLinkHere(gl).catch(() => false);
+      if (here) return;
+      leaveCurrentPage();
+      window.location.assign(url);
+    });
+    return true;
+  }
+  useConnectorOpen(openFromConnector);
 
   // Where a Gamma link points in this library (link_url's opening, the link
   // dialog's pasted link): {pageId, blockId?, title, quote?, highlight?} for

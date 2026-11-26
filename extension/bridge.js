@@ -9,7 +9,32 @@
 // request with the Connector's own Gamma server and decides what may be
 // said — nothing at all to a page that is neither that server's app nor
 // holding a request of its account, so other sites learn nothing.
+//
+// The other way, the worker's "Open in Gamma" in a Gamma tab already open
+// (worker.js openApp, {type: "app-open", url}) is posted to the app as
+// {source: "gamma-connector", type: "app-open", id, url}; the app's
+// {source: "gamma-app", type: "app-opened", id} says it opened the link,
+// and no word within a second answers false, so the worker loads it.
 (() => {
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || msg.type !== "app-open") return undefined;
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const done = (opened) => {
+      window.removeEventListener("message", onReply);
+      clearTimeout(timer);
+      sendResponse(opened);
+    };
+    const onReply = (event) => {
+      const data = event.data;
+      if (event.source === window && event.origin === location.origin && data
+          && data.source === "gamma-app" && data.type === "app-opened" && data.id === id) done(true);
+    };
+    const timer = setTimeout(() => done(false), 1000);
+    window.addEventListener("message", onReply);
+    window.postMessage({ source: "gamma-connector", type: "app-open", id, url: String(msg.url || "") }, location.origin);
+    return true; // async sendResponse
+  });
+
   const REPLIES = { "connector-probe": "connector-status", "connector-tab": "connector-tab",
                     "connector-hello": "connector-here" };
   const asked = new Map(); // request id + question → when it was last asked

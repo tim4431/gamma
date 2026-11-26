@@ -151,6 +151,7 @@ async function saveDefaults() {
     labels: $("labels").value.split(",").map((s) => s.trim()).filter(Boolean),
     allowOa: $("allow-oa").checked,
     saveCopy: $("save-copy").checked,
+    reuseAppTab: $("reuse-tab").checked,
     autoRefreshSessions: $("auto-sessions").checked,
   });
   saved();
@@ -187,6 +188,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("labels").value = (s.labels || []).join(", ");
   $("allow-oa").checked = !!s.allowOa;
   $("save-copy").checked = !!s.saveCopy;
+  $("reuse-tab").checked = s.reuseAppTab !== false;
   $("auto-sessions").checked = s.autoRefreshSessions !== false;
   $("connect").onclick = () => connect();
   $("server").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
@@ -194,7 +196,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("login").onclick = doLogin;
   $("logout").onclick = doLogout;
   $("copy-logs").onclick = copyLogs;
-  for (const id of ["labels", "allow-oa", "save-copy", "auto-sessions"]) $(id).addEventListener("change", saveDefaults);
+  for (const id of ["labels", "allow-oa", "save-copy", "reuse-tab", "auto-sessions"]) $(id).addEventListener("change", saveDefaults);
   chrome.storage.onChanged.addListener(async (changes, area) => {
     if (area !== "sync") return;
     // The popup chose another library, whose folders this page must show: one
