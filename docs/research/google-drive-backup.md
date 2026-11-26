@@ -163,7 +163,11 @@ ended the out-of-band copy-and-paste flow in 2023.
   reached only once they pick it in Google's Picker, which grants the app
   that one folder; the Picker runs in the browser with an API key and the
   access token, which today never leaves the server.
-- A run against Google itself: everything here was tested against a fake.
+- More runs against Google itself. Gamma's clients were tried once by
+  hand: Google gave a code for the TV client; connecting on Google's page
+  at 127.0.0.1 worked, and a backup task's copy went to Drive, was listed,
+  restored as a new workspace, deleted, and the access revoked. Everything
+  else is tested against a fake.
 
 ## Sources
 
