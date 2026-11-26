@@ -51,12 +51,14 @@ export function createModelsSync({ request, setInfo, setFailed, onError, canWrit
     setFailed(false);
   }
 
-  // Once the last write has answered, the read it dropped goes again.
-  function settled(seq, epoch) {
-    if (epoch !== s.epoch || seq !== s.writes || !s.dropped) return;
-    s.dropped = false;
-    refresh();
-  }
+  // The answer of write `seq` of `epoch`: while no later write was sent,
+  // its roles land and the read it dropped goes again.
+  const landed = (seq, epoch) => (answer) => {
+    if (epoch !== s.epoch || seq !== s.writes) return answer;
+    setInfo((info) => withRoles(info, answer));
+    if (s.dropped) { s.dropped = false; refresh(); }
+    return answer;
+  };
 
   // A write (`body` to `path`), shown at once through `optimistic(info)`;
   // the server's answer replaces it. A refused write says why and reads the
@@ -65,11 +67,7 @@ export function createModelsSync({ request, setInfo, setFailed, onError, canWrit
     if (!canWrite() || !s.user) return Promise.resolve(null);
     const seq = ++s.writes, epoch = s.epoch;
     if (optimistic) setInfo((info) => (info ? optimistic(info) : info));
-    return post(path, method, body).then((answer) => {
-      if (epoch === s.epoch && seq === s.writes) setInfo((info) => withRoles(info, answer));
-      settled(seq, epoch);
-      return answer;
-    }, (err) => {
+    return post(path, method, body).then(landed(seq, epoch), (err) => {
       if (epoch !== s.epoch || err?.name === "AbortError") return null;
       onError?.(err?.message || String(err));
       if (seq === s.writes) { s.dropped = false; refresh(); }
@@ -86,11 +84,7 @@ export function createModelsSync({ request, setInfo, setFailed, onError, canWrit
     if (!store) return;
     importLegacyPicks(store, (body) => {
       const seq = ++s.writes, epoch = s.epoch;
-      return post("/ai/models/import", "POST", body).then((answer) => {
-        if (epoch === s.epoch && seq === s.writes) setInfo((info) => withRoles(info, answer));
-        settled(seq, epoch);
-        return answer;
-      });
+      return post("/ai/models/import", "POST", body).then(landed(seq, epoch));
     }).catch(() => {});
   }
 

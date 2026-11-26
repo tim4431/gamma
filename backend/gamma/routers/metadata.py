@@ -43,7 +43,8 @@ from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
 from ..ai_context import pdf_excerpt as _pdf_excerpt
 from ..ai_context import pdf_path as _pdf_path
-from ..ai_settings import ai_runtime, require_ai_runtime, routed
+from ..ai_roles import routed
+from ..ai_settings import ai_runtime, require_ai_runtime
 from ..auth import require_user_id, require_ws
 from ..blocks_store import write_lock
 from ..ops import StorableBody, after_commit, apply_ops, props_patch

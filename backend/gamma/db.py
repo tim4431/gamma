@@ -2091,7 +2091,7 @@ USER_PREF_KEYS = frozenset({"ai-settings", "translate-engines", "search-services
                             # skills; only routers/skills.py reads or writes
                             # it, never synced to Gamma Cloud.
                             "skills",
-                            # gamma/ai_settings.py AI_MODELS_PREF_KEY: the
+                            # gamma/ai_roles.py AI_MODELS_PREF_KEY: the
                             # model each task uses and the favorites; only
                             # /api/ai/models/roles and /import write it,
                             # never synced to Gamma Cloud.

@@ -271,7 +271,7 @@ def failure_kind(error: Exception) -> str:
         return "rate"
     if isinstance(error, HTTPException):
         if getattr(error, "kind", ""):
-            return error.kind  # ai_settings.ModelUnavailable: "model_unavailable"
+            return error.kind  # ai_roles.ModelUnavailable: "model_unavailable"
         return "not_configured" if error.status_code == 503 else "other"
     status = error.status if isinstance(error, UpstreamError) else (
         error.code if isinstance(error, urllib.error.HTTPError) else 0)

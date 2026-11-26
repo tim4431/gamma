@@ -1021,7 +1021,7 @@ code-point and UTF-16 columns; [api.md](api.md) "The highlight shape"),
 sibling keys
 (`fractionalkeys.json`: the npm and PyPI fractional-indexing libraries),
 the AI models (`ai_models.json`: each task's model, `roles`, with
-`without` for the remove confirm, `ai_settings.resolve_roles` ↔
+`without` for the remove confirm, `ai_roles.resolve_roles` ↔
 `ai/aiModels.js` `resolveRoles` and `tasksAffectedBy`; a reply's usage
 sum, `sums`, `ai_client.add_usage` ↔ `chat/tokenUsage.js` `addUsage`; a
 keyless connection, `keyless`, `ai_settings.key_optional` ↔

@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
 from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, ocr_engine, offsite
-from . import ai_settings, reports
+from . import ai_roles, reports
 from . import spa, standby, sync_engine, trash, upload_gc, version, workspaces, ws_backup, zotero_stream
 from .annotations import listeners as annotation_listeners
 from .computers import channel as computer_channel
@@ -343,9 +343,9 @@ def create_app() -> FastAPI:
         # answers the inviter with the status the failure carries.
         return JSONResponse({"detail": str(exc)}, status_code=exc.status)
 
-    @app.exception_handler(ai_settings.ModelUnavailable)
-    async def model_unavailable(request: Request, exc: ai_settings.ModelUnavailable):
-        # A request naming a model no longer offered (ai_settings.resolve_model),
+    @app.exception_handler(ai_roles.ModelUnavailable)
+    async def model_unavailable(request: Request, exc: ai_roles.ModelUnavailable):
+        # A request naming a model no longer offered (ai_roles.resolve_model),
         # from whichever route: the 400 with its kind beside the sentence, the
         # shape the chat's error card and the translator read.
         return JSONResponse({"detail": exc.detail, "kind": exc.kind}, status_code=exc.status_code)

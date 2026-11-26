@@ -8,6 +8,7 @@
 // with the server's own cases in tests/shared/ai_models.json).
 import { T, t } from "../shared/i18n/i18n.js";
 import { FREE_TRANSLATE_ENGINE } from "../app/prefDefs.js";
+import { billingLabel } from "../chat/tokenUsage.js";
 
 // The tasks, in the order Settings lists them. Dictation is no task model:
 // it keeps its own transcription pick.
@@ -20,12 +21,7 @@ export const ROLE_LABELS = {
 };
 export const roleLabel = (role) => t(ROLE_LABELS[role] || role);
 
-// How a connection is paid for (/api/ai/models `billing`, the masked
-// entry's, resolved per connection by the server), worded by chat/tokenUsage.js.
-import { billingLabel } from "../chat/tokenUsage.js";
-export { billingLabel };
-
-// Each task's model, {role: {pick, model, state}}: gamma/ai_settings.py
+// Each task's model, {role: {pick, model, state}}: gamma/ai_roles.py
 // resolve_roles, case for case (tests/shared/ai_models.json). `models` the
 // registry's ([{id}]), `picks` the account's ({role: id}, "" or none for
 // no pick), `engines` the ids of the translation services set up. `state`

@@ -787,7 +787,7 @@ def test_the_redirect_is_caught_on_this_machine(monkeypatch):
     started = co.begin("someone", local=True, device=True)
     assert started["local"] is True and started["device"] is None
     state = started["state"]
-    base = f"http://127.0.0.1:{co._server.server_address[1]}/auth/callback"
+    base = f"http://127.0.0.1:{co._listener.server.server_address[1]}/auth/callback"
     direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     assert co.status("someone", state) == {"ready": False, "error": ""}
     with pytest.raises(urllib.error.HTTPError) as unknown:
@@ -803,9 +803,9 @@ def test_the_redirect_is_caught_on_this_machine(monkeypatch):
     assert co.redeem("someone", state)["email"] == "local@example.com"
     # Nothing left to wait for: the port is let go.
     deadline = time.time() + 5
-    while co._server is not None and time.time() < deadline:
+    while co._listener.server is not None and time.time() < deadline:
         time.sleep(0.05)
-    assert co._server is None
+    assert co._listener.server is None
 
 
 def test_a_named_service_reads_its_own_model_facts(monkeypatch):

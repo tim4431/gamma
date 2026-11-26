@@ -63,18 +63,17 @@ from ..ai_context import (
 from ..ai_permissions import permission_state
 from ..ai_protocols import DEFAULT_MAX_TOKENS
 from ..ai_protocols.base import reasoning_text, truncated_stop
+from ..ai_roles import ModelUnavailable, import_roles, resolve_model as _resolve_model, set_roles
 from ..ai_settings import (
     MAX_MODELS_LEN,
     MAX_NAME_LEN,
     MAX_PROVIDERS,
     MAX_TOOL_REASON,
-    ModelUnavailable,
     ai_runtime,
     billing_of,
     clear_refresh_backoff,
     entry_models,
     forget_tool_check,
-    import_roles,
     is_oauth_protocol as _is_oauth_protocol,
     is_server_id,
     key_optional,
@@ -89,10 +88,8 @@ from ..ai_settings import (
     provider_label,
     renew_rejected,
     require_ai_runtime,
-    resolve_model as _resolve_model,
     save_tool_check,
     server_entries_for,
-    set_roles,
     shared_allowance,
     stored_tool_check,
     transcriber_for,
@@ -630,7 +627,7 @@ class ModelRolesRequest(BaseModel):
 @router.put("/ai/models/roles")
 def ai_model_roles(payload: ModelRolesRequest, request: Request):
     """Set the model some tasks use, and add or remove favorites, in one
-    write of the account's ``ai-models`` pref (ai_settings.set_roles): 400
+    write of the account's ``ai-models`` pref (ai_roles.set_roles): 400
     for a pick not offered or past 50 favorites; a chat pick clears
     ``chat_migrated``. Any account, a guest's too (among the models it may
     use); never a link visitor or an integration token."""
@@ -651,7 +648,7 @@ class ModelImportRequest(BaseModel):
 @router.post("/ai/models/import")
 def ai_model_import(payload: ModelImportRequest, request: Request):
     """The client's one-time move of a browser's own picks into the
-    account (ai_settings.import_roles): each taken only while the account's
+    account (ai_roles.import_roles): each taken only while the account's
     is unset (chat also while it holds step 71's pick), atomically; a pick
     not offered is skipped. {taken, roles, favorites, chat_migrated}."""
     user_id = require_user_id(request)

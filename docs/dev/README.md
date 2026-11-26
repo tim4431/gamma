@@ -52,7 +52,7 @@ documentation with the code.
   [UI design](ui-design.md), [i18n](i18n.md), and the
   [source map](../../frontend/src/README.md).
 - **AI providers:** build per-user configuration through `ai_runtime(user)`
-  and resolve a request's model with `resolve_model(rt, requested, role)`;
+  and resolve a request's model with `ai_roles.resolve_model(rt, requested, role)`;
   protocol-specific behavior belongs in `gamma/ai_protocols/`, and model
   listings, context windows and prices come from the live catalog. See
   [AI](ai.md).

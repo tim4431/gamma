@@ -448,7 +448,7 @@ export async function settingsPane(page, name) {
 // citation a page with metadata asks for by itself once AI looks connected
 // gets an empty answer, since no provider is there to write it.
 // aiModelsAnswer(models, picks) is GET /api/ai/models' answer for `models`:
-// each task's model as gamma/ai_settings.resolve_roles resolves it, a pick
+// each task's model as gamma/ai_roles.resolve_roles resolves it, a pick
 // in `picks` ({role: id}) when offered, else the chat model, the chat's
 // own the first model; no favorites.
 export function aiModelsAnswer(models, picks = {}) {

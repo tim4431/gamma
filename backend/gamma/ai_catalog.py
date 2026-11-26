@@ -428,37 +428,36 @@ def price(conf: dict, model: str, provider_id: str = "", wait=0) -> dict | None:
     return _catalog_model_price(conf, model, left())
 
 
-def facts(provider_id: str, conf: dict, model: str, billing: str) -> dict:
-    """``{context, images, price}`` of one of the entry's models from what is
-    cached, never waiting on the network (a lookup not made yet is started,
-    for the next ask): /api/ai/models' facts. ``price`` only for a
-    connection paid per token (``billing`` "api"); null for what nobody
-    knows."""
-    listing = _listed(provider_id, conf, 0)
-    window = listing["windows"].get(model) or _catalog_value(model, conf, "window", lambda n: n, wait=0)
-    images = listing["images"].get(model)
+def _facts(conf: dict, model: str, listed: dict, billing: str, wait) -> dict:
+    """``{context, images, price}`` of one of the entry's models: what its
+    listing says (``listed``: a ``list_models`` row's ``context_window``,
+    ``images`` and ``price``), else models.dev, waited for up to ``wait``
+    seconds when it was never fetched. ``price`` only for a connection paid
+    per token (``billing`` "api"); null for what nobody knows, a listing's
+    price that varies (False) included."""
+    window = listed.get("context_window") or _catalog_value(model, conf, "window", lambda n: n, wait)
+    images = listed.get("images")
     if images is None:
-        images = _catalog_value(model, conf, "images", int, wait=0)
-    return {"context": window or None, "images": images,
-            "price": price(conf, model, provider_id, wait=0) if billing == "api" else None}
+        images = _catalog_value(model, conf, "images", int, wait)
+    cost = None
+    if billing == "api":
+        cost = listed.get("price")
+        if cost is None:
+            cost = _catalog_model_price(conf, model, wait)
+    return {"context": window or None, "images": images, "price": cost or None}
+
+
+def facts(provider_id: str, conf: dict, model: str, billing: str) -> dict:
+    """``_facts`` from what is cached, never waiting on the network (a
+    lookup not made yet is started, for the next ask): /api/ai/models'
+    facts."""
+    listing = _listed(provider_id, conf, 0)
+    return _facts(conf, model, {"context_window": listing["windows"].get(model),
+                                "images": listing["images"].get(model),
+                                "price": listing["prices"].get(model)}, billing, 0)
 
 
 def listing_facts(conf: dict, models: list, billing: str, wait=RECORD_WAIT) -> dict:
-    """``{model: {context, images, price}}`` for a listing just fetched
-    (``list_models``' rows: an unsaved connection's, in the connect form),
-    the models.dev part waited for up to ``wait`` seconds when it was never
-    fetched. ``price`` only for ``billing`` "api"."""
-    out = {}
-    for m in models:
-        mid = m["id"]
-        window = m.get("context_window") or _catalog_value(mid, conf, "window", lambda n: n, wait)
-        images = m.get("images")
-        if images is None:
-            images = _catalog_value(mid, conf, "images", int, wait)
-        cost = None
-        if billing == "api":
-            cost = m.get("price")
-            if cost is None:
-                cost = _catalog_model_price(conf, mid, wait)
-        out[mid] = {"context": window or None, "images": images, "price": cost or None}
-    return out
+    """``{model: _facts}`` for a listing just fetched (``list_models``'
+    rows: an unsaved connection's, in the connect form)."""
+    return {m["id"]: _facts(conf, m["id"], m, billing, wait) for m in models}
