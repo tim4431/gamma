@@ -1337,11 +1337,11 @@ every edit, so they play the part text offsets play. A write names the
 file its strokes were drawn onto (`base_props: {ink_url}` on the op,
 `base_properties` on `PUT /blocks/{id}`) and may carry `base_ids`, the
 stroke ids of that file as the client loaded it. When the stored `ink_url`
-is another one, meaning someone else saved meanwhile (a tab sends one save
-of a group at a time, so its own unanswered save is never taken for
-someone else's: "Fences"), the server merges
-instead of replacing (`ops._Batch.merge_ink`, `ink.merge_ink`; the client's
-`mergeInk` is the same function, `tests/shared/inkmerge.json` pins both):
+is another one, meaning someone else saved meanwhile, the server merges
+instead of replacing. A tab sends one save of a group at a time, so its own
+unanswered save is never taken for someone else's ("Fences"). The merge is
+`ops._Batch.merge_ink` and `ink.merge_ink`, and the client's `mergeInk` is
+the same function (`tests/shared/inkmerge.json` pins both):
 
 - A stroke is compared as two halves.
   - Its **geometry** is `pts`, `ch`, `size`, `shape`, `brush` and `nib`.
@@ -1458,32 +1458,33 @@ reach.
   without a `pagehide`).
 - **One save of a group is on its way at a time** (`inkSaver.js`, the
   group's lane). A save sent before the previous one is answered would
-  name the base from before it. The server would then merge the tab's own
-  unanswered save as someone else's: a stroke erased between the two would
-  come back, an undone erasure would be lost again, and the second could
-  overtake the first. A dense page against a NAS or an app's own server
-  takes long enough for that (the whole group is uploaded, a merge costs
-  about a second), which is how handwriting came back or vanished "while
-  writing".
+  name the base from before it, and the server would merge the tab's own
+  unanswered save as someone else's.
+  - A stroke erased between the two would then come back, an undone
+    erasure would be lost again, and the second save could overtake the
+    first.
+  - A dense page against a NAS or an app's own server is slow enough for
+    that: the whole group is uploaded, and a merge costs about a second.
   - A newer drawing waits (`again`) and goes at once when the save on its
     way is answered, on the base that answer stored. A save that settles
     with the group still dirty and nothing waiting puts it on the timer.
   - A save's requests are all under its batch. Each `PUT` or `DELETE` it
-    sends, its own or one sent again as the page may go, is a
-    transmission of the same write: whichever lands first, the others are
-    answered from the op log. The save settles once every transmission
-    has. Its first answer moves the draft's base. With no answer, the
-    journal forgets the `PUT` if every failure came with a status, and the
-    `PUT` is owed if one may have landed.
+    sends, its own or one sent again as the page may go, is a transmission
+    of the same write.
+    - Whichever lands first, the others are answered from the op log. The
+      save settles once every transmission has, and its first answer moves
+      the draft's base.
+    - With no answer, the journal forgets the `PUT` if every failure came
+      with a status. If one may have landed, the `PUT` is owed.
   - As the page may go (hidden or `pagehide`), the save on its way is made
-    to outlive it instead.
+    to outlive it.
     - One still uploading an older drawing is superseded: its PUT is
       never sent, and the newest drawing goes now with keepalive.
     - Otherwise the save's own requests go again with keepalive: its
-      `PUT` or `DELETE`, and its upload while that is not answered. On
-      `pagehide` a save still uploading a drawing named by its hash sends
-      its `PUT` beside that upload. The newest drawing waits for the
-      answer, and the journal keeps it.
+      `PUT` or `DELETE`, and its upload while that is not answered. The
+      newest drawing waits for the answer, and the journal keeps it.
+    - On `pagehide` a save still uploading a drawing named by its hash
+      sends its `PUT` beside that upload.
     - From then on what the save sends goes with keepalive.
     - When the save's own upload is cut off after a `PUT` went beside it,
       that `PUT` is owed with its upload, whatever it answered.
@@ -1492,8 +1493,8 @@ reach.
   - `pending()` counts a drawing waiting behind a save on its way and an
     owed PUT, so going hidden and leaving the page flush them.
   - A flush that runs after the page changed (a follow-up, a retry)
-    decides whether an empty group goes from the block as its page showed
-    it to the last flush that saw it, never from the next page's tree and
+    decides whether an empty group goes by the block as its page showed it
+    to the last flush that saw it. It never reads the next page's tree and
     threads.
 - **A PUT names its write** (`batch`, `ink-<tab>-<n>`, one per save).
   - A PUT that may have landed with its answer lost (no answer, a 5xx, a
@@ -1510,8 +1511,7 @@ reach.
     it owed.
   - A batch whose row the log has pruned since ([collab.md](collab.md)
     "The op log": 300 rows, 24 hours or 2 MB a page) is applied again from
-    its old base, and so is one sent to a server that ignores `batch`, as
-    before.
+    its old base, and so is one sent to a server that ignores `batch`.
 - **Every group's requests start at once**, none waiting for another
   group's. Nothing is sure to run once a closing page is gone, so a flush
   waiting for each group in turn would send the first alone.
@@ -1587,8 +1587,8 @@ reach.
   - 5xx and network errors retry after 2 s (with keepalive while the page
     is hidden).
   - An empty group's `DELETE` answered 404 for a block the page no longer
-    shows went (its answer was lost, or another took the block): it counts
-    as landed, with no retry.
+    shows has gone through: its answer was lost, or another took the block.
+    It counts as landed, with no retry.
 - The page socket's hello and `/api/session` carry the server's `build`,
   and so does the op-log read a tab without its socket polls
   (`GET /pages/{id}/ops`, [collab.md](collab.md) "The client"). The client
@@ -2550,19 +2550,23 @@ reach.
     with the draft's. A remote `ink_url` change on a block with nothing
     unsaved drops the draft.
     - Not before the page's tree has applied this tab's own last save of
-      it. A save's answer can come before its echo, the tree naming the
-      file the save replaced until then. Dropped then, the group would show
-      that older file, and a stroke drawn in the gap would build on it.
-      `markSaved(id, ink, url, stored, at)` keeps the answer's batch, `at`
-      `{page, seq}` (its `page_id` and `seq`), as the draft's `savedAt`;
-      `setTreeApplied(fn)` hands the store the open page session's
-      `{pageId, seq}` (`collabSession.js` `applied`, -1 while a reload is
-      on its way), and `inkFor` keeps the draft while that page's seq is
-      below it. A draft without `savedAt` (a server that does not say), or
-      of another page, is dropped as before. `treeBehind(id)` is that
-      test for a save the server stored as sent (the draft's url is its
-      base), which is when the server holds the draft's base while the tree
-      lags (the `pagehide` PUT beside its upload, "Fences").
+      it. A save's answer can come before its echo, and until then the tree
+      names the file the save replaced.
+      - Dropped then, the group would show that older file, and a stroke
+        drawn in the gap would build on it.
+      - `markSaved(id, ink, url, stored, at)` keeps `at`, the batch the
+        answer names as `{page, seq}` (its `page_id` and `seq`), as the
+        draft's `savedAt`.
+      - `setTreeApplied(fn)` hands the store the open page session's
+        `{pageId, seq}` (`collabSession.js` `applied`, -1 while a reload is
+        on its way). `inkFor` keeps the draft while that page's seq is
+        below `savedAt`.
+      - A draft without `savedAt` (a server that does not say), or of
+        another page, is dropped at the remote change.
+      - `treeBehind(id)` is the same test for a save the server stored as
+        sent (the draft's url is its base). The server then holds the
+        draft's base while the tree lags (the `pagehide` PUT beside its
+        upload, "Fences").
     - Nor for a tree naming no file. A group that named one never names
       none again, and a refetch's overlay of the group's insert puts `""`
       back for a moment.
@@ -2573,11 +2577,11 @@ reach.
     (`upgradeV1`, then `withDefaults`). So a version 1 file (a copy that
     has not run the upgrade step) renders and, once edited, uploads as
     version 2.
-  - A fetch that fails is cached as missing (`null`) only until its retry:
-    2 s, doubling to 30 s, for what `retryableStatus` retries, and a 404
-    three times (a peer's `pagehide` PUT goes beside its upload, so the
-    file can come a moment after the block names it). Never for a 401 or
-    403.
+  - A fetch that fails is cached as missing (`null`) only until its retry.
+    What `retryableStatus` retries is tried again after 2 s, doubling to
+    30 s, and a 404 three times. A 401 or 403 is not tried again.
+    - A 404 is tried again because a peer's `pagehide` PUT goes beside its
+      upload, so the file can come a moment after the block names it.
     - One timer serves every failed url. It forgets the due ones, so the
       next `inkFor` fetches again, then bumps once.
     - A merged file a save is waiting for (`markSaved`) is fetched by the
@@ -2587,13 +2591,15 @@ reach.
     - `fileState(url)` is `'loaded'`, `'loading'`, `'failed'` (another try
       is due), `'gone'` (no more tries) or `'unknown'`, and `fileOf(url)`
       the loaded drawing or null.
-  - `markDeleting(id)` (the saver, as a group's `DELETE` starts), and
-    `isDeleting(id)`. While the block is still on the page, a stroke
-    starts a new group rather than join one the deletion takes, and an
-    undo that would fill it waits. It is cleared when the `DELETE` is
-    known not to have landed (`unmarkDeleting`, an answer with a 4xx
-    status) and by `dropDraft`. `onDropDraft(fn)`: the saver forgets a PUT
-    it owed the old block.
+  - `markDeleting(id)` marks a group whose `DELETE` the saver has started,
+    and `isDeleting(id)` reads the mark.
+    - While the block is still on the page, a stroke starts a new group
+      rather than join one the deletion takes, and an undo that would fill
+      it waits.
+    - The mark is cleared when the `DELETE` is known not to have landed
+      (`unmarkDeleting`, an answer with a 4xx status) and by `dropDraft`.
+  - `onDropDraft(fn)` tells the saver of a dropped draft, so it forgets a
+    PUT it owed the old block.
   - A draft keeps its base's stroke ids (`baseIds`), which the save sends
     as `base_ids`.
   - A file loaded again for a block (the one a peer's save names, the
@@ -2660,12 +2666,12 @@ reach.
     - A block that names no file took none of those `PUT`s: one that
       lands names a file, and nothing names none again. The entry then
       counts from its own base.
-    - Nor did a block that still names the entry's own base: a `PUT` that
-      lands names its upload, and the base is not named again but by a
-      byte-identical revert. The entry then comes back as it is. A close
-      that cut the `PUT` off after its upload landed would otherwise count
-      from that upload, and its strokes would read as strokes the server
-      deleted.
+    - Nor did a block that still names the entry's own base. A `PUT` that
+      lands names its upload, and only a byte-identical revert names the
+      base again.
+      - The entry then comes back as it is. Otherwise it would count from
+        an upload that landed before a close cut its `PUT` off, and its
+        strokes would read as strokes the server deleted.
     - The upload alone would not tell: a flush the tab did not live
       through may have stored the upload and never sent the `PUT`.
     - Within the journal's 7 days a stored upload is never purged, the
@@ -2674,7 +2680,7 @@ reach.
     - The side this errs on is the server's. A `PUT` that left after its
       upload landed and never landed itself, its connection gone under it,
       counts as landed too when someone has saved since (the block names a
-      third file), so what only it carried is not brought back.
+      third file). What only it carried is then not brought back.
   - `restoredInk(entry, {url, current, base, baseUrl, lost})` decides,
     pure.
     - When the file it counts from is the block's current `ink_url`, the
@@ -3859,26 +3865,27 @@ reach.
   - The saver, `createInkSaver({blocksRef, setStatus, liveSaved, inkStore,
     apiJson, API, keepaliveRoom, keeps, hidden, timeoutMs}) → {flushInk,
     scheduleInk, pending}`, is handed the draft store, the API and the
-    keepalive room rather than importing them. So
-    `frontend/tests/inkSaver.test.mjs` drives it with fakes and mock timers,
-    and `frontend/tests/inkSync.test.mjs` with the real draft store against
-    a fake server that stores and merges as `ops.merge_ink` does. A real
-    close is the scratch scenario `tests/e2e/tabClose.mjs`, apart from the
-    browser suite.
+    keepalive room rather than importing them.
+    - So `frontend/tests/inkSaver.test.mjs` drives it with fakes and mock
+      timers. `frontend/tests/inkSync.test.mjs` drives it with the real
+      draft store against a fake server that stores and merges as
+      `ops.merge_ink` does.
+    - A real close is the scratch scenario `tests/e2e/tabClose.mjs`, apart
+      from the browser suite.
     - A group's save runs on its lane (`{ink, phase, batch, put,
-      superseded, again, done}`), one at a time per group ("Fences"); only
-      the save that made a lane clears it. A PUT that may have landed with
-      its answer lost is the group's owed PUT, sent again first under its
-      batch. `hidden()` is whether the page is in the background, so a
-      save that follows one goes with keepalive; `timeoutMs` is
-      `SAVE_TIMEOUT_MS`.
+      superseded, again, done, …}`), one at a time per group ("Fences").
+      Only the save that made a lane clears it.
+    - A PUT that may have landed with its answer lost is the group's owed
+      PUT, sent again first under its batch.
+    - `hidden()` is whether the page is in the background, so a save that
+      follows one goes with keepalive. `timeoutMs` is `SAVE_TIMEOUT_MS`.
     - A group erased empty is `DELETE`d unless its block holds a caption
       or notes, or `keeps(id)`: a group with a comment thread
       (`comments/useInkThreads.js`), which is saved as an empty drawing.
   - `useInkSave({focusedBlockId, blocksRef, setStatus, liveSaved, keeps,
     treeApplied}) → {flushInk, scheduleInk, pending}` keeps one for the
-    page's life over the real ones, asking the latest `keeps` it was given,
-    and registers `treeApplied` (the page session's `applied`) with
+    page's life over the real ones, asking the latest `keeps` it was given.
+    It registers `treeApplied` (the page session's `applied`) with
     `inkStore.setTreeApplied`. App calls it after the page's collab
     session, so its listeners register after collab's.
   - It flushes on `visibilitychange` when a save is pending (with
@@ -3889,18 +3896,20 @@ reach.
   - `scheduleInk()` puts the flush 700 ms after the last edit and at most
     5 s after the first unsaved one ("Fences"). `pending()` is whether one
     waits on its timer, behind a group's save on its way, or as an owed
-    PUT. `flushInk()` resolves once the saves it started, and those it left
-    a newer drawing to, have settled with what follows them (Transcribe
-    awaits it before it reads the group's block).
+    PUT.
+  - `flushInk()` resolves once the saves it started, and those it left a
+    newer drawing to, have settled with what follows them. Transcribe
+    awaits it before it reads the group's block.
   - The flush starts every dirty group's requests at once
     (`ink/inkFlush.js` `planFlush` says what each sends and which go with
     `keepalive`).
     - It uploads each draft (`POST /api/upload-ink`, the `serializeInk`
-      bytes) and PATCHes its block through `PUT /api/blocks/{id}`. The
-      `PUT` carries `inkProps` (the url, count and position),
-      `base_properties: {ink_url}`, the file the draft was edited from,
-      `base_ids`, that file's stroke ids, and `batch`, the save's name for
-      the write. Its answer's `page_id` and `seq` go to `markSaved` as `at`.
+      bytes) and PATCHes its block through `PUT /api/blocks/{id}`.
+    - The `PUT` carries `inkProps` (the url, count and position),
+      `base_properties: {ink_url}` (the file the draft was edited from),
+      `base_ids` (that file's stroke ids) and `batch` (the save's name for
+      the write). Its answer's `page_id` and `seq` go to `markSaved` as
+      `at`.
     - That is a server-side writer, so the change fans out over the page
       socket and reaches this tree like a remote op. Only the group's block
       itself (first stroke) is inserted through the tree.
@@ -3984,15 +3993,18 @@ reach.
     - `inkHistoryState` mirrors its lengths for the strip's buttons, and
       leaving the page empties it.
     - An entry waits, with a pill, while it cannot step onto its groups as
-      they are (`inkHistory.js` `stepWaits`). If one group's `DELETE` has gone and its
-      block is still on the page, the pill is "Handwriting is still
-      saving. Try again in a moment.": the deletion would take what the
-      step brings back. If one names a file still on its way, the pill is
-      "Handwriting is still loading. Try again in a moment.", and the
-      fetch starts: stepped without it, the step would replace what it
-      holds. So does one that failed with another try due. A file gone for
-      good does not hold an entry: it steps onto the drawing it had. The linked call from the block history (`from`)
-      never waits, so its two halves stay one step.
+      they are (`inkHistory.js` `stepWaits`).
+      - If one group's `DELETE` has gone and its block is still on the
+        page, the pill is "Handwriting is still saving. Try again in a
+        moment.". The deletion would take what the step brings back.
+      - If one names a file still on its way, or one that failed with
+        another try due, the pill is "Handwriting is still loading. Try
+        again in a moment.", and the fetch starts. Stepped without the
+        file, the step would replace what it holds.
+      - A file gone for good does not hold an entry: it steps onto the
+        drawing it had.
+      - The linked call from the block history (`from`) never waits, so its
+        two halves stay one step.
     - A group whose block is gone is re-inserted when an entry brings
       strokes back, its old draft dropped first (`inkStore.dropDraft`).
     - The block coming back is a fresh one with no file, so its upload
@@ -4091,11 +4103,13 @@ reach.
     group can hold a paste.
   - `pickGroup(active, page, size, bytes, count, {blocks, closed, draftOf,
     fileOf, makeId}) → {id, before}` is the group strokes land in and its
-    strokes so far, read as they apply: the current group, its draft, else
-    its loaded file, else a fresh file when it names none. A group naming a
-    file that is not here (it failed to load, or the tree moved on to one
-    not loaded yet), or a full one, is passed over for a new group, so
-    strokes never replace strokes that have not arrived.
+    strokes so far, read as they apply.
+    - That is the current group with its draft, else its loaded file, else
+      a fresh file when it names none.
+    - A full group is passed over for a new one. So is a group naming a
+      file that is not here (it failed to load, or the tree moved on to one
+      not loaded yet), so strokes never replace strokes that have not
+      arrived.
   - `eraseManyChanges` and `eraseAlongChanges` are the erasers' changes
     through the eraser filter.
 - `ink/useInkStrokes.js`: the strokes, `useInkStrokes({focusedBlockId,
@@ -4107,9 +4121,10 @@ reach.
     id}`, through `inkEdits.js currentGroup`). Leaving the page forgets
     it, so the next stroke starts a fresh group, and so does a group that
     `closedGroup(id)` says has a comment thread
-    (`comments/useInkThreads.js`), or whose empty-group `DELETE` has gone
-    while its block is still on the page (`inkStore.isDeleting`: the
-    deletion would take the stroke with it).
+    (`comments/useInkThreads.js`). So does a group whose empty-group
+    `DELETE` has gone while its block is still on the page
+    (`inkStore.isDeleting`), since the deletion would take the stroke with
+    it.
   - A new group is found through `blocksRef`, once a render has put its
     block in the tree.
   - `handleInkStroke(page, stroke, size, {label})` (the layers'
@@ -4117,17 +4132,18 @@ reach.
     - `label` is the history entry's label the layer's `onStroke` passes
       (`finishStroke`'s: "ink stroke", "ink straight line", "ink shape").
       *Stamp line* passes "ink straight line".
-    - A group no draft holds has its saved file loaded first
-      (`readyFor`: only one on its way or never asked for, for 3 s at
-      most; a file that failed is not waited for), so a stroke never
-      replaces strokes that have not arrived yet. Otherwise the stroke applies within the
-      layer's call.
+    - A group no draft holds has its saved file loaded first, so a stroke
+      never replaces strokes that have not arrived yet. Otherwise the
+      stroke applies within the layer's call.
+      - `readyFor` waits only for a file on its way or never asked for, for
+        3 s at most. A file that failed is not waited for.
     - The group and its strokes are read when the stroke applies
       (`groupFor`, `inkEdits.js pickGroup`), with no wait between that and
-      the `applyInk`. So pen-ups that waited for one file each land on the
-      draft the one before made, and the base the edit names
-      (`useInkDocument.js`, the tree's url) is the file its strokes came
-      from.
+      the `applyInk`.
+      - So pen-ups that waited for one file each land on the draft the one
+        before made.
+      - The base the edit names (`useInkDocument.js`, the tree's url) is the
+        file its strokes came from.
     - A stroke whose wait spans a page change is dropped: it has no page
       to land on.
     - It starts a new group on the same surface when the current one would
@@ -4260,10 +4276,10 @@ reach.
       edit")`).
     - `transcribe` ("Transcribe a selection", below).
     - `redraw` and `to-text` (Redraw as shapes, Convert to text,
-      `askAboutSelection`): one request to `/api/ai/ink/shapes` or `/text`
-      with no model (the server asks the handwriting model), a task row (`ai.addTask`,
-      `ai.updateTask`, the tasks store's local rows) and a pill while it
-      is out. `ai` is null in a shared page's view, which has none, and a
+      `askAboutSelection`) send one request to `/api/ai/ink/shapes` or
+      `/text` with no model, since the server asks the handwriting model. A
+      task row (`ai.addTask`, `ai.updateTask`, the tasks store's local rows)
+      and a pill show while it is out. `ai` is null in a shared page's view, which has none, and a
       page view has one request at a time (`aiRef`); leaving the page
       aborts it ([handwriting_ai.md](handwriting_ai.md#asking)).
       - A redraw is applied as one entry, `T("ink redraw as shapes")`,
