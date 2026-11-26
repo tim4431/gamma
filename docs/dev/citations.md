@@ -6,9 +6,9 @@ the BibTeX one, and the copies and files the app makes of them. The server
 keeps the data side (`gamma/citations.py`, `gamma/meta_fields.py`,
 `gamma/names.py`, `gamma/bibtex_format.py`, the bibliography builders in
 `gamma/routers/export.py`, the style store in `gamma/routers/citations.py`);
-the browser renders every
-style (`frontend/src/citations/`). What Zotero does and why Gamma took what
-it took: [research/citations.md](../research/citations.md). The record
+the browser renders every style (`frontend/src/citations/`). What Zotero
+does and why Gamma took what it took:
+[research/citations.md](../research/citations.md). The record
 itself and how it is looked up: [paper_metadata.md](paper_metadata.md);
 the BibTeX entry and the export dialog: [import_export.md](import_export.md#bibliography).
 

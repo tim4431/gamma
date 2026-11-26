@@ -1,10 +1,11 @@
 """The capitals of a title that a sentence-case style must keep.
 
 A style that sets titles in sentence case (plainnat, biblatex's) lowercases
-every letter of a title that braces do not protect. ``protect_case``
-braces the words whose capitals must stay, by Zotero's BibLaTeX rule, in
-the fields such a style sets (``CASE_FIELDS``). ``bibtex_format`` applies
-it in both dialects. Pure, standard library only.
+every letter of a title after its first that braces do not protect.
+``protect_case`` braces the words whose capitals must stay, by Zotero's
+BibLaTeX rule, in the fields such a style sets (``CASE_FIELDS``).
+``bibtex_format`` applies it in both dialects. Pure, standard library
+only.
 """
 
 import re

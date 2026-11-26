@@ -7,10 +7,11 @@ with curly quotes around the attribute values. So the fragment is read as a
 sequence of tags without trusting it to be XML: attributes are ignored and a
 tag that does not close is closed by its parent.
 
-``to_latex`` is what ``bibtex`` puts between ``$…$``; ``to_text`` is what
-``textnorm.plain_text`` stores (the title as the PDF prints it, which the
-title match compares). ``SYMBOLS`` is the one table of characters that have
-a math-mode LaTeX command, shared with ``bibtex``'s text-mode conversion.
+``to_latex`` is what ``bibtex_latex`` puts between ``$…$``; ``to_text`` is
+what ``textnorm.plain_text`` stores (the title as the PDF prints it, which
+the title match compares). ``SYMBOLS`` is the one table of characters that
+have a math-mode LaTeX command, shared with ``bibtex_latex``'s text-mode
+conversion.
 """
 
 import html
