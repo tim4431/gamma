@@ -1255,8 +1255,9 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
 
 ### The touch report
 
-What the shell knew about touches when the page stopped answering them,
-made for a freeze no device here showed, since solved
+What the shell knew about touches when Reload was pressed: for a page
+that stops answering taps while the bar still works, as the Pencil Pro
+freeze did up to 0.4.9
 ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)).
 `PencilCapture` sees every touch on the web views' container. Through
 `onTouch` it hands `TouchReport` each touch's begin, a Pencil touch's end
