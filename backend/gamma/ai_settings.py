@@ -558,6 +558,13 @@ def provider_label(entry: dict) -> str:
     return proto.label if proto else protocol or ""
 
 
+def entry_base_url(entry: dict) -> str:
+    """Where an entry's calls go: its own base URL, else its protocol's
+    default endpoint ("" for an unknown protocol), with no trailing slash."""
+    proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
+    return ((entry.get("base_url") or "").strip() or (proto.base_url if proto else "")).rstrip("/")
+
+
 def entry_models(entry: dict) -> list:
     """The entry's model names. None picked = none offered: there is no
     built-in default (it would go stale); the settings form lists the
@@ -612,7 +619,7 @@ def _same_connection(entry: dict, conf: dict) -> bool:
     proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
     if not proto or entry.get("protocol") != conf.get("protocol"):
         return False
-    if ((entry.get("base_url") or "").strip() or proto.base_url).rstrip("/") != conf.get("base_url"):
+    if entry_base_url(entry) != conf.get("base_url"):
         return False
     return proto.auth == "oauth" or (entry.get("api_key") or "").strip() == conf.get("api_key")
 
@@ -794,7 +801,7 @@ def _registry(user_id: str, refresh: bool = True) -> tuple[dict, list, int]:
             continue
         name = provider_label(e)
         conf = {
-            "base_url": ((e.get("base_url") or "").strip() or proto.base_url).rstrip("/"),
+            "base_url": entry_base_url(e),
             "protocol": protocol,
             "name": name,
             # How its calls are paid for: the recorder and the masked entry read it.

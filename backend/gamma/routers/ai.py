@@ -72,6 +72,7 @@ from ..ai_settings import (
     ai_runtime,
     billing_of,
     clear_refresh_backoff,
+    entry_base_url,
     entry_models,
     forget_tool_check,
     is_oauth_protocol as _is_oauth_protocol,
@@ -1074,14 +1075,6 @@ def ai_provider_test(provider_id: str, request: Request, payload: AIProviderTest
     return _probe_entry(user_id, entry, payload.model if payload else "", tools_model=tools_model)
 
 
-def _entry_conf(entry: dict) -> dict:
-    """A saved entry's protocol and effective base URL: what tells its
-    service preset (and so its quota reader) apart."""
-    proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
-    base = ((entry.get("base_url") or "").strip() or (proto.base_url if proto else "")).rstrip("/")
-    return {"protocol": entry.get("protocol"), "base_url": base}
-
-
 # Sync def: this read-only account call runs in FastAPI's threadpool.
 @router.post("/ai/providers/{provider_id}/usage")
 def ai_provider_usage(provider_id: str, request: Request):
@@ -1098,7 +1091,8 @@ def ai_provider_usage(provider_id: str, request: Request):
     entry = _saved_entry(request, user_id, provider_id)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
-    reader = ai_protocols.quota_reader(_entry_conf(entry))
+    # The protocol and the endpoint tell its service preset, and so its reader, apart.
+    reader = ai_protocols.quota_reader({"protocol": entry.get("protocol"), "base_url": entry_base_url(entry)})
     if reader is None:
         return {"available": False,
                 "reason": "This API-key provider does not expose a standard remaining-usage percentage."}
