@@ -217,10 +217,12 @@ path link its own.
   the selection toolbar and the editing bar open its form on the link the
   caret is on, or on the selected words for a new link, the cursor in Link
   (`linkCardHost.js`). The form's fields take the focus without ending the
-  editing session; a press outside both ends both.
+  editing session; a press outside both ends both. The editor's side is
+  `editor/editorLinks.jsx` (`useEditorLinkCard`).
 - **A web link's chip.** In the rendered view and the note editor alike, a
-  web link is a chip (BlockTree.jsx `LinkChip`, BlockCmEditor.jsx
-  `LinkChipWidget`): the site's icon and `webLinkLabel`'s words, a
+  web link is a chip (BlockTree.jsx `LinkChip`, editorLinks.jsx
+  `LinkChipWidget`): the site's icon and `webLinkLabel`'s words
+  (`shared/lib/webLinks.js`), a
   Markdown link's own, else GitHub's readable name, the site's title or
   the host. The editor shows a link's source only while an end of the
   selection stands inside it (the arrow keys step in) or while it is being

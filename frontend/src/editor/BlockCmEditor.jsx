@@ -5,7 +5,7 @@
 // [[block-ref]]) whose text the caret is NOT touching renders in place;
 // moving the caret into it (arrow keys, or clicking the rendered chip)
 // expands it back to source.
-import React, { useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Annotation, Compartment, EditorState, Prec, StateEffect, StateField, Transaction } from "@codemirror/state";
 import {
@@ -25,14 +25,9 @@ import { scanImageSyntax, scanMarks } from "./mdMarks";
 import { mathTex, protectedSpans, scanImages, scanMathSpans, scanTables } from "./mdScan";
 import { NO_MENTIONS, mentionChip, mentionChipClass, proseMentions } from "./mentions.js";
 import { CHIP_RE, refTargetTitle, refWords } from "./refLabels.js";
-import { applyLinkChange, linkMarkdown, linkSpanAt, linkSpans, pastedLink, spanWords, tablePipe } from "./linkEdit.js";
+import { linkSpanAt, linkSpans } from "./linkEdit.js";
 import { setLinkCardHost } from "./linkCardHost.js";
-import {
-  LinkCardContext, LinkCardSurface, bareLinkText, describeLink, loadSitePreview, siteIconUrl, sitePreview,
-  useSitePreview, webLinkLabel,
-} from "../shared/ui/LinkCard.jsx";
-import { parseGammaLink } from "../shared/model/gammaLinks.js";
-import { plainSnippet } from "../search/snippets.js";
+import { linkChip, pasteLinkOver, useEditorLinkCard } from "./editorLinks.jsx";
 import { pasteMath } from "./pasteMath.js";
 import { copiedText, isSourceCopy, sourceCopied } from "./sourceCopy.js";
 import { assetUrl } from "../shared/lib/utils";
@@ -93,79 +88,6 @@ class RefChipWidget extends WidgetType {
     });
     return span;
   }
-}
-
-// A web link as the rendered view's chip (BlockTree.jsx LinkChip): the
-// site's icon, or the link icon for a link into this library (`own`), and
-// its label; a bare address's (`fetches`) becomes its page's title once
-// /api/link-preview answers (LinkCard.jsx loadSitePreview). The address is
-// its hover title. A press shows its link card without opening the source
-// (ctx.pressLink); with Ctrl or Cmd it opens the link.
-const LINK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
-class LinkChipWidget extends WidgetType {
-  constructor(href, words, label, { own = false, fetches = false }, ctx) {
-    super();
-    this.href = href;
-    this.words = words;
-    this.label = label;
-    this.own = own;
-    this.fetches = fetches;
-    this.ctx = ctx;
-  }
-  eq(other) {
-    return other.href === this.href && other.label === this.label && other.own === this.own && other.fetches === this.fetches;
-  }
-  toDOM(view) {
-    const chip = document.createElement("span");
-    chip.className = "linkChip cmLinkChip";
-    chip.title = this.href;
-    const icon = this.own ? "" : siteIconUrl(this.href);
-    if (icon) {
-      const img = document.createElement("img");
-      img.className = "linkChipIcon";
-      img.src = icon;
-      img.alt = "";
-      img.addEventListener("error", () => img.replaceWith(document.createRange().createContextualFragment(LINK_SVG)));
-      chip.appendChild(img);
-    } else chip.insertAdjacentHTML("beforeend", LINK_SVG);
-    const text = document.createElement("span");
-    text.className = "linkChipText";
-    text.textContent = this.label;
-    chip.appendChild(text);
-    if (this.fetches) {
-      loadSitePreview(this.href).then((p) => {
-        if (!p.title) return;
-        text.textContent = webLinkLabel(this.href, this.words, p.title).label;
-        view.requestMeasure();
-      });
-    }
-    chip.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      if (e.button !== 0) return;
-      if (e.ctrlKey || e.metaKey) {
-        window.open(new URL(this.href, window.location.origin).href, "_blank", "noopener,noreferrer");
-        return;
-      }
-      this.ctx.pressLink?.(view, view.posAtDOM(chip));
-    });
-    return chip;
-  }
-}
-
-// The chip of a web link span (linkEdit.js linkSpans): its words (a
-// Markdown link's, as plain text), else what it points to — a link into
-// this library its card's title, any other the rendered chip's label.
-function linkChip(span, ctx) {
-  const words = span.kind === "md" ? plainSnippet(spanWords(span)) : "";
-  const gl = parseGammaLink(span.href, window.location.origin);
-  if (gl && !gl.foreign) {
-    const label = bareLinkText(words)
-      ? describeLink({ kind: "url", href: span.href, label: "" }, { labels: ctx.labels, ctx: ctx.linkCtx }).title : words;
-    return new LinkChipWidget(span.href, words, label, { own: true }, ctx);
-  }
-  const known = sitePreview(span.href);
-  const { label, fetches } = webLinkLabel(span.href, words, known?.title);
-  return new LinkChipWidget(span.href, words, label, { fetches: fetches && !known }, ctx);
 }
 
 // An @ mention (MentionMenu.jsx mentionChip: the rendered view's chip); a
@@ -1067,70 +989,6 @@ function pasteWithMath(e, view) {
   view.dispatch(view.state.replaceSelection(text), { userEvent: "input.paste", scrollIntoView: true });
 }
 
-// An address pasted over selected words, in any note editor: the words
-// linked to it ([words](url), a copied page link [[id|words]]: linkEdit.js
-// pastedLink), not replaced by it. Not in code or math, nor with files on
-// the clipboard; true when it took the paste.
-function pasteLinkOver(e, view) {
-  const sel = view.state.selection.main;
-  if (view.state.readOnly || sel.empty || e.clipboardData?.files?.length) return false;
-  const doc = view.state.doc.toString();
-  if (protectedSpans(doc).some((s) => sel.from < s.to && sel.to > s.from)) return false;
-  const md = pastedLink(doc.slice(sel.from, sel.to), e.clipboardData?.getData("text/plain") || "",
-    window.location.origin, tablePipe(doc, sel.from));
-  if (!md) return false;
-  e.preventDefault();
-  view.dispatch({ changes: { from: sel.from, to: sel.to, insert: md }, selection: { anchor: sel.from + md.length },
-    userEvent: "input.paste", scrollIntoView: true });
-  return true;
-}
-
-// The link card of the editor (shared/ui/LinkCard.jsx), under the link
-// `card.span` the caret is in (linkEdit.js linkSpans) or, from Ctrl+K on
-// words that are no link, the selection a new link takes ({kind: "new"}).
-// Its edits are the editor's own changes; the span is found again by its
-// text if the note changed under an open form, and nothing is written when
-// it is gone.
-function EditorLinkCard({ view, card, labels, blockId, onEditing, onClose }) {
-  const ctx = useContext(LinkCardContext);
-  const { span } = card;
-  const href = span.kind === "md" || span.kind === "bare" ? span.href : "";
-  const site = useSitePreview(href, !!href);
-  const info = span.kind === "new" ? { title: "", target: null }
-    : describeLink(span.kind === "ref" ? { kind: "ref", id: span.id, words: span.words } : { kind: "url", href, label: spanWords(span) },
-      { labels, ctx, site });
-  const write = (change) => {
-    const doc = view.state.doc.toString();
-    let at = span;
-    if (doc.slice(span.from, span.to) !== span.text) {
-      const i = span.text ? doc.indexOf(span.text) : Math.min(span.from, doc.length);
-      if (i < 0) return;
-      at = { ...span, from: i, to: i + span.text.length };
-    }
-    let insert;
-    if (at.kind === "new") insert = linkMarkdown(change.to, change.words, tablePipe(doc, at.from));
-    else {
-      const next = applyLinkChange(doc, at, change);
-      if (next == null) return;
-      insert = next.slice(at.from, next.length - (doc.length - at.to));
-    }
-    view.dispatch({ changes: { from: at.from, to: at.to, insert }, selection: { anchor: at.from + insert.length }, userEvent: "input" });
-  };
-  const edit = view.state.readOnly ? null : {
-    words: span.kind === "new" ? span.words : spanWords(span), isNew: span.kind === "new",
-    canRemove: span.kind === "ref" || span.kind === "md", excludeId: blockId,
-    onSave: write, onRemove: () => write({ remove: true, shown: info.title }),
-  };
-  const anchorRect = () => {
-    const len = view.state.doc.length;
-    const a = view.coordsAtPos(Math.min(span.from, len), 1), b = view.coordsAtPos(Math.min(span.to, len), -1) || a;
-    if (!a) return view.dom.getBoundingClientRect();
-    return { left: a.left, right: b.right, top: Math.min(a.top, b.top), bottom: Math.max(a.bottom, b.bottom) };
-  };
-  return <LinkCardSurface info={info} edit={edit} pinned editing={card.editing} anchorRect={anchorRect}
-    onEditing={onEditing} onClose={onClose} />;
-}
-
 const noteCopy = (view) => sourceCopied(copiedText(view.state),
   { marks: codeMarksAt(view.state.doc.toString(), view.state.selection.main.from) });
 
@@ -1157,7 +1015,6 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   decoCtx.mentions = mentions;
   decoCtx.objectDrag = onObjectDrag;
   decoCtx.tableCell = onTableCell;
-  decoCtx.linkCtx = useContext(LinkCardContext);
   // The boxes the table widgets drew, each showing its table as a portal.
   const [tables, setTables] = useState([]); // [{box, source, key}]
   decoCtx.mountTable = (box, source) => setTables((ts) => [...ts, { box, source, key: (tableKeys += 1) }]);
@@ -1167,61 +1024,8 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   // starts it afresh (see the sync below).
   const historyCompartment = useRef(new Compartment()).current;
   const ownHistoryRef = useRef(ownHistory);
-  // The link card ({span, editing}: EditorLinkCard). It shows while the
-  // caret, put there by a press or a key, stands inside a link, and after a
-  // press on a link's chip, until the caret moves; typing hides it. Its form
-  // (Ctrl+K, a Link button, its ✎) holds it until it closes.
-  const [linkCard, setLinkCard] = useState(null);
-  const linkCardRef = useRef(null);
-  linkCardRef.current = linkCard;
-  // A press on a link chip (LinkChipWidget): the caret after the link, and
-  // its card, pinned.
-  decoCtx.pressLink = (view, from) => {
-    const doc = view.state.doc.toString();
-    const span = linkSpans(doc).find((s) => s.from === from);
-    if (!span) return;
-    view.focus();
-    view.dispatch({ selection: { anchor: span.to } });
-    setLinkCard({ span: { ...span, text: doc.slice(span.from, span.to) }, editing: null });
-  };
-  const linkCardUpdate = useRef(null);
-  linkCardUpdate.current = (u) => {
-    const cur = linkCardRef.current;
-    if (cur?.editing) return;
-    if (u.docChanged) { if (cur) setLinkCard(null); return; }
-    if (!u.selectionSet && !u.focusChanged) return;
-    const sel = u.state.selection.main;
-    const doc = u.state.doc.toString();
-    const span = u.view.hasFocus && sel.empty ? linkSpanAt(doc, sel.head) : null;
-    if (!span || !(span.from < sel.head && sel.head < span.to)) { if (cur) setLinkCard(null); return; }
-    if (cur && cur.span.from === span.from && cur.span.to === span.to) return;
-    setLinkCard({ span: { ...span, text: doc.slice(span.from, span.to) }, editing: null });
-  };
-  // Ctrl+K and the Link buttons (linkCardHost.js): the form, on the link the
-  // caret is on, else a new link on the selected words.
-  const openLinkForm = useRef(null);
-  openLinkForm.current = () => {
-    const view = viewRef.current;
-    if (!view || view.state.readOnly) return;
-    const doc = view.state.doc.toString();
-    const sel = view.state.selection.main;
-    const span = sel.empty ? linkSpanAt(doc, sel.head) : linkSpans(doc).find((s) => s.from <= sel.from && sel.to <= s.to);
-    const text = span ? doc.slice(span.from, span.to) : doc.slice(sel.from, sel.to);
-    setLinkCard(span ? { span: { ...span, text }, editing: "text" }
-      : { span: { kind: "new", from: sel.from, to: sel.to, words: text, text }, editing: "link" });
-  };
-  // A press outside the editor and its open form closes the form, and the
-  // editor too (its blur skipped the card's fields).
-  useEffect(() => {
-    if (!linkCard?.editing) return undefined;
-    const away = (e) => {
-      if (e.target.closest?.(".linkCard")) return;
-      setLinkCard(null);
-      if (!hostRef.current?.contains(e.target)) cbRef.current.onBlur?.();
-    };
-    document.addEventListener("pointerdown", away, true);
-    return () => document.removeEventListener("pointerdown", away, true);
-  }, [!!linkCard?.editing]);
+  // The link card under the link the caret is in (editorLinks.jsx).
+  const links = useEditorLinkCard({ viewRef, hostRef, cbRef, decoCtx, labels: refLabels, blockId: dataBlockId });
 
   const api = useMemo(() => ({
     get value() { return viewRef.current ? viewRef.current.state.doc.toString() : ""; },
@@ -1274,9 +1078,8 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         Prec.highest(EditorView.domEventHandlers({
           keydown: (e) => {
             // The link card takes Escape before the editor closes.
-            if (e.key === "Escape" && linkCardRef.current && !linkCardRef.current.editing) {
+            if (e.key === "Escape" && links.escape()) {
               e.preventDefault();
-              setLinkCard(null);
               return true;
             }
             cbRef.current.onKeyDown?.(e);
@@ -1360,12 +1163,12 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
           }
           else if (u.selectionSet) cbRef.current.onSelect?.({ target: api });
         }),
-        EditorView.updateListener.of((u) => linkCardUpdate.current?.(u)),
+        EditorView.updateListener.of((u) => links.update(u)),
       ],
     });
     const view = new EditorView({ state, parent: hostRef.current });
     viewRef.current = view;
-    setLinkCardHost(view, () => openLinkForm.current?.());
+    setLinkCardHost(view, links.openForm);
     if (autoFocus) view.focus();
     // Caret placement on entering edit mode: at the clicked character when
     // the click mapped to a source offset (clickToSource.js), else at the
@@ -1511,14 +1314,7 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
         data-guide="notes.editor"
       />
       {tables.map(({ box, source, key }) => createPortal(renderTable(source, refLabels), box, key))}
-      {linkCard && viewRef.current ? (
-        <EditorLinkCard view={viewRef.current} card={linkCard} labels={refLabels} blockId={dataBlockId}
-          onEditing={(field) => {
-            setLinkCard((c) => (c ? { ...c, editing: field } : c));
-            if (!field) viewRef.current?.focus();
-          }}
-          onClose={() => { setLinkCard(null); viewRef.current?.focus(); }} />
-      ) : null}
+      {links.element}
     </>
   );
 });
