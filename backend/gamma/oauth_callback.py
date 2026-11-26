@@ -47,8 +47,8 @@ class Listener:
                 try:
                     self.server = _Server(("127.0.0.1", port), self._handler())
                 except OSError as e:
-                    log.info(f"[{self.name}] no loopback port {port or ''} for the sign-in ({e}); "
-                             "it will be pasted")
+                    where = f"localhost:{port} is taken" if port else "no loopback port is free"
+                    log.info(f"[{self.name}] {where} ({e}); the sign-in ends with a paste")
                     return 0
                 threading.Thread(target=self._serve, args=(self.server,), name=f"{self.name}-callback",
                                  daemon=True).start()

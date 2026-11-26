@@ -15,8 +15,8 @@ A sign-in in progress (``begin``) ends in one of two ways:
 
 - caught: when the browser runs on this server's machine, a listener on a
   free loopback port (gamma/oauth_callback.py) takes Google's redirect, as
-  Gemini CLI does (Google
-  lets a desktop client come back to any loopback port);
+  Gemini CLI does (Google lets a desktop client come back to any loopback
+  port);
 - pasted: anywhere else Google ends the sign-in on
   codeassist.google.com/authcode, which shows a code the user pastes back.
 
