@@ -8,6 +8,18 @@
 // handwriting (shared/lib/keepalive.js: the lowest priority, since the
 // draft journal keeps what a lost request carried).
 
+// What a group's save sends given what of it is on its way already
+// (planFlush's `send`), and the body bytes that takes.
+const SEND_IN_FLIGHT = { put: null, resend: "put", reupload: "upload" };
+function sendOf(g) {
+  if (g.inFlight === "waits") return null;
+  if (g.remove) return g.inFlight === "delete" ? null : "delete";
+  if (Object.hasOwn(SEND_IN_FLIGHT, g.inFlight)) return SEND_IN_FLIGHT[g.inFlight];
+  if (g.inFlight === "upload") return g.beside ? "put" : null;
+  return "both";
+}
+const bytesOf = (g, send) => ({ both: g.uploadBytes + g.putBytes, put: g.putBytes, upload: g.uploadBytes })[send] ?? 0;
+
 // groups: the dirty groups in the flush's order, each {id, remove,
 // uploadBytes, putBytes, beside, inFlight} — `remove` the group goes (a
 // DELETE, no body); `uploadBytes` / `putBytes` the UTF-8 length of its
@@ -30,17 +42,6 @@
 // taken in order; one that does not fit goes as plain fetches, which a
 // closing page may cut off (the journal is their safety net), and a smaller
 // one after it may still fit.
-// What a drawing's save sends given what of it is on its way already.
-const SEND_IN_FLIGHT = { waits: null, put: null, resend: "put", reupload: "upload" };
-function sendOf(g) {
-  if (g.inFlight === "waits") return null;
-  if (g.remove) return g.inFlight === "delete" ? null : "delete";
-  if (Object.hasOwn(SEND_IN_FLIGHT, g.inFlight)) return SEND_IN_FLIGHT[g.inFlight];
-  if (g.inFlight === "upload") return g.beside ? "put" : null;
-  return "both";
-}
-const bytesOf = (g, send) => ({ both: g.uploadBytes + g.putBytes, put: g.putBytes, upload: g.uploadBytes })[send] ?? 0;
-
 export function planFlush(groups, budget) {
   let left = budget;
   return groups.map((g) => {
