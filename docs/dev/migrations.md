@@ -180,7 +180,8 @@ build's schema statements to a newer file. What it reads goes through
 `standby._reading`, a `query_only` connection, with queries that name only
 columns every release has had; a file that answers them otherwise counts
 as not known. Its responses carry the app's baseline security headers
-(`auth._apply_security_headers` lives in the middleware it lacks).
+(`auth.SECURITY_HEADERS`, which the app's middleware adds and the
+standby's own adds too).
 
 Every `/api` path answers the guidance as a 503 JSON (`error:
 data_directory_not_upgradable`, the shells' health rule), and every other

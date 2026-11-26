@@ -61,11 +61,9 @@ from .logbuf import log
 
 COOKIE = "gamma_standby"  # a sign-in here; the app's own ``session`` cookie is left as it is
 LABEL = "newer-library"   # the label in a saved copy's manifest
-# The app's baseline headers (auth._apply_security_headers), which its
-# middleware adds and the standby has none of.
-HEADERS = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
-           "X-Frame-Options": "SAMEORIGIN", "Referrer-Policy": "no-referrer",
-           "Content-Security-Policy": "frame-ancestors 'self'"}
+# The app's baseline headers, which its middleware adds and the standby has
+# none of, and no caching.
+HEADERS = {"Cache-Control": "no-store", **auth.SECURITY_HEADERS}
 
 
 # --- reading the newer files ----------------------------------------------------------
