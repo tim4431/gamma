@@ -21,7 +21,7 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 
 // The roles a write answered ({roles, favorites, chat_migrated}, and
 // `missing` when it names them) over the list read before.
-export function withRoles(info, answer) {
+function withRoles(info, answer) {
   if (!info || !answer?.roles) return info;
   return { ...info, roles: answer.roles, favorites: answer.favorites || [], chat_migrated: !!answer.chat_migrated,
     ...(answer.missing ? { missing: answer.missing } : {}) };
