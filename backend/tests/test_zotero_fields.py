@@ -215,6 +215,12 @@ def test_arxiv_ids_come_from_the_url_the_doi_the_archive_id_or_extra():
     assert read("preprint", archiveID="arXiv:1706.03762") == "1706.03762"
     assert read(extra="PMID: 1\narXiv: hep-th/9901001") == "hep-th/9901001"
     assert read(url="https://example.org/paper", DOI="10.1038/x", extra="PMID: 1") == ""
+    # The line Zotero's arXiv translator writes for a published version,
+    # with the primary class (the oracle's 4989025-KFECEVB7).
+    assert read(extra="arXiv:1002.2136 [astro-ph]") == "1002.2136"
+    page = {"kind": "journalArticle", "arxiv_id": "1002.2136"}
+    remote = {"itemType": "journalArticle", "extra": "arXiv:1002.2136 [astro-ph]"}
+    assert _patch(remote, page, "", {"arxiv_id"}) == {}  # the line stays as Zotero wrote it
 
 
 def test_the_citation_key_is_the_field_or_better_bibtexs_extra_line():
@@ -237,8 +243,18 @@ def test_authors_are_the_primary_creators_and_an_organisation_stays_whole():
         {"creatorType": "presenter", "firstName": "Ada", "lastName": "Lovelace"},
         {"creatorType": "presenter", "name": "Aristotle"},
     ]
+    # A name goes out split as the RDF export splits it: at the comma of
+    # "Last, First" (once split at its last space, "Lovelace," / "Ada"),
+    # before a particle, and an organisation as a single field.
+    assert fields_from_meta({"kind": "presentation", "authors": [
+        "Lovelace, Ada", "Jan van der Berg", "ATLAS Collaboration", "Pereira Campos, Jorge Fernando"]})["creators"] == [
+        {"creatorType": "presenter", "firstName": "Ada", "lastName": "Lovelace"},
+        {"creatorType": "presenter", "firstName": "Jan", "lastName": "van der Berg"},
+        {"creatorType": "presenter", "name": "ATLAS Collaboration"},
+        {"creatorType": "presenter", "firstName": "Jorge Fernando", "lastName": "Pereira Campos"},
+    ]
     # A push keeps the entries the item already has (the organisation whole),
-    # splits a new name at its last space, and leaves the chair after them.
+    # splits a new name, and leaves the chair after them.
     patch = _patch(talk, {"kind": "presentation", "authors": ["Planck Collaboration", "Ada Lovelace",
                                                                  "Grace Brewster Hopper"]}, "", {"authors"})
     assert patch["creators"] == [
@@ -247,6 +263,75 @@ def test_authors_are_the_primary_creators_and_an_organisation_stays_whole():
         {"creatorType": "presenter", "firstName": "Grace Brewster", "lastName": "Hopper"},
         {"creatorType": "chair", "firstName": "Charles", "lastName": "Babbage"},
     ]
+
+
+def _person(first, last=None):
+    return ({"creatorType": "author", "name": first} if last is None
+            else {"creatorType": "author", "firstName": first, "lastName": last})
+
+
+# Creators as Zotero holds them, the odd ones too: a two-word surname, a
+# capital particle, a particle kept with the first name, a suffix in the
+# first name, a single-field "Last, First", what Gamma's split at the last
+# space wrote for "Carrasco Kind, M." before, a first name "Jr.", an
+# organisation, a surname that is an organisation's word.
+_CREATORS = [_person("Jorge Fernando", "Pereira Campos"), _person("Floris", "Den Hengst"),
+             _person("Frank van", "Harmelen"), _person("Martin Luther, Jr.", "King"), _person("De Silva, Ana"),
+             _person("Carrasco Kind,", "M."), _person("Jr.", "Pereira Campos"), _person("ATLAS Collaboration"),
+             _person("Jean", "Bureau"), _person("Ada", "Lovelace"), _person("T. M. C.", "Abbott")]
+
+
+def test_a_sync_compares_each_name_as_its_written_creator_reads_back():
+    """A name compares given name first as it splits (``names.given_first``):
+    the item's creators joined "First Last" as every base stored before
+    held them, the page's names as the creators they go out as read back.
+    So a page made from an item compares equal to it however the record
+    writes a name, a page's name compares as the item it makes, and the
+    record still takes each name's split and a classed arXiv line's id."""
+    item = {"itemType": "journalArticle", "extra": "arXiv:1002.2136 [astro-ph]", "creators": _CREATORS}
+    meta = meta_from_item(item)
+    assert meta["authors"][:4] == ["Pereira Campos, Jorge Fernando", "Den Hengst, Floris", "Frank van Harmelen",
+                                   "King, Jr., Martin Luther"]
+    assert meta["authors"][8] == "Jean Bureau" and meta["arxiv_id"] == "1002.2136"
+    compared = project(item)["meta"]
+    assert compared["arxiv_id"] == "1002.2136"
+    assert compared["authors"][:6] == ["Jorge Fernando Pereira Campos", "Floris Den Hengst", "Frank van Harmelen",
+                                       "Martin Luther King, Jr.", "Ana De Silva", "M. Carrasco Kind"]
+    assert normalized(meta)["meta"]["authors"] == compared["authors"]
+    # What a page holds goes out and reads back as it compares, in any form.
+    page = {"kind": "journalArticle", "authors": ["Abbott, T. M. C.", "T. M. C. Abbott", "Carrasco Kind, M.",
+                                                   "Lovelace, Ada", "Martin Luther King, Jr.", "Bureau, Jean"]}
+    assert normalized(page)["meta"]["authors"] == project(fields_from_meta(page))["meta"]["authors"] == [
+        "T. M. C. Abbott", "T. M. C. Abbott", "M. Carrasco Kind", "Ada Lovelace", "Martin Luther King, Jr.",
+        "Jean Bureau"]
+    assert fields_from_meta(page)["creators"][5] == _person("Jean", "Bureau")
+    # An Extra line with the class read before it, by a base stored then.
+    assert zotero_fields.unclassed_arxiv_id(item) == ""
+    assert zotero_fields.unclassed_arxiv_id({**item, "extra": "arXiv: 1002.2136"}) == "1002.2136"
+
+
+def test_a_push_keeps_the_items_creator_unless_the_page_splits_the_name_anew():
+    """An author the item lists keeps its entry while the page holds it as
+    read from it (the record's form, or the one read before
+    ``names.join_name``) or split alike; a name the page splits otherwise
+    goes out as the page splits it, and its split is what tells them apart
+    (``item_splits``, ``page_splits``)."""
+    item = {"itemType": "journalArticle", "creators": _CREATORS}
+    as_read = meta_from_item(item)["authors"]
+    before = [" ".join(filter(None, (c.get("firstName"), c.get("lastName")))) or c["name"] for c in _CREATORS]
+    for authors in (as_read, before):
+        patch = _patch(item, {"kind": "journalArticle", "authors": [*authors, "Grace Hopper"]}, "", {"authors"})
+        assert patch["creators"] == [*_CREATORS, _person("Grace", "Hopper")]
+    # The name read before join_name, typed so now: the item keeps its split
+    # unless the page split it otherwise when it last synced.
+    resplit = {"kind": "journalArticle", "authors": ["Jorge Fernando Pereira Campos", *as_read[1:]]}
+    assert _patch(item, resplit, "", {"authors"}) == {}
+    synced = zotero_fields.page_splits({"authors": as_read})
+    body, _ = patch_for(item, resplit, "", {"authors"}, splits=synced)
+    assert body["creators"] == [_person("Jorge Fernando Pereira", "Campos"), *_CREATORS[1:]]
+    assert zotero_fields.item_splits(item)[:2] == [["Pereira Campos", "Jorge Fernando"], ["Den Hengst", "Floris"]]
+    assert zotero_fields.page_splits(resplit)[0] == ["Campos", "Jorge Fernando Pereira"]
+    assert zotero_fields.page_splits({"authors": as_read})[:2] == zotero_fields.item_splits(item)[:2]
 
 
 def test_the_isbn_is_the_first_of_several_in_digits():

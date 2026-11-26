@@ -41,6 +41,7 @@ import { resolveSettingsPane, settingsSection } from "./settingsNavigation";
 import { hostCaps, searchSettings } from "./settingsSearch.js";
 import { SettingsReadsContext, createSettingsReads, useSettingsRead } from "./settingsReads.js";
 import { TranslationSettings } from "./SettingsTranslation";
+import { CitationSettings } from "./SettingsCitations";
 import {
   ActivityIcon,
   BookIcon,
@@ -78,6 +79,7 @@ import {
   PaperIcon,
   PencilIcon,
   PenIcon,
+  QuoteMarkIcon,
   RectSelectIcon,
   RefreshIcon,
   SearchIcon,
@@ -103,7 +105,8 @@ import { DialogOverlay } from "../shared/ui/Surfaces";
 // — with Help & diagnostics pinned to the bottom. Every pane is one click
 // from any other; nothing opens a second dialog. A pane holds one subject:
 // how things look (Appearance) apart from what the bars offer (Toolbars),
-// papers and notes (Reading & editing) apart from the pen (Handwriting),
+// papers and notes (Reading & editing) apart from the pen (Handwriting) and
+// from what citing them makes (Citations, Zotero's Cite pane),
 // the agents on the account's computers (Local agents, offered only with
 // one to show) apart from the models and the AI services that supply them
 // (Models).
@@ -113,6 +116,7 @@ const PREFERENCE_NAV = [
   ["toolbars", T("Toolbars"), PanelTopIcon],
   ["reading", T("Reading & editing"), BookIcon],
   ["handwriting", T("Handwriting"), PenIcon],
+  ["citations", T("Citations"), QuoteMarkIcon],
   ["translation", T("Language & translation"), LanguagesIcon],
   ["keyboard", T("Keyboard"), KeyboardIcon],
 ];
@@ -1443,6 +1447,10 @@ export default function SettingsDialog({
                 {pane === "handwriting" ? <>
                   <PaneHead icon={PenIcon} title={t("Handwriting")} />
                   <HandwritingSettings value={papers} />
+                </> : null}
+                {pane === "citations" ? <>
+                  <PaneHead icon={QuoteMarkIcon} title={t("Citations")} />
+                  <CitationSettings value={papers} setStatus={library?.setStatus} />
                 </> : null}
                 {pane === "translation" ? <>
                   <PaneHead icon={LanguagesIcon} title={t("Language & translation")} />

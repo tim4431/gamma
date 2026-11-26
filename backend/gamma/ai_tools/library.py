@@ -6,7 +6,7 @@ terms."""
 import re
 
 from .. import bibtex as bibtex_mod
-from .. import item_types
+from .. import citations, item_types, names
 from ..block_index import fts_query, search_blocks
 from ..db import connect_data_db
 from ..search import hits as search_hits, indexer
@@ -20,9 +20,13 @@ _RELAX_MAX_TERMS = 3
 
 
 _CITE_MAX = 50  # pages one cite call formats
-_RECORD_FIELDS = (("authors", "Authors"), ("year", "Year"), ("venue", "Venue"), ("volume", "Volume"),
+# The record's fields as the tool prints them (``citations.record``: the
+# full date only while it agrees with the year, the address the citation
+# links, the page's own when the record has none).
+_RECORD_FIELDS = (("authors", "Authors"), ("year", "Year"), ("date", "Date"), ("venue", "Venue"),
+                  ("journal_abbr", "Journal abbreviation"), ("volume", "Volume"), ("issue", "Issue"),
                   ("pages", "Pages"), ("publisher", "Publisher"), ("isbn", "ISBN"), ("doi", "DOI"),
-                  ("arxiv_id", "arXiv"))
+                  ("arxiv_id", "arXiv"), ("url", "URL"))
 # What tied a record to its page's PDF (meta.match, routers/metadata.py), as
 # the cite tool tells the model: the evidence of a confirmed record, and why
 # an unverified one is.
@@ -70,10 +74,11 @@ def _run_cite(conn, ws: str, scope: dict, args: dict):
         cited.append(title)
         # The item type (Zotero's name) tells a reference style what to print.
         record = [f"Type: {item_types.item_type(meta)}"]
+        fields = citations.record(props)
         for key, label in _RECORD_FIELDS:
-            value = meta.get(key)
-            if isinstance(value, list):
-                value = ", ".join(str(v) for v in value if str(v).strip())
+            value = fields.get(key)
+            if isinstance(value, list):  # names, "; " between them: a "Last, First" name holds a comma
+                value = names.author_list(value)
             if str(value or "").strip():
                 record.append(f"{label}: {value}")
         lines = [head, " · ".join(record)]
@@ -197,9 +202,9 @@ TOOLS = [
             "name": "cite",
             "description": (
                 "Citation records of pages: the paper metadata Gamma keeps with each page "
-                "(authors, year, venue, volume, pages, publisher, ISBN, DOI, arXiv id), its "
-                "BibTeX entry, and the slide citation when one was made. Use it for a "
-                "bibliography, a reference list in a given style or BibTeX — format other "
+                "(authors, year, date, venue, journal abbreviation, volume, issue, pages, publisher, "
+                "ISBN, DOI, arXiv id, URL), its BibTeX entry, and the slide citation when one was "
+                "made. Use it for a bibliography, a reference list in a given style or BibTeX — format other "
                 "styles from the fields — instead of writing records from memory. `page_ids`: "
                 f"up to {_CITE_MAX} page ids (in a page chat, default this page). A record may "
                 "be marked unverified, and a page may have none."),

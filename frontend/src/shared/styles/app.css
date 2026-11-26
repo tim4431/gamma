@@ -3013,9 +3013,6 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .topbar .sharePopover .setPickItem { padding: 5px 7px; border: 0; border-radius: var(--radius-sm); background: transparent; font-size: var(--fs-xs); }
 .topbar .sharePopover .setPickItem:is(.cursor, :hover) { background: var(--bg-hover); }
 .topbar .sharePopover .setPickItem.picked { background: var(--accent-bg); }
-/* Slide citation / BibTeX: a sub-label line, then a copy box. */
-.citeHead { display: flex; align-items: baseline; gap: 4px; padding: 6px 8px 4px; }
-.citeLabel { font-size: var(--fs-xs); font-weight: 600; color: var(--text-secondary); }
 .copyBox {
   position: relative;
   background: var(--bg-block);
@@ -3630,7 +3627,11 @@ mark.searchMark {
   overflow-y: auto;
 }
 /* A flyout in the sheet opens under its row: beside it, the sheet's own
-   scroll box would clip it (the account menu's Tours). */
+   scroll box would clip it (the account menu's Tours). Its rows keep the
+   glyph column the sheet's rows have, though none of them has a glyph (the
+   shared rule drops an unused one, .ctxMenuIcon below), so they stay
+   indented under their row's label. */
+.phoneBottomBar .popover:has(.ctxMenuIcon:not(:empty)) .ctxSubMenu.ctxMenu .ctxMenuIcon:empty { display: inline-flex; }
 .phoneBottomBar .popover .ctxSubMenu {
   position: static;
   min-width: 0;
@@ -3929,10 +3930,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   font-size: var(--fs-2xs);
   font-weight: 400;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 .citeSourceTag.warn { color: var(--danger); }
 .metaWarnDot.inline { position: static; display: inline-block; }
-.citeWarnHint { color: var(--danger); padding: 0 8px 4px; }
+.citeWarnHint { color: var(--danger); padding: 0 0 6px; }
 .sourcePopover { min-width: 300px; right: 0; }
 
 .searchResult.active { background: color-mix(in srgb, var(--accent-fill) 14%, transparent); }
@@ -6856,6 +6858,53 @@ a.shareBrand:hover { background: var(--bg-hover); }
 
 .pptCitePreview { min-width: 0; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-secondary); }
 .pptCitePreview p { margin: 0; }
+/* --- citations (citations/CitationHtml.jsx, CitationShareSection.jsx, ReferenceLine.jsx) --- */
+/* A part's label line (Reference, Slide citation, BibTeX), level with the
+   section's title and its boxes: one left edge. Its control at its end
+   (the Reference's style picker, the slide citation's Regenerate) drops
+   under the label where the line is too narrow (a phone). */
+.citeHead { display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; row-gap: var(--space-2); padding: 10px 0 6px; }
+.citeLabel { font-size: var(--fs-xs); font-weight: 600; color: var(--text-secondary); }
+.citeHeadEnd { margin-left: auto; display: flex; align-items: center; min-width: 0; max-width: 100%; }
+.citeHeadEnd .uiSelectBtn { max-width: 100%; }
+.citeHeadEnd .uiSelectBtn .uiSelectLabel { max-width: 200px; }
+/* A part's one-line state ("Formatting…", "Not made yet.", the AI's
+   Set up AI…). */
+.citeHint { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); min-height: var(--ctl-btn-sm); }
+/* Citation HTML as the engine renders it, read as text on screen
+   (CitationHtml's screen variant: no print spacing, the hanging indent on
+   each entry): an entry gap, the reading line height, the label columns
+   (IEEE's [1]) never broken, links in the accent. The Settings pane's
+   preview and the Export dialog's list; the popovers' references
+   (citeRefPreview) quieter and tighter. */
+.citeHtml { min-width: 0; font-size: var(--fs-sm); line-height: var(--lh-read); color: var(--text-primary); overflow-wrap: anywhere; }
+.citeHtml .csl-entry + .csl-entry { margin-top: var(--space-3); }
+.citeHtml .csl-left-margin { overflow-wrap: normal; white-space: nowrap; }
+.citeHtml a { color: var(--accent); text-decoration: none; }
+.citeHtml a:hover { text-decoration: underline; }
+.citeRefPreview { color: var(--text-secondary); line-height: var(--lh-ui); }
+/* The entry picked in a list (the Export dialog's paper), tinted as the
+   picked paper's row is. */
+.citeHtml .csl-entry.citeMark { background: var(--bg-selected); box-shadow: 0 0 0 var(--space-2) var(--bg-selected); border-radius: var(--radius-xs); }
+/* Copy citation under the Reference, the in-text citation beside it, on
+   two lines at most (a note style's note is long). */
+.citeInText { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-3) 0 var(--space-1); min-width: 0; }
+.citeInText .uiBtn { flex-shrink: 0; }
+.citeInTextPreview {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-ui);
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+/* The metadata popover's Reference, full width under its table. */
+.metaRefBlock { padding: 2px 4px 4px; }
+.metaRefBlock .citeHead { padding-top: 8px; }
+/* --- end citations --- */
 /* Full BibTeX entry in the share dialog: scrolls instead of growing. */
 .bibtexPre {
   min-width: 0;
@@ -6868,17 +6917,17 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   white-space: pre;
 }
-/* The BibTeX review needs room for two panes; every other step keeps the
+/* The bibliography review needs room for two panes; every other step keeps the
    dialog's usual width. */
 .reportModal.transferModalWide { width: min(1000px, calc(100vw - 32px)); max-width: 1000px; }
-/* The picked paper's entry in the BibTeX step: taller than the share
+/* The picked paper's entry in the bibliography step: taller than the share
    popover's, and long titles wrap instead of scrolling sideways. */
 .bibtexPreview {
   max-height: 240px;
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* The BibTeX step's two panes, the shape the Zotero import review uses: the
+/* The bibliography step's two panes, the shape the Zotero import review uses: the
    papers on the left, the picked one's entry on the right. The dialog widens
    for this step only (.transferModalWide). */
 .bibColumns {
@@ -6928,6 +6977,22 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .bibPaperSkipped:hover { background: transparent; }
 .bibPaperSkipped .bibPaperKey { font-family: inherit; }
 .bibPaneEmpty { margin: 4px 2px; color: var(--text-muted); font-size: var(--fs-xs); }
+/* The bibliography's choices over its panes: the format, a Formatted one's
+   style, language and file, and Include pages inside. */
+.bibOptions { margin-bottom: 10px; }
+/* A reference list in the right-hand pane, as the style renders it: one
+   box filling the pane and scrolling inside, so its copy button stays in
+   view while the picked entry is scrolled to; room inside for that
+   entry's tint. */
+.bibFormattedPreview { padding: 2px 0; }
+.bibEntryPane:has(> .copyBox .bibFormattedPreview) { display: flex; flex-direction: column; overflow: hidden; }
+.bibEntryPane > .copyBox:has(.bibFormattedPreview) { display: flex; flex: 1; min-height: 0; }
+.bibEntryPane > .copyBox:has(.bibFormattedPreview) > .copyBoxBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2);
+  margin: calc(-1 * var(--space-2));
+}
 /* One column on a phone, at the import review's breakpoint (importReview.css). */
 @media (max-width: 640px) {
   .bibColumns { grid-template-columns: minmax(0, 1fr); }
@@ -6935,12 +7000,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 
 /* --- paper metadata popover --- */
-.metaPopover { min-width: 340px; max-width: 420px; }
+.metaPopover { min-width: min(340px, calc(100vw - 16px)); max-width: min(420px, calc(100vw - 16px)); }
 .metaTable { display: flex; flex-direction: column; gap: 4px; padding: 2px 4px; }
 .metaRow { display: flex; gap: 8px; font-size: var(--fs-xs); line-height: 1.45; }
-/* Wide enough for the longest key, a conference paper's "Proceedings", on
-   one line. */
-.metaKey { color: var(--text-dim); flex: 0 0 74px; }
+/* Wide enough for the longest keys, a conference paper's "Proceedings" and
+   an article's "Journal abbr.", on one line. */
+.metaKey { color: var(--text-dim); flex: 0 0 84px; }
 .metaVal { color: var(--text-secondary); min-width: 0; word-break: break-word; }
 .metaVal a { color: var(--accent); text-decoration: none; }
 .metaVal a:hover { text-decoration: underline; }
@@ -7059,6 +7124,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-muted);
   flex-shrink: 0;
 }
+/* A menu or flyout none of whose rows has a glyph keeps no empty glyph
+   column: its labels start at the rows' own padding (the Copy as ▸
+   flyout's formats and styles; a flyout drawn inline in the phone's sheet
+   keeps it, above). */
+.ctxMenu:not(:has(.ctxMenuIcon:not(:empty))) .ctxMenuIcon:empty { display: none; }
 /* Label column of an iconed row — long folder paths ellipsize instead of
    stretching the menu across the screen (the full path stays in the title). */
 .ctxMenuText {

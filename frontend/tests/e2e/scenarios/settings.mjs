@@ -1760,7 +1760,7 @@ export async function settingsScenarios(env) {
   // With a computer of the account's shown to the server (GET
   // /api/computers faked: no computer announces itself here), Local agents
   // leads the AI group (SettingsDialog.jsx AI_NAV) and lists it: an admin's
-  // twenty panes fit a full-height dialog (a 900 px window: the dialog's
+  // twenty-one panes fit a full-height dialog (a 900 px window: the dialog's
   // 800 px cap), and a shorter window scrolls the groups alone
   // (.settingsNavList), the account card and Help in view.
   const labPc = { id: "lab-pc", name: "Lab PC", online: true,
@@ -1785,7 +1785,7 @@ export async function settingsScenarios(env) {
               helpIn: help.bottom <= nav.getBoundingClientRect().bottom + 1 };
           });
           assert(fit.railOver <= 1 && fit.helpIn, `the rail itself never scrolls and Help stays in view (${JSON.stringify(fit)})`);
-          if (height === 900) assert(fit.over <= 1, `twenty panes fit the full-height rail (${fit.over}px over)`);
+          if (height === 900) assert(fit.over <= 1, `twenty-one panes fit the full-height rail (${fit.over}px over)`);
           else assert(fit.over > 1, "a short window scrolls the groups");
           await nav(page, "Local agents").click();
           await row(page, "Lab PC").waitFor();

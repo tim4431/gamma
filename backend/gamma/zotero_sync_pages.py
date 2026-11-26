@@ -29,7 +29,7 @@ from .zotero_sync_gone import absent, send_back
 from .zotero_sync_items import reconcile
 from .zotero_sync_pdfs import attachment_body, may_send_files, pdf_filename, quota_active
 from .zotero_sync_reads import (HELD_ROWS, READ_AHEAD, Side, collection_map, entries_done, gamma_item, gamma_note,
-                                gamma_standalone, moving_pdf, page_side, read_unit, zotero_item)
+                                gamma_standalone, moving_pdf, names_moved, page_side, read_unit, zotero_item)
 from .zotero_sync_rows import (HELD, SETTLED, Round, drop_rows, new_row, page_note, read_rows, record_conflict,
                                round_stop, signature, without, write_rows)
 from .zotero_web import ZoteroError, item_uri, object_key, random_key
@@ -59,7 +59,7 @@ def _page_dirty(r: Round, row: dict, side: Side, rows: dict, cmap: dict) -> bool
         return gamma_note(side, inverse) != row["gbase"]
     else:
         G = gamma_item(side, inverse, row["zotero_type"])
-    if G != row["gbase"]:
+    if G != row["gbase"] or names_moved(side, row):
         return True
     bound = next((b for b in rows.values() if b["kind"] == "attachment" and b["page_id"] == side.page_id
                   and b["state"] in HELD_ROWS), None)
@@ -275,8 +275,10 @@ def _create_items(r: Round, cmap: dict, creates: list[_Create]):
         key = c.key or object_key(r.ws, r.library, "item", "", c.side.page_id, "")
         body = _item_body(c.side, cmap, document=c.document)
         G = gamma_item(c.side, inverse, body["itemType"])
+        split = zotero_fields.page_splits(c.side.props.get("meta") or {})  # (the creators sent split as the page)
         row = new_row(key, "item", page_id=c.side.page_id, block_id=c.side.page_id, zotero_type=body["itemType"],
-                      version=-1, state="pending", gsig=signature(G), detail={"sent": G})
+                      version=-1, state="pending", gsig=signature(G), detail={"sent": G, "names": {"z": split,
+                                                                                                    "g": split}})
         parent_of = c.parent_of
         if parent_of is not None:  # what the item is made for, kept until the move lands, whatever fails meanwhile
             row["detail"]["adopts"] = parent_of["key"]

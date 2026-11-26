@@ -986,8 +986,9 @@ def delete_account_workspaces(user_id: str, *, wait: bool = False) -> list[str]:
     members lose them — the admin UI says so before). Its prefs go from
     every workspace that stays where it could keep some: those it was a
     member of, and the public ones (a guest has no public access), and so
-    does its Inbox, and its Zotero links. The agents it turned on on this
-    computer go off (``runner.release_account``). The mailed links of the
+    does its Inbox, its Zotero links and the citation styles it added. The
+    agents it turned on on this computer go off
+    (``runner.release_account``). The mailed links of the
     deleted workspaces' invitations by e-mail are withdrawn in the background, or before this returns with
     ``wait`` (``email_invites.cancel_links``). Returns the deleted
     workspace ids."""
@@ -1013,6 +1014,7 @@ def delete_account_workspaces(user_id: str, *, wait: bool = False) -> list[str]:
         conn.execute("DELETE FROM user_prefs WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM reminders_done WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM inbox_items WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM citation_styles WHERE user_id = ?", (user_id,))
         conn.commit()
     registry.drop(computers)
     if local_agents.enabled():                          # the agents it turned on here go off

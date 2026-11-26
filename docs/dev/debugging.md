@@ -998,6 +998,12 @@ run by `backend/tests/test_shared_fixtures.py` and the matching node tests.
 So are a block's kind (`blockkind.json`: the `kind` column and
 `blocks_store.block_kind` ↔ `editor/blockProps.js`), item types
 (`itemtypes.json`: `gamma/item_types.py` ↔ `shared/lib/itemTypes.js`),
+a record's date beside its year (`citationdates.json`:
+`meta_fields.date_agrees` ↔ `itemTypes.js` `metaDate`, with the server's
+`parse_date`),
+the bundled citation styles (`citationstyles.json`:
+`routers/citations.py` `BUNDLED` ↔ `citations/bundledStyles.js`;
+[citations.md](citations.md#styles-and-locales)),
 colours (`colors.json`: `gamma/colors.py` ↔ `shared/model/palette.js`),
 share-link names (`linkname.json`: `auth.link_name` ↔
 `collaboration/linkName.js`), person colours (`personcolor.json`:
@@ -1533,6 +1539,12 @@ a change to touch editing. It is still no iPad:
 - A step that cannot check something there says so in its result line. This
   build has no `overscroll-behavior`, and with no `clipboard-write` the PDF
   popup's Copy runs but its text is not read back.
+- On Windows its clipboard is the system's: a run overwrites (or empties)
+  yours. A `ClipboardItem` of promised blobs was refused there at random
+  (`NotAllowedError`, a payload ready within 1 ms as often as one that
+  took 600 ms, the same step passing on the run before), and the legacy
+  copy after it too. So the `citations` group's copy steps put a stand-in
+  clipboard there that keeps what the app writes, and say so.
 - WebKit rejects the fetches a page still has open as it navigates, in the
   words of a CORS failure, and they show as unhandled rejections on the page
   being left. Logged against a run's navigations, each fell between the

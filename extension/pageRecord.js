@@ -26,10 +26,10 @@ globalThis.gammaPageRecord = function pageRecord(values) {
   if (!names.length) names = values("dc.creator");
   const authors = [];
   for (const raw of names) {
-    let name = clean(raw);
-    // "Lovelace, Ada" → "Ada Lovelace"; a name with more commas is left as it is.
-    const parts = name.split(",");
-    if (parts.length === 2 && clean(parts[0]) && clean(parts[1])) name = `${clean(parts[1])} ${clean(parts[0])}`;
+    // As the tag wrote it ("Lovelace, Ada"): the server joins a "Last,
+    // First" name as one in two fields (routers/metadata.py _web_name), so
+    // "Pereira Campos, Jorge Fernando" keeps the split the tag gave it.
+    const name = clean(raw);
     if (/[^\s,.;-]/.test(name) && authors[authors.length - 1] !== name) authors.push(name);
     if (authors.length >= 100) break;
   }
@@ -51,11 +51,17 @@ globalThis.gammaPageRecord = function pageRecord(values) {
   return {
     title, authors,
     year: (date.match(/\b(1[5-9]\d\d|20\d\d)\b/) || [])[1] || "",
+    // The tag as the page wrote it (Highwire's 2019/03/14): the server reads
+    // the month or the day from it and keeps them while they agree with the
+    // year (routers/metadata.py web_record), so a citation style prints them.
+    date,
     // A conference paper's venue is its proceedings when the page names them.
     venue: kind === "conferencePaper" ? journal || book || conference : book || journal,
     volume: first("citation_volume", "prism.volume"),
+    issue: first("citation_issue", "prism.number"),
     pages: firstPage && lastPage && lastPage !== firstPage ? `${firstPage}-${lastPage}` : firstPage,
     publisher: thesisBy || reportBy || first("citation_publisher", "dc.publisher"),
+    journal_abbr: first("citation_journal_abbrev"),
     isbn, kind,
   };
 };

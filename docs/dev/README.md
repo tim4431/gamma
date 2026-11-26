@@ -101,6 +101,7 @@ These describe the implementation unless explicitly marked as plans.
 | Photos and images placed on PDF pages and sheets: moving, turning, cropping and flipping them, the upload, the `/Stamp` they become in the annotated PDF, and Notability's pictures | [Pictures](pictures.md) |
 | Audio recordings in step with the notes: capture, the one replay store, playback, transcription | [Recordings](recording.md) |
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
+| Citations in a style: the record a citation reads, the CSL JSON, RIS and BibLaTeX formats beside BibTeX, the bibliography answer, citeproc-js in the browser behind its lazy boundary with the bundled styles and locales, Quick Copy and the copies (the menus and their commands, the share popover, the Reference line, Copy with citation, the clipboard), the styles an account adds, what older copies meet | [Citations](citations.md) |
 | Imports and exports: dialogs, formats, pipelines | [Import and export](import_export.md) |
 | The typesetting engine both PDF writers share, and the annotated-PDF export | [PDF typesetting](pdf_typesetting.md) |
 | Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |

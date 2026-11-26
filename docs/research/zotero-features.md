@@ -43,11 +43,17 @@ nearby, since most are extensions of existing code rather than new systems.
 **Built since this survey** — a `bibtex` export mode for a page or a folder,
 unique keys, a pinned `cite_key`, and a share-link URL that always serves the
 current `.bib`. See
-[import_export.md](../dev/import_export.md#bibtex-bibliography). The "Copy
-BibTeX" action on a multi-selection that the survey also proposed (see the
-suggested order) is still unbuilt: the library view has no such command.
+[import_export.md](../dev/import_export.md#bibtex-bibliography). The copy
+on a multi-selection that the survey also proposed is built with item 2.
 
 ### 2. Formatted citations in a style (CSL)
+
+**Built since this survey** — citeproc-js in the browser with Zotero's 15
+bundled styles plus APS and any repository style, Quick Copy on any
+selection, BibLaTeX, RIS and CSL JSON beside BibTeX, and the record fields a
+style needs. The survey behind it and what it left:
+[citations.md](citations.md); the mechanics:
+[dev/citations.md](../dev/citations.md).
 
 **Zotero.** Any of ~10,000 CSL styles renders a bibliography or an in-text
 citation; "Create Bibliography from Items" copies HTML or RTF; Quick Copy

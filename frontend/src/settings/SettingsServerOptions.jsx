@@ -1,14 +1,15 @@
 // The server options of Settings that are sections of their own
 // (serverOptions.js, gamma/server_options.py): Server › Online services
-// (paper lookups, the AI model catalog), Server › Work folders (the largest
-// file a work folder keeps, where this server keeps work folders) and AI ›
-// Tool usage › Online search for every account (the admin's SearXNG
+// (paper lookups, the AI model catalog, the citation style repository),
+// Server › Work folders (the largest file a work folder keeps, where this
+// server keeps work folders) and AI › Tool usage › Online search for every
+// account (the admin's SearXNG
 // instance and OpenAlex key, which every account without its own uses).
 // docs/dev/settings.md.
 import React from "react";
 import { DialogButtons, Field, FormNotice, PasswordInput, Row, Section, SubDialog, Toggle, UnitInput } from "./SettingsKit";
 import { useServerOptions } from "./serverOptions.js";
-import { BookIcon, FolderIcon, GlobeIcon, KeyIcon, SparklesIcon } from "../shared/ui/Icons";
+import { BookIcon, FolderIcon, GlobeIcon, KeyIcon, QuoteMarkIcon, SparklesIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -28,6 +29,10 @@ export function OnlineServicesSettings({ setStatus }) {
           hint={t("Read models' context windows and abilities from models.dev")}
           title={t("Off, model facts come from the AI providers' own listings alone, and this server never asks models.dev.")}
           onChange={(on) => save({ model_catalog: on }, on ? t("Model catalog on.") : t("Model catalog off."))} />
+        <Toggle icon={QuoteMarkIcon} label={t("Citation style repository")} checked={!!options.citation_styles}
+          hint={t("Search and add styles from the CSL repository at zotero.org")}
+          title={t("Off, Settings → Citations finds no styles there and fetches none, a dependent style's parent included; a style's own .csl file can still be added.")}
+          onChange={(on) => save({ citation_styles: on }, on ? t("Citation style downloads on.") : t("Citation style downloads off."))} />
       </> : null}
       {errorLine(error)}
     </Section>

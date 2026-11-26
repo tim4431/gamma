@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CATEGORIES, bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportSummary, hasReviewStep,
-  importSource, notionFiles, offersSubPages, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
+import { CATEGORIES, bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportSummary, formattedFile,
+  hasReviewStep, importSource, notionFiles, offersSubPages, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
 
 const allOff = Object.freeze({ highlights: false, notes: false, bundle: false });
 // The annotated PDF's own options, as every other format's payload has them,
@@ -123,38 +123,91 @@ test("a .zip already chosen is offered only the sources that read an archive", (
   assert.equal(resolveImport("logseq", { archive: true }).definition.id, "zotero", "a source that reads no archive falls back");
 });
 
-test("BibTeX is offered where there is something to cite, and reviews itself", () => {
+test("a bibliography is offered where there is something to cite, and reviews itself", () => {
   // No switches, but the step is worth showing: it previews the real entries.
-  const page = resolveExport({ format: "bibtex", ...allOff }, { ...paper, hasMeta: true });
-  assert.equal(page.definition.id, "bibtex");
+  const page = resolveExport({ format: "bibliography", ...allOff }, { ...paper, hasMeta: true });
+  assert.equal(page.definition.id, "bibliography");
   assert.equal(page.needsReview, true);
   assert.deepEqual(page.controls, []);
   assert.equal(hasReviewStep(page.definition), true);
-  assert.deepEqual(page.payload, { format: "bibtex", ...allOff, ...noCards });
+  assert.deepEqual(page.payload, { format: "bibliography", ...allOff, ...noCards, bibFormat: "bibtex" });
   // The step renders the summary, so it has to say something for one page too.
   assert.match(exportSummary(page), /citation entry as a \.bib file/);
 
   // A page with no paper record has no entry to write, so the card is absent.
-  const bare = resolveExport({ format: "bibtex", ...allOff }, paper);
-  assert(!bare.formats.some(({ id }) => id === "bibtex"));
-  assert.notEqual(bare.definition.id, "bibtex");
+  const bare = resolveExport({ format: "bibliography", ...allOff }, paper);
+  assert(!bare.formats.some(({ id }) => id === "bibliography"));
+  assert.notEqual(bare.definition.id, "bibliography");
 
   // A folder always offers it — its pages are what get cited.
-  const folder = resolveExport({ format: "bibtex", ...allOff }, { folder: "Reading" });
+  const folder = resolveExport({ format: "bibliography", ...allOff }, { folder: "Reading" });
   assert.equal(folder.definition.category, "Papers");
-  assert.match(folder.definition.hint, /One \.bib/);
   assert.match(exportSummary(folder, "Reading"), /Pages without paper metadata are left out/);
   assert.deepEqual(exportJobBody(folder.payload, { folder: "Reading" }),
     { folder: "Reading", mode: "bibtex", pdf: false, highlights: false, notes: false });
-  assert.equal(exportFormatOf("bibtex").id, "bibtex");
+});
+
+test("each bibliography file exports in its own mode, and its job is named after the file", () => {
+  const folder = { folder: "Reading" };
+  const body = (opts) => exportJobBody(resolveExport(opts, folder).payload, folder).mode;
+  assert.equal(body({ format: "bibliography", bibFormat: "ris" }), "ris");
+  assert.equal(body({ format: "bibliography", bibFormat: "csljson" }), "csljson");
+  assert.equal(body({ format: "bibliography", bibFormat: "biblatex" }), "biblatex");
+  assert.equal(body({ format: "bibliography", bibFormat: "nonsense" }), "bibtex", "an unknown file is BibTeX");
+  // a saved choice from before the card had files ("bibtex"), or a preset
+  // naming a file, is the card with that file
+  for (const id of ["bibtex", "ris"]) {
+    const resolved = resolveExport({ format: id, bibFormat: "csljson" }, folder);
+    assert.equal(resolved.definition.id, "bibliography");
+    assert.equal(resolved.payload.bibFormat, id);
+  }
+  // a finished job's mode is the card under the file's own name (its title,
+  // its last step), and still a step with a review
+  for (const [mode, label] of [["bibtex", "BibTeX"], ["biblatex", "BibLaTeX"], ["ris", "RIS"], ["csljson", "CSL JSON"]]) {
+    const format = exportFormatOf(mode);
+    assert.deepEqual([format.id, format.label, format.bibFormat, format.mode], ["bibliography", label, mode, mode]);
+    assert.equal(hasReviewStep(format), true);
+  }
+  assert.equal(exportFormatOf("formatted")?.bibFormat, undefined, "Formatted runs no job");
+  // the link that keeps a file up to date serves that file; Formatted has none
+  assert.equal(bibliographyUrl("/api", { folder: "f1", mode: "ris" }), "/api/folders/f1/export?mode=ris");
+  assert.equal(bibliographyUrl("/api", { pageId: "p1", mode: "formatted" }), "/api/pages/p1/export?mode=bibtex");
+});
+
+test("each bibliography file says what it holds; a list says how its keys are kept apart, Formatted that it has none", () => {
+  const nested = { ...paper, hasMeta: true, subPages: 2 };
+  const say = (bibFormat, context, folder) => exportSummary(resolveExport({ format: "bibliography", bibFormat, subPages: true }, context), folder);
+  const ris = say("ris", nested);
+  assert.match(ris, /^One \.ris file with the record of this paper and of every page inside it/);
+  assert.match(ris, /Clashing citation keys/);
+  assert.match(ris, /Pages without paper metadata are left out\.$/);
+  assert.match(say("csljson", { folder: "Reading" }, "Reading"), /^One CSL JSON file with every paper in the folder.* Clashing citation keys/);
+  assert.match(say("biblatex", { ...paper, hasMeta: true }), /^This paper's BibLaTeX entry as a \.bib file/);
+  const formatted = say("formatted", { folder: "Reading" }, "Reading");
+  assert.match(formatted, /reference list in the style chosen/);
+  assert.doesNotMatch(formatted, /citation keys/);
+  assert.match(formatted, /Pages without paper metadata are left out\.$/);
+});
+
+test("a Formatted bibliography saves a whole file of its own kind", () => {
+  const html = formattedFile("html", '<div class="csl-bib-body">Kuhn, T. S. (1962).</div>', "Café <notes>");
+  assert.equal(html.type, "text/html;charset=utf-8");
+  assert.equal(html.suffix, ".html");
+  assert.match(html.body, /^<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>Café &lt;notes&gt;<\/title>/);
+  assert.match(html.body, /<body>\n<div class="csl-bib-body">Kuhn, T\. S\. \(1962\)\.<\/div>\n<\/body>\n<\/html>\n$/);
+  const rtf = formattedFile("rtf", "{\\rtf Kuhn}");
+  assert.deepEqual([rtf.body, rtf.type, rtf.suffix], ["{\\rtf Kuhn}", "application/rtf", ".rtf"], "the engine's RTF is a document already");
+  assert.equal(formattedFile("text", "Kuhn, T. S. (1962).").body, "Kuhn, T. S. (1962).\n");
 });
 
 test("the review is fetched for whichever target the dialog is on", () => {
-  assert.equal(bibliographyPreviewUrl("/api", { folder: "f1" }), "/api/bibliography?folder=f1");
-  assert.equal(bibliographyPreviewUrl("/api", { pageId: "p 1" }), "/api/bibliography?page_id=p%201");
+  assert.equal(bibliographyPreviewUrl("/api", { folder: "f1" }), "/api/bibliography?folder=f1&format=bibtex");
+  assert.equal(bibliographyPreviewUrl("/api", { pageId: "p 1", format: "ris" }), "/api/bibliography?page_id=p%201&format=ris");
+  // Formatted reads BibTeX's answer, for the CSL items every answer carries
+  assert.equal(bibliographyPreviewUrl("/api", { folder: "f1", format: "formatted" }), "/api/bibliography?folder=f1&format=bibtex");
   // with the pages inside it, as the file would hold them; a folder's always bring theirs
-  assert.equal(bibliographyPreviewUrl("/api", { pageId: "p 1", subPages: true }), "/api/bibliography?page_id=p%201&sub_pages=1");
-  assert.equal(bibliographyPreviewUrl("/api", { folder: "f1", subPages: true }), "/api/bibliography?folder=f1");
+  assert.equal(bibliographyPreviewUrl("/api", { pageId: "p 1", subPages: true }), "/api/bibliography?page_id=p%201&sub_pages=1&format=bibtex");
+  assert.equal(bibliographyPreviewUrl("/api", { folder: "f1", subPages: true }), "/api/bibliography?folder=f1&format=bibtex");
 });
 
 test("the bibliography URL is the same path for a fetch and for a pasted link", () => {
@@ -249,7 +302,7 @@ test("each import source says what its picker takes, the note apps several files
 
 test("a page with pages inside it offers Include pages inside on every format's review, off by default", () => {
   const nested = { ...paper, hasMeta: true, subPages: 3 };
-  for (const format of ["pdf", "bibtex", "notespdf", "markdown", "notability", "notion", "obsidian", "logseq", "zotero", "gamma"]) {
+  for (const format of ["pdf", "bibliography", "notespdf", "markdown", "notability", "notion", "obsidian", "logseq", "zotero", "gamma"]) {
     const result = resolveExport({ format, highlights: true, notes: true, bundle: true }, nested);
     assert.equal(result.definition.id, format);
     const control = result.controls.find(({ key }) => key === "subPages");
@@ -288,9 +341,9 @@ test("the pages inside travel in the job's body and the summary", () => {
   assert.equal(direct.controls.at(-1).hint, "Adds the pages inside it, at any depth");
   assert.match(exportSummary(direct), / The pages inside it are exported with it\.$/);
   // a bibliography says which of them it cites rather than that all of them come
-  const bib = resolveExport({ format: "bibtex", subPages: true }, { ...paper, hasMeta: true, subPages: 3 });
+  const bib = resolveExport({ format: "bibliography", subPages: true }, { ...paper, hasMeta: true, subPages: 3 });
   assert.equal(exportSummary(bib), "One .bib file with the citation entry of this paper and of every page inside it. Clashing citation keys get a, b, … and a key you pinned on a page keeps its exact spelling. Pages without paper metadata are left out.");
-  assert.equal(exportSummary(resolveExport({ format: "bibtex" }, { ...paper, hasMeta: true, subPages: 3 })),
+  assert.equal(exportSummary(resolveExport({ format: "bibliography" }, { ...paper, hasMeta: true, subPages: 3 })),
     "This paper's citation entry as a .bib file, under its citation key.");
   const off = resolveExport({ format: "notability", subPages: false }, { ...paper, subPages: 2 });
   assert.doesNotMatch(exportSummary(off), /inside it/);

@@ -57,8 +57,10 @@ checksum-valid ISBN, an item type by our names): `doi` and `arxiv_id` from
 the page's own tags or address, `text_doi` for a DOI the page only printed
 in its text (the Connector's "possible paper", sent with `doi_from_text`),
 and the citation record its Highwire tags carry (`title`, `authors`,
-`year`, `venue`, `volume`, `pages`, `publisher`, `isbn`, `kind`;
-[extension.md](extension.md#detection)). Every lookup reads it off the
+`year`, `venue`, `volume`, `issue`, `pages`, `publisher`, `isbn`,
+`journal_abbr`, `kind`, and `date` when it names a month of that year;
+[extension.md](extension.md#detection)). An older Connector sends no date,
+issue or abbreviation. Every lookup reads it off the
 page, so the clip's own lookup and the one the app starts when the page is
 opened agree; the second used to run without the detector's identifiers,
 and whichever finished last stored its record. A later clip of the same
@@ -113,7 +115,9 @@ match and the popover need; an isotope, which APS writes as an
 `<mmultiscripts>` whose mass number is a prescript after the element in the
 markup, reads `171Yb` as printed, and its BibTeX is `${}^{171}\mathrm{Yb}$`),
 join `title: subtitle`, keep organisation
-authors, take the article number as `pages` (`_csl_pages`), and turn the
+authors, join a person's `given` and `family` as "Given Family", or as
+"Family, Given" where that would split back otherwise ("Pereira Campos,
+Jorge Fernando", `names.join_name`), take the article number as `pages` (`_csl_pages`), and turn the
 registry's work type into the record's item type. doi.org's own BibTeX
 carries the same markup, writes months no style defines (`Sept`, `July`)
 and leaves the article number out; `bibtex.normalize_entry` writes it as
@@ -121,6 +125,33 @@ valid BibTeX, the record's pages added, before it is cached
 ([import_export.md](import_export.md#bibtex-bibliography) lists the
 rules). The quirks as observed live:
 [research/registry-records.md](../research/registry-records.md).
+
+**The fields a citation needs.** A style prints what the record held no
+field for until step 72: the issue, the journal's abbreviation, the full
+date and an address (`meta.issue`, `meta.journal_abbr`, `meta.date`,
+`meta.url`; `meta_fields.NEW_FIELDS`, [citations.md](citations.md#the-record-a-citation-reads)).
+A record holds each only when it has a value, so one without them is the
+record of before them, its BibTeX entry byte for byte. Their sources:
+
+| Source | `issue` | `journal_abbr` | `date` | `url` |
+|---|---|---|---|---|
+| doi.org, Crossref (`_csl_cited`; Crossref's `select` asks for `issue` and `short-container-title`) | `issue` | `container-title-short` / `short-container-title`, unless it is the journal's title | `issued` when it names a month | — |
+| arXiv (`_arxiv_entry_meta`) | — | — | a preprint's first version's `published` day; none for a paper arXiv marks as published (`journal_ref`), whose journal dates it | — |
+| the web page's record (`web_record`, `_page_record`) | `citation_issue`, `prism.number` | `citation_journal_abbrev` | the date tag as the page wrote it (`web_page.normalize_date`, then `meta_fields.parse_date`), when it agrees with the year (it supplies a missing year) | — |
+| a hand edit (`_edited_record`) | the Issue row | the Journal abbr. row | the Date row | the URL row |
+| step 72 ([migrations.md](migrations.md)) | the cached entry's `number` | — | the cached entry's `month`, when the entry's year is the record's | — |
+
+`date` counts only while it is a month or a day of the record's year
+(`meta_fields.date_agrees`): the year stays the field a BibTeX key and a
+Zotero item are built from, so a date of another year is stale, and every
+reader (a citation, BibTeX's `month`, the popover's Date row) takes the
+year alone (`tests/shared/citationdates.json` pins the rule on both
+sides). The issue and the abbreviation are cut to their limits,
+`meta_fields.CITED_MAX` (40 and 300 characters, `clean_cited`), wherever a
+record gains them. `url`
+is an http(s) address only (`meta_fields.clean_url`), since a citation's
+HTML links it; a citation without one links the page's `web_url`
+(`citations.record`).
 
 **Item type.** `meta.kind` names what the record describes, under the names
 Zotero gives its item types (`gamma/item_types.py`, mirrored for the
@@ -221,7 +252,10 @@ a plausible hallucination):
     included, affiliation marks glued to the name split off ("Ofek1*") or
     passed over when they are letters ("Johnsona,b": a word opening with a
     surname of three letters or more, up to two letters more), and suffixes
-    passed over. A preprint's published record counts beside it (arXiv may
+    passed over. A record's surname is its name's (`names.family_name`:
+    "Pereira Campos" of "Pereira Campos, Jorge Fernando", a name joined
+    "Family, Given"), whose last word is matched, so a page that prints
+    initials ("J. F. Pereira Campos") ties it. A preprint's published record counts beside it (arXiv may
     list a collaboration where the page prints names).
   - A record whose title is the document's own but with no author found by
     it, or that is a line of the title block beside a largest type it is
@@ -356,7 +390,25 @@ The fetch also kicks background search indexing for the paper
 document map and library-wide Ctrl+F shouldn't wait for the first search to
 discover it. `/api/metadata/update` saves hand-edited fields from the
 metadata popover (rebuilds BibTeX, source `manual`, invalidates the cached
-citation). A DOI or arXiv id that differs from the stored record's is
+citation). The popover's **Date** row stands for the year
+(`itemTypes.metaDate`: the record's date while it agrees with the year,
+else the year as stored), and the save sends it as `date`:
+`meta_fields.parse_date` reads `2020`, `2020-03`, `2020-03-05` or
+`2020/3/5` into the year and, when more precise, the date, and anything
+else (`in press`) is the year as typed, with no date; a `year` sent
+without a `date` (a tab from before the row) goes through the same
+parse. A journal article's rows gain **Journal abbr.** and **Issue**, and
+every type ends with a **URL** row. The rules for the four new keys: one
+the edit does not send keeps the value stored when the write runs (a tab
+from before them sends none); one sent blank goes; only the sent keys
+decide whether the edit is blank, and a clear takes them all with the
+record; a record found from a typed DOI or arXiv id keeps none of the old
+paper's; a date the edit's year disagrees with goes (an edit of the year
+alone). The record is merged, and its entry built, inside the write
+(`_save_props` takes a function of the stored properties), from what the
+page holds then, not from what the request read before another write
+replaced it. `issue` is cut at 40 characters, `journal_abbr` at 300, and
+`url` goes through `clean_url`. A DOI or arXiv id that differs from the stored record's is
 looked up instead (`_typed_identifier_record`; pasted links are read with
 `clip.norm_doi`/`norm_arxiv`, and case does not count as a change): the
 registry's record and BibTeX replace the sent fields, source `doi` or
@@ -376,7 +428,10 @@ also gets a read-only Source file row (the attachment's path, with a copy
 button); replacing the PDF goes through the paperclip (detach, attach).
 
 **Citation key.** The BibTeX key is generated from the first author's surname
-and the year (`bibtex.default_key`). The popover's Cite key row pins one as
+and the year (`bibtex.default_key`: the name's last word as it always was,
+the surname's of a name `names.join_name` writes "Family, Given"; an entry
+built again keeps the key its cached entry carries while the first author
+and the year stay, `bibtex.rebuilt_key`). The popover's Cite key row pins one as
 `properties.cite_key`, beside `meta` so a refetch keeps it. Empty means
 generated, and the placeholder shows the key in use. A cached fetch answers
 `bibtex.page_entry`, the entry every other surface prints, so the popover's

@@ -92,6 +92,7 @@ import { viewerScenarios } from "./scenarios/viewers.mjs";
 import { textSearchScenarios } from "./scenarios/textSearch.mjs";
 import { textAnchorScenarios } from "./scenarios/textAnchors.mjs";
 import { explorerScenarios } from "./scenarios/explorer.mjs";
+import { citationScenarios } from "./scenarios/citations.mjs";
 import { GROUPS, changedFromGit, selectGroups, shardOf } from "./select.mjs";
 
 const RUNNERS = {
@@ -159,6 +160,7 @@ const RUNNERS = {
   "android": androidScenarios,
   "touch": touchScenarios,
   "block-properties": blockPropertiesScenarios,
+  "citations": citationScenarios,
 };
 
 const missing = GROUPS.filter((g) => !RUNNERS[g.id]).map((g) => g.id);

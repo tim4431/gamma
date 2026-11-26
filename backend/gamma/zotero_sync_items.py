@@ -34,7 +34,7 @@ from .zotero_sync_blocks import (NOTE_MAX, NOTE_TOO_LONG, NOTES_WAIT, WAIT_FILE,
 from .zotero_sync_gone import absent
 from .zotero_sync_pdfs import UnitPdf
 from .zotero_sync_reads import (HELD_ROWS, Side, collection_map, flat_fields, gamma_item, gamma_note, gamma_standalone,
-                                moving_pdf, page_side, read_unit, take_ahead, zotero_item, zotero_note,
+                                moving_pdf, names_moved, page_side, read_unit, take_ahead, zotero_item, zotero_note,
                                 zotero_standalone)
 from .zotero_sync_rows import (KEPT_HERE, Round, drop_rows, field_base, new_row, page_note, read_rows, record_conflict,
                                round_stop, settle_lossy, signature, without, write_rows)
@@ -114,6 +114,8 @@ class _Unit(UnitPdf):
         self.counts: dict[str, int] = {}
         self.merged: dict | None = None  # the merge the local part applies: its bases are taken after it
         self.G_after = None              # Gamma's item projection re-read after the local part
+        self.synced_splits = None        # the page's authors as split when it last synced (``_names``)
+        self._split_conflict = False     # ``_names`` added an authors conflict for a split
         self.moved: dict[str, dict] = {}  # attachment rows another page held until now, by key
         self.retry = False               # a write did not land: the page is looked at again a while later
         self.refetch = False             # Zotero changed an object as it was written: decided again
@@ -352,14 +354,52 @@ class _Unit(UnitPdf):
             self._merge(row)  # (a row still trashed is live again: both sides are)
             self._file()
 
+    def _lifted(self, row: dict, *, unchanged: bool = False) -> str | None:
+        """The arXiv id the item reads now where the row's ``zbase``, stored
+        before ``project`` read an Extra line naming the id's primary class
+        ("arXiv:1002.2136 [astro-ph]"; a row stored before release 72, which
+        kept no Zotero split, ``detail.names.z``), read that line as no id
+        and the item still holds what the base read
+        (``zotero_fields.unclassed_arxiv_id``): the new reading is no change
+        of Zotero's. With ``unchanged``, only while the item is at the
+        version the row last synced (a classed line Zotero added since is an
+        edit of the item). None otherwise. (The bases' authors moved to the
+        form compared now with the data: gamma/migrations.py
+        ``_v72_zotero_names``.)"""
+        names = row["detail"].get("names")
+        if self.standalone or self.note or (isinstance(names, dict) and "z" in names):
+            return None
+        fields = (row["zbase"] or {}).get("fields")
+        if not isinstance(fields, dict) or "arxiv_id" not in fields:
+            return None
+        if unchanged and int(self.version or 0) != int(row["version"] or 0):
+            return None
+        now = zotero_fields.meta_from_item(self.data)["arxiv_id"]
+        if now and fields["arxiv_id"] != now and fields["arxiv_id"] == zotero_fields.unclassed_arxiv_id(self.data):
+            return now
+        return None
+
+    @staticmethod
+    def _lifted_base(zbase: dict, lifted: str) -> dict:
+        """``zbase`` reading the arXiv id ``_lifted`` found."""
+        return {**zbase, "fields": {**zbase["fields"], "arxiv_id": lifted}}
+
     def _zotero_changed(self, row: dict) -> bool:
         """Whether Zotero edited the item since it last synced: a field of its
         own, or a child that travels (its PDF's file, a note, an annotation of
         its PDF: one the link keeps changed or brought back from Zotero's
         trash, or a new one), which counts as an edit of the item when an
         edit is to beat a delete. (Its page out of the way here, the round
-        cannot take a child's change in, so it must not pass it by.)"""
-        if self.Z() != row["zbase"]:
+        cannot take a child's change in, so it must not pass it by.) A name
+        split anew in Zotero (``detail.names``, ``_names``) is an edit too,
+        and an arXiv line the base read by the old rule is none
+        (``_lifted``)."""
+        lifted = self._lifted(row, unchanged=True)
+        if self.Z() != (row["zbase"] if lifted is None else self._lifted_base(row["zbase"], lifted)):
+            return True
+        names = row["detail"].get("names")
+        if (not self.standalone and not self.note and isinstance(names, dict) and "z" in names
+                and zotero_fields.item_splits(self.data) != names["z"]):
             return True
         pdf = self._primary()
         for key, child in self.kids.items():
@@ -431,8 +471,9 @@ class _Unit(UnitPdf):
             else:
                 self._receive_trashed(row)
             return
-        elif G != row["gbase"] or row["detail"].get("restore"):
-            # changed here since it synced (or restored from a backup since): an edit beats a delete
+        elif G != row["gbase"] or names_moved(self.side, row) or row["detail"].get("restore"):
+            # changed here since it synced, a name's split too (or restored from a backup since): an edit beats a
+            # delete
             self.conflicts.append(("zotero_deleted_edited", self.page_id, "(changed here)",
                                    "Zotero moved this item to its trash after it was changed here: it is kept"))
             if self.r.pushes:
@@ -498,6 +539,7 @@ class _Unit(UnitPdf):
         names = list(zotero_merge.tag_names(data, auto_tags=self.r.link["auto_tags"]).values())
         folders = [self.cmap[k] for k in data.get("collections") or () if k in self.cmap]
         props = {"zotero_key": item_uri(self.r.library, self.key), FOLDERS: folders}
+        split = None
         if self.standalone:
             title = " ".join(str(data.get("title") or data.get("filename") or "").split()) or "Untitled"
         elif self.note:
@@ -506,6 +548,7 @@ class _Unit(UnitPdf):
             props["zotero_note"] = props["zotero_key"]
         else:
             meta = zotero_fields.meta_from_item(data)
+            split = {"z": zotero_fields.item_splits(data), "g": zotero_fields.page_splits(meta)}
             cite_key = zotero_fields.cite_key_from_item(data)
             title = meta.get("title") or "Untitled"
             props.update(meta=meta, bibtex=build_entry(meta, cite_key))
@@ -532,8 +575,9 @@ class _Unit(UnitPdf):
             row = dict(row)
         row.update(page_id=page_id, block_id=page_id, version=self.version, state="live", zbase=Z, gbase=self.G(),
                    gsig=signature(self.G()), detail={**without(row["detail"], "first", "adopt", "restore", "rejected",
-                                                             "reason"),
-                                                     "collections": list(data.get("collections") or [])})
+                                                             "reason", "names"),
+                                                     "collections": list(data.get("collections") or []),
+                                                     **({"names": split} if split else {})})
         self._put(row)
         for key, other in self.rows.items():  # the rows of the page that went (a page made anew)
             if key != self.key and other["page_id"] and other["kind"] in ("attachment", "note", "annotation", "image"):
@@ -557,6 +601,7 @@ class _Unit(UnitPdf):
         r = self.r
         Z, G = self.Z(), self.G_synced(row)
         first = bool(row["detail"].get("first"))
+        lifted = None
         if first:
             zbase, gbase = zotero_merge.first_link_base("item", Z, G)
             prefer = "zotero" if (row["detail"].get("adopt") or r.adopt or "theirs") == "theirs" else "gamma"
@@ -564,6 +609,9 @@ class _Unit(UnitPdf):
                 zbase["note"], gbase["note"] = Z["note"], G["note"]
         else:
             zbase, gbase, prefer = row["zbase"], row["gbase"], "gamma"
+            lifted = self._lifted(row)
+            if lifted is not None:
+                zbase = self._lifted_base(zbase, lifted)
             if self.note and row["detail"].get("restore"):
                 zbase, gbase = dict(zbase or {}), dict(gbase or {})
                 for f, value in Z.items():
@@ -577,15 +625,32 @@ class _Unit(UnitPdf):
                                prefer=prefer)
         if self.note:
             m = self._note_merge(m, first)
+        if lifted is not None and not (G.get("fields") or {}).get("arxiv_id"):
+            # the page took no id from the line the old base read as none: it takes Zotero's now (a restore's
+            # blanked base would read its blank as a change of Gamma's, and send it), and nothing goes
+            m = m._replace(apply={**m.apply, "arxiv_id": lifted},
+                           push={f: v for f, v in m.push.items() if f != "arxiv_id"},
+                           conflicts=[c for c in m.conflicts if c[0] != "arxiv_id"])
         m = self._held_collections(m, Z, G)
+        m, names = self._names(row, m, first, Z, G)
         sig = signature(G)
         self._apply(m)
         push = {}
         refused = row["detail"].get("rejected")
         if r.pushes and not (refused and refused == sig):
             push = self._push(m, restore=restore)
+            if self._split_conflict and "creators" not in push:  # (a split both sides hold alike in the end)
+                m = m._replace(conflicts=[c for c in m.conflicts if c[0] != "authors"])
+            if not push and m.push and not m.merged_text:
+                # the item holds already what Gamma's change would write (a value Zotero's side reads its own
+                # way, a name split as the page splits it): nothing goes, and both sides are settled on it
+                m = m._replace(push={})
+                if names is not None:
+                    names = {**names, "g": self._page_splits()}
         for name, ours, theirs in m.conflicts:
             if name != "note":  # (the side a first link's pair took, as a note's: "" for an open row)
+                if name == "authors":  # the names as each side writes them, which "theirs" takes as they are
+                    ours, theirs = self._record_authors(), zotero_fields.meta_from_item(self.data)["authors"]
                 self.conflicts.append(("zotero_field", name, ours, theirs, prefer if first else ""))
                 if first:
                     r.count_decided("records", prefer)
@@ -594,8 +659,10 @@ class _Unit(UnitPdf):
             if "pulled" not in self.notes and self.change != "create":
                 self.notes.append("pulled")
         zb, gb = zotero_merge.bases_after(m, zbase, gbase, Z, G, pushed_ok=False)
-        detail = {**without(row["detail"], "collections", "reason"),
+        detail = {**without(row["detail"], "collections", "reason", "names"),
                   "collections": list(self.data.get("collections") or [])}
+        if names is not None:
+            detail["names"] = names
         if not push:
             detail = without(detail, "first", "adopt", "restore")
         if first and self.note_pull:  # a Send anyway chosen for the words Zotero's note replaces is spent with them
@@ -608,7 +675,122 @@ class _Unit(UnitPdf):
         self._put(row)
         self.merged = {"m": m, "zbase": zbase, "gbase": gbase, "Z": Z, "G": G}
         if push:
-            self.sent[self.key] = {"what": "update", "sig": sig, "restore": restore, **self.merged}
+            # (the splits the write leaves on each side, kept once it lands: ``_record``)
+            self.sent[self.key] = {"what": "update", "sig": sig, "restore": restore, **self.merged,
+                                   "names_g": self._page_splits(),
+                                   "names_z": zotero_fields.item_splits({**self.data, **push})}
+
+    def _record_authors(self) -> list[str]:
+        """The page's authors as its record keeps them."""
+        meta = (self.side.props.get("meta") if self.side is not None else None) or {}
+        return [str(a) for a in meta.get("authors") or () if str(a).strip()] if isinstance(meta, dict) else []
+
+    def _page_splits(self) -> list | None:
+        if self.standalone or self.note or self.side is None or self.side.block is None:
+            return None
+        return zotero_fields.page_splits(self.side.props.get("meta") or {})
+
+    def _names(self, row: dict, m, first: bool, Z: dict, G: dict):
+        """How the authors split, which the compared form leaves aside (it
+        reads every way of writing one split alike, ``names.given_first``),
+        merged as a field is (docs/dev/zotero_sync.md "Names"):
+        ``detail.names`` keeps each side's split as last synced (``{"z":
+        zotero_fields.item_splits, "g": zotero_fields.page_splits}``). A
+        split only one side changed goes to the other ("Pereira Campos,
+        Jorge Fernando" typed here for the item's "Campos" / "Jorge Fernando
+        Pereira" is sent; Zotero's split made anew comes into the page);
+        both changed apart, or Zotero changed the authors while the page
+        split one of them anew, Gamma's go and a ``zotero_field`` row keeps
+        Zotero's. A split of the page's waits as a field does on a
+        receive-only round. After a backup restore (Gamma's base blanked,
+        ``zotero_sync._own_library``) a name Zotero split anew since the
+        backup reads as split anew here too, so the restored page's split
+        wins it. A split not known: Zotero's of a row stored before release
+        72 reads as unchanged (a page that holds the item's names as a sync
+        read them before ``names.join_name`` takes the record's form of
+        them, ``_old_join``); Gamma's of a row with none (a create 71 sent,
+        a backup 71 restored) reads as changed where it differs from the
+        item's. A first link's pair takes each side's as it is; a force the
+        forced side's, where the page's moved since it synced (push) or
+        Zotero's record writes the names otherwise (pull). ``(m, the splits
+        to keep)``: the page's are read again once the round wrote its
+        authors (``_rows_tx``), Zotero's once a push lands (``_record``). A
+        push writes a name the page holds as read from the item, but split
+        otherwise than it last synced, as the page splits it
+        (``synced_splits``, ``_creators``)."""
+        self.synced_splits, self._split_conflict = None, False
+        gs = self._page_splits()
+        if gs is None:
+            return m, None
+        zs, base = zotero_fields.item_splits(self.data), row["detail"].get("names")
+        base = base if isinstance(base, dict) else {}
+        z_base, g_base = base.get("z"), base.get("g")
+        if (not first and not row["gbase"] and isinstance(z_base, list) and isinstance(g_base, list)
+                and len(z_base) == len(g_base) == len(zs) == len(gs)):
+            # a backup restored over the row (Gamma's base blanked, ``zotero_sync._own_library``): a name Zotero
+            # split anew since reads as split anew here too, so the restored page's split wins it
+            g_base = [z if z != zb else g for z, zb, g in zip(zs, z_base, g_base)]
+
+        def kept(g):  # Zotero's split now, the page's as given (None: not known)
+            return {"z": zs} if g is None else {"z": zs, "g": g}
+
+        def pushed(m):
+            self.synced_splits = g_base
+            return m._replace(apply={f: v for f, v in m.apply.items() if f != "authors"},
+                              push={**m.push, "authors": G["fields"]["authors"]}), kept(g_base)
+
+        def both(m):  # the page's split goes, Zotero's change of the authors stays in a conflict row
+            self._split_conflict = True
+            return m._replace(conflicts=[*m.conflicts, ("authors", G["fields"]["authors"], Z["fields"]["authors"])])
+
+        if first:
+            forced = self.r.link["status"].get("forced")
+            if forced == "push" and "authors" not in m.push and g_base is not None and gs != g_base:
+                return pushed(m)
+            if (forced == "pull" and "authors" not in m.apply and "authors" not in m.push and zs != gs
+                    and _squashed(self._record_authors())
+                    != _squashed(zotero_fields.meta_from_item(self.data)["authors"])):
+                return m._replace(apply={**m.apply, "authors": Z["fields"]["authors"]}), {"z": zs, "g": gs}
+            return m, {"z": zs, "g": gs}
+        self.synced_splits = g_base
+        if "authors" in m.push:  # (the page's split goes with it, kept once the write lands)
+            return m, kept(g_base)
+        if "authors" in m.apply:  # Zotero changed the authors: the page takes them, unless it split one anew
+            anew = [s for i, s in enumerate(gs) if g_base is not None and (i >= len(g_base) or s != g_base[i])]
+            if anew and any(s not in zs for s in anew):
+                return pushed(both(m))
+            return m, {"z": zs, "g": gs}
+        if zs == gs:
+            return m, {"z": zs, "g": gs}
+        z_moved = z_base is not None and zs != z_base
+        if gs != (zs if g_base is None else g_base):
+            return pushed(both(m) if z_moved else m)
+        if z_moved or (z_base is None and self._old_join()):
+            return m._replace(apply={**m.apply, "authors": Z["fields"]["authors"]}), {"z": zs, "g": gs}
+        return m, {"z": zs, "g": gs}
+
+    def _old_join(self) -> bool:
+        """Whether the page holds the item's authors as the record writes
+        them but for names it holds as a sync read them before
+        ``names.join_name`` (the creator's fields joined "First Last":
+        "Jorge Fernando Pereira Campos" for "Jorge Fernando" / "Pereira
+        Campos", which the record writes "Pereira Campos, Jorge Fernando"),
+        and at least one such."""
+        primary = zotero_fields.primary_creator(self.data.get("itemType") or "")
+        creators = [c for c in self.data.get("creators") or []
+                    if c.get("creatorType") == primary and zotero_fields.fields_name(c)]
+        record = _squashed(zotero_fields.meta_from_item(self.data)["authors"])
+        page = _squashed(self._record_authors())
+        if not (len(page) == len(record) == len(creators)):
+            return False
+        old = False
+        for name, written, creator in zip(page, record, creators):
+            if name == written:
+                continue
+            if name != " ".join(zotero_fields.fields_name(creator).split()):
+                return False
+            old = True
+        return old
 
     def _held_collections(self, m, Z: dict, G: dict):
         """A sub-page is filed where its top page is and carries no folders
@@ -703,6 +885,10 @@ class _Unit(UnitPdf):
         if not m.apply and not m.merged_text:
             return
         values = {**m.apply, **m.merged_text}
+        if "authors" in m.apply and not self.standalone:
+            # the names as the record keeps them ("Pereira Campos, Jorge
+            # Fernando"), not as compared (names.given_first)
+            values["authors"] = zotero_fields.meta_from_item(self.data)["authors"]
         if self.standalone:
             if "title" in values and (values["title"] or "").strip():
                 self.ops.append({"op": "set", "id": self.page_id, "content": values["title"]})
@@ -737,7 +923,8 @@ class _Unit(UnitPdf):
                 meta = dict(side.props.get("meta") or {})
                 for f, value in m.merged_text.items():
                     meta[f] = value
-                body, replace = zotero_fields.patch_for(data, meta, pinned_key(side.props), changed, side.title)
+                body, replace = zotero_fields.patch_for(data, meta, pinned_key(side.props), changed, side.title,
+                                                        splits=self.synced_splits)
         if "tags" in pushed:
             body["tags"] = zotero_merge.tags_for_push(data.get("tags"), self._spelled(pushed["tags"]),
                                                       auto_tags=self.r.link["auto_tags"])
@@ -775,6 +962,12 @@ class _Unit(UnitPdf):
                     mm = self.merged
                     row["zbase"], row["gbase"] = zotero_merge.bases_after(
                         mm["m"], mm["zbase"], mm["gbase"], mm["Z"], mm["G"], pushed_ok=False, G_after=self.G_after)
+                    names = row["detail"].get("names")
+                    if isinstance(names, dict) and "authors" in mm["m"].apply and not self.standalone:
+                        # the page's split as the write left it (a pull's names as the record keeps them); a split
+                        # of the page's not sent (a receive-only round) keeps its base, so it goes later
+                        row["detail"] = {**row["detail"], "names": {
+                            **names, "g": zotero_fields.page_splits(after.props.get("meta") or {})}}
                 elif self.change == "create":
                     row["gbase"] = self.G_after
         seq = self._own_change(conn, after)
@@ -925,6 +1118,9 @@ class _Unit(UnitPdf):
                                                   pushed_ok=True, G_after=self.G_after, Z_after=Z_after)
                 row.update(version=version, zbase=zb, gbase=gb, gsig=sent["sig"], state="live",
                            detail=without(row["detail"], "first", "adopt", "restore", "rejected", "reason", "force"))
+                if "authors" in sent["m"].push and sent.get("names_g") is not None:  # the split sent, as saved
+                    row["detail"]["names"] = {"z": zotero_fields.item_splits(saved) if saved else sent["names_z"],
+                                              "g": sent["names_g"]}
                 if saved:
                     row["detail"]["collections"] = list(saved.get("collections") or [])
                     row["zotero_type"] = saved.get("itemType") or row["zotero_type"]  # a retype sent
@@ -1059,6 +1255,11 @@ class _Unit(UnitPdf):
         return (self.standalone and self.side is not None and self.side.live and self.change != "trash"
                 and not any(row["kind"] == "item" for row in mine)
                 and zotero_merge.standalone_gets_parent(self.side.props.get("meta")))
+
+
+def _squashed(names) -> list[str]:
+    """Names with their whitespace runs collapsed, as a sync compares them."""
+    return [" ".join(str(n).split()) for n in names]
 
 
 def _result(kind: str, decided: str, pushes: bool) -> str:

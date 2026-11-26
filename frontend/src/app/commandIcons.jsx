@@ -13,7 +13,7 @@ import {
   ImportIcon, IndentIcon, InfoIcon, InsertAboveIcon, InsertBelowIcon, ItalicIcon, KeyboardIcon, LanguagesIcon, LinkIcon,
   MarkdownIcon, MessageSquareIcon, OutdentIcon, OutlineIcon, PaperclipIcon, PaperIcon, PencilIcon, PlusIcon, QuoteMarkIcon,
   RectSelectIcon, RedoIcon, ScissorsIcon, SearchIcon, SettingsIcon, SigmaIcon, SlashIcon, SparklesIcon, SquareCheckIcon,
-  StrikethroughIcon, TerminalIcon, TextCursorIcon, TextSearchIcon, Trash2Icon, UnderlineIcon, UndoIcon, UsersIcon, XIcon,
+  StrikethroughIcon, TerminalIcon, TextCursorIcon, TextQuoteIcon, TextSearchIcon, Trash2Icon, UnderlineIcon, UndoIcon, UsersIcon, XIcon,
 } from "../shared/ui/Icons";
 
 const COMMAND_ICONS = {
@@ -43,6 +43,8 @@ const COMMAND_ICONS = {
   "app.downloadPdf": DownloadIcon,
   "app.newPage": FilePlusIcon,
   "app.recentlyDeleted": Trash2Icon,
+  "app.copyCitation": QuoteMarkIcon, // as the page menu's Copy citation
+  "app.copyBibliography": BookIcon,
   "app.import": ImportIcon,
   "app.exportObsidian": FolderFilesIcon,
   "app.exportGamma": DatabaseIcon,
@@ -75,7 +77,7 @@ const COMMAND_ICONS = {
   "block.fold": CollapseIcon,
   "block.unfold": ExpandIcon,
   "block.todo": SquareCheckIcon,
-  "block.quote": QuoteMarkIcon,
+  "block.quote": TextQuoteIcon,
   "block.selectAll": TextCursorIcon,
   "block.bold": BoldIcon,
   "block.italic": ItalicIcon,

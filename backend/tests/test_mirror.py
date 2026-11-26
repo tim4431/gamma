@@ -476,8 +476,9 @@ def test_a_remote_with_another_data_format_pauses_the_round(monkeypatch):
     server's (one of the two runs a release with a workspace migration step
     the other lacks: a server from before step 52, which put a page's
     document in one property, names 44; one from before step 55, which
-    reads a picture's regions and a listed document, names 52) neither
-    gives nor gets anything:
+    reads a picture's regions and a listed document, names 52; one from
+    before step 72, which gives a paper's record its issue and date, names
+    55) neither gives nor gets anything:
     the round stops before any write, its status says which side to update,
     local edits wait, and the next round once the two agree carries both
     sides' changes."""
@@ -500,7 +501,7 @@ def test_a_remote_with_another_data_format_pauses_the_round(monkeypatch):
     monkeypatch.setattr(sync_engine, "default_fetch", fetch)
     remote.ops(page["id"], [{"op": "set", "id": "fm1", "content": "text (remote)"}])
     local.insert(page["id"], "fm2", "made here")
-    assert here == 55
+    assert here == 72
     for there, update in ((here + 1, "this server is updated"), (52, "the remote is updated"), (44, "the remote is updated")):
         told[0] = there
         status = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1").json()["status"]

@@ -33,7 +33,7 @@ from pypdf import PdfWriter
 from pypdf.annotations import Link
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
-from . import vector_text
+from . import names as names_mod, vector_text
 from .documents.model import page_document, source_address
 from .logbuf import log
 from .note_markup import (INLINE_RE, LINK_PARTS, LINK_TARGET, MATH, TEXT, WIDTH_SUFFIX, alt_and_width, latex_spans,
@@ -747,8 +747,7 @@ def _meta_line(meta: dict) -> str:
     parts = []
     authors = meta.get("authors")
     if isinstance(authors, list) and authors:
-        names = [str(a) for a in authors[:6]]
-        parts.append(", ".join(names) + (" et al." if len(authors) > 6 else ""))
+        parts.append(names_mod.author_list(authors, 6))
     elif authors:
         parts.append(str(authors))
     for key in ("venue", "year"):
