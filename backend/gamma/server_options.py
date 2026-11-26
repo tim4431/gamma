@@ -1,5 +1,5 @@
-"""Server-wide options an admin sets in Settings, which were environment
-variables before (docs/research/environment-variables.md):
+"""Server-wide options an admin sets in Settings (which environment
+variables stay beside them, and why: docs/research/environment-variables.md):
 
 - ``guest_max`` — how many guest accounts may live at once (Users →
   Guests). ``GAMMA_GUEST_MAX`` overrides it where it is set (the public

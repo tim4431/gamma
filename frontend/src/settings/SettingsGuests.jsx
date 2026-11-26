@@ -21,7 +21,7 @@ const envHint = (name) => t("Set by {name} in the server's environment", { name 
 
 export function GuestSettings({ setStatus }) {
   const { data: saved, error: readError, set: setSaved } = useSettingsRead("/admin/settings");
-  const { error: optionError, save: saveOption } = useServerOptions({ setStatus });
+  const { error: optionError, saveNumber } = useServerOptions({ setStatus });
   const [saveError, setError] = React.useState("");
   const error = saveError || optionError || (!saved ? readError : "");
   // Only the changed field: another box committing meanwhile keeps its value.
@@ -46,12 +46,7 @@ export function GuestSettings({ setStatus }) {
     if (!Number.isFinite(n) || n < 1 || n === saved.guest_ttl_hours) return; // the box shows the stored value again
     await save({ guest_ttl_hours: n }, t("Guest workspaces now last {n} h.", { n }));
   }
-  async function commitMax(raw) {
-    const n = Number.parseInt(String(raw).trim(), 10);
-    const [lo, hi] = saved.options.ranges.guest_max;
-    if (!Number.isFinite(n) || n < lo || n > hi || n === saved.options.guest_max) return;
-    await saveOption({ guest_max: n }, t("At most {n} guests at once.", { n }));
-  }
+  const commitMax = (raw) => saveNumber("guest_max", raw, (n) => t("At most {n} guests at once.", { n }));
   if (saved?.guest_logins_available === false) return null;
   if (!saved) return <Section title={t("Guests")}>
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : <p className="setNotice loadingHint">{t("Loading…")}</p>}
