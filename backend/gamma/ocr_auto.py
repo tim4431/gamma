@@ -49,7 +49,10 @@ import time
 from contextlib import closing
 
 from . import db, jobs, ocr_engine, ocr_run, pdf_ocr, pdf_text, server_options, workspaces
+from .blocks_store import page_for_doc, pages_showing, write_lock
+from .highlight_relocate import RESPELL_CLIENT
 from .logbuf import log
+from .ops import after_commit, apply_ops
 
 OCR = "ocr"
 # A file is recognized by itself only when it has at most so many pages that
@@ -311,8 +314,6 @@ def _queued() -> list[tuple[str, str, str]]:
 def _page_of(ws: str, doc_id: str) -> str:
     """The page an automatic run of the file is for: the library page that
     owns it, else the first page showing it; "" for none."""
-    from .blocks_store import page_for_doc, pages_showing  # local: they import this module's neighbours
-
     with db.connect_pages_db(ws) as conn:
         row = page_for_doc(conn, doc_id)
         if row:
@@ -378,10 +379,6 @@ def _clear_meta_error(ws: str, page_id: str, actor: str) -> None:
     scan's missing text, and the next open looks the paper up with the
     recognized one. One op under ``actor``; nothing when the page has none.
     Never raises (logged)."""
-    from .blocks_store import write_lock  # local: they import this module's neighbours
-    from .highlight_relocate import RESPELL_CLIENT
-    from .ops import after_commit, apply_ops
-
     try:
         with db.connect_pages_db(ws) as conn:
             write_lock(conn)
