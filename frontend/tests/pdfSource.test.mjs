@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WHOLE_MAX_BYTES, chooseTransport, docIdOf, layoutFromManifest, proxiedSourceOf, rangeOpenOptions, typicalPageIndex } from "../src/pdf/pdfSource.js";
+import { WHOLE_MAX_BYTES, chooseTransport, docIdOf, layoutFromManifest, ocrDocId, proxiedSourceOf, rangeOpenOptions, typicalPageIndex } from "../src/pdf/pdfSource.js";
 
 test("docIdOf reads upload urls only, query or not", () => {
   assert.equal(docIdOf("/api/uploads/0123abcdef0123abcdef0123.pdf"), "0123abcdef0123abcdef0123");
@@ -10,6 +10,13 @@ test("docIdOf reads upload urls only, query or not", () => {
   assert.equal(docIdOf("https://example.org/api/uploads/abc.pdf"), null);
   assert.equal(docIdOf(""), null);
   assert.equal(docIdOf(undefined), null);
+});
+
+test("ocrDocId names a document's stored file first, else the upload its url reads", () => {
+  const url = "/api/uploads/0123abcdef0123abcdef0123.pdf";
+  assert.equal(ocrDocId({ format: "pdf", hash: "fedcba9876543210" }, url), "fedcba9876543210");
+  assert.equal(ocrDocId(null, url), "0123abcdef0123abcdef0123");
+  assert.equal(ocrDocId({ format: "pdf", at: "url", url: "https://arxiv.org/pdf/1.pdf" }, "/api/pdf?source_url=x"), null);
 });
 
 test("proxiedSourceOf reads the address a proxy url fetches, whatever else its query carries", () => {

@@ -16,7 +16,7 @@ import { scopeOf, snapshot as translateSnapshot, span as translateSpan } from ".
 import { exportFile, exportLayout, exportPages } from "../pdf/translateExport.js";
 import { folderPapers, paperLayout } from "../pdf/folderTranslation.js";
 import { useFolderTranslations } from "../pdf/useFolderTranslations.js";
-import { docIdOf } from "../pdf/pdfSource";
+import { docIdOf, ocrDocId } from "../pdf/pdfSource";
 import * as ocrState from "../pdf/ocrState.js";
 import * as ocrRuns from "../pdf/ocrRuns.js";
 import { discardApplied, discardOutcome, discardStep, discardUndone, noteSummary, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
@@ -4013,7 +4013,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     if (openPopover !== "meta" || !docId || shareMode) { setPdfTextInfo(null); return; }
     checkPdfText();
-  }, [openPopover, docId, ocrState.revision(fileHash(doc) || docIdOf(pdfUrl))]);
+  }, [openPopover, docId, ocrState.revision(ocrDocId(doc, pdfUrl))]);
 
   // Modal preview of what the AI actually gets to read.
   const [pdfTextPreview, setPdfTextPreview] = useState(null); // null | {loading} | {text}
@@ -5171,7 +5171,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // translation, the menu rows and the metadata popover follow; and the jobs, whose
     // end (the server's own run of an upload, done between two listings) is said
     onOcr: (msg) => {
-      ocrState.refresh(msg?.doc_id || fileHash(doc) || docIdOf(pdfUrl));
+      ocrState.refresh(msg?.doc_id || ocrDocId(doc, pdfUrl));
       if (msg?.doc_id) tasks.expectEnd(ocrState.fileJobs(msg.doc_id));
     },
   });
@@ -8738,7 +8738,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const { recognize: ocrRow, forget: ocrDrop } = ocrState.useOcrMenu({ docId: fileHash(doc),
     offered: isPdf(doc) && !readOnly && !shareMode && !authUser?.is_guest, capability: serverConfig?.ocr || null,
     jobs: tasks.jobs, translated: pdfTransState.translated && pdfTransState.url === pdfUrl });
-  const ocrNonce = ocrState.useOcrNonce(fileHash(doc) || docIdOf(pdfUrl) || "");
+  const ocrNonce = ocrState.useOcrNonce(ocrDocId(doc, pdfUrl) || "");
   // A PDF read where it lies on this computer (gamma/linked_files.py), or a
   // work folder's file, whose PDF is its file's wherever the server keeps
   // the bytes: no other file replaces it from the Document menu.
