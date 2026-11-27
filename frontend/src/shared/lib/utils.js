@@ -379,8 +379,8 @@ async function apiJson(url, options = {}, { keepalive } = {}) {
   return r.json();
 }
 
-// apiJson's options for a JSON request: `body` sent as JSON, or, with none
-// (a DELETE, a POST that only asks), the method alone.
+// apiJson's options for a JSON request: the method, the JSON content type
+// and `body` as JSON, or, with none (a DELETE, a POST that only asks), no body.
 function jsonInit(method, body) {
   return { method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) };
 }
