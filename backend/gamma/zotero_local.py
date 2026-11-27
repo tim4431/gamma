@@ -43,7 +43,8 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 from . import storage, upload_gc
 from .auth import ZOTERO_ACTOR, ZOTERO_CLIENT
 from . import ink as inkmod
-from .bibtex import build_entry, clean_key
+from .bibtex import build_entry
+from .bibtex_keys import clean_key, rebuilt_key
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, TRASH, TREES, batch_page, block_to_dict, existing_in,
                            fetch_subtree, filing, insert_page_tree, label_names, load_props, new_block_id,
                            page_root_id, valid_block_id, write_lock)
@@ -51,6 +52,7 @@ from .db import connect_pages_db
 from .documents.model import page_document, pdf_file_hash, stored_name
 from .logbuf import log
 from .markdown_export import block_ref_resolver, build_tree
+from .meta_fields import date_agrees
 from .note_markup import WIDTH_SUFFIX, alt_and_width
 from .notebook import is_sheet
 from .ops import MAX_OPS, MOVED, OpError, after_commits, apply_batches, delete_tree, move_across_pages, notify_commit
@@ -679,7 +681,10 @@ def record_op(page: dict, values: dict) -> dict | None:
     """The op that writes Zotero's record fields ``values`` (``{compare
     field: Zotero's value}``, as ``zotero_merge.item_projection`` holds
     them: the fields a merge applies) on the page ``page`` (a block dict):
-    only those fields of ``meta`` change, its ``source`` stays the page's
+    only those fields of ``meta`` change, but for a ``date`` the pulled
+    year disagrees with, which goes (gamma/meta_fields.py: the popover's
+    Date row would show it and, saved again, set the year back), its
+    ``source`` stays the page's
     ("zotero" for a page that had no record), ``cite_key`` is pinned or
     unpinned, the BibTeX entry is built again (``bibtex.build_entry``) and
     the stale slide citation and lookup failure go (``ppt_cite``,
@@ -706,6 +711,8 @@ def record_op(page: dict, values: dict) -> dict | None:
             meta["authors"] = [str(a) for a in value or () if str(a).strip()]
         else:
             meta[field] = "" if value is None else str(value)
+    if "year" in values and not date_agrees(meta):
+        meta.pop("date", None)
     pinned = clean_key(props.get("cite_key") or "")
     cite_key = clean_key(values.get("cite_key") or "") if "cite_key" in values else pinned
     patch = {}
@@ -714,7 +721,7 @@ def record_op(page: dict, values: dict) -> dict | None:
     if cite_key != pinned:
         patch["cite_key"] = cite_key or None
     if patch:
-        bibtex = build_entry(meta, cite_key)
+        bibtex = build_entry(meta, rebuilt_key(props, meta, cite_key))
         if bibtex != props.get("bibtex"):
             patch["bibtex"] = bibtex
         for stale in ("ppt_cite", "meta_error"):

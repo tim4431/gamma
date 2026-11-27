@@ -12,16 +12,19 @@ back writes a field only where the item's type has it, since the API
 refuses an item holding a field its type lacks. In short:
 
 - title: the type's title field; authors: its primary creators ("First
-  Last", or an organisation's single name), written back split at the last
-  space, the item's other creators after them; year: the first four digits
-  of ``date`` (a fuller date in that year stays); venue: the type's
+  Last", "Last, First" for a surname that would not split back,
+  ``names.join_name``, or an organisation's single name; compared in
+  ``names.given_first``'s form), written back split as the RDF export
+  splits them (``names.split_name``), the item's other creators after
+  them; year: the first four digits of ``date`` (a fuller date in that
+  year stays); venue: the type's
   ``publicationTitle`` field, a presentation's ``meetingName``; publisher:
   the type's ``publisher`` field (``item_types.publisher``).
 - volume, pages, DOI, ISBN (the first, digits only) where the type has the
   field; a DOI with no field is a ``DOI:`` line in Extra.
 - arXiv id: from an arXiv URL or DOI, a preprint's archive ID or an
-  ``arXiv:`` line in Extra; written as a preprint's archive ID, else that
-  Extra line. Citation key: ``citationKey``, or Better BibTeX's
+  ``arXiv:`` line in Extra (its primary class after it or not); written as
+  a preprint's archive ID, else that Extra line. Citation key: ``citationKey``, or Better BibTeX's
   ``Citation Key:`` line.
 - kind: the item type for Gamma's nine (``item_types``); any other type
   reads as ``document`` and keeps its own type until Gamma's kind changes.
@@ -56,8 +59,9 @@ import re
 from pathlib import Path
 
 from . import item_types
-from .bibtex import clean_key
-from .zotero_import import _ARXIV_DOI_RE, _ARXIV_LINE_RE, _ARXIV_URL_RE, _CITATION_KEY_RE
+from .bibtex_keys import clean_key
+from .names import given_first, join_name, split_name
+from .zotero_import import _ARXIV_DOI_RE, _ARXIV_LINE_RE, _ARXIV_UNCLASSED_RE, _ARXIV_URL_RE, _CITATION_KEY_RE
 
 _TYPES: dict = json.loads(Path(__file__).with_name("zotero_schema.json").read_text(encoding="utf-8"))["types"]
 # Types that are no work (a file, a note, a reader annotation): never what a
@@ -164,16 +168,63 @@ def _extra_doi(extra: str) -> str:
 
 def _creator_name(creator: dict) -> str:
     """A creator as Gamma lists an author: an organisation's single name, or
-    "First Last" (the RDF import joins given name and surname the same way)."""
+    "First Last", "Last, First" where that would split otherwise
+    ("Pereira Campos, Jorge Fernando"; ``names.join_name``, as the RDF
+    import joins them)."""
     name = _text(creator.get("name"))
-    return name or " ".join(filter(None, (_text(creator.get("firstName")), _text(creator.get("lastName")))))
+    return name or join_name(creator.get("firstName"), creator.get("lastName"))
 
 
-def _arxiv_id(data: dict, doi: str, extra: str) -> str:
+def fields_name(creator: dict) -> str:
+    """A creator's two fields joined "First Last" (or its single name), as
+    a sync read every name before ``names.join_name``: the string the bases
+    it stored then hold, and one of the forms a page read from it keeps."""
+    return _text(creator.get("name")) or " ".join(
+        filter(None, (_text(creator.get("firstName")), _text(creator.get("lastName")))))
+
+
+def _readings(creator: dict) -> set[str]:
+    """The strings a page holds for a creator it took from Zotero, as
+    compared whitespace aside: the record's (``_creator_name``) and the one
+    read before ``names.join_name`` (``fields_name``)."""
+    return {" ".join(_creator_name(creator).split()), " ".join(fields_name(creator).split())}
+
+
+def creator_split(creator: dict) -> list[str]:
+    """A creator's name as split, ``[surname, given name]`` (a single-field
+    name a surname alone), whitespace runs collapsed: what a sync keeps of
+    each author beside its compared form, to tell a name split anew from
+    the same split written another way (gamma/zotero_sync_items.py
+    ``_Unit._names``)."""
+    name = _text(creator.get("name"))
+    if name:
+        return [" ".join(name.split()), ""]
+    last, first = (" ".join(_text(creator.get(f)).split()) for f in ("lastName", "firstName"))
+    return [last or first, first if last else ""]
+
+
+def item_splits(data: dict) -> list[list[str]]:
+    """``creator_split`` of an item's authors (its primary creators)."""
+    primary = primary_creator(data.get("itemType") or "")
+    return [creator_split(c) for c in data.get("creators") or []
+            if c.get("creatorType") == primary and fields_name(c)]
+
+
+def page_splits(meta: dict) -> list[list[str]]:
+    """A record's authors split as they go out (``_person``), in
+    ``creator_split``'s form: the page's side of ``item_splits``."""
+    return [creator_split(_person("author", name)) for name in _authors(meta or {})]
+
+
+def _arxiv_id(data: dict, doi: str, extra: str, classed: bool = True) -> str:
     """The arXiv id an item names, found as the RDF import finds it: an
-    arXiv URL or DOI, a preprint's archive ID, a line of Extra."""
+    arXiv URL or DOI, a preprint's archive ID, a line of Extra, its primary
+    class after it or not ("arXiv:1002.2136 [astro-ph]"). Without
+    ``classed``, not a line with the class, as the bases a sync stored
+    before read one (``unclassed_arxiv_id``)."""
+    line = _ARXIV_LINE_RE if classed else _ARXIV_UNCLASSED_RE
     m = (_ARXIV_URL_RE.search(_text(data.get("url"))) or _ARXIV_DOI_RE.match(doi)
-         or _ARXIV_LINE_RE.search(_text(data.get("archiveID"))) or _ARXIV_LINE_RE.search(extra))
+         or line.search(_text(data.get("archiveID"))) or line.search(extra))
     return m.group(1) if m else ""
 
 
@@ -211,17 +262,38 @@ def meta_from_item(data: dict) -> dict:
 def cite_key_from_item(data: dict) -> str:
     """The citation key pinned on an item: its ``citationKey``, else the
     ``Citation Key:`` line Better BibTeX keeps in Extra (read as the RDF
-    import reads it), cleaned by ``bibtex.clean_key``; "" for none."""
+    import reads it), cleaned by ``bibtex_keys.clean_key``; "" for none."""
     key = clean_key(data.get("citationKey") or "")
     m = None if key else _CITATION_KEY_RE.search(str(data.get("extra") or ""))
     return clean_key(m.group(1)) if m else key
 
 
+def unclassed_arxiv_id(data: dict) -> str:
+    """The arXiv id ``project`` read before it read an Extra line with a
+    primary class: what a base stored then holds for the item
+    (gamma/zotero_sync_items.py ``_Unit._lifted``)."""
+    item_type = data.get("itemType") or ""
+    doi = _read(data, item_type, "DOI")
+    if not doi and not _has(item_type, "DOI"):
+        doi = _extra_doi(str(data.get("extra") or ""))
+    return _arxiv_id(data, doi, str(data.get("extra") or ""), classed=False)
+
+
 def project(data: dict) -> dict:
     """An item in the form a sync compares and keeps as its base:
-    ``{"meta": the record without its source, "cite_key": str}``."""
+    ``{"meta": the record without its source, "cite_key": str}``, each
+    author given name first (``names.given_first`` of its fields joined,
+    ``fields_name``), so "Pereira Campos, Jorge Fernando", as a page keeps
+    the item's "Pereira Campos" / "Jorge Fernando", and "Jorge Fernando
+    Pereira Campos", as a page read before ``names.join_name`` keeps it,
+    read alike, and a name written to Zotero (``_person``) reads back as
+    the page holds it. How a name splits is compared beside it
+    (``item_splits``)."""
     meta = meta_from_item(data)
     del meta["source"]
+    primary = primary_creator(data.get("itemType") or "")
+    meta["authors"] = [given_first(name) for c in data.get("creators") or []
+                       if c.get("creatorType") == primary and (name := fields_name(c))]
     return {"meta": meta, "cite_key": cite_key_from_item(data)}
 
 
@@ -233,24 +305,41 @@ def _authors(meta: dict) -> list[str]:
 
 
 def _person(creator_type: str, name: str) -> dict:
-    """A name as a Zotero creator: split at the last space, as the RDF export
-    splits one, and whole when it has none."""
-    parts = name.split()
-    if len(parts) > 1:
-        return {"creatorType": creator_type, "firstName": " ".join(parts[:-1]), "lastName": parts[-1]}
-    return {"creatorType": creator_type, "name": name}
+    """A name as a Zotero creator, split as the RDF export splits one
+    (``names.split_name``: "Lovelace, Ada" at its comma, "Jan van der Berg"
+    before its particle), and a single-field name when it has no given
+    name (an organisation, a single word)."""
+    last, first = split_name(name)
+    if first:
+        return {"creatorType": creator_type, "firstName": first, "lastName": last}
+    return {"creatorType": creator_type, "name": last}
 
 
-def _creators(current: list, primary: str, names: list[str]) -> list:
+def _creators(current: list, primary: str, names: list[str], synced=None) -> list:
     """Gamma's authors as the item's ``primary`` creators, followed by its
-    other creators as they were. An author the item already lists keeps its
-    entry, so a name Zotero splits its own way ("Ludwig" / "van Beethoven")
-    is not split again."""
+    other creators as they were. An author the item already lists (the same
+    name as a sync compares it, ``names.given_first``) keeps its entry
+    while the page holds it split alike, or as read from it (``_readings``)
+    and split as when it last synced (``synced``: the page's
+    ``page_splits`` then, None when not known), so a name Zotero splits its
+    own way ("Frank van" / "Harmelen") is not split again, nor the item's
+    "Pereira Campos" / "Jorge Fernando" that a page read before
+    ``names.join_name`` keeps as "Jorge Fernando Pereira Campos"; a name
+    the page splits anew ("Pereira Campos, Jorge Fernando" for the item's
+    "Campos" / "Jorge Fernando Pereira") goes out as the page splits it."""
     listed = {}
     for c in current:
         if c.get("creatorType") == primary:
-            listed.setdefault(_creator_name(c), []).append(c)
-    authors = [listed[name].pop(0) if listed.get(name) else _person(primary, name) for name in names]
+            listed.setdefault(given_first(fields_name(c)), []).append(c)
+    authors = []
+    for name in names:
+        mine, same = _person(primary, name), listed.get(given_first(name)) or []
+        split = creator_split(mine)
+        kept = next((c for c in same if creator_split(c) == split or (
+            " ".join(name.split()) in _readings(c) and (synced is None or split in synced))), None)
+        if kept is not None:
+            same.remove(kept)
+        authors.append(mine if kept is None else kept)
     return authors + [c for c in current if c.get("creatorType") != primary]
 
 
@@ -288,10 +377,12 @@ def _archive_id(item: dict) -> str:
     return m.group(1) if m else ""
 
 
-def _writes(item: dict, meta: dict, cite_key: str, title: str, fields) -> dict:
+def _writes(item: dict, meta: dict, cite_key: str, title: str, fields, splits=None) -> dict:
     """The fields that make ``item`` hold the record's values for the
     compare-fields in ``fields``, written into the item's own type and only
-    where they differ from what it holds. ``title`` is the title to write."""
+    where they differ from what it holds. ``title`` is the title to write;
+    ``splits`` the page's authors as split when it last synced
+    (``_creators``)."""
     item_type = item.get("itemType") or ""
     work, out = dict(item), {}
 
@@ -307,7 +398,7 @@ def _writes(item: dict, meta: dict, cite_key: str, title: str, fields) -> dict:
     if "authors" in fields:
         primary = primary_creator(item_type)
         current = work.get("creators") or []
-        creators = _creators(current, primary, _authors(meta))
+        creators = _creators(current, primary, _authors(meta), splits)
         if primary in _spec(item_type).get("creators", ()) and creators != current:
             work["creators"] = out["creators"] = creators
     if "year" in fields:
@@ -431,12 +522,14 @@ def retype(remote: dict, item_type: str) -> dict:
     return out
 
 
-def patch_for(remote: dict, meta: dict, cite_key: str, changed, title: str = "") -> tuple[dict, bool]:
+def patch_for(remote: dict, meta: dict, cite_key: str, changed, title: str = "", splits=None) -> tuple[dict, bool]:
     """``(body, replace)``: what to write so ``remote`` (an item's data)
     holds the page's values for the compare-fields in ``changed``, and
     nothing else changes (the other creators, a full date in Gamma's year,
     the other lines of Extra and every field Gamma does not model stay).
-    The record's title is written, the page's ``title`` when it has none.
+    The record's title is written, the page's ``title`` when it has none;
+    ``splits``, the page's authors as split when it last synced, tells a
+    name split anew from one kept as read from Zotero (``_creators``).
     ``replace`` False: ``body`` is the changed fields only, a PATCH ({}
     when nothing differs). True when ``kind`` changed to a kind the item
     does not read as (an item outside the nine reads as ``document``):
@@ -449,5 +542,5 @@ def patch_for(remote: dict, meta: dict, cite_key: str, changed, title: str = "")
         if item_types.from_zotero(remote.get("itemType")) != kind:
             item = retype(remote, kind)
             body, replace = dict(item), True
-    body.update(_writes(item, meta, cite_key, _text(meta.get("title")) or _text(title), changed))
+    body.update(_writes(item, meta, cite_key, _text(meta.get("title")) or _text(title), changed, splits))
     return body, replace

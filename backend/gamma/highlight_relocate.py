@@ -128,7 +128,7 @@ from typing import NamedTuple
 
 from . import highlights as shape
 from . import pdf_ocr, upload_gc
-from .blocks_store import load_json, write_lock
+from .blocks_store import load_json, pages_showing, write_lock
 from .db import connect_pages_db, safe_doc_id
 from .documents.model import file_hash, page_document, stored_name
 from .logbuf import log
@@ -2314,17 +2314,6 @@ def _letters(text: str) -> str:
     return _NOT_LETTERS_RE.sub("", normalize_quote(text))
 
 
-def pages_showing(conn, doc_hash: str) -> list[str]:
-    """The live pages of the library showing the stored PDF ``doc_hash``:
-    the one owning it (the ``doc_id`` column) and every duplicate showing it
-    as a copy, which the column leaves out. Whose quotes a recognition
-    respells, and whose rooms hear that it changed (pdf_ocr ``announce``)."""
-    return [r[0] for r in conn.execute(
-        "SELECT id FROM unified_blocks WHERE parent_id = 'root' AND json_extract(properties, '$.doc.format') = 'pdf' "
-        "AND (doc_id = :h OR (json_extract(properties, '$.doc.copy') IS NOT NULL "
-        "AND json_extract(properties, '$.doc.hash') = :h)) ORDER BY id", {"h": doc_hash})]
-
-
 def respell_quotes(ws: str, doc_hash: str, pages, *, actor: str, back: bool = False) -> dict:
     """The quotes of the highlights on the PDF ``doc_hash``'s pages
     ``pages`` (1-based) respelled as the text recognized there reads
@@ -2333,7 +2322,7 @@ def respell_quotes(ws: str, doc_hash: str, pages, *, actor: str, back: bool = Fa
     from the old layer, is stale. Moving them by their passage instead
     would lose the ones made on garbled words. ``back``: the other way, as
     the file's own layer reads, while the recognized text is still live and
-    about to be forgotten (pdf_ocr ``forget_recognized``): ``was`` and
+    about to be forgotten (ocr_run ``forget_recognized``): ``was`` and
     ``now`` below swap their readings, and a highlight under which the
     layer reads nothing (a page that is only a picture) keeps its quote,
     counted ``unread``.

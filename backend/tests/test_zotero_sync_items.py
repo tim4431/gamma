@@ -658,6 +658,19 @@ def test_a_field_changed_on_both_sides_keeps_gammas_and_theirs_converges(me, mad
     calls = len(fake.calls)
     _sync(me, ws)
     assert _writes(fake, calls) == [] and me.get(f"/api/zotero/links/{ws}").json()["conflicts_open"] == 0
+    # the authors both changed: Zotero's names as its record writes them, which "theirs" takes as they are
+    meta = _block(ws, page)["props"]["meta"]
+    _edit(ws, owner_id, page, [{"op": "set", "id": page, "props": {"meta": {**meta, "authors": ["Ashish Vaswani"]}}}])
+    campos = {"creatorType": "author", "firstName": "Jorge Fernando", "lastName": "Pereira Campos"}
+    fake.edit(LIB, keys["attention"], creators=[campos])
+    _sync(me, ws)
+    [conflict] = me.get(f"/api/zotero/links/{ws}/conflicts").json()["conflicts"]
+    assert (conflict["mine"], conflict["theirs"]) == ("Authors: A. Vaswani", "Authors: J. F. Pereira Campos")
+    r = me.post(f"/api/zotero/links/{ws}/conflicts/{conflict['id']}", json={"choice": "theirs"})
+    assert r.status_code == 200
+    assert _block(ws, page)["props"]["meta"]["authors"] == ["Pereira Campos, Jorge Fernando"]
+    _sync(me, ws)
+    assert fake.data(LIB, keys["attention"])["creators"] == [campos]
     # a title both edited in other places merges as text
     meta = _block(ws, page)["props"]["meta"]
     _edit(ws, owner_id, page, [{"op": "set", "id": page, "props": {"meta": {

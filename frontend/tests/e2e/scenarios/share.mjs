@@ -485,6 +485,8 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
       await v.waitForSelector(".readOnlyTitle", { timeout: 15000 });
       await v.locator(".subPagesPanel .subPageNew", { hasText: "New page inside" }).click();
       await until(() => v.url().includes("page="), { what: "the new page opens in the share view" });
+      await until(() => v.locator(".titleEdit").evaluate((el) => el === document.activeElement || el.contains(document.activeElement)),
+        { what: "the new page's title takes the typing" });
       await v.keyboard.type("Made through the link");
       await v.keyboard.press("Enter");
       await until(async () => (await alice.api(`/api/pages/${top.id}/family`)).sub_pages.some((p) => p.title === "Made through the link"),

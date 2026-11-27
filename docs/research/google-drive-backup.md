@@ -6,7 +6,7 @@ that writes there, and the design that was picked. Surveyed in November
 2026 from Google's documentation and Gamma's backup code
 (`gamma/s3.py`, `gamma/offsite.py`, `gamma/snapshot_copies.py`,
 `gamma/backup_schedule.py`). How it works now is in
-[debugging.md](../dev/debugging.md#google-drive); since then the OAuth and the
+[backups.md](../dev/backups.md#google-drive); since then the OAuth and the
 connection are shared with OneDrive ([onedrive-icloud-backup.md](onedrive-icloud-backup.md)):
 `gamma/gdrive_account.py` became `gamma/cloud_account.py`, `/api/admin/gdrive`
 `/api/admin/clouds/drive`, and `manage.py gdrive-client` `manage.py cloud-client drive`.
@@ -163,7 +163,11 @@ ended the out-of-band copy-and-paste flow in 2023.
   reached only once they pick it in Google's Picker, which grants the app
   that one folder; the Picker runs in the browser with an API key and the
   access token, which today never leaves the server.
-- A run against Google itself: everything here was tested against a fake.
+- More runs against Google itself. Gamma's clients were tried once by
+  hand: Google gave a code for the TV client; connecting on Google's page
+  at 127.0.0.1 worked, and a backup task's copy went to Drive, was listed,
+  restored as a new workspace, deleted, and the access revoked. Everything
+  else is tested against a fake.
 
 ## Sources
 

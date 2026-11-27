@@ -364,7 +364,7 @@ export function useAppJobs({
       }
       return;
     }
-    if (job.kind === "ocr" || job.kind === "ocr-tab" || job.kind === "ocr-drop") {
+    if (ocrState.isOcrJob(job)) {
       // However it ended, every tab that heard it end reads the document's
       // recognition again (pdf/ocrState.js): the pages a done run or forget
       // changed build their text again, and a stopped or failed run leaves

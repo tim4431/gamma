@@ -638,15 +638,20 @@ from the records and not from the model's memory. `page_ids` takes up to
 50 pages; in a page chat the default is the open page. For each page the
 result gives:
 
-- the record from `properties.meta` (its item type as a `Type:` line, in
-  Zotero's names, so a reference style knows a chapter from an article;
-  authors, year, venue, volume, pages, publisher, ISBN, DOI, arXiv id;
-  [paper_metadata.md](paper_metadata.md)), and the paper's own title when it
-  differs from the page's;
+- the record from `properties.meta` as a citation reads it
+  (`citations.record`, [citations.md](citations.md#the-record-a-citation-reads)):
+  its item type as a `Type:` line, in Zotero's names, so a reference style
+  knows a chapter from an article; authors, year, the full date while it
+  agrees with the year, venue, the journal abbreviation, volume, issue,
+  pages, publisher, ISBN, DOI, arXiv id, and the URL (the record's own,
+  else the page's `web_url`; [paper_metadata.md](paper_metadata.md)), and
+  the paper's own title when it differs from the page's;
 - the stored BibTeX, else one built from the record the way a hand edit
   builds it (`bibtex.build_entry`), under the citation key pinned on the page
   when there is one — so what the model cites matches the `.bib` export
-  ([import_export.md](import_export.md#bibtex-bibliography));
+  ([import_export.md](import_export.md#bibtex-bibliography)). The model
+  formats a reference list in a style itself: the styles are rendered in
+  the browser, not on the server ([citations.md](citations.md));
 - the slide citation when one was made (`ppt_cite`). None is generated,
   since that is an AI call.
 
@@ -2284,9 +2289,12 @@ below). The result names the id `create_block` fills it by.
 `export(page_id | folder, format, sub_pages?)` starts the export job the
 Export dialog starts (`routers/export.py` `start_export`, the job body the
 route and the tool share), as the person, for a page in reach (a page
-chat's own by default) or a folder. `format` is one of `EXPORT_FORMATS`:
-markdown, pdf (the annotated PDF), notes-pdf, bibtex, obsidian, zotero,
-notion, logseq. Its action (kind `export`) carries the job, which the app
+chat's own by default) or a folder. `format` is one of `EXPORT_FORMATS`
+(`ai_tools/pages.py`, one registry of the name the model uses, the export
+mode and how a reply names it): markdown, pdf (the annotated PDF),
+notes-pdf, bibtex, biblatex, ris, csljson (CSL JSON, for Pandoc;
+[import_export.md](import_export.md#bibliography)), obsidian, zotero,
+notion, logseq. A Formatted bibliography is the Export dialog's alone. Its action (kind `export`) carries the job, which the app
 adopts and downloads when it is ready (`tasks.adopt`, `download: "auto"`),
 so it needs the app as `show_page` does. It is under Read pages: the file
 goes to the person, who may export any page of the workspace, and the

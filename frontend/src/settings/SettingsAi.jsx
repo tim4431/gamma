@@ -22,7 +22,8 @@ import { accessSummary, modelList, useProviderEditor } from "./providerEditor.js
 import { ProviderForm } from "./ProviderForm.jsx";
 import { signInWords } from "./aiServices.js";
 import { ActivityIcon, BanIcon, CheckIcon, GlobeIcon, KeyIcon, LanguagesIcon, MessageSquareIcon, MicIcon, PaperIcon, PenIcon, PlusIcon, RefreshIcon, StarIcon, Trash2Icon, UserIcon } from "../shared/ui/Icons";
-import { billingLabel, connectionsInUse, taskRow } from "../ai/aiModels.js";
+import { billingLabel } from "../chat/tokenUsage";
+import { connectionsInUse, taskRow } from "../ai/aiModels.js";
 import { ChatModels, TaskModelMenu } from "../ai/ModelMenu.jsx";
 import { ProviderLogo } from "../ai/ProviderLogo.jsx";
 import { T, fmtDate, getLocale, t } from "../shared/i18n/i18n.js";

@@ -36,8 +36,8 @@ from ..ai_client import (
     wire_protocol as _wire_protocol,
 )
 from ..ai_protocols.base import truncated_stop
-from ..ai_settings import (ai_runtime, is_server_id, own_entries, require_enabled, resolve_model as _resolve_model,
-                           routed)
+from ..ai_roles import resolve_model as _resolve_model, routed
+from ..ai_settings import ai_runtime, is_server_id, own_entries, require_enabled
 from ..auth import actor_of, can_write, require_user_id, require_ws
 from ..db import safe_doc_id
 from ..logbuf import log
@@ -163,11 +163,11 @@ def _target(user_id: str, requested: str) -> tuple:
     settled before any AI connection is required. A service it names
     (``engine:<id>``); a model it names (a 400 model_unavailable when no
     longer offered, never another model); else the translate task's target
-    (ai_settings.resolve_roles): its service or its model — the chat model
+    (ai_roles.resolve_roles): its service or its model — the chat model
     standing in for a pick no longer offered — and, with no model offered
     at all, the free service, so an account with services only keeps
     translating. ``engine`` is "" for a model, ``entry`` None for a
-    service; ``routed`` the response's provenance (ai_settings.routed)."""
+    service; ``routed`` the response's provenance (ai_roles.routed)."""
     engine = translate_engines.engine_of(requested)
     if engine:
         return engine, None, None, {"role": "translate", "model": requested, "fallback": False}

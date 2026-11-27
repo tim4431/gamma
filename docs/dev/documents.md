@@ -564,8 +564,9 @@ engine and the thresholds were measured in
 [research/ocr.md](../research/ocr.md#stage-2-what-real-ocr-adds).
 
 Code: `gamma/ocr_engine.py` (the engine, where a run goes),
-`gamma/pdf_ocr.py` (the store, the view the readers take, both runs, the
-forget), `gamma/ocr_auto.py` (the automatic runs), `routers/ocr.py` (the
+`gamma/pdf_ocr.py` (the store, the view the readers take),
+`gamma/ocr_run.py` (both runs, the page rules, the plan, the forget),
+`gamma/ocr_auto.py` (the automatic runs), `routers/ocr.py` (the
 jobs' starts, the window's routes and the reads,
 [api.md](api.md#text-recognition-routersocrpy-gammapdf_ocrpy)), `pdf_text`
 (the readers) and `pdf_scan.is_picture_page`. The viewer's side, the window's
@@ -619,7 +620,7 @@ count) and is at least 70% covered by images. Known miss: an OCR layer
 drawn visibly under its picture counts as shown text, so that page is
 neither kind and keeps its text.
 
-**The page rules** (`pdf_ocr._page_rule`). A page is drawn grey, without
+**The page rules** (`ocr_run._page_rule`). A page is drawn grey, without
 its annotations, at 300 dpi, or less past an A4 page's pixels or a side of
 10,000 pixels (`ocr_engine.render_zoom`).
 
@@ -627,7 +628,7 @@ its annotations, at 300 dpi, or less past an A4 page's pixels or a side of
   of the layer's words (`KEEP_SHARED`) and the recognition read at least
   half as many words (`MIN_WORDS_READ`). Otherwise the page keeps its
   layer. Words are compared as the study scored them
-  (`pdf_ocr.shared_words`): NFKC, quotes and dashes folded, punctuation at
+  (`ocr_run.shared_words`): NFKC, quotes and dashes folded, punctuation at
   a word's ends dropped, case kept, each word counted as often as it
   comes.
 - A picture page, or a scan page whose layer has no word, takes its
@@ -639,7 +640,7 @@ its annotations, at 300 dpi, or less past an A4 page's pixels or a side of
   text.
 - A page with no result stores nothing, and the next run reads it again.
 
-**The run** (`pdf_ocr.run`, the job's body):
+**The run** (`ocr_run.run`, the job's body):
 
 1. A file that an earlier run left `pending` (cut short, or failed in its
    finishing steps) is finished first.
@@ -682,7 +683,7 @@ step 1 fails the run before it reads anything, the earlier run's text
 staying live and pending. The result's counts are in
 [tasks.md](tasks.md#the-kinds).
 
-**The run in a window** (`pdf_ocr.window_run`, the `ocr-tab` job's body).
+**The run in a window** (`ocr_run.window_run`, the `ocr-tab` job's body).
 Where the capability is `window`, the window that asks reads the pages
 and the server only judges and keeps their words, so the page rules, the
 store and the finishing steps are the server run's. The window's side is
@@ -771,14 +772,15 @@ its workspace stopped (the hook is told `refused`): the marker stays
 queued. The delete still holds the workspace while the hook runs, so
 `next()` passes the file over. A delete that goes ahead takes the marker
 with data.db, and one that is called off leaves the file to the next
-sweep. The jobs' sweep, at startup and every 10 minutes, starts the files
-a restart left queued (`resume`); an admin turning the switch on does
+sweep. The round of the jobs' sweep (`app.sweep_jobs`), at startup and
+every 10 minutes, starts the files a restart left queued (`resume`); an
+admin turning the switch on does
 too. An automatic run's writes go under the uploader, else the
 workspace's personal owner, and one that recognized pages clears the
 page's failed metadata lookup (`meta_error`), so the next open looks the
 paper up with its new text.
 
-**Forgetting it** (`pdf_ocr.forget_recognized`, the `ocr-drop` job). It
+**Forgetting it** (`ocr_run.forget_recognized`, the `ocr-drop` job). It
 needs no engine, so the apps and an older Mac forget too. Under the
 file's turn:
 
@@ -794,7 +796,7 @@ file's turn:
 
 Then the open tabs are told. A new run reads every scanned page afresh.
 
-**Telling open tabs** (`pdf_ocr.announce`). Every apply that found pages
+**Telling open tabs** (`ocr_run.announce`). Every apply that found pages
 staged, from either run, and every forget sends `{t: "ocr", doc_id,
 stamp}` once its steps are through, failed or not
 ([collab.md](collab.md)). It goes to the rooms of the pages showing the

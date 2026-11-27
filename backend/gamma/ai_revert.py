@@ -72,6 +72,12 @@ class RevertError(Exception):
         super().__init__(detail)
         self.status, self.detail, self.conflict, self.preview = status, detail, conflict, preview
 
+    def body(self) -> dict:
+        """The answer a route gives with ``status``: ``{detail, conflict?,
+        preview?}`` (the chat's revert, the Changes list's undo)."""
+        return {"detail": self.detail, **({"conflict": self.conflict} if self.conflict else {}),
+                **({"preview": self.preview} if self.preview else {})}
+
 
 def _row(conn, block_id: str):
     return conn.execute(

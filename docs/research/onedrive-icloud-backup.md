@@ -6,7 +6,7 @@ Microsoft and Apple offer an app that writes there, and the design that was
 picked, with the shared layer the clouds now sit on. Surveyed in November
 2026 from Microsoft's and Apple's documentation (sources below) and the
 Google Drive backup ([google-drive-backup.md](google-drive-backup.md)). How
-it works now is in [debugging.md](../dev/debugging.md#cloud-destinations).
+it works now is in [backups.md](../dev/backups.md#cloud-destinations).
 
 ## What Microsoft allows
 
@@ -150,7 +150,7 @@ it works now is in [debugging.md](../dev/debugging.md#cloud-destinations).
 ## Still open
 
 - **Publisher verification.** Gamma's Microsoft app is registered
-  ([debugging.md](../dev/debugging.md#onedrive)) but not verified: a
+  ([backups.md](../dev/backups.md#onedrive)) but not verified: a
   verified publisher (a Microsoft Partner Network ID and a verified domain)
   would keep work tenants from showing it as unverified.
 - **A work or school account.** The live run (2026-11-22) used a personal

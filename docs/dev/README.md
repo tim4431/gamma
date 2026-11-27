@@ -52,7 +52,7 @@ documentation with the code.
   [UI design](ui-design.md), [i18n](i18n.md), and the
   [source map](../../frontend/src/README.md).
 - **AI providers:** build per-user configuration through `ai_runtime(user)`
-  and resolve a request's model with `resolve_model(rt, requested, role)`;
+  and resolve a request's model with `ai_roles.resolve_model(rt, requested, role)`;
   protocol-specific behavior belongs in `gamma/ai_protocols/`, and model
   listings, context windows and prices come from the live catalog. See
   [AI](ai.md).
@@ -101,6 +101,7 @@ These describe the implementation unless explicitly marked as plans.
 | Photos and images placed on PDF pages and sheets: moving, turning, cropping and flipping them, the upload, the `/Stamp` they become in the annotated PDF, and Notability's pictures | [Pictures](pictures.md) |
 | Audio recordings in step with the notes: capture, the one replay store, playback, transcription | [Recordings](recording.md) |
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
+| Citations in a style: the record a citation reads, the CSL JSON, RIS and BibLaTeX formats beside BibTeX, the bibliography answer, citeproc-js in the browser behind its lazy boundary with the bundled styles and locales, Quick Copy and the copies (the menus and their commands, the share popover, the Reference line, Copy with citation, the clipboard), the styles an account adds, what older copies meet | [Citations](citations.md) |
 | Imports and exports: dialogs, formats, pipelines | [Import and export](import_export.md) |
 | The typesetting engine both PDF writers share, and the annotated-PDF export | [PDF typesetting](pdf_typesetting.md) |
 | Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |
@@ -119,6 +120,7 @@ These describe the implementation unless explicitly marked as plans.
 | A page's highlights found again by their text after its PDF is replaced, the rough matches drawn dashed, the ones not found drawn hollow with their closest match, the review card of both, moving one by hand; a text file's ranges found again by their quote and context when the file changes | [Highlights after a PDF replacement](highlight_relocation.md) |
 | MCP, integration tokens, OAuth, and assistant plugins | [MCP](mcp.md) |
 | Preferences, Settings panes, notices, and backup tasks | [Settings](settings.md) |
+| Where the backup tasks' snapshots go off the server: the S3-compatible bucket and its settings, Google Drive and OneDrive, the clouds' one sign-in layer and transport | [Backup destinations](backups.md) |
 | The server's network proxy: the three modes, routing by destination and the bypass list, HTTP and SOCKS5 tunnels, guarded fetches pinned through the proxy, the Zotero stream, S3 and the local agents, the hosted lock, the admin API and its Test | [Network proxy](network_proxy.md) |
 | A NAS over HTTPS: the system trust store in the server, no redirects between Gamma servers, failures worded, a self-signed certificate trusted by its fingerprint, moving a server's address with its links, HSTS on public names only, where plain http is still allowed | [HTTPS for a NAS](https.md) |
 | Themes, controls, menus, dialogs, and editor interactions | [UI design](ui-design.md) |

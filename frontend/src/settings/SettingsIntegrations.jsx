@@ -1,6 +1,6 @@
 import React from "react";
 import { guideEvents } from "../guide/events.js";
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { CopyField, Empty, FormNotice, PaneHead, Section, Row, Segmented, Step, Toggle } from "./SettingsKit";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { LinkIcon, KeyIcon, MonitorIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon, HistoryIcon, TrashIcon,
@@ -182,7 +182,7 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
     try { await work(); } catch (err) { setFailed({ where, text: err.message }); } finally { setDoing(""); }
   };
   const failure = (where) => failed?.where === where ? <FormNotice>{failed.text}</FormNotice> : null;
-  const post = (url, body) => apiJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const post = (url, body) => apiJson(url, jsonInit("POST", body));
   // A read token reads the workspaces ticked, at their levels; a write
   // token is the open workspace's alone.
   const create = () => run("create", async () => {

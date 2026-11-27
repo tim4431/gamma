@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 // The one id generator, owned by the pure block model (re-exported below).
 import { makeId } from "../model/blockModel";
 import { t } from "../../shared/i18n/i18n.js";
-import { fmtBytes } from "./format.js";
+import { escapeHtml, fmtBytes } from "./format.js";
+import { canCopyImage } from "./copyImage.js";
 import { keepaliveFetch } from "./keepalive.js";
 import { dispositionName, saveBlob } from "./saveFile.js";
 import { sha256Hex } from "./sha256.js";
@@ -275,19 +276,43 @@ async function copyText(text) {
   return legacyCopy(plain);
 }
 
-// Copy with a rich HTML flavor plus a plain-text fallback flavor.
-async function copyRich(html, plain) {
-  if (window.isSecureContext && navigator.clipboard?.write && window.ClipboardItem) {
+// Plain text as HTML that pastes the same: escaped, line breaks kept.
+const plainHtml = (text) => escapeHtml(text).replace(/\r?\n/g, "<br>");
+
+// Copy what is still being made: `payload`, a promise of {text, html?} (a
+// citation being rendered, a bibliography being fetched). Call it in the
+// click itself, before anything is awaited. With the async clipboard the
+// ClipboardItem is made at once with promised blobs, so Safari and the
+// iPad's web view keep the gesture while the payload comes (copyImage.js
+// does the same); without it (plain-HTTP LAN) the payload is awaited and
+// the legacy copy runs, which only works while the browser still counts
+// the click. `html: false` copies text/plain alone (BibTeX, a key
+// command); otherwise text/html goes too, the payload's html or, when it
+// has none, its text as HTML. Resolves true when the copy landed, false
+// when the clipboard refused (offer a Copy action for a fresh gesture);
+// rejects with the payload's own failure.
+async function copyPayload(payload, { html = true } = {}) {
+  const made = Promise.resolve(payload);
+  const htmlOf = (value) => value?.html || plainHtml(value?.text || "");
+  if (canCopyImage()) {  // the async clipboard, which takes a ClipboardItem
     try {
-      await navigator.clipboard.write([new ClipboardItem({
-        "text/html": new Blob([html], { type: "text/html" }),
-        "text/plain": new Blob([plain], { type: "text/plain" }),
-      })]);
+      const blob = (type, pick) => {
+        const promised = made.then((value) => new Blob([pick(value)], { type }));
+        promised.catch(() => {});  // a failed payload is reported below
+        return promised;
+      };
+      const flavours = { "text/plain": blob("text/plain", (value) => value?.text || "") };
+      if (html) flavours["text/html"] = blob("text/html", htmlOf);
+      await navigator.clipboard.write([new ClipboardItem(flavours)]);
       return true;
     } catch {}
   }
-  return legacyCopy(plain, html);
+  const value = await made;
+  return legacyCopy(value?.text || "", html ? htmlOf(value) : "");
 }
+
+// Copy HTML with its plain-text flavour: copyPayload of what is in hand.
+const copyRich = (html, plain) => copyPayload({ html, text: plain });
 
 // FastAPI errors come as {"detail": "..."} — show the human message, not raw JSON.
 // The thrown Error carries `status` and the parsed JSON body as `data`, so
@@ -354,6 +379,12 @@ async function apiJson(url, options = {}, { keepalive } = {}) {
   return r.json();
 }
 
+// apiJson's options for a JSON request: the method, the JSON content type
+// and `body` as JSON, or, with none (a DELETE, a POST that only asks), no body.
+function jsonInit(method, body) {
+  return { method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) };
+}
+
 async function resolvePdfUrl(rawUrl, allowOa = true, { signal } = {}) {
   // {source_url, note} — note explains e.g. that an open-access preprint was
   // substituted because the published PDF is paywalled. `signal` stops it
@@ -410,4 +441,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, apiError, proxyRefusal, noteDeletingWorkspace, setShareView, getShareToken, withShare, withWorkspace, blockLinkUrl, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson, downloadFetched };
+export { API, makeId, fmtBytes, escapeHtml, sha256, getDocIdForUrl, isPdfFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, jsonInit, apiError, proxyRefusal, noteDeletingWorkspace, setShareView, getShareToken, withShare, withWorkspace, blockLinkUrl, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, copyPayload, readNdjson, downloadFetched };

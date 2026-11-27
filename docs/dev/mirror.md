@@ -351,8 +351,17 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
 - **A remote from before the check** names no `format`, and its rounds run
   as before. The check runs in the copy's engine, so it protects copies
   that run this release or a later one.
-- **Step 55** (`positions`, [migrations.md](migrations.md)) is the newest
-  format move, from 52: the kind column reads a picture's regions
+- **Step 72** (`citations`, [migrations.md](migrations.md)) is the newest
+  format move, from 55: a paper's record gains the issue and the month its
+  cached BibTeX entry holds, and new keys a citation reads (`issue`,
+  `journal_abbr`, `date`, `url`, [citations.md](citations.md#the-record-a-citation-reads)).
+  An older copy's metadata popover rebuilds the record from the fields it
+  knows, so an edit there would erase them on the other side; until both
+  sides run the step, the round pauses. The step rewrites both copies
+  alike, the stored bases too, so a pair that has run it has nothing to
+  send for it.
+- **Step 55** (`positions`, [migrations.md](migrations.md)) moved the
+  format from 52: the kind column reads a picture's regions
   (`image_position`) as highlights, and a work folder's file too large to
   keep is a document at `listed` ([documents.md](documents.md) "The listed
   state"), which an older copy's op path refuses as a 400 and would stop a

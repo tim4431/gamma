@@ -14,7 +14,7 @@ from ocr_fixtures import GARBLED, H, PRINTED, PRINTED_TEXT, W, printed_scan_pdf
 from test_pdf_ocr_store import DOC, WS, store
 from test_pdf_text_lock import lock_checks  # noqa: F401 — the fixture
 
-from gamma import pdf_ocr, pdf_text
+from gamma import ocr_run, pdf_ocr, pdf_text
 from gamma.pdf_export import viewer_rect_to_pdf
 from gamma.pdf_text import GlyphPages, quote_under
 
@@ -249,7 +249,7 @@ def test_the_real_engine_end_to_end(data_dir):
     assert "resonance" not in pdf_text.extract_text(src, 10_000)
     pdf_ocr.set_scanned(WS, DOC, 1, 1)
     (page_no, raster), = pdf_text.page_rasters(src, [1], ocr_engine.render_zoom, annots=False, grey=True)
-    pdf_ocr.stage_page(WS, DOC, page_no, pdf_ocr.to_lines(ocr_engine.recognize(raster), raster))
+    pdf_ocr.stage_page(WS, DOC, page_no, ocr_run.to_lines(ocr_engine.recognize(raster), raster))
     pdf_ocr.apply(WS, DOC, ocr_engine.engine())
     assert pdf_text.extract_text(src, 10_000) == PRINTED_TEXT
     lines = pdf_ocr.page_lines(WS, DOC, 1)

@@ -91,15 +91,17 @@ READ_ONLY_ALLOWED = (
 )
 # Reads sent as a POST, because their ids do not fit a URL: the file chips'
 # page lookup, the summaries of the tabs' and recents' pages the listing
-# does not carry, and the Ctrl+F panel's two searches, with the scope of
-# its chips and the page ids its predicates keep. The gate treats them as
-# reads: a read-only server lets them through, and they move no last
-# write. Whole paths.
+# does not carry, the Ctrl+F panel's two searches, with the scope of
+# its chips and the page ids its predicates keep, and the citations of the
+# pages a copy takes (the menus' Copy citation and Copy bibliography). The
+# gate treats them as reads: a read-only server lets them through, and they
+# move no last write. Whole paths.
 POST_READS = (
     "/api/pages/by-docs",
     "/api/pages/summaries",
     "/api/block-search",
     "/api/document-search",
+    "/api/bibliography",
 )
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 

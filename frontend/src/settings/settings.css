@@ -41,7 +41,7 @@
   text-align: left;
   font-size: var(--fs-md);
   color: var(--text-secondary);
-  padding: 5px 12px;
+  padding: 4px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
@@ -469,9 +469,9 @@
 .setPickEmpty { padding: 6px 8px; font-size: var(--fs-2xs); color: var(--text-muted); }
 /* A dialog with a members list inside scrolls its body, not the overlay. */
 .subDialog .settingsForm { overflow-y: auto; min-height: 0; }
-/* Backups › Google Drive's Connect (BackupDrive.jsx): the link that copies
-   the code and opens Google's page, drawn as the dialog's button. */
-.driveOpenGoogle { align-self: flex-start; gap: var(--space-2); text-decoration: none; }
+/* Backups › a cloud's Connect (BackupCloud.jsx): the link that opens the
+   service's page (and copies the code), drawn as the dialog's button. */
+.cloudOpenPage { align-self: flex-start; gap: var(--space-2); text-decoration: none; }
 /* Backups › Cloud copies' dialogs (CloudCopies.jsx): wider, the list
    scrolling under its bar of filters. */
 .reportModal.cloudCopies { width: min(640px, calc(100vw - 32px)); }
@@ -756,7 +756,7 @@ button.aiModelTag:disabled { cursor: default; }
 .settingsMobileBack { display: none; }
 .settingsSidebar { padding: 16px 10px; overflow: hidden; }
 .settingsNavBtn { flex-shrink: 0; line-height: var(--lh-tight); } /* one row height for Latin and CJK faces alike */
-/* The groups between the account card and Help: an admin's twenty panes
+/* The groups between the account card and Help: an admin's twenty-one panes
    fit the dialog's full height, the rows touching and the captions 4 px
    apart; a shorter window scrolls this list alone, the card and Help
    staying where they are. A thin scrollbar keeps the rail's width for
@@ -1090,3 +1090,24 @@ button.aiModelTag:disabled { cursor: default; }
 .keyChip.conflict .keyCap { border-color: var(--danger); color: var(--danger); }
 .keyboardPane [data-conflict="true"] .settingDesc { color: var(--danger); }
 .keyboardPane .setRow:has(.keyBinding) { padding-block: 5px; }
+
+/* --- Citations pane (SettingsCitations.jsx, CitationStyles.jsx): layout only --- */
+/* The style's preview, a .setCard in .setSubRows under the Style row, level
+   with the rows' text (their padding): the sample's citation, then its
+   bibliography, under .citeLabel captions. */
+.citeSample { display: flex; flex-direction: column; gap: 4px; margin: 0 8px 6px; }
+.citeSample .citeHtml + .citeLabel { margin-top: 6px; }
+/* On a phone the preview takes the pane's width, not the rows' text column. */
+@media (max-width: 640px) {
+  .citeSampleRows { padding-left: 0; }
+}
+.citeCredit { padding: 6px 8px 0; }
+.citeCredit a { color: inherit; text-decoration: underline; }
+/* Add a citation style: the search, and its results scrolling under it in
+   a box of one height, so the dialog and its field stay put while the
+   hint, Searching…, the results and "no match" take turns; a gap before
+   the buttons. */
+.reportModal.citeStyleDialog { width: min(600px, calc(100vw - 32px)); }
+.citeStyleSearch { width: 100%; margin-bottom: 0; }
+.citeStyleResults { height: min(50vh, 420px); overflow-y: auto; margin-bottom: var(--space-5); }
+.citeStyleResults .settingsPaneHint { padding: 8px 4px; }

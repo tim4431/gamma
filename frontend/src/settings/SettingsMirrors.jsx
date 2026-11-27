@@ -22,7 +22,7 @@
 // (DELETE /api/pages/{id}/publish for each page), never the clone actions.
 import React from "react";
 import { guideEvents } from "../guide/events.js";
-import { API, apiJson, fmtBytes } from "../shared/lib/utils";
+import { API, apiJson, jsonInit, fmtBytes } from "../shared/lib/utils";
 import { Section, SubDialog, Field, DialogButtons, IconChoices, Segmented, Empty, WorkspaceFolder } from "./SettingsKit";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import {
@@ -337,7 +337,6 @@ export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId,
       if (m.workspace_id === currentId && (path === "/relink" || path === "/detach")) refreshSession?.();
     }
   }
-  const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   function nameOf(m) {
     if (linkKind(m) === "zotero") return m.name || byWs[m.workspace_id]?.name || zoteroLibraryLabel(m);
     return m.name || byWs[m.workspace_id]?.name || t("this clone");
@@ -353,7 +352,7 @@ export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId,
           ? t("Make “{m}” identical to {remote_name} on {remote_url}? Only differing pages are written; your texts it replaces or removes are kept as conflicts.", { m: nameOf(m), remote_name: m.remote_name, remote_url: hostOf(m.remote_url) })
           : t("Make {remote_name} on {remote_url} identical to “{m}”? Only differing pages are written; origin's texts it replaces or removes are kept as conflicts.", { remote_name: m.remote_name, remote_url: hostOf(m.remote_url), m: nameOf(m) }),
       confirmLabel: direction === "pull" ? t("Force pull") : t("Force push"), danger: true,
-      onConfirm: () => call(m, "/force", json({ direction }), t("{action} running in the background.", { action: direction === "pull" ? t("Force pull") : t("Force push") })),
+      onConfirm: () => call(m, "/force", jsonInit("POST", { direction }), t("{action} running in the background.", { action: direction === "pull" ? t("Force pull") : t("Force push") })),
     });
   }
   function forget(m) {
@@ -393,7 +392,7 @@ export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId,
     const words = LINK_ACTIONS[linkKind(m)];
     const more = detached ? [
       { icon: LinkIcon, label: T("Reattach"), title: words.reattach,
-        onClick: () => call(m, "/relink", json({}), t("Reattached — syncing in the background.")) },
+        onClick: () => call(m, "/relink", jsonInit("POST", {}), t("Reattached — syncing in the background.")) },
     ] : [
       ...(zotero ? [{ icon: SettingsIcon, label: T("Link settings…"), title: T("When Zotero's changes come in, the direction, and what PDFs and tags travel"),
         onClick: () => setSettingsOf(m) }] : []),
@@ -461,7 +460,7 @@ export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId,
           ) : null}
           {onlyReconnect ? null : detached ? (
             <button className="uiBtn sm primary" disabled={busy} title={t(words.reattach)}
-              onClick={() => call(m, "/relink", json({}), t("Reattached — syncing in the background."))}>
+              onClick={() => call(m, "/relink", jsonInit("POST", {}), t("Reattached — syncing in the background."))}>
               <LinkIcon size={14} /> {t("Reattach")}
             </button>
           ) : (

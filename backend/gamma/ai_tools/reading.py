@@ -15,6 +15,7 @@ from ..blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filing, fo
                             label_by_name, label_names, load_props, page_parents, top_of, tree_parents)
 from ..documents.model import file_hash, is_listed, is_pdf, page_document, pdf_file_hash
 from ..annotations import anchors
+from ..names import family_name
 from ..notebook import is_sheet
 from ..work_folders import paths as work_paths
 from ..work_folders.library import listed, work_folder_of
@@ -75,7 +76,9 @@ def _page_line(paths: dict, names: dict, page_id: str, content, props: dict, fol
     meta = props.get("meta") or {}
     authors = [a for a in (meta.get("authors") or []) if str(a).strip()]
     if authors or meta.get("year") or meta.get("venue"):
-        first = str(authors[0]).split()[-1] if authors else ""
+        # The surname a reference prints ("Pereira Campos" of "Pereira
+        # Campos, Jorge Fernando", "van der Berg" of "Jan van der Berg").
+        first = family_name(str(authors[0])) if authors else ""
         who = f"{first} et al." if len(authors) > 1 else first
         bits.append("meta: " + ", ".join(
             x for x in (who, str(meta.get("year") or ""), str(meta.get("venue") or "")[:40]) if x))

@@ -110,10 +110,11 @@ export function sweepRuns() {
 // scenarios/https.mjs); a scenario may change it between two starts.
 // The server options a test server starts with (gamma/server_options.py,
 // set by manage.py set-option before it starts): nothing goes out to the
-// paper registries or models.dev (OFFLINE), and no scan an upload stores is
-// recognized by itself (gamma/ocr_auto.py; scenarios/scanLayer.mjs turns it
-// on for its automatic steps). A scenario's `options` add to them.
-const OFFLINE = { metadata_lookup: "off", model_catalog: "off" };
+// paper registries, models.dev or the CSL style repository (OFFLINE), and no
+// scan an upload stores is recognized by itself (gamma/ocr_auto.py;
+// scenarios/scanLayer.mjs turns it on for its automatic steps). A
+// scenario's `options` add to them.
+const OFFLINE = { metadata_lookup: "off", model_catalog: "off", citation_styles: "off" };
 const NO_AUTO_OCR = { ocr_auto: "off" };
 
 export class Server {
@@ -447,7 +448,7 @@ export async function settingsPane(page, name) {
 // citation a page with metadata asks for by itself once AI looks connected
 // gets an empty answer, since no provider is there to write it.
 // aiModelsAnswer(models, picks) is GET /api/ai/models' answer for `models`:
-// each task's model as gamma/ai_settings.resolve_roles resolves it, a pick
+// each task's model as gamma/ai_roles.resolve_roles resolves it, a pick
 // in `picks` ({role: id}) when offered, else the chat model, the chat's
 // own the first model; no favorites.
 export function aiModelsAnswer(models, picks = {}) {

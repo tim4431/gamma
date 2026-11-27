@@ -22,7 +22,7 @@ from test_jobs import Gate
 from test_ocr_api import scan_page, start, upload
 from test_pdf_ocr_run import born_digital
 
-from gamma import jobs, ocr_auto, ocr_engine, pdf_ocr, pdf_text, server_options, workspaces
+from gamma import jobs, ocr_auto, ocr_engine, ocr_run, pdf_ocr, pdf_text, server_options, workspaces
 from gamma.db import connect_pages_db, connect_users_db, page_now
 
 PW = "oau-pass-12345"
@@ -211,14 +211,14 @@ def test_one_automatic_run_at_a_time_the_next_when_it_ends(amy, fake, monkeypatc
 def test_an_automatic_run_gives_way_to_a_person_and_goes_on_after(amy, fake, monkeypatch):
     ws = workspace_of("oau_amy")
     held, mine, go_on = Held(monkeypatch, fake), [], threading.Event()
-    real = pdf_ocr.run
+    real = ocr_run.run
 
     def run(ws_, doc_id, src, **kwargs):  # the person's run held until the test has looked
         if doc_id in mine:
             assert go_on.wait(10), "the test never let the person's run go on"
         return real(ws_, doc_id, src, **kwargs)
 
-    monkeypatch.setattr(pdf_ocr, "run", run)
+    monkeypatch.setattr(ocr_run, "run", run)
     try:
         _page, doc = uploaded(amy, scan(2))
         assert held.reading.wait(10)
@@ -282,7 +282,7 @@ def test_a_stop_declines_the_file_and_a_failure_settles_it(amy, fake, monkeypatc
     def too_long(*_args, **_kwargs):
         raise ValueError("This PDF has 3000 scanned pages; text recognition reads at most 2000 pages of a file.")
 
-    monkeypatch.setattr(pdf_ocr, "run", too_long)
+    monkeypatch.setattr(ocr_run, "run", too_long)
     _page, long = uploaded(amy, scan(1))
     failed = automatic(ws, long)
     assert failed["state"] == "failed" and "3000" in failed["error"]
@@ -333,7 +333,9 @@ def test_an_automatic_run_stopped_while_it_waits_is_declined(amy, monkeypatch):
     assert jobs.latest(jobs.WORKSPACE, "ocr", f"{ws}:{doc}")["id"] == auto["id"], "never started again"
 
 
-def test_the_jobs_sweep_starts_what_a_restart_left_queued(amy):
+def test_the_jobs_round_starts_what_a_restart_left_queued(amy):
+    from gamma.app import sweep_jobs
+
     ws, me = workspace_of("oau_amy"), account_of("oau_amy")
     _page, doc = scan_page(amy, scan(1))
     key = f"{ws}:{doc}"
@@ -347,7 +349,7 @@ def test_the_jobs_sweep_starts_what_a_restart_left_queued(amy):
                      "'gone', ?, ?)", (old, ws, key, jobs.INTERRUPTED, page_now(), page_now()))
         conn.commit()
     ocr_auto.reset()  # a process that knows of no queue yet
-    jobs.sweep()
+    sweep_jobs()  # the app's round, at startup and every jobs.SWEEP_INTERVAL_S
     job = automatic(ws, doc)
     assert job is not None and job["state"] == "done" and job["result"]["recognized"] == 1
     assert jobs.get(old) is None, "the interrupted row goes: it would read as failed beside the run that went on"

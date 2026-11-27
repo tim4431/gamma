@@ -33,7 +33,7 @@ struct ShellView: UIViewControllerRepresentable {
 /// presented from here.
 final class ShellController: UIViewController {
     private let model: AppModel
-    private let shell: WebShell
+    let shell: WebShell
     private let chrome: Chrome
     private let bar: WKWebView
     private var launcherView: WKWebView?
@@ -88,12 +88,11 @@ final class ShellController: UIViewController {
             if let failure {
                 self.model.loadFailed(failure)
             } else {
-                // A new document: what the last one asked of the screen is over.
-                self.awake.pageGone()
+                self.pageGone()
                 self.model.pageLoaded()
             }
         }
-        shell.onProcessEnded = { [weak self] in self?.awake.pageGone() }
+        shell.onProcessEnded = { [weak self] in self?.pageGone() }
         // The screen the page keeps on sleeps while the app is away (ScreenAwake).
         NotificationCenter.default.addObserver(self, selector: #selector(cameToFront),
                                                name: UIApplication.didBecomeActiveNotification, object: nil)
@@ -177,11 +176,11 @@ final class ShellController: UIViewController {
         ])
         capture.surface = shell.webView
         gestures.surface = shell.webView
-        if NativePieces.current.pencilCapture { container.addGestureRecognizer(capture) }
+        container.addGestureRecognizer(capture)
         #if DEBUG && targetEnvironment(simulator)
         PencilStandIn.link(shell.webView, to: capture)
         #endif
-        if NativePieces.current.pencilGestures { container.addInteraction(gestures.interaction) }
+        container.addInteraction(gestures.interaction)
         view = container
     }
 
@@ -319,6 +318,14 @@ final class ShellController: UIViewController {
 
     @objc private func toggleBar() {
         model.setBarHidden(!model.barHidden)
+    }
+
+    /// A new document, or the end of the page's process: what the last one
+    /// asked of the shell is over. It says nothing as it unloads, so the
+    /// edit menu it turned off over a selection (`editMenu`) comes back here.
+    private func pageGone() {
+        awake.pageGone()
+        shell.webView.editMenuShown = true
     }
 
     @objc private func reloadPage() {
@@ -476,7 +483,7 @@ final class ShellController: UIViewController {
     private func deliver(pointerId: Int, samples: [[Double]], held: Int?) {
         let line = live.finish()
         Task {
-            await shell.bridge.send(.stroke(pointerId: pointerId, samples: samples, held: held))
+            await shell.bridge.sendStroke(pointerId: pointerId, samples: samples, held: held)
             if let line { live.remove(line) }
         }
         Task {

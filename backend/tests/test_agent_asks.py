@@ -1,5 +1,5 @@
 """An assistant over MCP asking the person about a change in two places at
-once (gamma/mcp_server.py ``_answer``, gamma/agent_asks.py): its client's
+once (gamma/mcp_server.py ``_ask_both``, gamma/agent_asks.py): its client's
 question (elicitation) and Gamma, where the change is drawn on its page and
 answered as a chat card is. The first answer decides; answered in Gamma,
 the client's question is withdrawn, each ask its own when one session asks
@@ -58,7 +58,7 @@ def _conn(monkeypatch):
 
 def _ask(session, monkeypatch, shown=("ws1", PREVIEW)):
     context = SimpleNamespace(session=session, request_id=3)
-    return anyio.run(mcp_server._answer, context, _conn(monkeypatch), "edit_block", QUESTION, shown)
+    return anyio.run(mcp_server._ask_both, context, _conn(monkeypatch), "edit_block", QUESTION, shown)
 
 
 def _answer_in_gamma(*answers):
@@ -113,7 +113,7 @@ def test_two_asks_on_one_session_each_withdraw_their_own_question(monkeypatch):
 
     async def ask(call, page):
         context = SimpleNamespace(session=session, request_id=call)
-        answers[call] = await mcp_server._answer(context, conn, "edit_block", f"ask {call}",
+        answers[call] = await mcp_server._ask_both(context, conn, "edit_block", f"ask {call}",
                                                  ("ws1", {**PREVIEW, "page_id": page}))
 
     async def both():
@@ -137,7 +137,7 @@ def test_a_call_cancelled_while_it_asks_ends_gammas_question_at_once(monkeypatch
 
     async def cancelled():
         with anyio.move_on_after(0.2):
-            await mcp_server._answer(context, conn, "edit_block", QUESTION, ("ws1", PREVIEW))
+            await mcp_server._ask_both(context, conn, "edit_block", QUESTION, ("ws1", PREVIEW))
 
     start = time.monotonic()
     anyio.run(cancelled)

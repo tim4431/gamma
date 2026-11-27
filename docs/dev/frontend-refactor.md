@@ -51,6 +51,7 @@ does not show comes in chunks of its own, through `lazySurface` and
 | A vault page's Edit the file (`vault/FileSourceDialog.jsx`) and an opened PDF's Add to library… (`vault/FolderPickerDialog.jsx`) | while open | nothing |
 | The code view (`documents/viewers/TextViewer.jsx`, with `@codemirror/search` and `@codemirror/language-data`; each grammar a chunk of its own, fetched when a file of it opens; its marks, popup, Find row and margin layers, `textMarks.js`, `TextTip.jsx`, `FindPanel.jsx` and `TextOverlay.jsx`, come with it, and it imports nothing of pdf.js: the popup's frame is `shared/ui/TipFrame.jsx`, the marks' tools `pdf/MarkTools.jsx` and `pdf/selectionTip.js`, none of which loads it) and the picture, the player and the file pane (`documents/viewers/FileViews.jsx`) | with a page whose document is of their format (`documents/DocumentPane.jsx`); App fetches the chunk as the page starts to open (`preloadViewer`) | the pane's empty shell (`.docViewSkeleton`) |
 | pdf.js and its worker | `loadPdfEngine()` in `pdf/PdfViewer.jsx`, awaited just before `getDocument` | the viewer's skeleton and status pill |
+| The citation engine (`citations/cslCore.js` with citeproc and `cslAssets.js`; DOMPurify it shares with `shared/lib/svgSanitize.js`), and each bundled style and CSL locale as a raw chunk of its own (`import.meta.glob` with `?raw`), fetched the first time a render needs it | through the one literal `import("./cslCore.js")` in `citations/render.js`, which nothing else may bypass; `preloadCitations()` fetches it on pointer-enter or focus of what renders (the page and selection menus' citation rows, the highlight menu's Copy with citation), as the share popover or the metadata popover's Reference line opens, and as the Export dialog's Bibliography card is picked; `preloadStyle(id)` a style's XML as its row is hovered ([citations.md](citations.md#the-engine-behind-a-lazy-boundary)) | the surface's "Formatting…" or nothing; a copy waits inside its click (`copyPayload`) |
 | The window's text recognition (`pdf/ocrTab.js` with tesseract.js and `pdf/ocrLoop.js`; 73 KB, 17 KB in Brotli), its worker script (111 KB, 28 KB) and its one core (`tesseract-core-simd-lstm.wasm.js`, 3.9 MB, 1.1 MB), the last two hashed assets fetched by the engine itself | when a scan's pages are first read in the window: `pdf/ocrRuns.js`, which is small and in the `App` chunk, imports it, through a loader its tests replace ([pdf_loading.md](pdf_loading.md#recognized-words)) | nothing: the Document menu's row and the task's row show the run |
 
 Mermaid was already loaded this way (`shared/lib/mermaidRenderer.js`).
@@ -166,11 +167,15 @@ rows the first feeds), `explorer/useFileSearch.js` (quick open's files,
 QuickOpen's own), `comments/useInkThreads.js` (what a comment thread on
 an ink group does to the ink) and `pdf/useHighlightWait.js` (what the PDF's
 next press or selection is for while a note's ⊕ or a highlight waits for
-one: a link, a new place, another passage) are. State that must
+one: a link, a new place, another passage) and `citations/useCitations.js`
+(the account's citation style, language and Quick Copy format as they
+apply here, the bibliography answers and every copy of a citation,
+[citations.md](citations.md)) are. State that must
 outlive a component, or be read outside React, is a store with listeners
 that components read through `useSyncExternalStore` (`pdf/translateState.js`,
 `recording/recorderStore.js`, `replay/playback.js`,
-`settings/settingsReads.js`). App calls the owner and hands its commands on.
+`settings/settingsReads.js`, and `citations/citationApi.js`, the account's
+added styles, which the copies, Settings and the Export dialog share). App calls the owner and hands its commands on.
 
 - **An owner is tested.** Its rules are a pure module with a node test,
   since the frontend has no component tests: `ink/stripState.js` under
@@ -182,7 +187,8 @@ that components read through `useSyncExternalStore` (`pdf/translateState.js`,
   `explorer/directoryRows.js` under `useDirectoryRows.js`, `layoutKeeping`
   in `useFilesWindow.js`, `explorer/fileSearch.js` under
   `useFileSearch.js`, `pdf/highlightWait.js` under
-  `useHighlightWait.js` and `ai/modelsSync.js` under `useAiModels.js`.
+  `useHighlightWait.js`, `ai/modelsSync.js` under `useAiModels.js` and
+`citations/citeRules.js` under `useCitations.js`.
 - **An owner is narrow.** It takes the few inputs it reads and returns
   state and stable commands. A hook that takes App's variables wholesale
   moves code without giving it an owner.
@@ -410,9 +416,10 @@ sign-in live in the settings feature (`useProviderEditor`,
 results and the login check.
 
 Split `shared/ui/Widgets.jsx` by ownership: generic controls stay shared;
-workspace docks (`DockWindow`, `OpenTabs`) and chat/editor rendering
+workspace docks (`DockWindow`) and chat/editor rendering
 (`ChatMarkdown`, `GammaLinkCard`, `BlockDropIndicator`) belong with their
-feature. The transfer dialogs already live in `transfers/`.
+feature. The transfer dialogs already live in `transfers/`, and the tab
+strip (`OpenTabs`) in `workspace/`.
 The colour palette is `shared/model/palette.js` (its React context
 `shared/ui/paletteContext.js`) and the zoom limits are
 `shared/model/zoom.js`, so neither the block editor nor the notebook viewer

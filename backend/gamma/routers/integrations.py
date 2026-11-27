@@ -15,6 +15,7 @@ import secrets
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .. import agent_changes, ratelimit
@@ -26,7 +27,6 @@ from ..integrations import (ALL, EDITING_ROLES, TURN, comment_grant, create_toke
                             set_asks, set_deletes, set_workspaces, token_digest)
 from ..mcp_oauth import load, public_base, store
 from ..workspaces import list_for_user, refuse_writes, role_of
-from .ai import revert_refusal
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 DEVICE_SECONDS = 600
@@ -162,7 +162,7 @@ def _token_workspaces(user_id: str, token_id: str) -> list[str]:
         raise HTTPException(404, "This connection is gone.")
     found = granted(row[0], row[1])
     mine = {w["id"] for w in list_for_user(user_id) if not w["deleting"]}
-    return [w for w in mine] if found == ALL else [w for w in found if w in mine]
+    return list(mine) if found == ALL else [w for w in found if w in mine]
 
 
 @router.get("/tokens/{token_id}/changes")
@@ -206,7 +206,7 @@ def undo_token_change(token_id: str, change_id: str, payload: ChangeUndo, reques
     try:
         return agent_changes.undo(ws, change, actor=actor_of(request), force=payload.force)
     except RevertError as e:
-        return revert_refusal(e)
+        return JSONResponse(status_code=e.status, content=e.body())
 
 
 @router.delete("/tokens/{token_id}")

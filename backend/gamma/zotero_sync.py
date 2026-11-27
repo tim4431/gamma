@@ -885,7 +885,9 @@ def _own_library(r: Round) -> None:
     restored pages win their differences and Zotero's values stay in the
     conflicts. Its rows (the backup's) read every restored record, folder
     and standalone PDF as changed here (Gamma's base blanked: their
-    projections are exact, so only a real difference goes); a note's (a
+    projections are exact, so only a real difference goes; an item's split
+    of its authors Zotero changed since the backup reads so too,
+    gamma/zotero_sync_items.py ``_Unit._names``); a note's (a
     note page's, a child note's) or an annotation's keeps its bases and
     reads what Zotero changed since the backup as changed here too
     (``detail.restore``, the notes' and annotations' merges), so a mapping

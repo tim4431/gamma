@@ -5,9 +5,10 @@ request/stream shape, and the library agent: what it can reach, how the tool
 loop runs, and what the user controls. The tools themselves are catalogued in
 [ai_tools.md](ai_tools.md); how long papers reach the model is
 [ai_context.md](ai_context.md). Code: `gamma/ai_settings.py`,
+`gamma/ai_roles.py` (the model each task uses),
 `gamma/ai_protocols/` (one adapter per wire), `gamma/ai_client.py`,
 `gamma/ai_catalog.py`, `gamma/ai_context.py`, `gamma/ai_tools/`,
-`gamma/chatgpt_oauth.py`, `gamma/routers/ai.py`. PDF translation
+`gamma/chatgpt_oauth.py`, `gamma/gemini_oauth.py`, `gamma/routers/ai.py`. PDF translation
 (`gamma/routers/translate.py`), the handwriting selection's Redraw as
 shapes and Convert to text (`gamma/routers/ink_ai.py`) and the stored chat
 conversations have their own documents: [translation.md](translation.md),
@@ -115,7 +116,7 @@ carries its connection's `billing`. It adds the model each task uses
 model: the account's chat pick while it is offered, else the account's own
 first model, else the server's first. AI endpoints must use it, not module-level config
 constants for credentials or model routing, and resolve a request's model
-with `resolve_model(rt, requested, role)`. Each
+with `ai_roles.resolve_model(rt, requested, role)`. Each
 protocol's default base URL is the provider's own (`config.AI_BASE_URLS`);
 another endpoint is a connection's own base URL, and no environment
 variable moves the default (an `ANTHROPIC_BASE_URL` a shell exports is not
@@ -185,7 +186,7 @@ if its upstream contract changes.
 
 Each task names the model it runs on, from any connection, in the
 account's reserved `ai-models` pref (`users.db`, account-wide,
-`db.USER_PREF_KEYS`). The generic `/api/prefs` endpoints refuse it, profile
+`db.USER_PREF_KEYS`; `gamma/ai_roles.py` reads and writes it). The generic `/api/prefs` endpoints refuse it, profile
 sync never copies it, and only the two writes below change it:
 
 ```json
@@ -193,7 +194,7 @@ sync never copies it, and only the two writes below change it:
  "ink": "", "favorites": ["<entry>:<model>"], "chat_migrated": false}
 ```
 
-- **The tasks** (`ai_settings.ROLES`): `chat` (the chat, its generated
+- **The tasks** (`ai_roles.ROLES`): `chat` (the chat, its generated
   titles and structured notes), `metadata` (the AI's pick among the records
   a paper names, its own reading of the metadata, the slide citation),
   `translate` (PDF translation: a model, or a set-up service as
@@ -321,7 +322,7 @@ translation service picked is left out. `modelName`, `connectionName` and
 `modelTitle` read names from `models[]` or `missing`.
 
 `tests/shared/ai_models.json` holds the cases both sides pass: `roles`
-(`ai_settings.resolve_roles` ↔ `resolveRoles`, and with `without`, what
+(`ai_roles.resolve_roles` ↔ `resolveRoles`, and with `without`, what
 removing a connection leaves, `tasksAffectedBy`), `sums`
 (`ai_client.add_usage` ↔ `addUsage` in `chat/tokenUsage.js`, "Token
 usage") and `keyless` (`ai_settings.key_optional` ↔ `keyOptional` in
@@ -878,7 +879,8 @@ of three endings:
   from loopback (the desktop app's own server, a localhost install; a
   reverse proxy on the same host passes only the second test), the server
   listens on `127.0.0.1:1455` for the redirect and exchanges its code. The
-  listener takes the port only while such a sign-in waits and never with
+  listener (`gamma/oauth_callback.py`, the Gemini sign-in's too) takes the
+  port only while such a sign-in waits and never with
   `SO_REUSEADDR` on Windows, so Codex CLI's own login or another Gamma
   server holding the port makes it fall back to the other two.
 - **Device code.** Otherwise `start` also asks OpenAI for a one-time code
@@ -1091,7 +1093,7 @@ wording:
   a single server-sent event (`ai_protocols.base.NotAnAIStream`).
 - `too_long`: the prompt exceeds the context. Anything else is `other`.
 - `model_unavailable`: the request named a model no connection offers any
-  more (`ai_settings.ModelUnavailable`, "Models for each task"). It is
+  more (`ai_roles.ModelUnavailable`, "Models for each task"). It is
   Gamma's own refusal, a 400 before any call.
 
 `_failure_info` in `routers/ai.py` puts that `kind` beside the plain-string
@@ -1699,9 +1701,9 @@ row: Enter keeps, Escape leaves it) and Move up / down.
   (`enterKey.js` `othersOnEnter`) the other (`followUpSteers`), as in
   Codex; the box's placeholder ("Steer the reply…", "Queue a follow-up…")
   and the button's title say which. A message that cannot steer stays
-  queued. The preference replaced `chatFollowUp` (Queue by default) under a
-  name and key of its own, since a first load stores a preference's default
-  too: every account moved to Steer once, and a choice made since stays.
+  queued. Its key, `gamma-chat-follow-up-mode`, is not the older
+  Queue-by-default preference's: a first load stores a preference's default,
+  so a stored "queue" there said nothing of a choice.
   The stream's head ends with `{"steer": id}` (`gamma/ai_steer.py`: an
   inbox per streamed reply, in memory, bound to its account, closed when
   the stream ends). `POST /api/ai/chat/steer/{id}` carries the text, the
@@ -2380,8 +2382,8 @@ In the chat, a model with a "no tools" verdict shows a **No tools** chip
 before the model chip while the chat would use tools, with the reason on
 hover. A click checks it again: Test with `tools_model`, on an own
 connection or by an administrator; anyone else is told an administrator can
-check it in Settings → Server. The chip's quick list reads "model · no
-tools" (`modelLabel` in `chat/modelPrefs.js`), the model menu tags the row
+check it in Settings → Server. The model chip's panel lists it as "model ·
+no tools" (`modelLabel` in `chat/modelPrefs.js`), the model menu tags the row
 "no tools" ("The model menu"), and the agent's intro and
 placeholder give way to the plain chat's. A reply that brings a verdict the
 registry didn't have reads `/api/ai/models` again, so the chip shows at once.

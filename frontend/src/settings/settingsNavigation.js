@@ -22,6 +22,10 @@ const SECTIONS = {
   // Manage skills… (the chat's "/" menu that matches none, the card of a
   // skill gone before the send): Chat, at Your skills.
   skills: ["assistant", T("Your skills")],
+  // More styles… (a citation style menu's action, the share popover's
+  // Reference): Citations, at Your styles, where a style is added. The
+  // pane's own name, `citations`, opens it at the top.
+  "citation-styles": ["citations", T("Your styles")],
 };
 export const resolveSettingsPane = (pane) => SECTIONS[pane]?.[0] || pane;
 // The untranslated label of the row a section entry point jumps to, or "".

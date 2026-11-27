@@ -17,7 +17,7 @@
 // comment controls).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { guideEvents } from "../guide/events.js";
-import { API, apiJson, makeId } from "../shared/lib/utils";
+import { API, apiJson, jsonInit, makeId } from "../shared/lib/utils";
 import { nowStamp } from "../library/libraryUtils";
 import { keepIfSame, sameMap } from "../shared/lib/keepIfSame.js";
 import { t } from "../shared/i18n/i18n.js";
@@ -34,7 +34,6 @@ const NO_REFUSED = { page: "", byThread: new Map() };
 // How often the threads are read again while a turn of one is to end, ms.
 const TURN_POLL_MS = 2000;
 const sameList = (a, b) => !!a && a.length === b.length && a.every((x, i) => x === b[i]);
-const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 // Every thread of a page, open and resolved.
 const threadsOf = (page) => apiJson(`${API}/pages/${encodeURIComponent(page)}/comments?state=all`);
 
@@ -181,7 +180,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
     try {
       try { await flushRef.current?.(); } catch { /* the save says so itself; the server answers for the block */ }
       const out = await apiJson(`${API}/pages/${encodeURIComponent(page)}/comments`,
-        json("POST", { id, block_id: blockId, body, thread_id: threadId, client: CLIENT_ID, ...(to == null ? {} : { to }) }));
+        jsonInit("POST", { id, block_id: blockId, body, thread_id: threadId, client: CLIENT_ID, ...(to == null ? {} : { to }) }));
       pendingRef.current.delete(id);
       set(page, (list) => upsertThread(list, out.thread));
       noteTurn(page, threadId || id, id, out.turn);
@@ -230,7 +229,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
     const page = pageRef.current;
     return write(
       (list) => editComment(list, id, body, nowStamp()),
-      () => apiJson(`${API}/comments/${encodeURIComponent(id)}`, json("PATCH", { body, client: CLIENT_ID, ...(to == null ? {} : { to }) }))
+      () => apiJson(`${API}/comments/${encodeURIComponent(id)}`, jsonInit("PATCH", { body, client: CLIENT_ID, ...(to == null ? {} : { to }) }))
         .then((out) => {
           if (out?.turn && out.comment) noteTurn(page, out.comment.thread_id, id, out.turn);
           return out;
@@ -250,7 +249,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
 
   const resolve = useCallback((threadId, resolved) => write(
     (list) => resolveThread(list, threadId, resolved, me || "", nowStamp()),
-    () => apiJson(`${API}/comments/${encodeURIComponent(threadId)}/resolve`, json("POST", { resolved, client: CLIENT_ID })),
+    () => apiJson(`${API}/comments/${encodeURIComponent(threadId)}/resolve`, jsonInit("POST", { resolved, client: CLIENT_ID })),
     (list, out) => upsertThread(list, out?.thread),
   ), [write, me]);
 
@@ -260,7 +259,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
     const turnId = thread?.agent_chat?.turn?.turn_id;
     if (!turnId) return;
     try {
-      await apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(turnId)}/stop`, json("POST", {}));
+      await apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(turnId)}/stop`, jsonInit("POST", {}));
     } catch (err) {
       statusRef.current?.(t("Couldn't stop {agent}: {message}", { agent: thread.agent_chat.label, message: err.message }));
     }

@@ -3,7 +3,8 @@
 // and takes {options: {name: value}}. The sections that show them (Users ›
 // Guests, Server › Online services and Work folders, Tool usage › Online
 // search for every account) save through this hook: only the options given,
-// shown at once and put back when the save fails.
+// shown at once and put back when the save fails. `saveNumber` is a
+// whole-number option's box committed.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { useSettingsRead } from "./settingsReads.js";
@@ -32,5 +33,15 @@ export function useServerOptions({ setStatus } = {}) {
       return false;
     }
   }
-  return { options, error: error || (!read.data ? read.error || "" : ""), save };
+  // A whole-number option's box committed (`raw`, what it holds): saved,
+  // with `message(n)`, when it is in the option's range (`options.ranges`)
+  // and not what is saved; else nothing, and the box shows the stored value
+  // again.
+  async function saveNumber(name, raw, message) {
+    const n = Number.parseInt(String(raw).trim(), 10);
+    const [lo, hi] = options?.ranges?.[name] || [];
+    if (!Number.isFinite(n) || !(n >= lo && n <= hi) || n === options[name]) return false;
+    return save({ [name]: n }, message(n));
+  }
+  return { options, error: error || (!read.data ? read.error || "" : ""), save, saveNumber };
 }

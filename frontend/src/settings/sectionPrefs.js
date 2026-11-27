@@ -56,6 +56,9 @@ export const SECTION_PREFS = Object.freeze({
     Service: ["translateKeep"],
     Speed: ["translateEffort", "translateSpeed", "translateParallel"],
   }),
+  citations: sections({
+    Citations: ["citationStyle", "citationLocale", "quickCopyFormat"],
+  }),
   keyboard: sections({
     Shortcuts: ["keybindings"],
     "Built in": ["enterNewBlock"],

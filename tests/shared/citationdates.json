@@ -1,0 +1,40 @@
+{
+  "about": "The full date a paper record keeps beside its year (gamma/meta_fields.py, docs/dev/citations.md). date_agrees: what a citation, a BibTeX month and the metadata popover's Date row read of a record, its date while that is an ISO month or day of its year, else '' (date); the Date row shows that date, else the year as stored (shown, frontend/src/shared/lib/itemTypes.js metaDate). parse_date: what the server makes of what the Date row or a source wrote, the year and, when it names a month or a day (in digits, or in English words as Zotero's strToDate reads them), the ISO date; anything else is the year as written, at most 20 characters, with no date. Read by backend/tests/test_shared_fixtures.py and frontend/tests/itemTypes.test.mjs.",
+  "date_agrees": [
+    {"note": "a day of its year", "meta": {"year": "2020", "date": "2020-03-05"}, "date": "2020-03-05", "shown": "2020-03-05"},
+    {"note": "a month of its year", "meta": {"year": "2020", "date": "2020-03"}, "date": "2020-03", "shown": "2020-03"},
+    {"note": "the year with spaces around it", "meta": {"year": " 2020 ", "date": "2020-03"}, "date": "2020-03", "shown": "2020-03"},
+    {"note": "a date of another year is stale", "meta": {"year": "2021", "date": "2020-03"}, "date": "", "shown": "2021"},
+    {"note": "month 13 is no month", "meta": {"year": "2020", "date": "2020-13"}, "date": "", "shown": "2020"},
+    {"note": "day 32 is no day", "meta": {"year": "2020", "date": "2020-01-32"}, "date": "", "shown": "2020"},
+    {"note": "a stored date is ISO, slashes are none", "meta": {"year": "2020", "date": "2020/03/05"}, "date": "", "shown": "2020"},
+    {"note": "a stored date is ISO, a single digit is none", "meta": {"year": "2020", "date": "2020-3"}, "date": "", "shown": "2020"},
+    {"note": "a year alone is no date", "meta": {"year": "2020", "date": "2020"}, "date": "", "shown": "2020"},
+    {"note": "a free-text year keeps no date", "meta": {"year": "in press", "date": "2020-03"}, "date": "", "shown": "in press"},
+    {"note": "no year, no date", "meta": {"date": "2020-03"}, "date": "", "shown": ""},
+    {"note": "a year and no date", "meta": {"year": "2020"}, "date": "", "shown": "2020"}
+  ],
+  "parse_date": [
+    {"note": "a year", "in": "2020", "year": "2020", "date": ""},
+    {"note": "a month", "in": "2020-03", "year": "2020", "date": "2020-03"},
+    {"note": "a day", "in": "2020-03-05", "year": "2020", "date": "2020-03-05"},
+    {"note": "Highwire's slashes", "in": "2019/03/14", "year": "2019", "date": "2019-03-14"},
+    {"note": "single digits", "in": "2020/3/5", "year": "2020", "date": "2020-03-05"},
+    {"note": "a month in one digit", "in": "2008-3", "year": "2008", "date": "2008-03"},
+    {"note": "spaces around it", "in": " 2020-03 ", "year": "2020", "date": "2020-03"},
+    {"note": "a free-text year as written", "in": "in press", "year": "in press", "date": ""},
+    {"note": "no date", "in": "n.d.", "year": "n.d.", "date": ""},
+    {"note": "a month in words", "in": "March 2020", "year": "2020", "date": "2020-03"},
+    {"note": "a day in words, as a Zotero item dates it", "in": "August 1, 2020", "year": "2020", "date": "2020-08-01"},
+    {"note": "the day before the month", "in": "1 October 2019", "year": "2019", "date": "2019-10-01"},
+    {"note": "an abbreviated month with its period", "in": "Aug. 2020", "year": "2020", "date": "2020-08"},
+    {"note": "Sept, as doi.org writes it", "in": "Sept 2021", "year": "2021", "date": "2021-09"},
+    {"note": "PubMed's year first", "in": "2020 Aug 1", "year": "2020", "date": "2020-08-01"},
+    {"note": "a season is the year as written", "in": "Spring 2020", "year": "Spring 2020", "date": ""},
+    {"note": "day 32 in words is the year as written", "in": "March 32, 2020", "year": "March 32, 2020", "date": ""},
+    {"note": "a month that is none is the year as written", "in": "2020-13", "year": "2020-13", "date": ""},
+    {"note": "day 0 is none", "in": "2020-03-00", "year": "2020-03-00", "date": ""},
+    {"note": "a long text is cut at 20 characters", "in": "to appear in the proceedings", "year": "to appear in the pro", "date": ""},
+    {"note": "nothing", "in": "", "year": "", "date": ""}
+  ]
+}

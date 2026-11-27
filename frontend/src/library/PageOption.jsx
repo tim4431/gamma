@@ -13,7 +13,7 @@ import FileIcon from "../shared/ui/FileIcon.jsx";
 import { CheckIcon, FileGlyph } from "../shared/ui/Icons";
 import { MarkedText } from "../search/SearchPanel";
 import { CardLabels } from "./FileBrowser";
-import { filingChips, formatRelativeTime } from "./libraryUtils";
+import { authorList, filingChips, formatRelativeTime } from "./libraryUtils";
 import { workFolderOf } from "../documents/library.js";
 import { pageDocument } from "../documents/pageDocument.js";
 import { fileParts, placeParts } from "../explorer/fileSearch.js";
@@ -65,7 +65,7 @@ export default function PageOption({ row: { page, time, path }, tree, query, cur
     return <FileOption {...props} page={page} tree={tree} query={query} time={time} currentPageId={currentPageId} checked={checked} />;
   }
   const meta = page.properties?.meta || {};
-  const authors = (meta.authors || []).slice(0, 2).join(", ");
+  const authors = authorList(meta.authors, 2);
   const detail = [path, authors, meta.year].filter(Boolean).join(" · ");
   const title = page.content || t("Untitled");
   const chips = filingChips(tree, page.properties);

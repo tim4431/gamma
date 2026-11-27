@@ -48,7 +48,7 @@ from datetime import datetime
 from html.parser import HTMLParser
 from typing import NamedTuple
 
-from . import item_types, textmerge, zotero_annotations, zotero_fields
+from . import item_types, names, textmerge, zotero_annotations, zotero_fields
 from .blocks_store import block_kind
 from .colors import parse_color
 from .db import parse_stamp
@@ -1217,10 +1217,12 @@ def _clip(text: str, limit: int) -> str:
 
 
 def _short_name(name: str) -> str:
-    """A name with its given names as initials (Ashish Vaswani → A.
-    Vaswani); a single name stays whole."""
-    parts = str(name or "").split()
-    return " ".join([f"{p[0]}." for p in parts[:-1]] + parts[-1:]) if len(parts) > 1 else " ".join(parts)
+    """A name with its given names as initials before the surname, its
+    suffix after it, as ``names.name_parts`` splits it (Ashish Vaswani → A.
+    Vaswani, "Pereira Campos, Jorge Fernando" → J. F. Pereira Campos); an
+    organisation or a single name stays whole."""
+    last, given, suffix = names.name_parts(name)
+    return " ".join([*(f"{p[0]}." for p in given.split()), last, *([suffix] if suffix else [])])
 
 
 def _type_words(value: str) -> str:

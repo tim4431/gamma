@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { ENGINE, LANGS, LIMITS, OCR_VERSION, RENDER, UNITS, hasSimd, pageDpi, parseTsv, toPgm, workerOptions, zoomPlan }
+import { ENGINE, LIMITS, UNITS, hasSimd, pageDpi, parseTsv, toPgm, workerOptions, zoomPlan }
   from "../src/pdf/ocrRaster.js";
 
 const ROOMY = { pixels: 16 * 1024 * 1024, edge: 8192 };
@@ -30,7 +30,6 @@ test("a page is drawn at 300 dpi, within the server's pixel and side limits and 
   assert.equal(zoomPlan(612, 792, ROOMY, { dpi: 150 }).zoom, 150 / 72);
   assert.equal(zoomPlan(0, 792, ROOMY), null);
   assert.equal(zoomPlan(612, Number.NaN, ROOMY), null);
-  assert.deepEqual(RENDER, { dpi: 300, max_pixels: 2480 * 3508, max_side: 10000 });
 });
 
 test("the resolution the engine is told is the canvas's pixels per inch of the page, never under 70", () => {
@@ -133,16 +132,15 @@ test("the engine's options keep every file on this server and read the page as t
   assert.throws(() => workerOptions({ ...files, models: "https://gamma.example/api/ocr/models/1" }), /must come from this server/);
 });
 
-test("the engine the window names is the one package.json pins, exactly", () => {
+test("the engine the window names is the one package.json pins, exactly, and the lock installs", () => {
   const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(pkg.dependencies["tesseract.js"], "7.0.0");
-  assert.equal(pkg.dependencies["tesseract.js-core"], "7.0.0");
-  assert.equal(ENGINE, `tesseract.js ${pkg.dependencies["tesseract.js"]}`);
+  const pinned = pkg.dependencies["tesseract.js"];
+  assert.match(pinned, /^\d+\.\d+\.\d+$/, "an exact version");
+  assert.equal(pkg.dependencies["tesseract.js-core"], pinned);
+  assert.equal(ENGINE, `tesseract.js ${pinned}`);
   const lock = JSON.parse(fs.readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
-  assert.equal(lock.packages["node_modules/tesseract.js"].version, "7.0.0");
-  assert.equal(lock.packages["node_modules/tesseract.js-core"].version, "7.0.0");
-  assert.equal(LANGS, "eng+fra+deu");
-  assert.equal(OCR_VERSION, 1);
+  assert.equal(lock.packages["node_modules/tesseract.js"].version, pinned);
+  assert.equal(lock.packages["node_modules/tesseract.js-core"].version, pinned);
 });
 
 test("the SIMD probe is wasm-feature-detect's: Node has SIMD; a WebAssembly that refuses it, or none, has not", () => {

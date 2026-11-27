@@ -1,11 +1,11 @@
 """Forgetting the recognized text (routers/ocr.py POST /api/jobs/ocr-drop,
-gamma/pdf_ocr.py ``forget_recognized`` and ``unapply``, highlight_relocate
+gamma/ocr_run.py ``forget_recognized`` and ``unapply``, highlight_relocate
 ``respell_quotes(back=True)``): the PDF's own text read again everywhere
 (the page text, search, the highlights' quotes where it reads under them,
 a picture page's left with the recognized words), its row kept with a
 stamp never seen before, automatic recognition declining the file, no
 engine needed, who may and when (one OCR job of a file at a time, whatever
-its kind); and telling the open tabs (pdf_ocr ``announce``, collab
+its kind); and telling the open tabs (ocr_run ``announce``, collab
 ``publish_file``): after an apply that staged anything and after a forget,
 even when the finishing steps fail, to the file's pages and the members'
 other tabs, never another page's share visitors. A fake engine
@@ -20,7 +20,7 @@ from ocr_fake import LIGHT, install, layered_scan
 from ocr_fixtures import PRINTED, printed_scan_pdf
 from test_ocr_api import _in, scan_page, start
 
-from gamma import collab, highlight_relocate, jobs, ocr_auto, ocr_engine, pdf_ocr, pdf_text
+from gamma import collab, highlight_relocate, jobs, ocr_auto, ocr_engine, ocr_run, pdf_ocr, pdf_text
 from gamma.db import connect_data_db
 from gamma.routers.ocr import ELSEWHERE, FORGET_GUESTS, FORGETTING, NOTHING_RECOGNIZED, RECOGNIZING
 from gamma.search import index
@@ -173,7 +173,7 @@ def test_one_ocr_job_of_a_file_at_a_time_whatever_its_kind(fay, lab, monkeypatch
         monkeypatch.setattr(module, name, held_there)
 
     # beside a recognition (another run of the file): the caller's own, someone else's
-    hold(pdf_ocr, "run")
+    hold(ocr_run, "run")
     try:
         running = start(fay, page_id, _in(ws)).json()
         assert held.wait(10)
@@ -239,7 +239,7 @@ def test_the_open_tabs_are_told_after_an_apply_and_a_forget(fay, monkeypatch):
     # no room of the workspace open: nothing read, nothing sent
     told.clear()
     monkeypatch.setattr(collab, "open_pages", lambda: [("another workspace", "its page")])
-    pdf_ocr.announce(ws, doc)
+    ocr_run.announce(ws, doc)
     assert told == []
 
 

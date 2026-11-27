@@ -17,7 +17,7 @@ export function FormatIllustration({ format }) {
   if (format === "zotero") icon = <img className="formatAppImage" src={zotero} alt="" width="48" height="48" {...FADE_IN} />;
   else if (appIcon) icon = <span className="formatAppIcon" style={{ "--app-icon": `url("${appIcon}")` }} />;
   else if (format === "pdf" || format === "annots") icon = <FileGlyph format="pdf" />;
-  else if (format === "bibtex") icon = <FileGlyph label="BIB" />;
+  else if (format === "bibliography") icon = <FileGlyph label="BIB" />;
   else if (format === "notability") icon = <FileGlyph label="NOTE" />;
   else if (format === "goodnotes") icon = <FileGlyph label="GN" />;
   // the import card that takes both note apps' files: their two glyphs

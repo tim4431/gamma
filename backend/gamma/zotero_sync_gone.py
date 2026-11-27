@@ -23,8 +23,8 @@ from .logbuf import log
 from .ops import OpError
 from .zotero_sync_blocks import NOTE_MAX, NOTE_TOO_LONG, children_gone, note_page_html
 from .zotero_sync_pdfs import may_send_files, pdf_filename, quota_active
-from .zotero_sync_reads import (Side, collection_map, entries_done, gamma_item, gamma_note, gamma_standalone, page_side,
-                                zotero_note, zotero_standalone)
+from .zotero_sync_reads import (Side, collection_map, entries_done, gamma_item, gamma_note, gamma_standalone,
+                                names_moved, page_side, zotero_note, zotero_standalone)
 from .zotero_sync_rows import (HELD, Round, drop_rows, new_row, page_note, read_rows, record_conflict, round_stop,
                                signature, without, write_rows)
 from .zotero_web import ZoteroError, item_uri, random_key
@@ -81,7 +81,7 @@ def items_gone(r: Round, keys) -> None:
         # (a standalone PDF's page is changed here by its file too, as its own unit reads it)
         refiled = (row["kind"] == "attachment" and bool(row["detail"].get("gmd5"))
                    and side.md5 != row["detail"]["gmd5"])
-        if G == row["gbase"] and not refiled and row["state"] != "pending":
+        if G == row["gbase"] and not names_moved(side, row) and not refiled and row["state"] != "pending":
             doomed.append((row, side))
         else:
             kept.append((row, side, _goes_back(r, row, side)))

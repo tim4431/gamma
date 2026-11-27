@@ -127,6 +127,14 @@ export function scanTables(content) {
   return out;
 }
 
+// The pipe written at `at` inside a page link's words or a picture's size:
+// "\|" on a table's row, whose cells a bare one would split, else "|"
+// (note_markup.py table_pipe).
+export function tablePipe(content, at) {
+  const text = String(content || "");
+  return text.slice(text.lastIndexOf("\n", at - 1) + 1, at).trimStart().startsWith("|") ? "\\|" : "|";
+}
+
 // The content with the math on a table's rows reading each escaped pipe
 // ("\|", the one a cell holds) as "\vert ": GFM reads "\|" in a cell as the
 // pipe it stands for, in code and a link's words too, and so does the

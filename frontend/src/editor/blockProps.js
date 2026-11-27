@@ -23,9 +23,9 @@ import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { isPicture, normalizePicture } from "../markup/picture.js";
 import { isLandscape, isSheet, normalizePaper, paperSizeKey, sheetOfBlock, sheetsOf } from "../notebook/notebook.js";
 import { heldElsewhere, isRecordingBlock, normalizeRecording } from "../recording/recording.js";
-import { citationKeyOf, filingChips, folderPath, formatRelativeTime, parseStamp } from "../library/libraryUtils.js";
+import { authorList, citationKeyOf, filingChips, folderPath, formatRelativeTime, parseStamp } from "../library/libraryUtils.js";
 import { metaSourceInfo } from "../shared/lib/metaSource.js";
-import { itemTypeFields, itemTypeLabel, itemTypeOf } from "../shared/lib/itemTypes.js";
+import { itemTypeFields, itemTypeLabel, itemTypeOf, metaField } from "../shared/lib/itemTypes.js";
 import { fmtClock } from "../replay/clock.js";
 import { fmtBytes } from "../shared/lib/format.js";
 import { isPdf, pageDocument, uploadUrl } from "../documents/pageDocument.js";
@@ -826,9 +826,15 @@ function paperRows(p, ctx) {
   if (meta) {
     const type = itemTypeOf(meta);
     if (meta.title) rows.push(valueRow("paper", ["meta", "title"], meta.title, ctx));
-    if (meta.authors?.length) rows.push(valueRow("paper", ["meta", "authors"], meta.authors, ctx));
+    // (one line, "; " between the names: a "Last, First" name holds a comma)
+    if (meta.authors?.length) rows.push(valueRow("paper", ["meta", "authors"], meta.authors, ctx, "text",
+      { display: plain(authorList(meta.authors)) }));
+    // The Date row is the stored date while it agrees with the year, else
+    // the year (metaDate), each under its own key path; the URL a link.
     for (const [label, field] of itemTypeFields(type, meta)) {
-      if (String(meta[field] ?? "").trim()) rows.push(valueRow("paper", ["meta", field], meta[field], ctx, "text", { label: t(label), hint: "" }));
+      const value = metaField(meta, field).trim();
+      const key = field === "date" && value !== meta.date ? "year" : field;
+      if (value) rows.push(valueRow("paper", ["meta", key], meta[key], ctx, field === "url" ? "url" : "text", { label: t(label), hint: "" }));
     }
     rows.push(makeRow("paper", ["meta", "kind"], { type: "text", value: meta.kind, display: plain(t(itemTypeLabel(type))) }));
     if (meta.doi) rows.push(valueRow("paper", ["meta", "doi"], meta.doi, ctx));

@@ -28,7 +28,7 @@
 // item rings once per browser as a system notification, as reminders do
 // (app/useReminders.js); its click is `onOpen(item)`.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { nowStamp } from "../library/libraryUtils";
 import { t } from "../shared/i18n/i18n.js";
 import { applyMark, inboxSentence, inboxSnippet, itemsToRing, lookedListing, reopenedListing, sameListing } from "./inboxText.js";
@@ -41,9 +41,6 @@ const MARK_BATCH = 100; // the ids one POST /api/inbox/mark takes
 const RUNG_KEY = "gamma-inbox-rung"; // the item ids this browser has rung, the latest kept
 const RUNG_CAP = 200;
 const EMPTY = { filter: "unread", items: [], more: false, loaded: false, failed: false };
-const post = (body) => ({
-  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-});
 // A mark goes through the page's keepalive ledger, small and recoverable
 // (shared/lib/keepalive.js 'normal'): a navigation does not cut it off.
 const MARK = { keepalive: "normal" };
@@ -243,9 +240,9 @@ export function useInbox({ enabled, open, notify = false, onOpen, onStatus }) {
     try {
       const ids = target.ids || [];
       let got = null;
-      if (target.all) got = await apiJson(`${API}/inbox/mark`, post({ all: true, ...change }), MARK);
+      if (target.all) got = await apiJson(`${API}/inbox/mark`, jsonInit("POST", { all: true, ...change }), MARK);
       for (let i = 0; i < ids.length; i += MARK_BATCH) {
-        got = await apiJson(`${API}/inbox/mark`, post({ ids: ids.slice(i, i + MARK_BATCH), ...change }), MARK);
+        got = await apiJson(`${API}/inbox/mark`, jsonInit("POST", { ids: ids.slice(i, i + MARK_BATCH), ...change }), MARK);
       }
       marking.current -= 1;
       // the mark's own answer counts once it is the latest and the last on its way

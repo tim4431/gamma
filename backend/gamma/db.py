@@ -529,6 +529,31 @@ USERS_SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_inbox_user ON inbox_items(user_id, at)",
     "CREATE INDEX IF NOT EXISTS idx_inbox_unread ON inbox_items(user_id) WHERE read_at IS NULL AND archived_at IS NULL",
     "CREATE INDEX IF NOT EXISTS idx_inbox_comment ON inbox_items(comment_id) WHERE comment_id != ''",
+    # citation_styles = the CSL styles an account added beside the bundled
+    # ones (gamma/routers/citations.py): the style's own id (the
+    # last segment of its <id>), what its <info> says of it (title, short
+    # title, kind: the citation format, author-date / numeric / note /
+    # label / author; the default-locale, '' for none), a dependent style's
+    # bundled parent ('' for none), the XML, a dependent style's parent
+    # fetched from the repository when none of the bundled ones is it
+    # ('' otherwise), where it came from (repository / file) and when. At
+    # most 50 an account, each XML 512 KB at most. They go with the account
+    # (workspaces.delete_account_workspaces). Additive: no step
+    # (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS citation_styles (
+        user_id TEXT NOT NULL,
+        style_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        short_title TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL DEFAULT '',
+        locale TEXT NOT NULL DEFAULT '',
+        parent TEXT NOT NULL DEFAULT '',
+        xml TEXT NOT NULL,
+        parent_xml TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT '',
+        added_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, style_id)
+    )""",
     # Server-wide admin-tunable settings (see gamma/server_settings.py) — a
     # tiny KV, global because limits like upload size apply to every user.
     """CREATE TABLE IF NOT EXISTS settings (
@@ -2077,7 +2102,7 @@ USER_PREF_KEYS = frozenset({"ai-settings", "translate-engines", "search-services
                             # skills; only routers/skills.py reads or writes
                             # it, never synced to Gamma Cloud.
                             "skills",
-                            # gamma/ai_settings.py AI_MODELS_PREF_KEY: the
+                            # gamma/ai_roles.py AI_MODELS_PREF_KEY: the
                             # model each task uses and the favorites; only
                             # /api/ai/models/roles and /import write it,
                             # never synced to Gamma Cloud.

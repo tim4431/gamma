@@ -139,7 +139,7 @@ def test_search_papers_merges_registries_and_dedups(org, registries):
     assert "cited by 300" in text
     assert 'fetch_paper(source="doi:10.1126/sciadv.aay5901")' in text
     assert 'fetch_paper(source="arXiv:2101.00001")' in text
-    assert "S. Puri, L. Jiang (2020, Science Advances)" in text
+    assert "S. Puri; L. Jiang (2020, Science Advances)" in text
     assert "[Bias-preserving gates with cat qubits](https://doi.org/10.1126/sciadv.aay5901)" in text
     assert "[Another cat paper](https://arxiv.org/abs/2101.00001)" in text
 

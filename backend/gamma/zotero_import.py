@@ -38,7 +38,8 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 
 from . import item_types
-from .bibtex import clean_key
+from .bibtex_keys import clean_key
+from .names import join_name
 from .note_markup import LINK_PARTS
 from .zotero_notes import _href, block_elements, note_tree, title_text
 
@@ -58,8 +59,14 @@ _ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/(" + _ARXIV_ID + ")", r
 # Zotero records arXiv preprints with a DataCite DOI: 10.48550/arXiv.<id>
 _ARXIV_DOI_RE = re.compile(r"^10\.48550/arxiv\.([0-9]{4}\.[0-9]{4,5})$", re.I)
 # A preprint's z:archiveID ("arXiv:<id>"), and the "arXiv: <id>" line Zotero's
-# arXiv translator writes into the Extra of a paper's published version.
-_ARXIV_LINE_RE = re.compile(r"^[ \t]*arxiv:[ \t]*(" + _ARXIV_ID + r")(?:v\d+)?[ \t]*$", re.I | re.M)
+# arXiv translator writes into the Extra of a paper's published version,
+# with the primary class after it when it has one ("arXiv:1002.2136
+# [astro-ph]").
+_ARXIV_LINE_RE = re.compile(r"^[ \t]*arxiv:[ \t]*(" + _ARXIV_ID + r")(?:v\d+)?(?:[ \t]+\[[^\]\r\n]*\])?[ \t]*$",
+                            re.I | re.M)
+# ... the same line without the class: what a Zotero sync compares
+# (zotero_fields.project), so the bases it stored before still agree.
+_ARXIV_UNCLASSED_RE = re.compile(r"^[ \t]*arxiv:[ \t]*(" + _ARXIV_ID + r")(?:v\d+)?[ \t]*$", re.I | re.M)
 # Better BibTeX's pinned key: a line of Zotero's Extra field.
 _CITATION_KEY_RE = re.compile(r"^[ \t]*citation key[ \t]*:[ \t]*(\S+)", re.I | re.M)
 
@@ -463,10 +470,9 @@ def parse_zotero_rdf(text: str) -> list[dict]:
     for about, el in raw_items:
         authors = []
         for person in el.findall(f"{_BIB}authors//{_FOAF}Person"):
-            name = " ".join(filter(None, [
-                (person.findtext(f"{_FOAF}givenName") or "").strip(),
-                (person.findtext(f"{_FOAF}surname") or "").strip(),
-            ]))
+            # "First Last", or "Last, First" where that would split
+            # otherwise ("Pereira Campos", "Den Hengst"): names.join_name.
+            name = join_name(person.findtext(f"{_FOAF}givenName"), person.findtext(f"{_FOAF}surname"))
             if name:
                 authors.append(name)
 

@@ -193,7 +193,7 @@ def test_the_bibtex_fence_comes_first_then_the_record_with_no_front_matter(user)
     text = _text(_export(user, page), "A record.md")
     fence, _, rest = text.partition("```\n\n")
     assert fence.startswith("```bibtex\n@") and "---" not in text.split("my notes")[0]
-    assert rest == "DOI: 10.1/x\n\nAuthors: Ada, Bob\n\nYear: 2024\n\nTags: NX reading\n\nmy notes\n"
+    assert rest == "DOI: 10.1/x\n\nAuthors: Ada; Bob\n\nYear: 2024\n\nTags: NX reading\n\nmy notes\n"
 
 
 # --- mentions ---------------------------------------------------------------------

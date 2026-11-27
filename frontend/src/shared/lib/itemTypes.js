@@ -53,26 +53,41 @@ export const isCheckableType = (type) => CHECKABLE.has(type);
 
 // The popover's rows after Title and Authors, per type: [label, field].
 // Where the venue and the publisher sit is what tells the types apart (a
-// chapter's venue is its book, a thesis's publisher its university).
-const VENUE = [T("Venue"), "venue"], YEAR = [T("Year"), "year"], VOLUME = [T("Volume"), "volume"];
+// chapter's venue is its book, a thesis's publisher its university). The
+// Date row is the year, or the month or day of it the record holds
+// (metaDate); every type has an address, last.
+const VENUE = [T("Venue"), "venue"], DATE = [T("Date"), "date"], VOLUME = [T("Volume"), "volume"];
 const PAGES = [T("Pages"), "pages"], PUBLISHER = [T("Publisher"), "publisher"], ISBN = ["ISBN", "isbn"];
+const ISSUE = [T("Issue"), "issue"], ABBR = [T("Journal abbr."), "journal_abbr"], URL = ["URL", "url"];
 const TYPE_FIELDS = {
-  journalArticle: [[T("Journal"), "venue"], YEAR, VOLUME, PAGES],
-  conferencePaper: [[T("Proceedings"), "venue"], YEAR, PAGES, PUBLISHER],
-  preprint: [VENUE, YEAR],
-  bookSection: [[T("Book title"), "venue"], YEAR, PAGES, PUBLISHER, ISBN],
-  book: [PUBLISHER, YEAR, ISBN],
-  thesis: [[T("University"), "publisher"], YEAR],
-  report: [[T("Institution"), "publisher"], YEAR, PAGES],
-  presentation: [VENUE, YEAR],
-  document: [VENUE, YEAR],
+  journalArticle: [[T("Journal"), "venue"], ABBR, DATE, VOLUME, ISSUE, PAGES],
+  conferencePaper: [[T("Proceedings"), "venue"], DATE, PAGES, PUBLISHER],
+  preprint: [VENUE, DATE],
+  bookSection: [[T("Book title"), "venue"], DATE, PAGES, PUBLISHER, ISBN],
+  book: [PUBLISHER, DATE, ISBN],
+  thesis: [[T("University"), "publisher"], DATE],
+  report: [[T("Institution"), "publisher"], DATE, PAGES],
+  presentation: [VENUE, DATE],
+  document: [VENUE, DATE],
 };
-const ALL_FIELDS = [VENUE, VOLUME, PAGES, PUBLISHER, ISBN];
+const ALL_FIELDS = [VENUE, ABBR, VOLUME, ISSUE, PAGES, PUBLISHER, ISBN];
 
 // The rows for a type, then any other field that carries a value, so
-// switching the type never hides what the record holds.
+// switching the type never hides what the record holds, then the URL.
 export function itemTypeFields(type, values) {
   const own = TYPE_FIELDS[type] || TYPE_FIELDS.document;
   const shown = new Set(own.map(([, field]) => field));
-  return [...own, ...ALL_FIELDS.filter(([, field]) => !shown.has(field) && String(values?.[field] || "").trim())];
+  return [...own, ...ALL_FIELDS.filter(([, field]) => !shown.has(field) && String(values?.[field] || "").trim()), URL];
 }
+
+// What the Date row shows of a record: its full date while that is a month
+// or a day of its year (gamma/meta_fields.py date_agrees: a date of
+// another year is stale), else the year as stored ("2020", "in press").
+// tests/shared/citationdates.json holds the two to the same cases.
+export function metaDate(meta) {
+  const year = String(meta?.year ?? "").trim(), date = String(meta?.date ?? "");
+  return year && /^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/.test(date) && date.startsWith(`${year}-`) ? date : year;
+}
+
+// A record's value for one of the rows' fields, as the rows show it.
+export const metaField = (meta, field) => (field === "date" ? metaDate(meta) : String(meta?.[field] ?? ""));

@@ -140,7 +140,7 @@ editor opens at the chip's `menuAnchor`; a new group's once its chip has
 risen into place (`arriving`). The name field takes focus a frame after
 the editor opens, as the editor is laid out hidden until it is placed.
 
-`OpenTabs` (`shared/ui/Widgets.jsx`) draws `stripRuns`: the chip
+`OpenTabs` (`workspace/OpenTabs.jsx`) draws `stripRuns`: the chip
 (`data-strip-group`, draggable, `menuPress` for the editor) before its run,
 a collapsed run's tabs left out but for the active one. The chips are
 `ListMotion` items, so a collapse sinks the tabs out and the rest glide. A

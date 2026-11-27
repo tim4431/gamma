@@ -7,7 +7,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-pen-writes-pdf`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the dictation model and language (`gamma-dictation-model`, `gamma-dictation-lang`; the other tasks' models are the account's `ai-models`, below), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`), the papers this browser left showing their translation (`gamma-translated:<user>@<workspace>`, `pdf/translateRecall.js`, [translation.md](translation.md#a-paper-opened-again)) and the directories its conversations with a computer's agent began in, so a new one starts where the last did (`gamma-agent-dirs-used`, `chat/computer/usedDirs.js`, [local_agents.md](local_agents.md) "The strip") |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer)), the tours (whether they are suggested, `suggestTours`, and which the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, the PDFs' page direction (`pdfFlow`), smooth wheel scrolling, how search opens, how a replaced PDF's highlights, and a changed text file's ranges, are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds))), handwriting (the habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), whether the page header shows an Export button (`pageExportButton`, Toolbars › Page header, on by default; [import_export.md](import_export.md#the-export-dialog)), the text highlighters (`highlightPresets`, [Text highlighters](#text-highlighters)) and the released builds' highlighter colour, which only seeds the first (`highlighterColor`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), a comment field's *Send to {agent}* tick as the person left it last (`commentSendTo`, which the tick itself sets, with no row; the Chat pane's Chat section's tag holds it, [comments.md](comments.md) "Sent to an agent"), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer)), the tours (whether they are suggested, `suggestTours`, and which the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, the PDFs' page direction (`pdfFlow`), smooth wheel scrolling, how search opens, how a replaced PDF's highlights, and a changed text file's ranges, are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds))), handwriting (the habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), whether the page header shows an Export button (`pageExportButton`, Toolbars › Page header, on by default; [import_export.md](import_export.md#the-export-dialog)), the text highlighters (`highlightPresets`, [Text highlighters](#text-highlighters)) and the released builds' highlighter colour, which only seeds the first (`highlighterColor`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), a comment field's *Send to {agent}* tick as the person left it last (`commentSendTo`, which the tick itself sets, with no row; the Chat pane's Chat section's tag holds it, [comments.md](comments.md) "Sent to an agent"), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)), citations (the style, its language and Quick Copy's format, `citationStyle`, `citationLocale`, `quickCopyFormat`; the styles the account added are rows of the server's users.db, not the profile, [citations.md](citations.md#settings--citations-and-the-style-store)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`, with their groups, [strip_groups.md](strip_groups.md#where-it-is-kept)), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -290,8 +290,8 @@ apart from what the calls used (Usage); the server's people and who may come in 
 apart from the machine itself (Server); help apart from what it is about
 (tours sit in Help & diagnostics). A new setting goes into the pane whose
 subject it is, not the one with room. The rail is 224 px at 100 % (one line
-for "Language & translation") and its rows 27.5 px. The groups' rows touch
-and their captions sit 4 px apart, so an admin's twenty panes fit the
+for "Language & translation") and its rows 25.5 px. The groups' rows touch
+and their captions sit 4 px apart, so an admin's twenty-one panes fit the
 dialog's full height (`min(800px, 100dvh - 48px)`). On a shorter window
 anyone's may not fit: then the groups scroll between the
 account card and Help, which stay where they are (`.settingsNavList`, with
@@ -539,6 +539,36 @@ Preferences:
   *Double tap* needs `pencil`, `apple` and `pencilTap`, *Pen button*
   `pencil`, `stylus` and `pencilTap`, each *Haptics* `pencil`, its
   wording's flag and `haptics`.
+- **Citations** (pane id `citations`, after Handwriting,
+  [SettingsCitations.jsx](../../frontend/src/settings/SettingsCitations.jsx);
+  Zotero's Cite pane, [citations.md](citations.md)), in two sections.
+  **Citations** (account scope, `SECTION_PREFS.citations["Citations"]`):
+  **Style** (`citationStyle`, `gamma-citation-style`, default APA), a
+  `MenuSelect` over the bundled styles and the account's added ones in
+  sections by class, with a preview of a fixed sample (its citation, or a
+  note style's note, and its bibliography; the last render stays while the
+  next is made); a style the profile names that this server lacks shows a
+  warning that citations use APA, with **Add it again** where the server
+  may download styles (`citeRules.styleInUse`, the rule every citation
+  follows). **Language** (`citations/CitationChoices.jsx`
+  `CitationLanguageRow`, the Export dialog's row too) (`citationLocale`, default `en-US`),
+  every CSL locale by its own name, disabled with "Set by the style" when
+  the style has a default locale. **Quick Copy** (`quickCopyFormat`,
+  `gamma-quick-copy`, default the style): what Copy bibliography and its
+  shortcut give, the style or BibTeX, BibLaTeX, RIS, CSL JSON or a key
+  command. **Your styles** (the server's rows, so no scope tag): the
+  styles the account added, each with its class badge and a remove,
+  **Add style…** as the section's action (the Add style dialog:
+  the repository's search and Add from file…, `CitationStyles.jsx`), and
+  the CSL credit with its link to citationstyles.org, which the styles'
+  licence asks for. The entry point `citation-styles` opens the pane at
+  Your styles: More styles…, a style menu's action offered to an account,
+  uses it. The pane reads the list `citations/citationApi.js` holds for the
+  tab (`useAddedStyles({fresh: true})`, which the app's copies and the
+  Export dialog read too), not through `PANE_READS`: again on each visit,
+  with the held list on show, so only a first visit says Loading…; a guest
+  or a viewer with no account has no styles of its own here, and the
+  section says so.
 - **Language & translation** (pane id `translation`,
   [SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)),
   in five sections. **Language**: the Interface language row (a `MenuSelect`:
@@ -1063,7 +1093,8 @@ Library:
   [offsiteRound.js](../../frontend/src/settings/offsiteRound.js)), read
   every 3 s while it runs. `GET/PUT /api/admin/offsite`, `POST
   /api/admin/offsite/test` and `…/run`; the copies and the rounds
-  themselves: [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket).
+  themselves: [backups.md](backups.md#snapshots-and-copies-in-a-bucket),
+  [debugging.md](debugging.md#the-off-site-rounds).
   What the stores hold shows with the snapshots (`GET
   /api/admin/offsite/snapshots`, `?store=<store>` for all but the bucket,
   read again after a task's run; `useStores` in BackupDestinations.jsx
@@ -1088,7 +1119,7 @@ Library:
   alone. `GET/PUT/DELETE /api/admin/clouds/<store>`, `POST …/authorize`,
   `…/connect`, `…/poll`, `…/test`, `…/folders`, `DELETE …/connect`, `GET
   …/browse`, `…/callback`; how they work:
-  [debugging.md](debugging.md#cloud-destinations).
+  [backups.md](backups.md#cloud-destinations).
 - **Maintenance** (the pane's head says Library maintenance): workspace
   storage, rebuilding the search indexes (the notes index and the
   document text index of every PDF and text file) and the per-paper
@@ -1124,7 +1155,11 @@ Administration (admins only):
   asks for the public URL first), and takes the client key and the
   write-only secret, with Remove…; [zotero_sync.md](zotero_sync.md)),
   **Online services** (`SettingsServerOptions.jsx`: the switches **Paper
-  lookups**, `metadata_lookup`, and **AI model catalog**, `model_catalog`),
+  lookups**, `metadata_lookup`, **AI model catalog**, `model_catalog`, and
+  **Citation style repository**, `citation_styles`, whether Settings →
+  Citations searches and fetches styles in the CSL repository at
+  zotero.org, a dependent style's parent included; off, a style's own
+  `.csl` file can still be added, [citations.md](citations.md#settings--citations-and-the-style-store)),
   **Work folders** where this server keeps them (the largest file a work
   folder keeps, `vault_keep_mb`), on a hosted container the
   **Plan** (`HostedPlan`, [cloud_accounts.md](cloud_accounts.md) "Hosted
@@ -1440,6 +1475,10 @@ section reads through `useSettingsRead` is named in `PANE_READS`
 (`tests/settingsReads.test.mjs`). The Chat pane's skills sections are the
 exception: they read the chat's own skill store (`chat/useSkills.js`),
 which the "/" menu shares, so naming its path here would read it twice.
+Citations' Your styles is another: it reads `citations/citationApi.js`'s
+list of the account's styles, held for the tab because the app's copies
+and the Export dialog read it too: a store that lives only while the
+dialog is open could serve neither.
 The AI → Usage pane's `PANE_READS.usage` reads the month over every task
 (`usageOf("month")`), what the pane opens on; another period or task the
 user picks there is read through `useSettingsRead` the same way, the last
@@ -1916,7 +1955,7 @@ the rail without Local agents where nothing is there to list (a
 `/?settings=agents` link opening Models, a search for Codex finding
 Integrations), an admin's rail with a computer of the account's shown to
 the server (`/api/computers` faked: Local agents first in the AI group,
-listing it, twenty panes fitting a 900 px window, a 640 px one scrolling
+listing it, twenty-one panes fitting a 900 px window, a 640 px one scrolling
 the groups alone), and
 Backups › Backup destinations: an admin's alone, tagged so, a row per
 destination, found by the search, reached from Server backups' Off-site

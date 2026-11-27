@@ -84,7 +84,8 @@ test("settings search finds controls on nested AI pages without exposing inacces
 });
 
 test("a section entry point opens its pane at a row the pane has; any other name is a pane's own", () => {
-  const sections = { topbar: ["toolbars", "Top bar"], "viewer-tools": ["toolbars", "Viewer tools"], highlighters: ["toolbars", "Text highlighters"] };
+  const sections = { topbar: ["toolbars", "Top bar"], "viewer-tools": ["toolbars", "Viewer tools"], highlighters: ["toolbars", "Text highlighters"],
+    "citation-styles": ["citations", "Your styles"] };
   for (const [name, [pane, label]] of Object.entries(sections)) {
     assert.equal(resolveSettingsPane(name), pane, name);
     assert.equal(settingsSection(name), label, name);

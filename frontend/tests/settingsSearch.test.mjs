@@ -18,6 +18,7 @@ const PANE_FILES = {
   toolbars: ["SettingsToolbars.jsx", "TextHighlighters.jsx", "BarLayoutSection.jsx", "../app/topbarItems.js", "../app/viewerToolItems.js"],
   reading: ["SettingsDialog.jsx"],
   handwriting: ["SettingsDialog.jsx"],
+  citations: ["SettingsDialog.jsx", "SettingsCitations.jsx", "../citations/CitationChoices.jsx"],
   translation: ["SettingsTranslation.jsx"],
   keyboard: ["SettingsKeyboard.jsx"],
   agents: ["SettingsDialog.jsx", "SettingsAgents.jsx"],

@@ -16,9 +16,10 @@
 //          INFO's hooks are printed but not counted: useMemo, useCallback and
 //          the shared glue like them (useStableActions, useWheelPan's callback
 //          ref, useLatch, a lazy surface's mount latch), useSyncExternalStore
-//          (how App reads a store), useTextScale and useLinkCardValue (shared
-//          owners: the notes' text size, the link cards' context). A
-//          feature's owner hooks are neither.
+//          (how App reads a store), useTextScale, useLinkCardValue and
+//          useConnectorOpen (shared owners: the notes' text size, the link
+//          cards' context, the Connector's "Open in Gamma"). A feature's owner
+//          hooks are neither.
 //   unknown  the hooks a file imports from React or shared/ that are in
 //          neither list. The test fails on one until a list has it.
 //   lines  code lines: lines with code on them once comments are gone, JSX
@@ -41,7 +42,7 @@ export const FILES = ["app/App.jsx"];
 export const STATE = ["useState", "useReducer", "useRef", "usePersistedState", "usePersistedFlag", "useCopied"];
 export const EFFECTS = ["useEffect", "useLayoutEffect"];
 export const INFO = ["useMemo", "useCallback", "useStableActions", "useWheelPan", "useLatch", "useSyncExternalStore", "useTextScale",
-  "useLinkCardValue"];
+  "useLinkCardValue", "useConnectorOpen"];
 export const HEADROOM = 1000;
 const COUNTED = [...STATE, ...EFFECTS];
 

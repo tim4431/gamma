@@ -23,11 +23,13 @@ const XLINK_NS = "http://www.w3.org/1999/xlink";
 const XMLNS_NS = "http://www.w3.org/2000/xmlns/";
 
 // CSS that could load something or run script, judged on the text as it is
-// emitted: any url() but a reference to "#id", @import, image-set(),
-// expression(), element(), src(), and backslashes (an escape can spell any
-// of those). A comment that mentions url( counts too.
+// emitted: url(), @import, image-set(), expression(), element(), src(), and
+// backslashes (an escape can spell any of those). A comment that mentions
+// url( counts too. The one rule of every sanitizer that keeps inline CSS
+// (citations/cslCore.js too); an SVG may keep a url() naming "#id".
+export const CSS_LOADER = /url\(|@import|image-set\(|expression\(|element\(|src\(|\\/i;
 const LOCAL_URL = /url\(\s*(["']?)#[^"')\s]*\1\s*\)/gi;
-const unsafeCss = (css) => /url\(|@import|image-set\(|expression\(|element\(|src\(|\\/i.test(css.replace(LOCAL_URL, ""));
+const unsafeCss = (css) => CSS_LOADER.test(css.replace(LOCAL_URL, ""));
 
 // Its own instance: hooks are per instance, and Mermaid sanitizes its labels
 // with the shared default one.

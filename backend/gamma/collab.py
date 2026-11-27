@@ -188,7 +188,7 @@ def publish_account(user_id: str, message: dict) -> None:
 def publish_file(ws: str, page_ids, message: dict) -> None:
     """Send ``message`` about a stored file of workspace ``ws`` to the tabs
     that may show it: everyone in the rooms of ``page_ids`` (the pages
-    showing the file, highlight_relocate ``pages_showing``), share visitors
+    showing the file, blocks_store ``pages_showing``), share visitors
     included, and the members' peers in the workspace's other rooms (a
     member's tab shows the file in a split pane or a dock, with one socket,
     its focused page's). A share visitor of another page hears nothing: a

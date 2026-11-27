@@ -33,7 +33,11 @@ export async function motionScenarios(env) {
   await user.folder("Lab");
   const home = `${server.base}/?ws=${user.ws}`;
   const folderRow = (page) => page.locator(".fileList .folderRow", { hasText: "Lab" }).first();
-  // Right-clicks a folder row 40 px in; the point, in the window.
+  // Right-clicks a folder row 40 px in; the point, in the window. Its
+  // contexts are tall enough for the folder menu to open below that point:
+  // in 860 px it is moved up over the pointer, which then rests on a row
+  // and opens that row's flyout (Move to ▸).
+  const roomBelow = { viewport: { width: 1280, height: 1100 } };
   async function menuAt(page) {
     const row = folderRow(page);
     await row.waitFor();
@@ -44,7 +48,7 @@ export async function motionScenarios(env) {
   }
 
   await step("motion: a menu grows from the cursor and leaves through an inert copy that goes; the next menu takes its place", async () => {
-    const ctx = await user.context(browser);
+    const ctx = await user.context(browser, roomBelow);
     const page = await openPage(ctx, home);
     try {
       const point = await menuAt(page);
@@ -97,7 +101,7 @@ export async function motionScenarios(env) {
   });
 
   await step("motion: under reduced motion a closed menu leaves no copy", async () => {
-    const ctx = await user.context(browser, { reducedMotion: "reduce" });
+    const ctx = await user.context(browser, { reducedMotion: "reduce", ...roomBelow });
     const page = await openPage(ctx, home);
     try {
       await menuAt(page);

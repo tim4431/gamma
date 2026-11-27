@@ -146,7 +146,7 @@ _META_KEYS = {
                  "last-modified"),
 }
 _LD_KEYS = {"datePublished": "published", "dateModified": "modified"}
-_DATE = re.compile(r"(\d{4})[-/](\d{2})[-/](\d{2})")
+_DATE = re.compile(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?!\d)")
 
 
 def _attrs(source: str) -> dict:
@@ -161,12 +161,15 @@ def _clean(value: str) -> str:
     return SPACE.sub(" ", value).strip()[:_META_CHARS]
 
 
-def _date(value: str) -> str:
+def normalize_date(value: str) -> str:
     """A date as ``YYYY-MM-DD`` when it reads as one (an ISO date or time,
-    ``2017/06/12``, a Unix time), else as the page wrote it."""
+    ``2017/06/12``, Highwire's ``2008/11/3``, a Unix time), else as the
+    page wrote it. A clip's citation record reads its date through it too
+    (``routers/metadata.web_record``)."""
     m = _DATE.match(value)
     if m:
-        return "-".join(m.groups())
+        year, month, day = m.groups()
+        return f"{year}-{int(month):02d}-{int(day):02d}"
     if re.fullmatch(r"\d{9,10}", value):
         return datetime.fromtimestamp(int(value), timezone.utc).strftime("%Y-%m-%d")
     return value[:40]
@@ -218,9 +221,9 @@ def head(text: str, url: str) -> Head:
         value = next((names[n] for n in options if names.get(n) and not (
             key == "author" and names[n].startswith(("http://", "https://")))), "")
         if value:
-            meta[key] = _date(value) if key in ("published", "modified") else value
+            meta[key] = normalize_date(value) if key in ("published", "modified") else value
     for m in _LD_DATE.finditer(head):
-        meta.setdefault(_LD_KEYS[m.group(1)], _date(m.group(2)))
+        meta.setdefault(_LD_KEYS[m.group(1)], normalize_date(m.group(2)))
     if "canonical" in meta:
         meta["canonical"] = _absolute(base, meta["canonical"])
         if not meta["canonical"]:

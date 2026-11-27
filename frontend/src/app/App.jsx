@@ -16,12 +16,12 @@ import { scopeOf, snapshot as translateSnapshot, span as translateSpan } from ".
 import { exportFile, exportLayout, exportPages } from "../pdf/translateExport.js";
 import { folderPapers, paperLayout } from "../pdf/folderTranslation.js";
 import { useFolderTranslations } from "../pdf/useFolderTranslations.js";
-import { docIdOf } from "../pdf/pdfSource";
+import { docIdOf, ocrDocId } from "../pdf/pdfSource";
 import * as ocrState from "../pdf/ocrState.js";
 import * as ocrRuns from "../pdf/ocrRuns.js";
 import { discardApplied, discardOutcome, discardStep, discardUndone, noteSummary, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { canJoin, joinHighlights, takesParts, withPart } from "../shared/model/highlightParts.js";
-import { waitingFor } from "../pdf/highlightWait.js";
+import { WAIT_BANNERS, waitingFor } from "../pdf/highlightWait.js";
 import { useHighlightWait } from "../pdf/useHighlightWait.js";
 import { basePixels } from "../pdf/pageRaster";
 import { DEFAULT_HIGHLIGHT, LINK_COLOR, highlightColor, normalizeColor } from "../shared/model/palette.js";
@@ -40,21 +40,19 @@ import { byteProgress, bytesInfo, progressText, relocationSummary, taskTitle } f
 import { isActive } from "../tasks/taskModel.js";
 import { isSourceLink, parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
-import { API, apiJson, assetUrl, getShareToken, setShareView, withShare, withWorkspace, blockLinkUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, metaSourceInfo, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "../shared/lib/utils";
+import { API, apiJson, assetUrl, getShareToken, setShareView, withShare, withWorkspace, blockLinkUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, metaSourceInfo, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, escapeHtml } from "../shared/lib/utils";
 import { ITEM_TYPES, itemTypeFields, itemTypeOf } from "../shared/lib/itemTypes.js";
 import {
   AutoGrowTextarea,
   BlockDropIndicator,
-  ChatMarkdown,
-  CopyBox,
   DockBar,
   DockWindow,
   GammaNavContext,
-  OpenTabs,
   PopoverAnchor,
   useCopied,
   useTextScale,
 } from "../shared/ui/Widgets";
+import { OpenTabs } from "../workspace/OpenTabs.jsx";
 import { BlockTree, _dragState } from "../editor/BlockTree";
 import { PageReviewStrip } from "../editor/PageReviewStrip";
 import { noteReview, ReviewMarkLife } from "../chat/noteReview.js";
@@ -95,7 +93,11 @@ import { reviewsImport } from "../transfers/importApi.js";
 import { doneWithOpenedFile, hostOpensFiles, listOpenedFiles, onFilesOpened, openedKind, placeOpenedFiles,
   readOpenedFile } from "../transfers/openedFiles.js";
 import { importSource } from "../transfers/transferFormats.js";
-import { bibliographyPreview } from "../transfers/exportApi";
+import { useCitations } from "../citations/useCitations.js";
+import { CitationMenuRows } from "../citations/CitationMenuRows";
+import { CitationShareSection } from "../citations/CitationShareSection";
+import { ReferenceLine } from "../citations/ReferenceLine";
+import { preloadCitations } from "../citations/render.js";
 import { copyTargets } from "../transfers/workspaceCopy.js";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
@@ -103,7 +105,7 @@ import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, ClipboardIcon, CloudIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitPageIcon, FitWidthIcon, FolderGlyph, HighlightIcon, SquareCheckIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, IndentIcon, InfoIcon, LabelGlyph, LabelIcon, OutdentIcon,
-  LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
+  LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteMarkIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UnlinkIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
   PanelTopIcon, LocateIcon, TextPlusIcon, ScanTextIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
@@ -247,8 +249,8 @@ import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../col
 import { modelList, useProviderEditor } from "../settings/providerEditor.js";
 import { useGuide } from "../guide/useGuide";
 import { guideEvents } from "../guide/events";
-import { askConnectorHere, IS_DESKTOP } from "../shared/lib/connector.js";
-import { Empty, Section, StorageRing } from "../settings/SettingsKit";
+import { askConnectorHere, IS_DESKTOP, useConnectorOpen } from "../shared/lib/connector.js";
+import { Empty, StorageRing } from "../settings/SettingsKit";
 import { LazyBoundary, lazySurface, useLatch, whenIdle } from "../shared/ui/lazy";
 import { libraryAccess } from "../library/libraryAccess";
 import { MirrorPopover } from "../collaboration/MirrorPopover";
@@ -304,6 +306,8 @@ import {
   defaultPageTitle,
   metadataToDraft,
   citationKeyOf,
+  familyName,
+  authorsFromRow,
   NO_LABEL,
   NO_LABEL_TITLE,
   PATH_SEP,
@@ -3951,21 +3955,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // --- Paper metadata (arXiv / DOI / AI) and citation export -----------------
   const [pageMeta, setPageMeta] = useState(null);   // properties.meta of the open page
   const [pageBibtex, setPageBibtex] = useState("");
-  // What the share popover's Copy BibTeX gives: the entry the .bib export
-  // prints (GET /api/bibliography, bibtex.page_entry), valid BibTeX however
-  // the stored entry (pageBibtex) was written. Asked for when the popover
-  // opens and again after an edit changes the stored entry.
-  const [printedBibtex, setPrintedBibtex] = useState("");
-  const sharedPageId = openPopover === "share" && shareTarget?.kind === "page" && pageMeta ? shareTarget.id : "";
-  useEffect(() => {
-    setPrintedBibtex("");
-    if (!sharedPageId) return undefined;
-    let live = true;
-    bibliographyPreview({ pageId: sharedPageId })
-      .then((data) => { if (live) setPrintedBibtex(data?.entries?.[0]?.text || ""); })
-      .catch(() => {});  // the stored entry stays on show
-    return () => { live = false; };
-  }, [sharedPageId, pageBibtex]);
+  // The page the share popover's Citation section cites, whose entry (the
+  // printed BibTeX) and CSL item useCitations asks for.
+  const sharedPageId = openPopover === "share" && shareTarget?.kind === "page" && (pageMeta || pageBibtex) ? shareTarget.id : "";
   // Block ids with a metadata fetch in flight. Tracked per page (not one
   // boolean) so the button doesn't spin for a fetch that belongs to a
   // different page. A page this tab handed to the metadata job (an upload)
@@ -4027,7 +4019,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     if (openPopover !== "meta" || !docId || shareMode) { setPdfTextInfo(null); return; }
     checkPdfText();
-  }, [openPopover, docId, ocrState.revision(fileHash(doc) || docIdOf(pdfUrl))]);
+  }, [openPopover, docId, ocrState.revision(ocrDocId(doc, pdfUrl))]);
 
   // Modal preview of what the AI actually gets to read.
   const [pdfTextPreview, setPdfTextPreview] = useState(null); // null | {loading} | {text}
@@ -4053,7 +4045,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const data = await apiJson(`${API}/metadata/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ block_id: blockId, meta: metaDraft, cite_key: citeKeyDraft.trim() }),
+        body: JSON.stringify({ block_id: blockId, meta: { ...metaDraft, authors: authorsFromRow(metaDraft.authors) },
+          cite_key: citeKeyDraft.trim() }),
       });
       if (focusedBlockIdRef.current !== blockId) return;
       setPageMeta(data.meta || null);
@@ -4387,7 +4380,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // Rich copy: PowerPoint/Word get real italics & bold via text/html;
       // plain-text targets keep the markdown source so **bold** survives a
       // paste into notes or any markdown editor.
-      const esc = (text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const esc = escapeHtml(text || "");
       const html = esc
         .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
         .replace(/_([^_]+)_/g, "<i>$1</i>")
@@ -5184,7 +5177,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // translation, the menu rows and the metadata popover follow; and the jobs, whose
     // end (the server's own run of an upload, done between two listings) is said
     onOcr: (msg) => {
-      ocrState.refresh(msg?.doc_id || fileHash(doc) || docIdOf(pdfUrl));
+      ocrState.refresh(msg?.doc_id || ocrDocId(doc, pdfUrl));
       if (msg?.doc_id) tasks.expectEnd(ocrState.fileJobs(msg.doc_id));
     },
   });
@@ -6572,7 +6565,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const opening = openPopover !== "meta";
     if (opening) {
       const r = metaBtnRef.current?.getBoundingClientRect();
-      if (r) setMetaPopPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+      // its right edge under the button, moved right as far as its widest
+      // (app.css .metaPopover: 420px, the screen less 8px each side) needs
+      // to stay on screen: a phone's spans it
+      const widest = Math.min(420, window.innerWidth - 16);
+      if (r) setMetaPopPos({ top: r.bottom + 6, right: Math.max(8, Math.min(window.innerWidth - r.right, window.innerWidth - 8 - widest)) });
     }
     setOpenPopover(opening ? "meta" : null);
   }
@@ -8574,7 +8571,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Another page, or another file on this one, ends a move or an extension.
   // The commands are stable, so BlockRow's memo holds.
   const hlWait = useHighlightWait(`${focusedBlockId || ""}\n${docId || ""}\n${doc?.url || ""}`);
-  const attachModeBlockId = waitingFor(hlWait.wait, "attach");
   const moveHighlightId = waitingFor(hlWait.wait, "move");
   const extendHighlightId = waitingFor(hlWait.wait, "extend");
   const { startAttach: startAttachMode, startMove: startHighlightMove, startExtend: startHighlightExtend, startReviewMove } = hlWait;
@@ -8748,7 +8744,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const { recognize: ocrRow, forget: ocrDrop } = ocrState.useOcrMenu({ docId: fileHash(doc),
     offered: isPdf(doc) && !readOnly && !shareMode && !authUser?.is_guest, capability: serverConfig?.ocr || null,
     jobs: tasks.jobs, translated: pdfTransState.translated && pdfTransState.url === pdfUrl });
-  const ocrNonce = ocrState.useOcrNonce(fileHash(doc) || docIdOf(pdfUrl) || "");
+  const ocrNonce = ocrState.useOcrNonce(ocrDocId(doc, pdfUrl) || "");
   // A PDF read where it lies on this computer (gamma/linked_files.py), or a
   // work folder's file, whose PDF is its file's wherever the server keeps
   // the bytes: no other file replaces it from the Document menu.
@@ -8898,14 +8894,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // fetch-vs-browser.
   async function handleDocLink(url) {
     const gl = parseGammaLink(url, window.location.origin);
-    if (gl) {
-      const place = await gammaLinkPlace(gl);
-      if (place) {
-        if (isSourceLink(gl)) openPageLink(gl.pageId, gl);
-        else openLinkTarget(place);
-        return;
-      }
-    }
+    if (gl && await openGammaLinkHere(gl)) return;
     const pid = findPageForUrl(url, homeBlocks);
     if (pid) {
       setStatus(t("Already in your library — opening."));
@@ -8914,6 +8903,40 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     setLinkPrompt(url);
   }
+
+  // A Gamma link opened at its place in this library: a PDF passage or a
+  // file's lines there, a highlight or note through openLinkTarget. False
+  // when its block or page is not here.
+  async function openGammaLinkHere(gl) {
+    const place = await gammaLinkPlace(gl);
+    if (!place) return false;
+    if (isSourceLink(gl)) openPageLink(gl.pageId, gl);
+    else openLinkTarget(place);
+    return true;
+  }
+
+  // Gamma Connector's "Open in Gamma", sent to this tab rather than a new one
+  // (shared/lib/connector.js useConnectorOpen): a link into this library opens
+  // in place, as a note's link does; one naming another workspace, or not
+  // found in this one, loads as an address, the way a workspace switch does.
+  // The open waits for the yes to be posted, so a load cannot unload the page
+  // before the Connector hears it and loads the link a second time. A share
+  // view, or a tab with no library signed in yet, leaves the link to the
+  // Connector, which loads it in the tab.
+  function openFromConnector(url) {
+    if (shareMode || !authUser?.user || !wsReady) return false;
+    const gl = parseGammaLink(url, window.location.origin);
+    if (!gl || gl.foreign) return false;
+    const ws = new URL(url, window.location.origin).searchParams.get("ws") || "";
+    setTimeout(async () => {
+      const here = (!ws || ws === wsId) && await openGammaLinkHere(gl).catch(() => false);
+      if (here) return;
+      leaveCurrentPage();
+      window.location.assign(url);
+    });
+    return true;
+  }
+  useConnectorOpen(openFromConnector);
 
   // Where a Gamma link points in this library (link_url's opening, the link
   // dialog's pasted link): {pageId, blockId?, title, quote?, highlight?} for
@@ -9413,6 +9436,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     homePick,
     homePicks: homeMode && lib.organize ? selectedPages.size : 0,
     deletePages: () => deletePages([...selectedPages]),
+    // the pages with something to cite, as the menus offer their rows (a
+    // viewer's library as an editor's: copying changes nothing); read when
+    // a command asks, so after `cite` below is made
+    get citePicks() { return homeMode ? (cite.hasRecord([...selectedPages]) ? selectedPages.size : 0) : focusedBlockId && (pageMeta || pageBibtex) ? 1 : 0; },
+    copyCitations: (bibliography) => cite.copySelection(bibliography),
     organize: lib.organize,
     recentlyDeleted: () => { preloadTrash(); setOpenPopover(null); setTrashOpen(true); },
     // On a phone Chat and Notes are the bottom bar's panels, which the
@@ -10363,6 +10391,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     () => (workFolder ? [...workRows.values()] : homeVisibleItems.filter((it) => it.kind === "page").map((it) => it.block)),
     [workFolder, workRows, homeVisibleItems]
   );
+  // Citations (citations/useCitations.js): the style and Quick Copy, the
+  // menus' copies of a selection in the order listed (inside a folder, with
+  // its .bib's keys), the commands', the share popover's section, the
+  // metadata popover's Reference line and a quote's Copy with citation.
+  const cite = useCitations({ prefs: appPrefs, setStatus, account: !!authUser?.user && !authUser?.is_guest && !shareMode,
+    known: knownBlocks, selected: selectedPages, order: homeVisiblePages, homeMode, openPage: focusedBlockId,
+    keyFolder: folderFilter && !workFolder ? folderFilter : "", sharedPage: sharedPageId, pageBibtex, pageRecord: pageMeta });
   // Pinned papers — shown as a favorites strip at the library root. Most
   // recently pinned first. Scrolls like the recents carousel: wheel pans it.
   const pinnedStripRef = useWheelPan();
@@ -10712,13 +10747,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Names the paper a citation pill points at, in the chat and in the notes:
   // the page title for its preview, and a short form (first author's
-  // surname, else the title cut short) for text that cites several papers.
+  // surname as a reference prints it, else the title cut short) for text
+  // that cites several papers.
   function citeSource(id) {
     const page = knownBlocks.find((b) => b.id === id);
     const title = page?.content || (id === focusedBlockId ? pageTitle : "") || refCache[id]?.content || "";
     if (!title) return null;
     const first = page?.properties?.meta?.authors?.[0];
-    const surname = first ? String(first).trim().split(/\s+/).pop() : "";
+    const surname = first ? familyName(first) : "";
     return { title, short: surname || (title.length > 24 ? `${title.slice(0, 24).replace(/\s+\S*$/, "")}…` : title) };
   }
 
@@ -10817,8 +10853,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // The share popover (sharing/SharePopover.jsx), anchored under the topbar's
-  // link button — the open page's, or the open folder's; the citation
-  // section is App's (metadata + copy state).
+  // link button — the open page's, or the open folder's; App hands it the
+  // page's Citation section (citations/CitationShareSection.jsx), with the
+  // slide citation and the copy state App keeps.
   const sharePopover = (
     <LazyBoundary>
     <SharePopover
@@ -10854,52 +10891,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         accountUrl: serverConfig?.cloud?.issuer ? `${serverConfig.cloud.issuer}/` : "",
       } : null}
       citation={shareTarget?.kind !== "folder" && (pageMeta || pageBibtex) ? (
-        <Section
-          title={t("Citation")}
-          action={
-            <button
-              type="button" className="uiBtn sm iconSq"
-              title={t("Regenerate the citation")} aria-label={t("Regenerate the citation")}
-              disabled={pptCiteBusy}
-              onClick={() => makePptCitation(true)}
-            >{pptCiteBusy ? "…" : <RefreshIcon size={16} />}</button>
-          }
-        >
-          <div className="citeHead">
-            <span className="citeLabel">{t("Slide citation")}</span>
-            {/* Provenance right where the citation gets copied: a
-                registry name, or a red "!" when nothing tied the
-                record to this document. */}
-            {metaSrc ? (
-              <span className={`citeSourceTag${metaSrc.warn ? " warn" : ""}`} title={t(metaSrc.hint)}>
-                {metaSrc.warn ? <span className="metaWarnDot inline" aria-hidden="true">!</span> : null}
-                {t(metaSrc.label)}
-              </span>
-            ) : null}
-          </div>
-          {metaSrc?.warn ? <div className="settingsPaneHint citeWarnHint">{t(metaSrc.hint)}.</div> : null}
-          {pptCite ? (
-            <CopyBox
-              copied={copiedKey === "ppt"} onCopy={() => copyFlash("ppt", pptCite)}
-              title={t("Copy — pastes with real italics/bold into PowerPoint")} label={t("Copy slide citation")}
-            >
-              <div className="pptCitePreview"><ChatMarkdown text={pptCite} /></div>
-            </CopyBox>
-          ) : (
-            <div className="settingsPaneHint">{pptCiteBusy ? t("Generating…") : t("Citation will generate when metadata is ready.")}</div>
-          )}
-          {pageBibtex ? (
-            <>
-              <div className="citeHead"><span className="citeLabel">{t("BibTeX")}</span></div>
-              <CopyBox
-                copied={copiedKey === "bibtex"} onCopy={() => copyFlash("bibtex", printedBibtex || pageBibtex)}
-                title={t("Copy the BibTeX entry")} label={t("Copy BibTeX")}
-              >
-                <pre className="bibtexPre">{printedBibtex || pageBibtex}</pre>
-              </CopyBox>
-            </>
-          ) : null}
-        </Section>
+        <CitationShareSection cite={cite} pageBibtex={pageBibtex} pptCite={pptCite} pptCiteBusy={pptCiteBusy} onRegenerate={() => makePptCitation(true)}
+          aiReady={!aiModelsKnown || !!aiInfo.enabled} onSetUpAi={readOnly ? null : () => openSettingsPane("ai")} metaSrc={metaSrc} copied={copiedKey} onCopy={copyFlash} onMoreStyles={() => openSettingsPane("citation-styles")} />
       ) : null}
     />
     </LazyBoundary>
@@ -11496,6 +11489,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                     if (metaDirty) saveMetaEdits();
                                   }}
                                   placeholder="—"
+                                  title={key === "authors" ? t("One name per author, separated by semicolons") : undefined}
                                 />
                                 {/* Identifier rows: open the registry page, or copy its URL. */}
                                 {(key === "doi" || key === "arxiv_id") && metaDraft?.[key]?.trim() ? (() => {
@@ -11651,6 +11645,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             </DialogOverlay>
                           ) : null}
                         </div>
+                        {/* the saved record as the default style cites it, under the table */}
+                        <ReferenceLine cite={cite} pageId={focusedBlockId} pageBibtex={pageBibtex} meta={pageMeta} />
                         {!pageMeta ? (
                           <div className="popoverHint">{metaBusy
                             ? t("Fetching metadata…")
@@ -11907,7 +11903,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {selecting ? (
                   <>
                     <span className="homeSelectCount">{t("{n} selected", { n: selectionCount })}</span>
-                    <MenuButton open={openSelectionMenu} disabled={!selectionCount} />
+                    <MenuButton open={openSelectionMenu} disabled={!selectionCount} onPointerEnter={preloadCitations} onFocus={preloadCitations} />
                     <button type="button" className="uiBtn sm" onClick={clearSelection}>{t("Done")}</button>
                   </>
                 ) : (
@@ -13287,8 +13283,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openPageShare(focusedBlockId); }}
-            onPointerEnter={SharePopover.preload}
-            onFocus={SharePopover.preload}
+            onPointerEnter={() => { SharePopover.preload(); preloadCitations(); }}
+            onFocus={() => { SharePopover.preload(); preloadCitations(); }}
             disabled={loading}
             data-guide="header.share"
             title={t("Share")}
@@ -13628,6 +13624,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             }}>
               {t("Copy as reference point")}
             </MenuItem>,
+            // “quote” (Smith, 2020, p. 347): a PDF passage's, at its page while it has one
+            !shareMode && !range && !!h?.quote?.trim() && (
+              <MenuItem key="cite" icon={QuoteMarkIcon} title={cite.quoteHint} onPointerEnter={preloadCitations}
+                onClick={() => { close(); cite.copyQuote(h.quote, h.position?.lost ? null : h.position?.pageNumber); }}>{t("Copy with citation")}</MenuItem>
+            ),
             // a highlight drawn dashed (matched roughly, or an area placed
             // by estimate), pending: accepted where it is, it is drawn solid
             !readOnly && placedToCheck(h?.position) && (
@@ -13708,7 +13709,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         cmdRow("pdf.translatePage", { disabledTitle: running ? waiting : t("This page is translated") }),
         cmdRow("pdf.translateDocument", { disabledTitle: running ? waiting : t("Every page is translated") }),
         !running && pdfTransState.refsLeft > 0 ? (
-          <MenuItem key="refs" icon={QuoteIcon} onClick={() => { close(); pdfTranslateCtl.current?.translateReferences(); }}>
+          <MenuItem key="refs" icon={QuoteMarkIcon} onClick={() => { close(); pdfTranslateCtl.current?.translateReferences(); }}>
             {t("Translate references too")}
           </MenuItem>
         ) : null,
@@ -14206,24 +14207,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onRemove={lib.organize && openRules.trash ? deleteOpenPage : null}
           onDismiss={vault.dismissBanner} />
       ) : null}
-      {attachModeBlockId && (
-        <div className="attachModeBanner">
-          {t("Click a PDF highlight to link it")}
+      {hlWait.wait ? (
+        <div className="attachModeBanner" data-move-highlight={moveHighlightId || undefined} data-extend-highlight={extendHighlightId || undefined}>
+          {t(WAIT_BANNERS[hlWait.wait.kind])}
           <button onClick={hlWait.end}>{t("Cancel")}</button>
         </div>
-      )}
-      {moveHighlightId && (
-        <div className="attachModeBanner" data-move-highlight={moveHighlightId}>
-          {t("Select the text where this highlight belongs")}
-          <button onClick={hlWait.end}>{t("Cancel")}</button>
-        </div>
-      )}
-      {extendHighlightId && (
-        <div className="attachModeBanner" data-extend-highlight={extendHighlightId}>
-          {t("Select text to add to this highlight, or press another highlight on its page to join them")}
-          <button onClick={hlWait.end}>{t("Cancel")}</button>
-        </div>
-      )}
+      ) : null}
       {transMenu && (
         <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)} aria-label={t("Translate")}>
           {translateRows(() => setTransMenu(null))}
@@ -14458,6 +14447,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
               // the selection popup's Comment: a highlight with its thread popover open on it
               selComment={commentsOn && canComment}
+              // its Copy with citation, at the page's label (labelsRef)
+              citeQuote={shareMode ? null : { copy: cite.copyQuote, hint: cite.quoteHint }} labelsRef={cite.labelsRef}
               highlighter={textHighlighter.on ? textHighlighter.tint : ""}
               moveMode={!!moveHighlightId}
               // a highlight waiting for another passage: a selection, or a press on another highlight
@@ -14647,6 +14638,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           // the translation shown being read (a folder's papers'), or the export started
           busy={exportSeeding || exportStarting || !!folderTranslated()?.counting}
           shareView={shareMode}
+          citationStyle={appPrefs.citationStyle} citationLocale={appPrefs.citationLocale}
           onCancel={closeExport}
           onExport={runExport}
           onLeaveJob={leaveExportJob}
@@ -14924,6 +14916,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setRelocateMinMatch: appPrefs.setRelocateMinMatch,
           relocateExactChars: appPrefs.relocateExactChars,
           setRelocateExactChars: appPrefs.setRelocateExactChars,
+          citationStyle: appPrefs.citationStyle, setCitationStyle: appPrefs.setCitationStyle,
+          citationLocale: appPrefs.citationLocale, setCitationLocale: appPrefs.setCitationLocale,
+          quickCopyFormat: appPrefs.quickCopyFormat, setQuickCopyFormat: appPrefs.setQuickCopyFormat,
           inkPenOnly,
           setInkPenOnly,
           inkPenWritesPdf,
@@ -15309,8 +15304,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               // Open · Rename | New page inside | Pin · Add label · Move to
               // folder · Add to library… · Remove from library · Save a copy
               // to library… · Move into page… · Move to library · Duplicate ·
-              // Copy to workspace | Copy link · Share… · Export… · Ask AI |
-              // Delete — the same rows
+              // Copy to workspace | Copy citation · Copy bibliography · Copy
+              // as ▸ (where a page has a record: CitationMenuRows) | Copy
+              // link · Share… · Export… · Ask AI | Delete — the same rows
               // wherever the page was right-clicked (a Pages inside row's
               // without Rename: openSubPageMenu).
               return menuGroups(
@@ -15436,6 +15432,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </SubMenuItem>
                   ),
                 ],
+                [cite.hasRecord(ids) && <CitationMenuRows key="cite" cite={cite} ids={ids} keyFolder={fromHere} keyLabel={homeMenu.panel ? null : commandKeyLabel} onClose={close} />],
                 [
                   !many && !shareMode && (
                     <MenuItem key="link" icon={LinkIcon} onClick={() => { close(); copyPageLink(homeMenu.id); }}>{t("Copy link")}</MenuItem>
@@ -15578,6 +15575,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       onClick={() => { setHomeMenu(null); openProps(id, null, { at: { x: homeMenu.x, y: homeMenu.y }, opener: homeMenu.el }); }}>{t("Properties")}</MenuItem>
                   ),
                 ],
+                // its papers' citations, a group of their own as a page's are, where one of them has a record
+                [folders.length === 1 && cite.hasRecordIn(folderSubtree(libTree, id))
+                  && <CitationMenuRows key="cite" cite={cite} folder={id} onClose={() => setHomeMenu(null)} />],
                 [
                   detach && (
                     <MenuItem key="detach" icon={UnlinkIcon} danger disabled={detach.disabled}

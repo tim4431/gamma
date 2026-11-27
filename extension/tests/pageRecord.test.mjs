@@ -8,7 +8,7 @@ const { gammaPageRecord: pageRecord } = globalThis;
 // without regard to case, as the content script's selector does.
 const tags = (pairs) => (name) => pairs.filter(([n]) => n.toLowerCase() === name.toLowerCase()).map(([, v]) => v);
 
-test("a repository's thesis: its type, its university as publisher, names turned around", () => {
+test("a repository's thesis: its type, its university as publisher, names as the tags wrote them", () => {
   const record = pageRecord(tags([
     ["citation_title", "  Trapped   ions in optical cavities "],
     ["citation_author", "Lovelace, Ada"], ["citation_author", "Lovelace, Ada"], ["citation_author", "Babbage, Charles"],
@@ -17,9 +17,20 @@ test("a repository's thesis: its type, its university as publisher, names turned
     ["DC.publisher", "Example University Library"],
   ]));
   assert.deepEqual(record, {
-    title: "Trapped ions in optical cavities", authors: ["Ada Lovelace", "Charles Babbage"], year: "2019",
-    venue: "", volume: "", pages: "", publisher: "Example University", isbn: "", kind: "thesis",
+    title: "Trapped ions in optical cavities", authors: ["Lovelace, Ada", "Babbage, Charles"], year: "2019",
+    date: "2019/05/03", venue: "", volume: "", issue: "", pages: "", publisher: "Example University",
+    journal_abbr: "", isbn: "", kind: "thesis",
   });
+});
+
+test("a journal article keeps its issue, the journal's abbreviation and the date as the page wrote it", () => {
+  const article = pageRecord(tags([
+    ["citation_title", "A paper"], ["citation_author", "A. Author"], ["citation_journal_title", "Physical Review A"],
+    ["citation_journal_abbrev", "Phys. Rev. A"], ["citation_volume", "78"], ["citation_issue", "5"],
+    ["citation_publication_date", "2008/11/3"],
+  ]));
+  assert.deepEqual([article.year, article.date, article.issue, article.journal_abbr],
+    ["2008", "2008/11/3", "5", "Phys. Rev. A"]);
 });
 
 test("a conference paper cites its proceedings, a journal article its journal and pages", () => {

@@ -488,6 +488,18 @@ def page_for_doc(conn, doc_id: str, columns: str = "id"):
         (doc_id,)).fetchone()
 
 
+def pages_showing(conn, doc_hash: str) -> list[str]:
+    """The live pages showing the stored PDF ``doc_hash``: the one owning it
+    (the ``doc_id`` column) and every duplicate showing it as a copy, which
+    the column leaves out. Whose quotes a text recognition respells
+    (highlight_relocate ``respell_quotes``) and whose rooms hear that it
+    changed (ocr_run ``announce``)."""
+    return [r[0] for r in conn.execute(
+        "SELECT id FROM unified_blocks WHERE parent_id = 'root' AND json_extract(properties, '$.doc.format') = 'pdf' "
+        "AND (doc_id = :h OR (json_extract(properties, '$.doc.copy') IS NOT NULL "
+        "AND json_extract(properties, '$.doc.hash') = :h)) ORDER BY id", {"h": doc_hash})]
+
+
 def page_for_file(conn, hash: str, ext: str, columns: str = "id"):
     """Lookup BY STORED FILE, for a document of any format: the row
     (``columns`` of it) of the root page whose own document is the stored

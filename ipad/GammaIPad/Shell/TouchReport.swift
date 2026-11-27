@@ -1,15 +1,15 @@
 import UIKit
 
-/// The touch report (docs/research/ipad-pencil-pro-freeze.md): what the
-/// shell knew about touches when the bar's Reload was pressed. On an iPad
-/// Air with an Apple Pencil Pro the page stops answering every tap, the
-/// Pencil's and a finger's, from the Pencil's first contact, while the
-/// Pencil's hover still reaches it and the bar still works; no device here
-/// does that. The report says which recognizers took the last touches and
-/// in what state, and which recognizers and interactions every view holds,
-/// so a stuck one shows by name. It is appended to `touch-report.log`
-/// beside the local server's log, which the launcher's *Show log file*
-/// opens in Files, at each Reload; nothing is sent anywhere.
+/// The touch report (docs/dev/ipad.md "The touch report"): what the shell
+/// knew about touches when the bar's Reload was pressed, for a page that
+/// stops answering taps while the bar still works, as the Pencil Pro
+/// freeze did up to 0.4.9 (solved in 0.4.11,
+/// docs/research/ipad-pencil-pro-freeze.md). The report says which
+/// recognizers took the last touches and in what state, and which
+/// recognizers and interactions every view holds, so a stuck one shows by
+/// name. It is appended to `touch-report.log` beside the local server's
+/// log, which the launcher's *Show server log* opens in Files, at each
+/// Reload; nothing is sent anywhere.
 @MainActor
 enum TouchReport {
     /// The latest touches' lines, oldest first (`PencilCapture.onTouch`).
@@ -90,7 +90,6 @@ enum TouchReport {
                 + "double tap \(PencilAction.name(UIPencilInteraction.preferredTapAction)), "
                 + "squeeze \(PencilAction.name(UIPencilInteraction.preferredSqueezeAction)), "
                 + "hover preview \(UIPencilInteraction.prefersHoverToolPreview)",
-            "Native pieces: \(NativePieces.current.summary)",
             "Pencil capture: \(capture)",
             "Recognizers and interactions:",
         ] + tree(root) + ["Latest touches, oldest first:"] + recent.lines

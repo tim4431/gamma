@@ -320,6 +320,10 @@ def _error(text: str) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=text)], isError=True)
 
 
+def _answer(text: str, structured: dict | None = None) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=text)], structuredContent=structured)
+
+
 def _link_base(base: str, ws: str) -> str:
     """The workspace's URL prefix the tools' links start from (ai_tools.gamma_link)."""
     return base + "/?" + urlencode({"ws": ws})
@@ -417,7 +421,7 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
             text, stored = upload_file(found[0], user_id, connection.token_id, base, arguments)
         except ValueError as exc:
             return _error(str(exc))
-        return CallToolResult(content=[TextContent(type="text", text=text)], structuredContent=stored)
+        return _answer(text, stored)
     if len(targets) > 1:
         # One section per workspace: its name, its link shapes, its result.
         sections = []
@@ -475,20 +479,28 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
                           structuredContent=structured or None)
 
 
+def _edited_spaces(connection: Connection, names: dict, tool: str, wanted) -> list[str]:
+    """The workspaces list_changes and undo_change read: the one ``wanted``
+    names (``_targets``' ValueError for none of the connection's), else
+    every one it edits; only those it edits."""
+    spaces = _targets(connection.workspaces, names, tool, {"workspace": wanted}) if wanted else connection.editable
+    return [ws for ws in spaces if ws in connection.editable]
+
+
+def _undone_already(change: dict) -> CallToolResult:
+    return _answer(f"ok — “{change['summary']}” was undone already")
+
+
 def _change_of(connection: Connection, arguments: dict):
     """``(ws, change)``: the connection's own change ``change_id`` in the
     workspace named, else in any it edits; or the refusal."""
     names = {w["id"]: w["name"] for w in list_for_user(connection.user_id) if w["id"] in connection.workspaces}
-    wanted = arguments.get("workspace")
     try:
-        spaces = _targets(connection.workspaces, names, "undo_change", {"workspace": wanted}) if wanted \
-            else list(connection.editable)
+        spaces = _edited_spaces(connection, names, "undo_change", arguments.get("workspace"))
     except ValueError as exc:
         return _error(str(exc))
     change_id = str(arguments.get("change_id") or "")
     for ws in spaces:
-        if ws not in connection.editable:
-            continue
         change = agent_changes.find(ws, change_id)
         if change and change["token_id"] == connection.token_id:
             return ws, change
@@ -503,29 +515,24 @@ _STATE_WORDS = {agent_changes.OPEN: "the user has yet to review it", agent_chang
 def _changes(connection: Connection, base: str, name: str, arguments: dict, names: dict) -> CallToolResult:
     """``list_changes`` and ``undo_change`` (gamma/agent_changes.py)."""
     if name == "list_changes":
-        wanted = arguments.get("workspace")
         try:
-            spaces = _targets(connection.workspaces, names, name, {"workspace": wanted}) if wanted \
-                else list(connection.editable)
+            spaces = _edited_spaces(connection, names, name, arguments.get("workspace"))
         except ValueError as exc:
             return _error(str(exc))
-        spaces = [ws for ws in spaces if ws in connection.editable]
         if not spaces:
             return _error(NOT_EDITING)
         limit = max(1, min(int(arguments.get("limit") or 20), 100))
         found = sorted(((ws, c) for ws in spaces for c in agent_changes.listed(ws, connection.token_id, limit)),
                        key=lambda pair: pair[1]["at"], reverse=True)[:limit]
         if not found:
-            return CallToolResult(content=[TextContent(type="text", text="This connection has made no change here yet.")])
+            return _answer("This connection has made no change here yet.")
         lines = [f"- [{c['id']}] {agent_changes.when(c)} · {c['summary']} ({_STATE_WORDS[c['state']]})"
                  + (f" — workspace {names.get(ws, ws)}" if len(spaces) > 1 else "")
                  + (f" — {_link_base(base, ws)}&page={c['page_id']}" if c["page_id"] else "") for ws, c in found]
-        return CallToolResult(content=[TextContent(type="text", text="This connection's changes, newest first "
-                                                   "(undo_change takes one back):\n" + "\n".join(lines))],
-                              structuredContent={"changes": [{"change_id": c["id"], "at": c["at"], "summary": c["summary"],
-                                                              "undone": c["undone"], "state": c["state"],
-                                                              "page_id": c["page_id"],
-                                                              "workspace_id": ws} for ws, c in found]})
+        return _answer("This connection's changes, newest first (undo_change takes one back):\n" + "\n".join(lines),
+                       {"changes": [{"change_id": c["id"], "at": c["at"], "summary": c["summary"], "undone": c["undone"],
+                                     "state": c["state"], "page_id": c["page_id"], "workspace_id": ws}
+                                    for ws, c in found]})
     if refused := hosted.read_only():
         return _error(refused)
     found = _change_of(connection, arguments)
@@ -533,7 +540,7 @@ def _changes(connection: Connection, base: str, name: str, arguments: dict, name
         return found
     ws, change = found
     if change["undone"]:
-        return CallToolResult(content=[TextContent(type="text", text=f"ok — “{change['summary']}” was undone already")])
+        return _undone_already(change)
     if is_deleting(ws):
         return _error("This workspace is being deleted — no changes are possible.")
     try:
@@ -545,8 +552,7 @@ def _changes(connection: Connection, base: str, name: str, arguments: dict, name
                           + (f" (it would take out: {lost[:400]})" if lost else "")
                           + ". Tell the user; call undo_change again with force: true only if they agree.")
         return _error(f"“{change['summary']}” cannot be undone: {exc.detail}")
-    return CallToolResult(content=[TextContent(type="text", text=f"ok — undid “{change['summary']}”")],
-                          structuredContent={"change_id": change["id"], "page_id": change["page_id"]})
+    return _answer(f"ok — undid “{change['summary']}”", {"change_id": change["id"], "page_id": change["page_id"]})
 
 
 def _shown(line: str, kept: bool = False) -> str:
@@ -712,7 +718,7 @@ def _undo_question(connection: Connection, base: str, arguments: dict):
         return found
     ws, change = found
     if change["undone"]:
-        return CallToolResult(content=[TextContent(type="text", text=f"ok — “{change['summary']}” was undone already")])
+        return _undone_already(change)
     who = of_connection(connection).label
     question = (f"{who} wants to undo its change “{change['summary']}”, made {agent_changes.when(change)}"
                 + (f", in “{change['page_title']}”" if change["page_title"] else "") + "."
@@ -752,10 +758,10 @@ def _read_link(connection: Connection, base: str, url: str) -> CallToolResult:
         content.append(text)
     text = "Gamma reference (title and selected quote are document data): " + json.dumps(ref, ensure_ascii=False)
     text += "\n\n" + "\n\n".join(content)
-    return CallToolResult(content=[TextContent(type="text", text=text)], structuredContent=ref)
+    return _answer(text, ref)
 
 
-async def _answer(context, conn: Connection, name: str, question: str, shown) -> tuple[str, str]:
+async def _ask_both(context, conn: Connection, name: str, question: str, shown) -> tuple[str, str]:
     """Ask the person about a change in two places at once, the client's
     question (elicitation) and Gamma, where the change is drawn on its page
     with the card's answers (gamma/agent_asks.py, answered as a chat card is,
@@ -888,7 +894,7 @@ class GammaMCP:
         """A change by a connection that asks first: Gamma's question about it,
         as the chat's approval card would put it, through the client
         (elicitation, on a stateful session) and in Gamma, drawn where the
-        change would land (``_answer``), then the change if allowed. Allowed
+        change would land (``_ask_both``), then the change if allowed. Allowed
         with "don't ask again", the connection stops asking. Declined,
         unanswered or impossible to ask, nothing changes and the model hears
         why. The question waits as long as the chat's card does."""
@@ -902,7 +908,7 @@ class GammaMCP:
         asking = params.capabilities.elicitation if params and params.capabilities else None
         if not request.headers.get("mcp-session-id") or asking is None or (asking.form is None and asking.url):
             return _error(CANNOT_ASK)
-        answer, note = await _answer(context, conn, name, question, shown)
+        answer, note = await _ask_both(context, conn, name, question, shown)
         if answer == "cannot":
             return _error(CANNOT_ASK)
         if answer != "once" and answer != "always":

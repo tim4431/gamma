@@ -32,7 +32,7 @@ entities, and `type`, which was not being selected.
 - **Plain text in the record, LaTeX in the entry.** The stored title and
   venue read as the PDF prints them (`CsPbCl3`), because that is what the
   title match compares and what the popover shows; markup is turned into
-  macros only where it is typeset (`bibtex.latex_text` for built values,
+  macros only where it is typeset (`bibtex_latex.latex_text` for built values,
   `bibtex.normalize_entry` for doi.org's rendering). An inline tag leaves
   nothing behind, a block tag a space — OpenAlex's cleaning used to insert a
   space for every tag, which split `CsPbCl3`; both now share

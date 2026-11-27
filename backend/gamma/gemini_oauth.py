@@ -14,8 +14,9 @@ says so, and a Gemini API key is the supported way.
 A sign-in in progress (``begin``) ends in one of two ways:
 
 - caught: when the browser runs on this server's machine, a listener on a
-  free loopback port takes Google's redirect, as Gemini CLI does (Google
-  lets a desktop client come back to any loopback port);
+  free loopback port (gamma/oauth_callback.py) takes Google's redirect, as
+  Gemini CLI does (Google lets a desktop client come back to any loopback
+  port);
 - pasted: anywhere else Google ends the sign-in on
   codeassist.google.com/authcode, which shows a code the user pastes back.
 
@@ -32,15 +33,13 @@ RefreshUnavailable and the tokens are kept.
 """
 
 import hashlib
-import http.server
 import json
 import re
 import secrets
 import threading
 import time
-import urllib.parse
 
-from . import chatgpt_oauth, cloud_http, cloud_oauth, config, html_page
+from . import chatgpt_oauth, cloud_http, cloud_oauth, config, oauth_callback
 from .chatgpt_oauth import RefreshUnavailable, _b64url, parse_callback
 from .cloud_http import CloudConfigError, CloudError
 from .logbuf import log
@@ -257,7 +256,6 @@ def refresh(oauth: dict) -> dict | None:
 
 _PENDING: dict = {}
 _LOCK = threading.Lock()  # _PENDING and the callback listener
-_server = None            # the running listener, under _LOCK
 
 
 def _live(rec, now: float) -> bool:
@@ -281,7 +279,7 @@ def begin(owner, *, local: bool = False, device: bool = False) -> dict:
         for k in [k for k, v in _PENDING.items() if not _live(v, now)]:
             del _PENDING[k]
         _PENDING[state] = rec
-    port = _listen() if local else 0
+    port = _listener.open() if local else 0
     with _LOCK:
         rec["local"] = bool(port)
         if port:
@@ -366,54 +364,8 @@ def _capture(query: dict) -> tuple[bool, str]:
     return False, error
 
 
-class _CallbackHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        parts = urllib.parse.urlsplit(self.path)
-        if parts.path != CALLBACK_PATH:
-            self.send_error(404)
-            return
-        ok, message = _capture({k: v[0] for k, v in urllib.parse.parse_qs(parts.query).items()})
-        body = html_page.page("Signed in with Google" if ok else "The Google sign-in did not finish",
-                              message or "You can close this tab: Gamma finishes connecting in its own window.").encode()
-        self.send_response(200 if ok else 400)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        for name, value in html_page.headers().items():
-            self.send_header(name, value)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args):  # the server log is logbuf's
-        pass
-
-
-class _CallbackServer(http.server.HTTPServer):
-    timeout = 1
-
-
-def _listen() -> int:
-    """The loopback port Google's redirect comes back to while a sign-in on
-    this machine waits (a free one, opened at the first such sign-in); 0
-    when none could be opened."""
-    global _server
-    with _LOCK:
-        if _server is None:
-            try:
-                _server = _CallbackServer(("127.0.0.1", 0), _CallbackHandler)
-            except OSError as e:
-                log.info(f"[gemini-oauth] no loopback port for the sign-in ({e}); the code will be pasted")
-                return 0
-            threading.Thread(target=_serve, args=(_server,), name="gemini-callback", daemon=True).start()
-        return _server.server_address[1]
-
-
-def _serve(server) -> None:
-    global _server
-    while True:
-        server.handle_request()
-        with _LOCK:
-            now = time.time()
-            if not any(r["local"] and not r["tokens"] and _live(r, now) for r in _PENDING.values()):
-                _server = None
-                server.server_close()
-                return
+_listener = oauth_callback.Listener(
+    name="gemini-oauth", path=CALLBACK_PATH, lock=_LOCK,
+    waiting=lambda: any(r["local"] and not r["tokens"] and _live(r, time.time()) for r in _PENDING.values()),
+    capture=_capture, titles=("Signed in with Google", "The Google sign-in did not finish"),
+    done="You can close this tab: Gamma finishes connecting in its own window.")

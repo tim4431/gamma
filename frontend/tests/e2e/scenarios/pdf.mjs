@@ -297,7 +297,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       const props = (await account.api(`/api/blocks/${pageId}`)).properties;
       return props.meta?.kind === "conferencePaper" ? props : null;
     }, { what: "the item type saved" });
-    assert(saved.bibtex.startsWith("@inproceedings{he2016,") && saved.bibtex.includes("booktitle = {2016 IEEE CVPR}"),
+    // (its capitalised words braced, as Zotero's BibTeX export braces a booktitle's)
+    assert(saved.bibtex.startsWith("@inproceedings{he2016,") && saved.bibtex.includes("booktitle = {2016 {IEEE} {CVPR}}"),
       `entry: ${saved.bibtex}`);
     // the hand edit is stamped, and the popover says when
     await until(async () => (await keys()).includes("Edited"), { what: "the Edited row" });
@@ -1732,6 +1733,60 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await p.close();
     } finally { await c.close(); }
     await account.api(`/api/blocks/${paper.id}`, { method: "DELETE" });
+  });
+
+  // Gamma Connector's "Open in Gamma" in a Gamma tab already open
+  // (extension/worker.js openApp), posted here as bridge.js posts it
+  // (shared/lib/connector.js useConnectorOpen): a page of this workspace
+  // opens in place and a highlight's link lands on its passage, the tab
+  // never reloading; a page of another workspace loads that workspace's
+  // address, as a switch does. Each is answered, so the Connector leaves the
+  // tab alone (extension/tests/openapp.e2e.mjs is the Connector's half).
+  await step("pdf: the Connector's Open in Gamma opens a page and a highlight in place in this tab, and another workspace's page by loading it", async () => {
+    const up = await account.upload("/api/uploads", makePdf([["Connector landing paper", "A passage the Connector opens"]]), "connector.pdf", "application/pdf");
+    const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Connector landing paper" } });
+    const r = { x1: 60, y1: 80, x2: 480, y2: 102 };
+    const hl = await account.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "",
+      properties: { quote: "A passage the Connector opens", color: "#ffe28fa6", pdf_position: { pageNumber: 1, width: 612, height: 792, boundingRect: r, rects: [r] } } } });
+    const lab = await account.api("/api/workspaces", { method: "POST", body: { name: "Connector lab" } });
+    const c = await account.context(browser);
+    try {
+      const away = await account.api("/api/pages", { method: "POST", body: { title: "Lab page" }, headers: { "X-Gamma-Workspace": lab.id } });
+      // The answers the app posts, kept across a load of the tab.
+      await c.addInitScript(() => window.addEventListener("message", (e) => {
+        if (e.data?.source !== "gamma-app" || e.data.type !== "app-opened") return;
+        sessionStorage.setItem("answered", `${sessionStorage.getItem("answered") || ""} ${e.data.id}`);
+      }));
+      const p = await openPage(c, `${server.base}/?ws=${account.ws}`);
+      await p.waitForLoadState("networkidle");
+      await p.evaluate(() => { window.sameDocument = true; });
+      const answered = (id) => p.evaluate((id) => (sessionStorage.getItem("answered") || "").split(" ").includes(id), id);
+      const open = (id, url) => p.evaluate(({ id, url }) => window.postMessage({ source: "gamma-connector", type: "app-open", id, url }, location.origin), { id, url });
+      const opened = () => new URL(p.url()).searchParams;
+
+      await open("paper", `${server.base}/?block=${paper.id}&ws=${account.ws}`);
+      await until(() => answered("paper"), { what: "the paper's open answered" });
+      await waitForPdf(p, 1);
+      await until(() => [opened().get("block"), opened().get("page")].includes(paper.id), { what: "the paper's address" });
+      assert(await p.evaluate(() => window.sameDocument), "the paper opened without a reload");
+
+      await open("highlight", `${server.base}/?block=${hl.id}&ws=${account.ws}`);
+      await until(() => answered("highlight"), { what: "the highlight's open answered" });
+      await p.waitForSelector(`[data-page="1"] [data-hl-id="${hl.id}"].pdfHlFlash`, { timeout: 8000 });
+      assert(await p.evaluate(() => window.sameDocument), "the highlight opened without a reload");
+
+      await open("lab", `${server.base}/?block=${away.id}&ws=${lab.id}`);
+      await until(async () => opened().get("ws") === lab.id && !(await p.evaluate(() => window.sameDocument).catch(() => true)),
+        { what: "the other workspace's address loaded" });
+      await until(() => answered("lab"), { what: "the other workspace's open answered before the load" });
+      await until(() => [opened().get("block"), opened().get("page")].includes(away.id), { what: "the lab page open" });
+      assertNoProblems(p);
+      await p.close();
+    } finally {
+      await c.close();
+      await account.api(`/api/workspaces/${lab.id}`, { method: "DELETE" });
+      await account.api(`/api/blocks/${paper.id}`, { method: "DELETE" });
+    }
   });
 
   // Settings → Reading › PDFs › Smooth wheel scrolling (shared/lib/smoothWheel.js).

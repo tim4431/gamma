@@ -404,12 +404,7 @@ async function showHandoff(id, sender) {
     if (seen) await noteHandoff(seen, seen.note || "");
     pumpQueue();
   }
-  try {
-    tab = await chrome.tabs.get(tabId);
-    await chrome.tabs.update(tabId, { active: true });
-    const win = await chrome.windows.get(tab.windowId);
-    await chrome.windows.update(tab.windowId, win.state === "minimized" ? { state: "normal", focused: true } : { focused: true });
-  } catch {}
+  try { await bringForward(await chrome.tabs.get(tabId)); } catch {}
   return true;
 }
 
@@ -428,23 +423,60 @@ async function bindHandoff(tabId, url, openerTabId) {
                          background: false, note: "" });
 }
 
-// The Gamma tab to bring back: the one that opened the request, else the
-// most recently used Gamma page at the address it asked from (or the
-// Connector's own), never an API address like /go.
-async function focusGamma({ opener, app }) {
-  const origins = [app, await serverOrigin()].filter(Boolean);
-  const isApp = (t) => t && t.url && origins.some((o) => t.url.startsWith(o + "/") && !t.url.startsWith(o + "/api/"));
-  let tab = null;
-  if (opener != null) { try { tab = await chrome.tabs.get(opener); } catch {} }
-  if (!isApp(tab)) {
-    tab = (await chrome.tabs.query({})).filter(isApp)
-      .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || null;
-  }
-  if (!tab) return;
+// Whether a tab shows the Gamma app at one of `origins`: never an API
+// address like a handoff's /go, nor a share view (`?share=`), which shows
+// someone's page rather than the library.
+function isAppTab(tab, origins) {
+  let u;
+  try { u = new URL(tab.url); } catch { return false; }
+  return origins.includes(u.origin) && !u.pathname.startsWith("/api/") && !u.searchParams.has("share");
+}
+
+// The Gamma tab used last at one of `origins`, or null. A private window's
+// is left out: its session is not the one the Connector saves with.
+async function lastAppTab(origins) {
+  return (await chrome.tabs.query({})).filter((t) => !t.incognito && isAppTab(t, origins))
+    .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || null;
+}
+
+// A tab to the front: selected, and its window focused (restored when
+// minimized).
+async function bringForward(tab) {
   try {
     await chrome.tabs.update(tab.id, { active: true });
-    await chrome.windows.update(tab.windowId, { focused: true });
+    const win = await chrome.windows.get(tab.windowId);
+    await chrome.windows.update(tab.windowId, win.state === "minimized" ? { state: "normal", focused: true } : { focused: true });
   } catch {}
+}
+
+// The Gamma tab to bring back: the one that opened the request, else the
+// most recently used Gamma page at the address it asked from (or the
+// Connector's own).
+async function focusGamma({ opener, app }) {
+  const origins = [app, await serverOrigin()].filter(Boolean);
+  let tab = null;
+  if (opener != null) { try { tab = await chrome.tabs.get(opener); } catch {} }
+  if (!tab || !isAppTab(tab, origins)) tab = await lastAppTab(origins);
+  if (tab) await bringForward(tab);
+}
+
+// "Open in Gamma" (the popup's, a notification's click): in the Gamma tab
+// used last when the options page leaves `reuseAppTab` on and one is open,
+// else in a new tab. That tab's app opens the link in place (bridge.js
+// "app-open"; the app's shared/lib/connector.js useConnectorOpen); one that
+// gives no answer (an app from before it, a tab still loading or discarded)
+// loads the link instead.
+async function openApp(url) {
+  const tab = (await getSettings()).reuseAppTab ? await lastAppTab([new URL(url).origin]) : null;
+  if (!tab) { await chrome.tabs.create({ url }); return; }
+  let opened = false;
+  if (!tab.discarded) {
+    try { opened = (await chrome.tabs.sendMessage(tab.id, { type: "app-open", url }, { frameId: 0 })) === true; } catch {}
+  }
+  if (!opened) {
+    try { await chrome.tabs.update(tab.id, { url }); } catch { await chrome.tabs.create({ url }); return; }
+  }
+  await bringForward(tab);
 }
 
 // Tell the card what the Connector is doing — "looking" (no PDF link on the
@@ -967,7 +999,7 @@ async function notify(message, target) {
 
 chrome.notifications && chrome.notifications.onClicked.addListener((id) => {
   const target = notifyTargets.get(id);
-  if (typeof target === "string") chrome.tabs.create({ url: target });
+  if (typeof target === "string") openApp(target).catch(() => {});
   else if (target?.showHandoff) showHandoff(target.showHandoff).catch(() => {});
   notifyTargets.delete(id);
   chrome.notifications.clear(id);
@@ -1125,7 +1157,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return { ...status, auto };
       }
       case "open": {
-        await chrome.tabs.create({ url: await appUrl(msg.path) });
+        await openApp(await appUrl(msg.path));
         return true;
       }
       // The Gamma app asking (bridge.js) whether a Connector is here at

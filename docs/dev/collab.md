@@ -676,13 +676,13 @@ socket was down is never sent again. A tab with no page open
 
 **One file's tabs.** `collab.publish_file(ws, page_ids, message)` sends to
 everyone in the rooms of `page_ids` (the pages showing a stored file, the
-owner and its copies: `highlight_relocate.pages_showing`), share visitors
+owner and its copies: `blocks_store.pages_showing`), share visitors
 included, and to the members' peers (no share token) in the workspace's
 other rooms, since a member's tab may show the file in a split pane or a
 dock while its one socket is its focused page's. A share visitor of
 another page hears nothing. It sends as `publish_account` does, and is a
 no-op without targets. The recognized text uses it for `{t: "ocr"}`
-(`pdf_ocr.announce`, which reads nothing when no room of the workspace is
+(`ocr_run.announce`, which reads nothing when no room of the workspace is
 open).
 
 A peer is `{client, user, name, can_edit, block, anchor, head}` —

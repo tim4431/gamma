@@ -1,20 +1,17 @@
 import React from "react";
-import { FileIcon, HighlightIcon, IndentIcon, LayoutIcon, MessageSquareIcon, PaperclipIcon, PenIcon, PinIcon } from "../shared/ui/Icons";
-import { CopyField, FormNotice, PictureChoices, Row, Segmented, Step, SubDialog, Toggle } from "../settings/SettingsKit";
+import { FileIcon, HighlightIcon, IndentIcon, LayoutIcon, MessageSquareIcon, PaperclipIcon, PenIcon } from "../shared/ui/Icons";
+import { FormNotice, PictureChoices, Row, Segmented, Step, SubDialog, Toggle } from "../settings/SettingsKit";
 import { ExportPreview, FormatIllustration } from "../shared/illustrations";
-import { CopyBox, useCopied } from "../shared/ui/Widgets";
 import { MorphText } from "../shared/ui/MotionWidgets";
-import { copyText } from "../shared/lib/utils";
 import { fmtBytes } from "../shared/lib/format.js";
-import { bibliographyPreview, shareToken, sharedBibliographyUrl } from "./exportApi";
 import { CATEGORIES, exportFormatOf, hasReviewStep, notionFiles, offersSubPages, resolveExport, resolveImport, exportSummary } from "./transferFormats";
+import { BibliographyReview, useBibliographyStep } from "./BibliographyReview";
 import { canPickFolder, folderDrop } from "./folderZip.js";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { TaskProgress } from "../tasks/TasksTray";
 import { isActive, isFinished } from "../tasks/taskModel.js";
 import { exportAgain, taskTitle } from "../tasks/taskKinds.js";
 import { T, t, tn } from "../shared/i18n/i18n.js";
-import { guideEvents } from "../guide/events.js";
 
 const EXPORT_CONTROLS = {
   highlights: { icon: HighlightIcon, label: T("Highlights") },
@@ -80,122 +77,6 @@ function TransferDialog({ title, step, setStep, firstTitle, secondTitle, onCance
   </SubDialog>;
 }
 
-// A bibliography previews itself, in the two panes the Zotero import review
-// uses: the papers on the left, the entry of whichever one is picked on the
-// right. The data comes from the same builder as the download
-// (GET /api/bibliography), so the citation keys on screen — the a/b suffixes
-// a clash gets included — are the ones the file will carry, and the pages it
-// cannot cite are listed before anything is downloaded rather than after.
-// `active` keeps the fetch out of the way until the step is on screen.
-// `subPages`: the review and the link are the page's export with the pages
-// inside it.
-function useBibliography(active, { pageId, folder, subPages }) {
-  const [state, setState] = React.useState({ loading: true });
-  const [token, setToken] = React.useState("");
-  React.useEffect(() => {
-    if (!active) return undefined;
-    let live = true;
-    setState({ loading: true });
-    bibliographyPreview({ pageId, folder, subPages })
-      .then((data) => { if (live) setState({ data }); })
-      .catch((err) => { if (live) setState({ error: err.message }); });
-    return () => { live = false; };
-  }, [active, pageId, folder, subPages]);
-  React.useEffect(() => {
-    if (!active) return undefined;
-    let live = true;
-    // The link is a bonus: no share, no link, and nothing is created here.
-    shareToken({ pageId, folder })
-      .then((found) => { if (live) setToken(found); });
-    return () => { live = false; };
-  }, [active, pageId, folder]);
-  // Inactive it reports nothing, so the format step's Next is never waiting
-  // on a fetch that has not been asked for.
-  return { ...(active ? state : {}), url: sharedBibliographyUrl(token, { pageId, folder, subPages }) };
-}
-
-// `controls`: the export's switches (for a bibliography only "Include pages
-// inside", resolveExport).
-function BibtexReview({ bib, folder, summary, copied, onCopy, controls, payload, set }) {
-  const { entries = [], skipped = [] } = bib.data || {};
-  const [picked, setPicked] = React.useState("");
-  const shown = entries.find((entry) => entry.page_id === picked) || entries[0];
-  if (bib.loading) return <p className="reportModalHint">{t("Reading the citation records…")}</p>;
-  if (bib.error) return <FormNotice>{t(bib.error)}</FormNotice>;
-  return <>
-    <p className="reportModalHint">{entries.length
-      ? tn("{n} paper can be cited.", "{n} papers can be cited.", entries.length)
-      : t("Nothing here can be cited yet: no page carries paper metadata.")}</p>
-    <div className="bibColumns">
-      <section aria-label={t("Papers")}>
-        <h3>{t("Papers")}</h3>
-        <div className="bibPaperList">
-          {entries.map((entry) => (
-            <button key={entry.page_id} type="button" className="bibPaperRow"
-              aria-pressed={entry === shown} onClick={() => setPicked(entry.page_id)}>
-              <span className="bibPaperTitle">{entry.title || t("Untitled")}</span>
-              <span className="bibPaperKey">
-                {entry.pinned ? <PinIcon filled size={12} aria-label={t("Pinned citation key")} /> : null}
-                {entry.key}
-              </span>
-            </button>
-          ))}
-          {/* The pages that could not be cited, where the question "why is my
-              paper missing?" is actually asked. */}
-          {skipped.map((page) => (
-            <div key={page.page_id || page.title} className="bibPaperRow bibPaperSkipped">
-              <span className="bibPaperTitle">{page.title}</span>
-              <span className="bibPaperKey">{t(page.reason)}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-      <section aria-label={t("BibTeX entry")}>
-        <h3>{t("BibTeX entry")}</h3>
-        <div className="bibEntryPane">
-          {shown ? <CopyBox copied={copied === shown.page_id} onCopy={() => onCopy(shown.text, shown.page_id)}
-            title={t("Copy this entry")} label={t("Copy this entry")}>
-            <pre className="bibtexPre bibtexPreview">{shown.text}</pre>
-          </CopyBox> : <p className="bibPaneEmpty">{t("Look up a paper's metadata with the (i) button to cite it.")}</p>}
-        </div>
-      </section>
-    </div>
-    {controls.map((control) => <ExportControl key={control.key} control={control} payload={payload} set={set} />)}
-    <div className="reportModalHint">{summary}</div>
-    <BibtexSteps url={bib.url} folder={folder} />
-  </>;
-}
-
-// Keeping a LaTeX document's bibliography in step with the library: the
-// export endpoint answers the current .bib on every request, so a share link
-// turns it into a URL Overleaf (or a Makefile, or curl) can refresh from.
-// Sharing itself stays in the share popover, where the audience is chosen —
-// this only reports whether a link exists.
-function BibtexSteps({ url, folder }) {
-  // A folder's bibliography on screen: the guide's hint names this link.
-  React.useEffect(() => { guideEvents.emit("bibtex.shown", { folder: !!folder }); }, [folder]);
-  return <details className="transferHelp" data-guide="transfer.bibLink"><summary>{t("Keep this .bib up to date")}</summary><div className="importSteps">
-    {url ? <>
-      <CopyField label={t("Bibliography link")} value={url} action={t("Copy the bibliography link")} rows={1} />
-      <Step n={1} title={t("In Overleaf: Upload → From External URL")}
-        hint={t("Paste this link and name the file references.bib. The Refresh button next to it fetches the current entries again.")} />
-      <Step n={2} title={t("Cite as usual")}
-        hint={t("Use the citation keys above in your document. Pin a key in the (i) metadata popover to keep citing a paper by the name your document already uses.")} />
-      {/* Whole sentences, not an interpolated noun: a fragment like "the page"
-          has no context for a translator (docs/dev/i18n.md). */}
-      <p className="reportModalHint">{folder
-        ? t("Anyone with the link can read the folder — it is the share link, so changing or stopping the share changes this too.")
-        : t("Anyone with the link can read the page — it is the share link, so changing or stopping the share changes this too.")}</p>
-    </> : <>
-      <p className="reportModalHint">{t("A share link makes this bibliography available at a fixed URL, which Overleaf and build scripts can refresh from instead of re-exporting by hand.")}</p>
-      <Step n={1} title={folder ? t("Share the folder") : t("Share the page")}
-        hint={folder ? t("Use Share in the folder's ⋮ menu and pick who may open the link.")
-          : t("Use Share in the page's menu and pick who may open the link.")} />
-      <Step n={2} title={t("Come back here")} hint={t("The link to paste into Overleaf appears in this step.")} />
-    </>}
-  </div></details>;
-}
-
 // `job`: the export job this dialog shows (then only its last step, with
 // fetchJob / onDownload / onStop / onRetry); otherwise the choice of format
 // and options, and onExport(payload) starts the export. `folder` is the
@@ -221,18 +102,22 @@ export function ExportDialog({ job, fetchJob, onDownload, onStop, onRetry, onLea
   return <ExportSetup {...setup} startStep={resume} />;
 }
 
+// `citationStyle`, `citationLocale`: the account's (Settings → Citations),
+// which a Formatted bibliography starts from (useBibliographyStep).
 function ExportSetup({ opts, setOpts, hasPdf, pdfStored, hasMeta, pageId, folder, folderName, subPages = 0, subPagesDirect = false,
-  translated = null, busy = false, startStep = 0, onCancel, onExport }) {
+  translated = null, busy = false, startStep = 0, onCancel, onExport, citationStyle, citationLocale }) {
   const [step, setStep] = React.useState(startStep);
   const context = { hasPdf, pdfStored, hasMeta, folder, subPages, subPagesDirect, translated };
   const resolved = resolveExport(opts, context);
   const { definition, formats, controls, needsReview, payload } = resolved;
   const { format, highlights, bundle } = payload;
   const isZotero = format === "zotero";
-  const isBibtex = format === "bibtex";
-  const bib = useBibliography(isBibtex && step === 1, { pageId, folder, subPages: payload.subPages });
-  const [copied, flashCopied] = useCopied();
+  const isBibliography = format === "bibliography";
+  const reviewing = isBibliography && step === 1;
   const set = (patch) => setOpts((o) => ({ ...o, ...patch }));
+  const bibliography = useBibliographyStep({ card: isBibliography, reviewing, opts, set, payload, pageId, folder, folderName,
+    citationStyle, citationLocale });
+  const { isFormatted } = bibliography;
   const advance = (id = format) => {
     const next = resolveExport({ ...opts, format: id }, context);
     set({ format: next.payload.format });
@@ -240,36 +125,25 @@ function ExportSetup({ opts, setOpts, hasPdf, pdfStored, hasMeta, pageId, folder
     else onExport(next.payload);
   };
   const summary = exportSummary(resolved, folder);
-
-  // BibTeX is small and text: copying it is often the whole job, so the step
-  // offers that beside the download instead of making the file the only way
-  // out. The footer copies the whole bibliography, the right-hand pane one entry.
-  const copy = (text, key = "all") => copyText(text).then((ok) => { if (ok) flashCopied(key); });
-  const entries = bib.data?.entries || [];
-  const copyAction = isBibtex && entries.length > 1 ? <button type="button" className={`uiBtn ${copied === "all" ? "on" : ""}`}
-    onClick={() => copy(bib.data.text)}>
-    <MorphText>{copied === "all" ? t("Copied") : t("Copy all")}</MorphText></button> : null;
-  // Only the review step waits on the bibliography — nothing has been fetched
-  // while the format cards are still up, so Next must not be held there.
-  const bibNotReady = isBibtex && step === 1 && (bib.loading || !!bib.error || !entries.length);
+  const switches = controls.map((control) => <ExportControl key={control.key} control={control} payload={payload} set={set} />);
   // The host's wait holds the button only where it exports.
   const waiting = busy && (step === 1 || !needsReview);
 
   return <TransferDialog title={folder ? t("Export “{folder}”", { folder: folderName }) : t("Export")} step={step} setStep={setStep}
     firstTitle={t("Choose a format")} secondTitle={t(definition.label)} needsReview={needsReview} onContinue={() => advance()}
-    onCancel={onCancel} actionLabel={t("Export")} action={() => onExport(payload)} finalTitle={t("Export")}
-    secondaryAction={copyAction} wide={isBibtex && step === 1} busy={bibNotReady || waiting}>
+    onCancel={onCancel} actionLabel={isFormatted ? bibliography.downloadLabel : t("Export")}
+    action={isFormatted ? bibliography.download : () => onExport(payload)} finalTitle={isFormatted ? null : t("Export")}
+    secondaryAction={bibliography.copyAction} wide={reviewing} busy={bibliography.notReady || waiting}>
     {step === 0 ? <>
       <FormatChoices label={t("Export format")} value={format} onChange={(format) => set({ format })} onConfirm={advance} options={formats} />
       {!needsReview ? <p className="reportModalHint">{summary}</p> : null}
-    </> : isBibtex ? <BibtexReview bib={bib} folder={folder} summary={summary} copied={copied} onCopy={copy}
-      controls={controls} payload={payload} set={set} />
+    </> : isBibliography ? <BibliographyReview {...bibliography.review} summary={summary} controls={switches} />
     : <>
       <p className="reportModalHint">{t("Choose what to include.")}</p>
       <div className="transferReview">
         <ExportPreview {...payload} filesRow={payload.format === "notion" ? notionFiles(payload) : null} />
         <div className="transferControls">
-          {controls.map((control) => <ExportControl key={control.key} control={control} payload={payload} set={set} />)}
+          {switches}
           {isZotero && !bundle ? <p className="reportModalHint">{t("Highlights travel inside PDF files. Turn on file bundling to include them.")}</p> : null}
         </div>
       </div>
@@ -293,9 +167,12 @@ function ZoteroSteps({ folder, bundle, highlights, open = false }) {
 }
 
 // What to do with an export once it is downloaded, for the formats that
-// need a word (Zotero has its step guide).
+// need a word (Zotero has its step guide), a bibliography's by its file.
 const NEXT_STEP = {
   bibtex: T("Put it beside your .tex file, or upload it to Overleaf."),
+  biblatex: T("Put it beside your .tex file and load it with \\addbibresource, or upload it to Overleaf."),
+  ris: T("Import it into a reference manager: Zotero and EndNote read it with File → Import."),
+  csljson: T("Give it to Pandoc with --bibliography, or to any other tool that reads CSL JSON."),
   obsidian: T("Unzip it into a vault, or open the folder as one."),
   gamma: T("In the other Gamma: Import → Gamma export (.zip)."),
   notability: T("Open it in Notability: on the iPad or the Mac, open the .note from Files (or AirDrop it) and choose Notability. Unzip a folder's .zip first."),
@@ -308,7 +185,7 @@ const NEXT_STEP = {
 const SKIP_REASONS = [T("page has no PDF"), T("PDF not stored on the server"),
   T("page has no paper metadata"), T("the PDF has no pages"), T("the page's PDF changed after it was translated"),
   T("page has no PDF and no sheets of paper")];
-// And the refusals a BibTeX export job fails with (its failed step shows them).
+// And the refusals a bibliography's export job fails with (its failed step shows them).
 // biome-ignore lint/correctness/noUnusedVariables: kept for the catalogs; nothing reads it at run time
 const EXPORT_REFUSALS = [T("none of these pages has paper metadata to cite"),
   T("this page has no paper metadata to cite")];
@@ -395,7 +272,7 @@ function ExportJobStep({ job, folder, folderName, pageId, subPages, shareView, f
           </details>
         ) : null}
         {format?.id === "zotero" ? <ZoteroSteps folder={folder} bundle={params.pdf} highlights={params.highlights} open />
-          : NEXT_STEP[format?.id] ? <p className="reportModalHint">{t(NEXT_STEP[format.id])}</p> : null}
+          : NEXT_STEP[format?.bibFormat || format?.id] ? <p className="reportModalHint">{t(NEXT_STEP[format.bibFormat || format.id])}</p> : null}
       </> : null}
       {job.state === "failed" ? <FormNotice>{t(job.error)}</FormNotice> : null}
       {job.state === "cancelled" ? <p className="reportModalHint">{t("Nothing was saved. Start it again to export.")}</p> : null}

@@ -1043,6 +1043,9 @@ def test_field_lines_read_as_a_person_says_them():
     assert field_line("authors", ["Ashish Vaswani", "Noam Shazeer", "Niki Parmar"]) == \
         "Authors: A. Vaswani, N. Shazeer, …"
     assert field_line("authors", ["Plato"]) == "Authors: Plato"
+    # A "Last, First" name is initials and surname as any other.
+    assert field_line("authors", ["Pereira Campos, Jorge Fernando", "Lovelace, Ada"]) == \
+        "Authors: J. F. Pereira Campos, A. Lovelace"
     assert field_line("kind", "journalArticle") == "Type: Journal article"
     assert field_line("venue", "") == "Venue: (none)"
     assert field_line("tags", ["a", "b"]) == "Tags: a, b"

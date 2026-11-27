@@ -63,7 +63,7 @@ import time
 from contextlib import closing, contextmanager, nullcontext
 from pathlib import Path
 
-from . import backups, config, version
+from . import backups, bibtex, bibtex_keys, bibtex_parse, config, meta_fields, names, version
 from .blocks_store import FOLDERS, folder_by_path
 from .colors import normalize_color
 from .db import (BUSY_TIMEOUT_S, SCHEMA_VERSION, USERS_SCHEMA, WORKSPACE_PREFS_SCHEMA, WS_VERSION_BASE,
@@ -2522,6 +2522,197 @@ def _v71_ai_models(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v72_promoted(props: dict) -> dict | None:
+    """``props`` with the issue and the month its cached BibTeX entry holds
+    (``bibtex_parse.record_from_entry``: an @article's ``number``, and its
+    ``month`` while the entry's year is the record's: doi.org may date the
+    print issue a year after the record's online year) given to the record
+    as ``issue`` and ``date`` (``YYYY-MM``, gamma/meta_fields.py), each only
+    where the record has none. None when nothing is added. The entry's
+    bytes stay as they are."""
+    meta, entry = props.get("meta"), props.get("bibtex")
+    if not isinstance(meta, dict) or not isinstance(entry, str) or (meta.get("issue") and meta.get("date")):
+        return None
+    year = str(meta.get("year") or "").strip()
+    found = bibtex_parse.record_from_entry(entry, year)
+    added = {}
+    if found.get("issue") and not meta.get("issue"):
+        added["issue"] = meta_fields.clean_cited("issue", found["issue"])
+    date = meta_fields.parse_date(f"{year}-{found['month']}")[1] if year and found.get("month") else ""
+    if date and not meta.get("date"):
+        added["date"] = date
+    return {**props, "meta": {**meta, **added}} if added else None
+
+
+def _v72_keyed(props: dict) -> dict | None:
+    """``props`` with the BibTeX entry its record was cited by until now
+    cached (``properties.bibtex``, keyed ``bibtex_keys.last_word_key``)
+    where it keeps none and pins no key, and its first author is a name in
+    ``names.join_name``'s comma form ("Pereira Campos, Jorge Fernando",
+    typed, imported or given through the API), which
+    ``bibtex_keys.default_key`` reads by its surname from 72 ("campos2021"
+    where it was "fernando2021"): a .tex file citing the old key keeps
+    working, and a rebuild keeps it (``bibtex_keys.rebuilt_key``). None
+    otherwise."""
+    meta = props.get("meta")
+    if not isinstance(meta, dict) or props.get("bibtex") or bibtex_keys.pinned_key(props):
+        return None
+    key = bibtex_keys.last_word_key(meta)
+    return {**props, "bibtex": bibtex.build_entry(meta, key)} if key != bibtex_keys.default_key(meta) else None
+
+
+def _v72_record(props) -> dict | None:
+    """``_v72_promoted`` or ``_v72_keyed`` of a block's properties."""
+    return (_v72_promoted(props) or _v72_keyed(props)) if isinstance(props, dict) else None
+
+
+def _v72_citation_fields(ws: str, pages: sqlite3.Connection, data) -> None:
+    """A paper's record gains the issue and the month of publication its
+    cached BibTeX entry already holds (``_v72_promoted``), the fields a
+    citation style prints that the record lacked until now, and a record
+    with no entry whose key would move gets the entry it was cited by
+    (``_v72_keyed``): every row that keeps a record, in the library, in
+    Recently deleted or anywhere else, and every block entry of a mirror's
+    stored bases (``sync_pages``; a push in flight, ``~pending``, is left
+    as it was), so the first round after both sides upgraded sends nothing
+    for it. Properties alone: no ``updated_at``, no change-log or op-log
+    row. A Zotero link's item rows move to the names compared from 72
+    (``_v72_zotero_names``). A rerun finds every record holding what its
+    entry gives or holding an entry, and a copy without the table gets it
+    from the schema statements. Not derived nor local: the record a server
+    keeps changes, so the workspace format moves
+    to 72 and a copy kept by an older server pauses until it upgrades
+    (docs/dev/mirror.md "The data format"); without that, its popover's
+    edit, which rebuilds the record from the fields it knows, would erase
+    the new ones on this side."""
+    if not _columns(pages, "unified_blocks"):
+        return
+    changed = []
+    for block_id, raw in pages.execute(
+            "SELECT id, properties FROM unified_blocks WHERE properties LIKE '%\"meta\"%'").fetchall():
+        try:
+            props = json.loads(raw or "{}")
+        except ValueError:
+            continue
+        new = _v72_record(props)
+        if new:
+            changed.append((json.dumps(new), block_id))
+    pages.executemany("UPDATE unified_blocks SET properties = ? WHERE id = ?", changed)
+    if _columns(pages, "sync_pages"):  # a copy without the table: no mirror's bases
+        bases = []
+        for page_id, raw in pages.execute(
+                "SELECT page_id, base FROM sync_pages WHERE base LIKE '%\"meta\"%'").fetchall():
+            try:
+                base = json.loads(raw or "{}")
+            except ValueError:
+                continue
+            moved = False
+            for key, entry in (base.items() if isinstance(base, dict) else ()):
+                if key == "~pending" or not isinstance(entry, dict) or not isinstance(entry.get("props"), dict):
+                    continue  # sync_engine.PENDING: a push in flight is resent as it was
+                new = _v72_record(entry["props"])
+                if new:
+                    entry["props"], moved = new, True
+            if moved:
+                bases.append((json.dumps(base), page_id))
+        pages.executemany("UPDATE sync_pages SET base = ? WHERE page_id = ?", bases)
+    _v72_zotero_names(pages)
+    if changed:
+        where = f"workspace {ws}" if ws else "a backup's copy"
+        log.info(f"[migrate] {where}: {len(changed)} records given the issue or month their BibTeX entry holds, "
+                 f"or the entry their key was")
+
+
+def _v72_names(authors, read=names.given_first):
+    """A stored list of compared names in the form a Zotero sync compares
+    them in from release 72 (``read``: ``names.given_first`` for Zotero's
+    side, ``names.sent_form`` for Gamma's); anything else as it is."""
+    if not isinstance(authors, list):
+        return authors
+    return [read(a) if isinstance(a, str) else a for a in authors]
+
+
+def _v72_moved(raw, read):
+    """A stored projection (``raw``, JSON, or a dict) with its authors
+    moved by ``_v72_names``: ``(the projection, its authors before)``,
+    the projection None when nothing moves."""
+    base = _json_or_none(raw) if isinstance(raw, str) else raw
+    fields = base.get("fields") if isinstance(base, dict) else None
+    if not isinstance(fields, dict):
+        return None, None
+    was = fields.get("authors")
+    now = _v72_names(was, read)
+    return ({**base, "fields": {**fields, "authors": now}} if now != was else None), was
+
+
+def _json_or_none(raw):
+    try:
+        return json.loads(raw or "{}")
+    except ValueError:
+        return None
+
+
+def _v72_zotero_names(pages: sqlite3.Connection) -> None:
+    """A Zotero link's item rows as release 72 reads them
+    (docs/dev/zotero_sync.md "Names"). Until then a sync compared the
+    authors as the item's two fields joined "First Last" and the page's
+    names as written, and kept no split; from 72 a creator compares given
+    name first as its split reads it (gamma/zotero_fields.py ``project``),
+    a page's name as the creator it makes reads back (``normalized``), and
+    each side's split is kept beside (``detail.names``). So each item row
+    stored before 72 (no ``detail.names``) has every stored name moved to
+    the form the same name, unchanged, reads as now: its bases
+    (``zbase`` by ``names.given_first``, ``gbase`` by ``names.sent_form``),
+    the item a create whose answer was lost was sent as (``detail.sent``,
+    which a later round confirms as both bases; ``sent_form``) and the
+    Zotero side an open ``zotero_field`` row of its page kept
+    (``sync_conflicts`` ``base.zbase``; ``given_first``). Else "Carrasco
+    Kind, M.", "Abbott, T. M. C." or "Martin Luther, Jr. King" would read
+    as changed on both sides once, and the first trash, restore or removal
+    of the item decide wrong. It is given the page's split as it last
+    synced (``detail.names.g``: ``zotero_fields.page_splits`` of the old
+    ``gbase``'s authors, which are the page's names as synced, whitespace
+    runs collapsed), so a name split anew here since goes to Zotero; Zotero's
+    split is not known (no ``z``), so the item's reads as unchanged. A row
+    whose ``gbase`` holds no authors (a pending create, a backup restored
+    since) gets an empty ``detail.names``. A rerun finds every item row
+    with ``detail.names`` and moves nothing again (``given_first`` is not a
+    fixed point of every name: "Smith, John, Esq.")."""
+    if not _columns(pages, "zotero_objects"):
+        return
+    from . import zotero_fields  # (local: it reads Zotero's schema file, which no other step needs)
+
+    moved, old_pages = [], set()
+    for key, page_id, zraw, graw, draw in pages.execute(
+            "SELECT key, page_id, zbase, gbase, detail FROM zotero_objects WHERE kind = 'item'").fetchall():
+        detail = _json_or_none(draw)
+        if not isinstance(detail, dict) or "names" in detail:
+            continue  # moved already, or written from 72 on
+        old_pages.add(page_id)
+        zbase, _ = _v72_moved(zraw, names.given_first)
+        gbase, synced = _v72_moved(graw, names.sent_form)
+        sent, _ = _v72_moved(detail.get("sent"), names.sent_form)
+        split = ({"g": zotero_fields.page_splits({"authors": [a for a in synced if isinstance(a, str)]})}
+                 if isinstance(synced, list) else {})
+        detail = {**detail, "names": split, **({"sent": sent} if sent is not None else {})}
+        # (as gamma/zotero_sync_rows.py writes a row)
+        moved.append((zraw if zbase is None else json.dumps(zbase, ensure_ascii=False, sort_keys=True),
+                      graw if gbase is None else json.dumps(gbase, ensure_ascii=False, sort_keys=True),
+                      json.dumps(detail, ensure_ascii=False, sort_keys=True), key))
+    pages.executemany("UPDATE zotero_objects SET zbase = ?, gbase = ?, detail = ? WHERE key = ?", moved)
+    if old_pages and _columns(pages, "sync_conflicts"):
+        kept = []
+        for row_id, page_id, raw in pages.execute(
+                "SELECT id, page_id, base FROM sync_conflicts WHERE kind = 'zotero_field' AND resolved = 0 "
+                "AND base LIKE '%\"authors\"%'").fetchall():
+            base = _json_or_none(raw) if page_id in old_pages else None
+            was = base.get("zbase") if isinstance(base, dict) else None
+            now = _v72_names(was.get("authors")) if isinstance(was, dict) else None
+            if now is not None and now != was.get("authors"):
+                kept.append((json.dumps({**base, "zbase": {**was, "authors": now}}, ensure_ascii=False), row_id))
+        pages.executemany("UPDATE sync_conflicts SET base = ? WHERE id = ?", kept)
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -2585,6 +2776,7 @@ WORKSPACE_STEPS = [
     (66, "agent_ids", _v66_resolved_agents),
     (68, "far_chats", _v68_far_chats),
     (69, "far_answers", _v69_far_answers),
+    (72, "citations", _v72_citation_fields),
     (73, "agent_changes", _v73_agent_changes),
 ]
 

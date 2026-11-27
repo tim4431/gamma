@@ -37,19 +37,21 @@ from difflib import SequenceMatcher
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import ai_usage, item_types, jobs, server_options, storage
+from .. import ai_usage, bibtex_keys, item_types, jobs, meta_fields, server_options, storage, web_page
 from .. import bibtex as bibtex_mod
 from ..ai_client import CallRefused, call_ai as _call_ai
 from ..ai_context import ensure_indexed as _ensure_indexed
 from ..ai_context import pdf_excerpt as _pdf_excerpt
 from ..ai_context import pdf_path as _pdf_path
-from ..ai_settings import ai_runtime, require_ai_runtime, routed
+from ..ai_roles import routed
+from ..ai_settings import ai_runtime, require_ai_runtime
 from ..auth import require_user_id, require_ws
 from ..blocks_store import write_lock
 from ..ops import StorableBody, after_commit, apply_ops, props_patch
 from ..db import connect_data_db, connect_pages_db, page_now
 from ..documents.model import is_pdf, own_hash, page_document, source_address, stored_name
 from ..logbuf import log
+from ..names import family_name, join_name, split_name
 from ..search.index import doc_chars
 from ..pdf_text import PDF_EXTRACT_FAILED
 from ..pdf_text import page_count as _page_count
@@ -158,9 +160,11 @@ def _years_compatible(a, b) -> bool:
 
 
 def _surname(author: str) -> str:
-    """Last alphabetic token of an author string ("Anthony E. Siegman" →
-    "siegman"), normalized like the text it is matched against."""
-    parts = re.findall(r"[a-z]+", normalize_text(author or "").lower())
+    """Last alphabetic token of an author's surname ("Anthony E. Siegman"
+    → "siegman", "Pereira Campos, Jorge Fernando" → "campos";
+    ``names.family_name``), normalized like the text it is matched
+    against."""
+    parts = re.findall(r"[a-z]+", normalize_text(family_name(author or "")).lower())
     return parts[-1] if parts and len(parts[-1]) >= 3 else ""
 
 
@@ -279,9 +283,11 @@ def _fold_name(s: str, keep_case: bool = False) -> str:
 
 
 def _name_key(author: str) -> str:
-    """An author's surname as names are matched: the last word of the folded
-    name, a suffix (Jr., III) passed over; two letters at least (Li, Wu)."""
-    words = [w for w in _fold_name(author).split() if w not in _NAME_SUFFIXES]
+    """An author's surname as names are matched: the last word of the
+    folded surname (the part before the comma of "Den Hengst, Floris",
+    ``names.family_name``), a suffix (Jr., III) passed over; two letters at
+    least (Li, Wu)."""
+    words = [w for w in _fold_name(family_name(author or "")).split() if w not in _NAME_SUFFIXES]
     return words[-1] if words and len(words[-1]) >= 2 else ""
 
 
@@ -709,6 +715,12 @@ def _arxiv_entry_meta(entry, arxiv_id: str = "", detail: bool = False) -> dict |
         "kind": "journalArticle" if journal_ref else "preprint",
         "source": "arxiv",
     }
+    # A preprint's date: the day its first version went up, as Zotero's
+    # arXiv translator dates one. A published paper's (journal_ref) is the
+    # journal's, which arXiv does not give.
+    date = meta_fields.parse_date((entry.findtext(f"{_ATOM}published") or "")[:10])[1]
+    if date and not journal_ref:
+        meta["date"] = date
     if detail:
         meta["abstract"] = plain_abstract(entry.findtext(f"{_ATOM}summary"))
     return meta
@@ -772,14 +784,16 @@ _PUBLISHED_BY = ("book", "bookSection", "conferencePaper", "thesis", "report")
 
 
 def _csl_authors(entries) -> list[str]:
-    """Author names from a CSL JSON author list: "given family", or the name
-    an organisation goes by (Crossref's ``name``, CSL's ``literal`` — the
+    """Author names from a CSL JSON author list: "given family", or "family,
+    given" for a surname that would not split back from it ("Pereira
+    Campos", "Den Hengst"; ``names.join_name``), or the name an
+    organisation goes by (Crossref's ``name``, CSL's ``literal`` — the
     Planck Collaboration is such a first author), blanks dropped."""
     out = []
     for a in entries or []:
         if not isinstance(a, dict):
             continue
-        name = (" ".join(filter(None, [a.get("given"), a.get("family")])).strip()
+        name = (join_name(plain_text(str(a.get("given") or "")), plain_text(str(a.get("family") or "")))
                 or str(a.get("literal") or a.get("name") or ""))
         name = plain_text(name)
         if name:
@@ -792,6 +806,29 @@ def _csl_year(obj: dict) -> str:
     parts = (obj.get("issued") or {}).get("date-parts") or []
     first = parts[0] if parts and isinstance(parts[0], list) else []
     return str(first[0]) if first and first[0] else ""
+
+
+def _csl_cited(obj: dict) -> dict:
+    """What a CSL record (doi.org's, a Crossref search hit's) gives a
+    citation beyond the fields every record has (gamma/meta_fields.py): the
+    ``issue``, the journal's abbreviation (``container-title-short``, the
+    REST API's ``short-container-title``; not when it is the title itself)
+    and the ``date`` of ``issued`` when it names a month. Only those it
+    has, so a record without them stays the record of before them."""
+    out = {}
+    issue = meta_fields.clean_cited("issue", plain_text(str(obj.get("issue") or "")))
+    if issue:
+        out["issue"] = issue
+    abbr = meta_fields.clean_cited("journal_abbr", _csl_text(obj.get("container-title-short")
+                                                             or obj.get("short-container-title")))
+    if abbr and abbr.lower() != _csl_text(obj.get("container-title")).lower():
+        out["journal_abbr"] = abbr
+    parts = (obj.get("issued") or {}).get("date-parts") or []
+    first = parts[0] if parts and isinstance(parts[0], list) else []
+    date = meta_fields.parse_date("-".join(str(p) for p in first[:3] if p))[1] if len(first) > 1 else ""
+    if date:
+        out["date"] = date
+    return out
 
 
 def _csl_pages(obj: dict) -> str:
@@ -848,6 +885,7 @@ def _fetch_doi(doi: str, with_bibtex: bool = True) -> tuple[dict | None, str]:
         "doi": doi,
         "arxiv_id": "",
         "source": "doi",
+        **_csl_cited(data),
     }
     kind = item_types.from_registry(data.get("type"))
     if kind:
@@ -906,7 +944,7 @@ def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year:
     (a Crossref type such as ``journal-article``) keeps that kind only."""
     if not (query or "").strip():
         return []
-    fields = "DOI,type,title,author,container-title,volume,page,article-number,issued" + (
+    fields = "DOI,type,title,author,container-title,short-container-title,volume,issue,page,article-number,issued" + (
         ",abstract,is-referenced-by-count" if detail else "")
     narrow = ([f"from-pub-date:{int(from_year)}"] if from_year else []) + (
         [f"type:{work_type}"] if work_type else [])
@@ -937,6 +975,7 @@ def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year:
             "doi": str(it.get("DOI") or ""),
             "arxiv_id": "",
             "source": "crossref",
+            **_csl_cited(it),
         })
         kind = item_types.from_registry(it.get("type"))
         if kind:
@@ -1204,14 +1243,18 @@ def _load_page(ws: str, block_id: str):
     return row[0] or "", json.loads(row[1] or "{}")
 
 
-def _save_props(ws: str, block_id: str, updates: dict | None = None, remove: tuple = (),
+def _save_props(ws: str, block_id: str, updates=None, remove: tuple = (),
                 auto_title: str = "", actor: str = "") -> tuple[bool, str]:
     """Apply a delta to the page's properties, re-reading them inside the write.
 
     Lookups take seconds to minutes, and the user can label the page (which
     merges into properties via PUT /api/blocks/{id}) at any point during one.
     Writing back the dict we read before the lookup would silently drop that
-    label, so only the keys metadata owns are touched here.
+    label, so only the keys metadata owns are touched here. ``updates`` may
+    be a function of the properties the write reads, returning ``(updates,
+    remove)``: a change made from what is stored (a hand edit that keeps
+    the record's fields it did not send) is then made from what is stored
+    now, not from what another write replaced meanwhile.
 
     Returns ``(renamed, title)``: whether THIS write replaced the automatic
     title, and the page's title as it stands after the write — which may
@@ -1229,6 +1272,9 @@ def _save_props(ws: str, block_id: str, updates: dict | None = None, remove: tup
             raise HTTPException(status_code=404, detail="page not found")
         content = row[0] or ""
         props = json.loads(row[1] or "{}")
+        if callable(updates):
+            updates, more = updates(json.loads(row[1] or "{}"))
+            remove = (*remove, *more)
         props.update(updates or {})
         for key in remove:
             props.pop(key, None)
@@ -1327,17 +1373,21 @@ def metadata_status(request: Request):
 # reads them: the clip's own, the one the app starts when the page is
 # opened (which used to run beside it without the identifiers), a refetch.
 
-_WEB_FIELDS = ("title", "year", "venue", "volume", "pages", "publisher", "isbn")
+_WEB_FIELDS = ("title", "year", "venue", "volume", "issue", "pages", "publisher", "isbn", "journal_abbr")
 _WEB_AUTHORS_MAX = 100
 
 
 def web_record(record: dict | None, doi: str = "", arxiv_id: str = "", text_doi: str = "") -> dict:
     """``properties.web_meta`` for a clip: the page's citation ``record``
     cleaned (plain strings of bounded length, at most 100 authors, a
-    four-digit year, a checksum-valid ISBN, an item type by our names), the
-    identifiers its tags carried (``doi``, ``arxiv_id``, normalized by the
-    caller) and a DOI found only in its text (``text_doi``). {} when there
-    is nothing to keep."""
+    four-digit year, the full ``date`` when it names a month of that year
+    (the Connector sends the tag as the page wrote it: Highwire's
+    ``2019/03/14`` or ``2008/11/3``, an ISO date or time, which
+    ``web_page.normalize_date`` and ``meta_fields.parse_date`` read), a
+    checksum-valid ISBN, an item type by our names), the identifiers its
+    tags carried (``doi``, ``arxiv_id``, normalized by the caller) and a DOI
+    found only in its text (``text_doi``). {} when there is nothing to keep.
+    An older Connector sends no date, issue or journal abbreviation."""
     record = record if isinstance(record, dict) else {}
     out = {}
     for key in _WEB_FIELDS:
@@ -1347,11 +1397,14 @@ def web_record(record: dict | None, doi: str = "", arxiv_id: str = "", text_doi:
     year = re.search(r"\d{4}", out.pop("year", ""))
     if year:
         out["year"] = year.group()
+    dated, date = meta_fields.parse_date(web_page.normalize_date(str(record.get("date") or "").strip()))
+    if date and out.setdefault("year", dated) == dated:
+        out["date"] = date
     isbn = re.sub(r"[^0-9Xx]", "", out.pop("isbn", "")).upper()
     if _isbn_valid(isbn):
         out["isbn"] = isbn
     authors = record.get("authors") if isinstance(record.get("authors"), list) else []
-    names = [re.sub(r"\s+", " ", str(a)).strip()[:200] for a in authors[:_WEB_AUTHORS_MAX]]
+    names = [_web_name(a)[:200] for a in authors[:_WEB_AUTHORS_MAX]]
     if any(names):
         out["authors"] = [n for n in names if n]
     kind = item_types.normalize(record.get("kind"))
@@ -1363,6 +1416,21 @@ def web_record(record: dict | None, doi: str = "", arxiv_id: str = "", text_doi:
     if text_doi and text_doi.lower() != (doi or "").lower():
         out["text_doi"] = text_doi
     return out
+
+
+def _web_name(raw) -> str:
+    """A page's citation_author as Gamma keeps a name: a Highwire "Last,
+    First" joined as a name in two fields is (``names.join_name``:
+    "Lovelace, Ada" is "Ada Lovelace", "Pereira Campos, Jorge Fernando"
+    keeps its comma); an organisation's ("University of California,
+    Berkeley"), a name of more commas or of none as written. An older
+    Connector sends a two-part name turned around already."""
+    name = re.sub(r"\s+", " ", str(raw)).strip()
+    family, sep, given = name.partition(",")
+    # (read as Zotero's Embedded Metadata reads one, at its comma with a space after it or none: "Lovelace,Ada")
+    if sep and "," not in given and family.strip() and given.strip() and split_name(f"{family}, {given}")[1]:
+        return join_name(given, family)
+    return name
 
 
 def _page_record(web: dict) -> dict | None:
@@ -1378,6 +1446,13 @@ def _page_record(web: dict) -> dict | None:
     rec = {"title": title, "authors": authors, "source": "page"}
     for key in ("year", "venue", "volume", "pages", "doi", "arxiv_id", "publisher", "isbn"):
         rec[key] = str(web.get(key) or "").strip()
+    for key in ("issue", "journal_abbr"):  # held only when the page named them
+        value = meta_fields.clean_cited(key, web.get(key))
+        if value:
+            rec[key] = value
+    date = meta_fields.date_agrees({"year": rec["year"], "date": web.get("date")})
+    if date:
+        rec["date"] = date
     kind = item_types.normalize(web.get("kind"))
     if kind:
         rec["kind"] = kind
@@ -1681,11 +1756,11 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", fo
     # A citation key pinned on the page outranks both the generated key and
     # the registrar's own (doi.org renders BibTeX keyed its own way), and it
     # survives this refetch: the user's .tex files cite it.
-    cite_key = bibtex_mod.clean_key(props.get("cite_key") or "")
+    cite_key = bibtex_keys.clean_key(props.get("cite_key") or "")
     if not bibtex:
-        bibtex = bibtex_mod.build_entry(meta, cite_key)
+        bibtex = bibtex_mod.build_entry(meta, bibtex_keys.rebuilt_key(props, meta, cite_key))
     elif cite_key:
-        bibtex = bibtex_mod.with_key(bibtex, cite_key)
+        bibtex = bibtex_keys.with_key(bibtex, cite_key)
     # Stored with the record so every surface can say what tied it to the
     # document, and warn before it is cited when nothing confirmed did (an
     # id or a title the text only names may be a cited work's; AI output may
@@ -1887,6 +1962,79 @@ class MetaUpdateRequest(StorableBody):
     cite_key: str | None = None
 
 
+_AUTHOR_SEP_RE = re.compile(r",| and ")
+
+
+def _split_authors(text: str, known=()) -> list[str]:
+    """The popover's Authors row as a list, when it comes as typed: the
+    app sends a row split at its semicolons, and one of a single comma as
+    one "Last, First" name (``libraryUtils.authorsFromRow``), so the rows
+    that reach here hold more commas or none, or come from a tab from
+    before. A row holding a semicolon splits at each one alone; one
+    without splits at each comma and " and ", except that a name of
+    ``known`` (the record's
+    authors) holding one, written "Last, First" ("Pereira Campos, Jorge
+    Fernando", ``names.join_name``) or an organisation's ("Dark Energy
+    Survey and Kilo-Degree Survey Collaboration"), is kept whole where the
+    row still holds it, so a save that leaves the authors alone leaves them
+    as they were."""
+    if ";" in str(text):
+        return [name for name in (" ".join(part.split()) for part in str(text).split(";")) if name]
+    whole = sorted({" ".join(str(a).split()) for a in known or () if _AUTHOR_SEP_RE.search(" ".join(str(a).split()))},
+                   key=len, reverse=True)
+    out, rest = [], " ".join(str(text).split())
+    while rest:
+        name = next((k for k in whole if rest.startswith(k) and re.match(r"\s*(?:,| and |$)", rest[len(k):])), None)
+        if name is None:
+            sep = _AUTHOR_SEP_RE.search(rest)
+            name, rest = (rest[:sep.start()], rest[sep.end():]) if sep else (rest, "")
+        else:
+            rest = rest[len(name):]
+            sep = re.match(r"\s*(?:,| and )", rest)
+            rest = rest[sep.end():] if sep else rest
+        if name.strip():
+            out.append(name.strip())
+        rest = rest.strip()
+    return out
+
+
+def _edited_record(m: dict, known_authors=()) -> dict:
+    """The record the popover's fields ``m`` say, each as the store keeps
+    it: the fields every record has ("" when not sent, as the form always
+    sends them), and of the fields a citation needs beside them
+    (gamma/meta_fields.py) those sent with a value. The Authors row comes
+    as a list, or as typed, split then at its semicolons, else at its
+    commas, a "Last, First" name of ``known_authors`` (the stored record's)
+    kept whole (``_split_authors``). The Date row, ``date``
+    (``year`` from a tab of before it), sets the year and, when it names a
+    month or a day, the date (``meta_fields.parse_date``; "in press" stays
+    the year, verbatim)."""
+    authors = m.get("authors") or []
+    if isinstance(authors, str):
+        authors = _split_authors(authors, known_authors)
+    year, date = meta_fields.parse_date(m["date"] if "date" in m else m.get("year"))
+    meta = {
+        "title": str(m.get("title") or "").strip()[:500],
+        "authors": [str(a).strip()[:200] for a in authors if str(a).strip()],
+        "year": year,
+        "venue": str(m.get("venue") or "").strip()[:300],
+        "volume": str(m.get("volume") or "").strip()[:40],
+        "pages": str(m.get("pages") or "").strip()[:60],
+        "doi": str(m.get("doi") or "").strip()[:200],
+        "arxiv_id": str(m.get("arxiv_id") or "").strip()[:60],
+        "publisher": str(m.get("publisher") or "").strip()[:300],
+        "isbn": re.sub(r"[^0-9Xx]", "", str(m.get("isbn") or ""))[:13].upper(),
+        "source": "manual",
+    }
+    cited = {"issue": meta_fields.clean_cited("issue", m.get("issue")),
+             "journal_abbr": meta_fields.clean_cited("journal_abbr", m.get("journal_abbr")),
+             "url": meta_fields.clean_url(m.get("url"))}
+    meta.update((k, v) for k, v in cited.items() if k in m and v)
+    if date:
+        meta["date"] = date
+    return meta
+
+
 @router.post("/metadata/update")
 def metadata_update(payload: MetaUpdateRequest, request: Request):
     """Save hand-edited metadata. BibTeX is rebuilt from the edited fields
@@ -1898,26 +2046,22 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
     stored one is looked up instead (``_typed_identifier_record``): its
     registry record replaces the typed fields, trusted like a source URL's
     identifier, and ``lookup`` in the answer says what was asked. One that
-    resolves nowhere leaves the fields as typed."""
+    resolves nowhere leaves the fields as typed.
+
+    The fields a citation needs beside those (``meta_fields.NEW_FIELDS``:
+    issue, journal abbreviation, date, address) keep their stored values
+    when the edit does not send them, as a tab from before them does not;
+    one sent blank goes, and a clear takes them all with the record. Only
+    the sent fields decide whether the edit is blank, and a looked-up
+    record keeps none of the old paper's. A date the edit's year disagrees
+    with goes (an edit of the year alone). The record is merged, and its
+    entry built, inside the write (``_save_props``), from what the page
+    holds then."""
     ws = require_ws(request, write=True)
     _, props = _load_page(ws, payload.block_id)  # 404 before validating the edit
     m = payload.meta or {}
-    authors = m.get("authors") or []
-    if isinstance(authors, str):
-        authors = [a.strip() for a in re.split(r",| and ", authors) if a.strip()]
-    meta = {
-        "title": str(m.get("title") or "").strip()[:500],
-        "authors": [str(a).strip()[:200] for a in authors if str(a).strip()],
-        "year": str(m.get("year") or "").strip()[:20],
-        "venue": str(m.get("venue") or "").strip()[:300],
-        "volume": str(m.get("volume") or "").strip()[:40],
-        "pages": str(m.get("pages") or "").strip()[:60],
-        "doi": str(m.get("doi") or "").strip()[:200],
-        "arxiv_id": str(m.get("arxiv_id") or "").strip()[:60],
-        "publisher": str(m.get("publisher") or "").strip()[:300],
-        "isbn": re.sub(r"[^0-9Xx]", "", str(m.get("isbn") or ""))[:13].upper(),
-        "source": "manual",
-    }
+    stored = props.get("meta") if isinstance(props.get("meta"), dict) else {}
+    meta = _edited_record(m, stored.get("authors") or ())
     # ppt_cite is stale (the metadata changed); meta_error is settled (or
     # reset) by the hand-edit either way
     stale = ("ppt_cite", "meta_error")
@@ -1925,32 +2069,42 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
         _save_props(ws, payload.block_id, remove=stale + ("meta", "bibtex", "cite_key"),
                     actor=request.state.user_id)
         return {"meta": None, "bibtex": "", "cite_key": "", "source": "", "cached": False}
-    lookup, record, bibtex = _typed_identifier_record(meta, props.get("meta") or {})
-    if record:
-        # The user named the paper, so its record needs no title check.
-        meta = {**record, "match": "typed", "unverified": False}
-    else:
-        # The item type survives an edit that leaves it alone (a book stays
-        # @book). A hand edit is the user vouching for the record, so it is
-        # not "unverified".
-        kind = item_types.normalize(m.get("kind")) or item_types.normalize((props.get("meta") or {}).get("kind"))
-        if kind:
-            meta["kind"] = kind
-    meta["at"] = page_now()  # when it was edited, as a lookup stamps when it looked
-    # An unsent cite_key leaves the page's pin as it is; "" unpins.
-    cite_key = (bibtex_mod.clean_key(payload.cite_key) if payload.cite_key is not None
-                else bibtex_mod.clean_key(props.get("cite_key") or ""))
-    if not bibtex:
-        bibtex = bibtex_mod.build_entry(meta, cite_key)
-    elif cite_key:
-        bibtex = bibtex_mod.with_key(bibtex, cite_key)
-    updates = {"meta": meta, "bibtex": bibtex}
-    if cite_key:
-        updates["cite_key"] = cite_key
-    _save_props(ws, payload.block_id, updates, remove=stale + (() if cite_key else ("cite_key",)),
-                actor=request.state.user_id)
-    return {"meta": meta, "bibtex": bibtex, "cite_key": cite_key, "source": meta["source"], "cached": False,
-            "lookup": lookup}
+    lookup, record, registrar = _typed_identifier_record(meta, props.get("meta") or {})
+    saved = {}
+
+    def merge(current: dict) -> tuple[dict, tuple]:
+        old = current.get("meta") if isinstance(current.get("meta"), dict) else {}
+        if record:
+            # The user named the paper, so its record needs no title check.
+            new = {**record, "match": "typed", "unverified": False}
+        else:
+            # The item type survives an edit that leaves it alone (a book stays
+            # @book). A hand edit is the user vouching for the record, so it is
+            # not "unverified".
+            kept = {k: old[k] for k in meta_fields.NEW_FIELDS if k not in m and k not in meta and old.get(k)}
+            new = {**meta, **kept}
+            if new.get("date") and not meta_fields.date_agrees(new):
+                del new["date"]
+            kind = item_types.normalize(m.get("kind")) or item_types.normalize(old.get("kind"))
+            if kind:
+                new["kind"] = kind
+        new["at"] = page_now()  # when it was edited, as a lookup stamps when it looked
+        # An unsent cite_key leaves the page's pin as it is; "" unpins.
+        cite_key = (bibtex_keys.clean_key(payload.cite_key) if payload.cite_key is not None
+                    else bibtex_keys.clean_key(current.get("cite_key") or ""))
+        if not registrar:
+            bibtex = bibtex_mod.build_entry(new, bibtex_keys.rebuilt_key(current, new, cite_key))
+        else:
+            bibtex = bibtex_keys.with_key(registrar, cite_key) if cite_key else registrar
+        saved.update(meta=new, bibtex=bibtex, cite_key=cite_key)
+        updates = {"meta": new, "bibtex": bibtex}
+        if cite_key:
+            updates["cite_key"] = cite_key
+        return updates, stale + (() if cite_key else ("cite_key",))
+
+    _save_props(ws, payload.block_id, merge, actor=request.state.user_id)
+    return {"meta": saved["meta"], "bibtex": saved["bibtex"], "cite_key": saved["cite_key"],
+            "source": saved["meta"]["source"], "cached": False, "lookup": lookup}
 
 
 class MetaVerifyRequest(BaseModel):

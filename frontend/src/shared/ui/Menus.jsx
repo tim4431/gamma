@@ -185,6 +185,20 @@ function MenuLabel({ id, children }) {
   return <div className="ctxMenuLabel" id={id}>{children}</div>;
 }
 
+// A MenuLabel over the rows it heads, which a group named by it holds, so a
+// screen reader says the heading with each of them: a MenuSelect's heading
+// and sections, an ActionMenu's `{heading}`, the Copy as ▸ flyout's
+// formats and styles.
+function MenuGroup({ label, children }) {
+  const id = useId();
+  return (
+    <>
+      <MenuLabel id={id}>{label}</MenuLabel>
+      <div role="group" aria-labelledby={id}>{children}</div>
+    </>
+  );
+}
+
 // A thin rule between a menu's groups of rows.
 function MenuDivider() {
   return <div className="ctxMenuDivider" role="separator" />;
@@ -328,14 +342,31 @@ function useDropdown(up = false, start = false) {
   return [menu, close, triggerProps, triggerRef];
 }
 
-// An action row of a dropdown's menu ({icon, label, title, onClick, danger,
-// disabled}): ActionMenu's items and MenuSelect's `actions`, closing the
-// menu as it acts.
-const actionRow = (close) => ({ icon, label: lab, title, onClick, danger, disabled: off }) => (
-  <MenuItem key={lab} icon={icon} title={t(title)} danger={danger} disabled={off} onClick={() => { close(); onClick(); }}>
-    {t(lab)}
-  </MenuItem>
-);
+// The action rows of a dropdown's menu ({icon, label, title, onClick,
+// danger, disabled}): ActionMenu's items and MenuSelect's `actions`, each
+// closing the menu as it acts. An item that is `{heading}` alone heads the
+// rows after it, up to the next one, as a MenuGroup (the share popover's
+// Copy as: Formats, Cite keys).
+function actionRows(items, close) {
+  const out = [];
+  let group = null;
+  for (const { heading, icon, label: lab, title, onClick, danger, disabled: off } of items) {
+    if (heading) {
+      group = { heading, rows: [] };
+      out.push(group);
+      continue;
+    }
+    const row = (
+      <MenuItem key={lab} icon={icon} title={t(title)} danger={danger} disabled={off} onClick={() => { close(); onClick(); }}>
+        {t(lab)}
+      </MenuItem>
+    );
+    if (group) group.rows.push(row);
+    else out.push(row);
+  }
+  return out.map((x) => (React.isValidElement(x) ? x
+    : <MenuGroup key={`heading:${x.heading}`} label={t(x.heading)}>{x.rows}</MenuGroup>));
+}
 
 // A <select> replacement: options are [value, label] pairs; the menu marks
 // the current one with a check. `block` stretches the trigger into a field.
@@ -343,9 +374,9 @@ const actionRow = (close) => ({ icon, label: lab, title, onClick, danger, disabl
 // pill and the menu items lead with the glyph (same look as ActionMenu items).
 // A fourth element is the row's `trailing` node, after its label as a
 // MenuItem's (a hint such as the chat picker's "offline"), and a fifth the
-// row's title; such a row stays pickable. The labels go through `t()`
-// unless they are `names` (data: a folder's name, which a catalog key of
-// the same spelling would translate).
+// row's title; such a row stays pickable. The labels, the sections' too, go
+// through `t()` unless they are `names` (data: a folder's name, which a
+// catalog key of the same spelling would translate).
 // `icon` collapses the trigger to that fixed glyph + chevron (no value label) —
 // the current choice rides in the tooltip instead. `iconOnly` also removes the
 // chevron for especially tight toolbars. `display` replaces the trigger's
@@ -387,8 +418,24 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
     </button>
   );
   // A menu holding more than one choice keeps each one's radios in a group
-  // named by its heading, so each has its own checked row.
-  const choices = (headingId, rows) => (headingId ? <div role="group" aria-labelledby={headingId}>{rows}</div> : rows);
+  // named by its heading (MenuGroup), so each has its own checked row.
+  const mainRows = () => options.map((option) => choice(option, option[0] === value, onChange,
+    locked ? { title: locked } : null, say));
+  // A menu longer than it can show opens on the choice: the first checked
+  // row in its middle (a style far down its class).
+  const opened = !!menu && !listbox;
+  useEffect(() => {
+    if (!opened) return undefined;
+    const frame = requestAnimationFrame(() => {
+      const list = document.querySelector(`.ctxMenu[aria-labelledby="${CSS.escape(id)}"]`);
+      const row = list?.querySelector('[aria-checked="true"]');
+      if (!row || list.scrollHeight <= list.clientHeight) return;
+      let top = 0;
+      for (let el = row; el && el !== list; el = el.offsetParent) top += el.offsetTop;
+      list.scrollTop = top - (list.clientHeight - row.offsetHeight) / 2;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [opened]);
   return (
     <>
       <button type="button" id={id} aria-haspopup={listbox ? popup : "menu"} aria-expanded={!!menu}
@@ -408,17 +455,14 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
         : menu ? (
         <ContextMenu x={menu.x} y={menu.y} anchorRight={!start} anchorBottom={up} onClose={close} ignoreRef={triggerRef}
           className="uiSelectMenu" aria-labelledby={id}>
-          {heading ? <MenuLabel id={`${id}-0`}>{heading}</MenuLabel> : null}
-          {choices(heading ? `${id}-0` : null, options.map((option) => choice(option, option[0] === value, onChange,
-            locked ? { title: locked } : null, say)))}
-          {sections.map((section, i) => (
-            <React.Fragment key={section.label}>
-              <MenuLabel id={`${id}-${i + 1}`}>{section.label}</MenuLabel>
-              {choices(`${id}-${i + 1}`, section.options.map((option) => choice(option, option[0] === section.value, section.onChange)))}
-            </React.Fragment>
+          {heading ? <MenuGroup label={heading}>{mainRows()}</MenuGroup> : mainRows()}
+          {sections.map((section) => (
+            <MenuGroup key={section.label} label={section.label}>
+              {section.options.map((option) => choice(option, option[0] === section.value, section.onChange, null, say))}
+            </MenuGroup>
           ))}
           {actions.length ? <MenuDivider /> : null}
-          {actions.map(actionRow(close))}
+          {actionRows(actions, close)}
         </ContextMenu>
       ) : null}
     </>
@@ -427,8 +471,9 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
 
 // A button that opens a small action menu (the Users rows' Export / Import,
 // a clone row's "more"). items: [{icon, label, title, onClick, danger?,
-// disabled?}]; `iconOnly` makes the trigger a square icon button whose
-// label is its tooltip.
+// disabled?}], a {heading} among them labelling the rows after it;
+// `iconOnly` makes the trigger a square icon button whose label is its
+// tooltip.
 function ActionMenu({ label, icon: Icon, items, disabled, iconOnly = false }) {
   const [menu, close, triggerProps, triggerRef] = useDropdown();
   const id = useId(); // the trigger's: it names the menu
@@ -442,11 +487,11 @@ function ActionMenu({ label, icon: Icon, items, disabled, iconOnly = false }) {
       </button>
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} anchorRight onClose={close} ignoreRef={triggerRef} aria-labelledby={id}>
-          {items.map(actionRow(close))}
+          {actionRows(items, close)}
         </ContextMenu>
       ) : null}
     </>
   );
 }
 
-export { ContextMenu, useMenuTrigger, MenuScope, MenuItem, MenuButton, MenuLabel, MenuDivider, menuGroups, SubMenuItem, MenuSelect, ActionMenu, useInMenu };
+export { ContextMenu, useMenuTrigger, MenuScope, MenuItem, MenuButton, MenuLabel, MenuGroup, MenuDivider, menuGroups, SubMenuItem, MenuSelect, ActionMenu, useInMenu };

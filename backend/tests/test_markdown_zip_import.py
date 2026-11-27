@@ -455,6 +455,25 @@ def test_gamma_markdown_export_round_trips(guest):
     assert again["pages_created"] == 0 and again["pages_skipped"] == 2
 
 
+def test_a_papers_last_first_authors_come_back_whole(guest):
+    """The front matter lists the authors as a block list, so a "Last,
+    First" name (names.join_name keeps "Den Hengst, Floris" so) comes back
+    one author, not two."""
+    authors = ["Den Hengst, Floris", "Pereira Campos, Jorge Fernando", "Ada Lovelace"]
+    page = guest.post("/api/blocks", json={"parent_id": "root", "content": "Names paper"}).json()
+    folder = make_folder(guest, "names2026")
+    guest.put(f"/api/blocks/{page['id']}", json={"properties": {
+        "folders": [folder], "meta": {"title": "Names paper", "authors": authors, "year": "2023"}}})
+    r = guest.get(f"/api/folders/{folder}/export?mode=readable&notes=1")
+    assert r.status_code == 200, r.text
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    text = zf.read(next(n for n in zf.namelist() if n.startswith("Names paper"))).decode()
+    assert 'authors:\n  - "Den Hengst, Floris"\n' in text
+    report = _import(guest, io.BytesIO(r.content), folder=make_folder(guest, "names-restored"))
+    [made] = report["pages"]
+    assert guest.get(f"/api/blocks/{made['id']}").json()["properties"]["meta"]["authors"] == authors
+
+
 def test_a_multi_line_area_note_or_link_label_keeps_a_page_readable(guest):
     """An area highlight has no quote, so its note is its first line, and a
     link's label can run over lines too: every line stays under its bullet,

@@ -1637,7 +1637,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
-  await step("transfer: BibTeX previews the real bibliography, copies it, and resolves clashing keys", async () => {
+  await step("transfer: Bibliography as BibTeX previews the real bibliography, copies it, and resolves clashing keys", async () => {
     const folder = "E2E bibtex";
     // Two papers by the same author in the same year: their generated keys
     // collide, which is the case the bibliography has to resolve.
@@ -1682,7 +1682,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       // 2. One page's own bibliography: the same two panes, one paper, and
       //    no Copy all to copy (its entry's own button is the way).
       const one = await openDialog(page, "Export");
-      await choice(one, "BibTeX").click();
+      await choice(one, "Bibliography").click();
       await choice(one, "Next").click();
       await one.getByRole("region", { name: "Papers", exact: true }).waitFor();
       assertEq(await one.locator(".bibPaperRow").count(), 1);
@@ -1704,7 +1704,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       const dialog = page.getByRole("dialog", { name: `Export “${folder}”`, exact: true });
       await dialog.getByRole("group", { name: "Papers choices", exact: true }).waitFor();
       if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/export-bibtex-cards.png` });
-      await choice(dialog, "BibTeX").click();
+      await choice(dialog, "Bibliography").click();
       await choice(dialog, "Next").click();
 
       // 4. The two panes: every citable paper on the left, the picked one's
@@ -1783,7 +1783,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       // 7. The finished step's breadcrumb walks back to the review, and on
       //    to the format cards — a second thought needs no reopening.
       await choice(dialog, "2. Review").click();
-      await dialog.getByRole("heading", { name: "BibTeX", exact: true }).waitFor();
+      await dialog.getByRole("heading", { name: "Bibliography", exact: true }).waitFor();
       await choice(dialog, "1. Choose a format").click();
       await dialog.getByRole("group", { name: "Papers choices", exact: true }).waitFor();
       // The close button is named after the dialog, and a folder's title is
@@ -1798,7 +1798,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       // counting, so wait for the menu this viewport has.
       await page.waitForSelector('[data-popover="menu"] > button');
       const other = await openDialog(page, "Export");
-      assertEq(await choice(other, "BibTeX").count(), 0, "no record, no BibTeX card");
+      assertEq(await choice(other, "Bibliography").count(), 0, "no record, no Bibliography card");
       await choice(other, "Close Export").click();
       assertNoProblems(page);
     } finally {

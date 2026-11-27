@@ -13,3 +13,8 @@ android/gradlew text eol=lf
 # Tesseract's models (backend/tessdata) are binary, checked against the
 # sha256 their README names: no line-ending conversion, no text diff
 *.traineddata binary
+# The citation styles and locales (frontend/src/citations/) are the CSL
+# project's files byte for byte, checked against the SHA-256 their README
+# names: no line-ending conversion
+frontend/src/citations/styles/*.csl -text
+frontend/src/citations/locales/* -text
