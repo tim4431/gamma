@@ -1,4 +1,4 @@
-"""The HTTP of the cloud backup stores (docs/dev/debugging.md "Cloud
+"""The HTTP of the cloud backup stores (docs/dev/backups.md "Cloud
 destinations"): Google Drive (gamma/gdrive.py) and OneDrive
 (gamma/onedrive.py) are REST APIs reached with plain urllib on the server's
 network route (gamma/net_proxy.py), signed in to through OAuth

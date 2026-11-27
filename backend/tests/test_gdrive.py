@@ -1,5 +1,5 @@
 """Google Drive as a backup destination (gamma/gdrive.py,
-gamma/cloud_account.py, docs/dev/debugging.md "Google Drive") against an
+gamma/cloud_account.py, docs/dev/backups.md "Google Drive") against an
 in-memory Google (tests/gdrive_fake.py), and through it what every cloud
 connection does alike: connecting through the device flow or the sign-in
 page with Gamma's own app (or a server's own), the client's files (folders

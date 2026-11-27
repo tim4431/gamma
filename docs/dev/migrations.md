@@ -367,7 +367,7 @@ environment's off-site rounds on, each database is also copied to the
 bucket every interval it changed, with the uploaded files, and those
 copies come back with `manage.py offsite --restore` instead
 (`gamma/offsite.py`,
-[debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)).
+[debugging.md](debugging.md#the-off-site-rounds)).
 
 ## Running it
 

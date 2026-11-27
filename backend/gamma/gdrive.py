@@ -1,4 +1,4 @@
-"""Google Drive as a backup store (docs/dev/debugging.md "Google Drive",
+"""Google Drive as a backup store (docs/dev/backups.md "Google Drive",
 docs/research/google-drive-backup.md): ``GOOGLE``, how a server signs in to
 Google (gamma/cloud_oauth.py; gamma/cloud_account.py keeps the connection),
 and ``Client``, one folder of that Drive, a backup

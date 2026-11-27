@@ -1,4 +1,4 @@
-"""OneDrive as a backup store (docs/dev/debugging.md "OneDrive",
+"""OneDrive as a backup store (docs/dev/backups.md "OneDrive",
 docs/research/onedrive-icloud-backup.md): ``MICROSOFT``, how a server signs
 in to a Microsoft account (gamma/cloud_oauth.py; gamma/cloud_account.py
 keeps the connection), and ``Client``, one folder of that account's

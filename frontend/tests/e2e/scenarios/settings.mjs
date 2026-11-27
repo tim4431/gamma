@@ -2186,7 +2186,7 @@ export async function settingsScenarios(env) {
   });
 
   // Settings → Backups › Backup destinations › Google Drive (BackupCloud.jsx,
-  // gamma/gdrive.py, gamma/cloud_account.py, docs/dev/debugging.md "Google
+  // gamma/gdrive.py, gamma/cloud_account.py, docs/dev/backups.md "Google
   // Drive"): a second server whose Google is the fake one
   // (backend/tests/gdrive_fake.py over HTTP, its device codes asking for a
   // 2 s interval), so nothing reaches Google, the app the fake knows given

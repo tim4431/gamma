@@ -1,4 +1,4 @@
-"""OAuth 2.0 for the cloud backup stores (docs/dev/debugging.md "Cloud
+"""OAuth 2.0 for the cloud backup stores (docs/dev/backups.md "Cloud
 destinations"): how a server signs in to Google for Drive and to Microsoft
 for OneDrive, with nothing set up first. Each provider is a ``Service``
 (gamma/gdrive.py ``GOOGLE``, gamma/onedrive.py ``MICROSOFT``): its

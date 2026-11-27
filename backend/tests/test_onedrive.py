@@ -1,5 +1,5 @@
 """OneDrive as a backup destination (gamma/onedrive.py, gamma/cloud_account.py,
-docs/dev/debugging.md "OneDrive") against an in-memory Microsoft
+docs/dev/backups.md "OneDrive") against an in-memory Microsoft
 (tests/onedrive_fake.py): what Microsoft does differently from Google — a
 public client that sends no secret, the sign-in page coming back to
 ``localhost``, refresh tokens rotated on every renewal and none revoked on
