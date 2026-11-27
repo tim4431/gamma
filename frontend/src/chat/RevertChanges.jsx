@@ -13,9 +13,9 @@ import { t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay } from "../shared/ui/Surfaces";
 import { backdropPress } from "../shared/ui/press.js";
 import { CheckIcon, PencilIcon, UndoIcon } from "../shared/ui/Icons";
-import { revertible, revertRefusal } from "./aiRevert.js";
-import { ACTION_ICONS, changeText, refusalCopy, sendRevert } from "./AgentChanges";
-import { WordDiff } from "./ApprovalCard";
+import { refusalCopy, revertible, revertRefusal } from "./aiRevert.js";
+import { ACTION_ICONS, changeText, sendRevert } from "./AgentChanges";
+import { WordDiff } from "./ApprovalShell";
 
 // No links in a checkbox's label: a click on one would tick the box too.
 const PLAIN = { page: (_, label) => <span>{label}</span>, block: (_, label) => <span>{label}</span> };

@@ -919,7 +919,7 @@ them (below).
   - A kept one has a "Kept" tag and **Undo**, an undone one "Undone".
   - It is where a deletion or a page made is reviewed.
   - A conflict is worded as the chat's revert words it
-    (`chat/AgentChanges.jsx` `refusalCopy`), with the button that undoes
+    (`chat/aiRevert.js` `refusalCopy`), with the button that undoes
     anyway.
   - The routes, as the person ([api.md](api.md) "Integrations and MCP"):
     `GET /api/integrations/tokens/{token_id}/changes` lists the latest 100

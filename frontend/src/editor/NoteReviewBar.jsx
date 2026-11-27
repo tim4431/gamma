@@ -25,10 +25,8 @@ import { t, tn } from "../shared/i18n/i18n.js";
 import { CheckIcon, ChevronUpIcon, ShieldIcon, SparklesIcon, UndoIcon } from "../shared/ui/Icons";
 import { CHANGE_STATES, noteReview, useRefusal } from "../chat/noteReview.js";
 import { remoteAnswers, toolAnswers } from "../chat/approvals.js";
-import { ApprovalAnswers, useApprovalAnswer } from "../chat/ApprovalShell";
-import { WordDiff } from "../chat/ApprovalCard";
-import { refusalCopy } from "../chat/AgentChanges";
-import { revertRefusal } from "../chat/aiRevert.js";
+import { ApprovalAnswers, WordDiff, useApprovalAnswer } from "../chat/ApprovalShell";
+import { refusalCopy, revertRefusal } from "../chat/aiRevert.js";
 
 // The bar's own presses are not the row's or the page's, which would open
 // an editor or start a drag.

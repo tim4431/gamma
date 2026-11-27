@@ -20,21 +20,11 @@ import { t, tn } from "../shared/i18n/i18n.js";
 import { ActivityIcon, LocateIcon, PencilIcon, TerminalIcon } from "../shared/ui/Icons";
 import { GammaNavContext } from "../shared/ui/Widgets";
 import { approvalTitle, batchNotes, deletionNotes, isChangeCall, placeText, toolAnswers } from "./approvals.js";
-import ApprovalShell from "./ApprovalShell";
+import ApprovalShell, { WordDiff } from "./ApprovalShell";
 import { pictureSrc } from "./pictureSrc.js";
 import { permissionIcon, permissionLabel } from "../settings/AssistantTools";
 import { guideEvents } from "../guide/events.js";
 import { askCommand, askPlace, askRisk, askTitle, diffRows, markParts, scrolledToEnd } from "./computer/computerChat.js";
-
-// A server word diff (`[[kind, text], …]`, ai_tools.text_diff): what goes
-// struck out, what comes in tinted. The revert prompt shows one too
-// (chat/AgentChanges.jsx).
-export function WordDiff({ diff }) {
-  return <div className="chatApprovalDiff">
-    {diff.map(([kind, text], i) => (kind === "del" ? <del key={i}>{text}</del>
-      : kind === "ins" ? <ins key={i}>{text}</ins> : <span key={i}>{text}</span>))}
-  </div>;
-}
 
 const DRAWING_TOOLS = new Set(["draw", "add_text_box", "place_picture", "add_sheet"]);
 

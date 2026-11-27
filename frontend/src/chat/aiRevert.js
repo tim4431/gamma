@@ -14,6 +14,7 @@
 // `revert` and a batch's `items`. The rows that do it are
 // chat/AgentChanges.jsx, and the dialog that takes back several at once,
 // any of the conversation's, chat/RevertChanges.jsx.
+import { t, tn } from "../shared/i18n/i18n.js";
 import { changePlace, isChange } from "./agentSteps.js";
 
 const REVERTIBLE = new Set(["edit", "create", "move", "delete"]);
@@ -125,4 +126,38 @@ export function revertRefusal(err) {
     conflict: err?.status === 409 ? data.conflict || "" : "",
     preview: data.preview || null,
   };
+}
+
+// What a refusal (`revertRefusal`) says where it stopped (a reply's row,
+// the dialog, a note's review bar, a connection's list in Settings), and
+// the button that reverts (or redoes) anyway — none when it can't be forced.
+export function refusalCopy({ conflict, preview, detail, status }, redo) {
+  if (conflict === "changed") {
+    return redo
+      ? { text: t("The note was changed since. Redoing anyway makes this change:"), force: t("Redo anyway") }
+      : { text: t("The note was changed since. Undoing anyway makes this change:"), force: t("Undo anyway") };
+  }
+  if (conflict === "filled") {
+    if (preview?.page) {
+      return { text: t("Notes, pages or comments were added to the page since. Undoing moves it to Recently deleted with them."),
+        force: t("Move to Recently deleted anyway") };
+    }
+    return {
+      text: preview?.children ? t("Notes were added under it since. Undoing deletes it with them.")
+        : preview?.drawn ? t("Strokes were added to it since. Undoing deletes them with it.")
+          : preview?.threads ? t("It was commented on since. Undoing deletes it, and its comments with it.")
+            : t("It was typed in since. Undoing deletes what it says now:"),
+      force: t("Delete anyway"),
+    };
+  }
+  if (conflict === "moved") {
+    return redo
+      ? { text: t("The note was moved since. Redoing puts it where the AI moved it."), force: t("Move anyway") }
+      : { text: t("The note was moved since. Undoing puts it back where the AI found it."), force: t("Move back anyway") };
+  }
+  if (conflict === "kept") {
+    return { text: tn("The page changed since, or was deleted, and was left as it is.",
+      "These {n} pages changed since, or were deleted, and were left as they are.", preview?.kept || 1) };
+  }
+  return { text: status === 404 ? t("The note was deleted since.") : detail };
 }

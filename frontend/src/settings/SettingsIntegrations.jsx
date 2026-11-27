@@ -5,8 +5,7 @@ import { CopyField, Empty, FormNotice, PaneHead, Section, Row, Segmented, Step, 
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { LinkIcon, KeyIcon, MonitorIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon, HistoryIcon, TrashIcon,
   UndoIcon } from "../shared/ui/Icons";
-import { refusalCopy } from "../chat/AgentChanges.jsx";
-import { revertRefusal } from "../chat/aiRevert.js";
+import { refusalCopy, revertRefusal } from "../chat/aiRevert.js";
 import { CHANGE_STATES } from "../chat/noteReview.js";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
   claudeRemoveCommands, codexRemoveCommands, dshRemoveCommand } from "./assistantSetup";
@@ -77,7 +76,7 @@ function ConnectionRow({ item, names, busy, onEdit, onChanges, onRevoke }) {
 // a deletion or a page made has no note to draw it in, so this is where it
 // is kept. Each not undone has Undo: the chat's revert (gamma/ai_revert.py),
 // as the person. Someone's work since stops it, worded as the chat's row
-// words it (chat/AgentChanges.jsx refusalCopy), with the button that undoes
+// words it (chat/aiRevert.js refusalCopy), with the button that undoes
 // anyway. Both act in the change's own workspace, which need not be the one
 // open (Keep's ?ws=, Undo's workspace_id).
 function ConnectionChanges({ item }) {

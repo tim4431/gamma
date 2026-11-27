@@ -25,6 +25,17 @@ import { answerWords } from "./approvals.js";
 // How long the line of what to do instead may be (both servers' cap).
 const NOTE_MAX = 2000;
 
+// A server word diff (`[[kind, text], …]`, ai_tools.text_diff): what goes
+// struck out, what comes in tinted. A card's preview shows one, and so do
+// a revert that stopped (chat/AgentChanges.jsx, RevertChanges.jsx) and a
+// note's review bar (editor/NoteReviewBar.jsx).
+export function WordDiff({ diff }) {
+  return <div className="chatApprovalDiff">
+    {diff.map(([kind, text], i) => (kind === "del" ? <del key={i}>{text}</del>
+      : kind === "ins" ? <ins key={i}>{text}</ins> : <span key={i}>{text}</span>))}
+  </div>;
+}
+
 // The answer's state: `onDecide(decision, note)` sends it ("deny" with the
 // line's note, trimmed) and throws a refusal; `answered` is a decision
 // given elsewhere, said as if given here.

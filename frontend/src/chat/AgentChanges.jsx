@@ -29,8 +29,8 @@ import { ActivityIcon, BookIcon, BotIcon, CheckIcon, CloudDownloadIcon, ExportIc
   XIcon } from "../shared/ui/Icons";
 import { PathLink } from "../editor/PathLink.jsx";
 import { changeCount, changePlace, isChange, noteChangeText } from "./agentSteps";
-import { canRedo, canRevert, revertKind, revertRefusal } from "./aiRevert.js";
-import { WordDiff } from "./ApprovalCard";
+import { canRedo, canRevert, refusalCopy, revertKind, revertRefusal } from "./aiRevert.js";
+import { WordDiff } from "./ApprovalShell";
 import { CHANGE_STATES, isUndone, noteReview, useChangeState } from "./noteReview.js";
 
 // The icon of each action kind, in this list and on the tool chips under the
@@ -56,39 +56,6 @@ export async function sendRevert(a, { force = false, redo = false } = {}) {
   }
   return apiJson(`${API}/ai/revert`,
     jsonInit("POST", { kind: revertKind(a), block_id: a.block_id || "", revert: a.revert, force, redo }));
-}
-
-// What a row that stopped says, and the button that reverts (or redoes)
-// anyway — none when it can't be forced.
-export function refusalCopy({ conflict, preview, detail, status }, redo) {
-  if (conflict === "changed") {
-    return redo
-      ? { text: t("The note was changed since. Redoing anyway makes this change:"), force: t("Redo anyway") }
-      : { text: t("The note was changed since. Undoing anyway makes this change:"), force: t("Undo anyway") };
-  }
-  if (conflict === "filled") {
-    if (preview?.page) {
-      return { text: t("Notes, pages or comments were added to the page since. Undoing moves it to Recently deleted with them."),
-        force: t("Move to Recently deleted anyway") };
-    }
-    return {
-      text: preview?.children ? t("Notes were added under it since. Undoing deletes it with them.")
-        : preview?.drawn ? t("Strokes were added to it since. Undoing deletes them with it.")
-          : preview?.threads ? t("It was commented on since. Undoing deletes it, and its comments with it.")
-            : t("It was typed in since. Undoing deletes what it says now:"),
-      force: t("Delete anyway"),
-    };
-  }
-  if (conflict === "moved") {
-    return redo
-      ? { text: t("The note was moved since. Redoing puts it where the AI moved it."), force: t("Move anyway") }
-      : { text: t("The note was moved since. Undoing puts it back where the AI found it."), force: t("Move back anyway") };
-  }
-  if (conflict === "kept") {
-    return { text: tn("The page changed since, or was deleted, and was left as it is.",
-      "These {n} pages changed since, or were deleted, and were left as they are.", preview?.kept || 1) };
-  }
-  return { text: status === 404 ? t("The note was deleted since.") : detail };
 }
 
 const labelChange = (a) => [...(a.added || []).map((n) => `+${n}`), ...(a.removed || []).map((n) => `−${n}`)].join(", ");
