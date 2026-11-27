@@ -35,7 +35,7 @@
 // route of a chat's line link).
 
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import {
   BanIcon, BookIcon, CalendarIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, FileIcon, FolderIcon, HistoryIcon,
   LabelIcon, SearchIcon, TextSearchIcon, UserIcon, XIcon,
@@ -69,8 +69,6 @@ const QUALIFIER_ICONS = {
 const KEY_LIST = "label: folder: is: no: author: venue: year: created: updated: in:"; // i18n-ignore: syntax
 const HINT_EXAMPLE = "-label:read year:>=2020 is:pdf,pinned"; // i18n-ignore: syntax
 const PLACEHOLDER_EXAMPLE = "label: is:pdf…"; // i18n-ignore: syntax
-// A POST of a search page's body (searchPages.searchBody).
-const postJson = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 // `text` with the query's matches marked (search/snippets.js markedParts):
 // a result row here, a row of the Ctrl+P palette (library/QuickOpen.jsx).
@@ -259,14 +257,14 @@ export default function SearchPanel({
   // label ids, and the page ids the predicates keep), so the server ranks
   // and limits inside it; the run keeps that scope, and its "Show more"
   // pages the same one.
-  const notesPage = (cursor, ask) => apiJson(`${API}/block-search`, postJson(searchBody(q, {
+  const notesPage = (cursor, ask) => apiJson(`${API}/block-search`, jsonInit("POST", searchBody(q, {
     limit: NOTES_PAGE, cursor, scope: ask.scope, pages: ask.pages, kinds: filters.kinds, case: caseSensitive, whole: wholeWord,
   })));
   // Full-text over the documents' text (server-side FTS index; normalized
   // word matching — the Aa/ab toggles only apply to notes and the open
   // PDF, whose matches pdf.js lists: the server leaves its document out).
   // The open file stays in: its hits are listed with the others'.
-  const libPage = (cursor, ask) => apiJson(`${API}/document-search`, postJson(searchBody(q, {
+  const libPage = (cursor, ask) => apiJson(`${API}/document-search`, jsonInit("POST", searchBody(q, {
     limit: DOC_PAGE, cursor, scope: ask.scope, pages: ask.pages, exclude: ask.exclude, formats: filters.formats,
   })));
   // Whether the open page shows a PDF: the listing's document, or the PDF

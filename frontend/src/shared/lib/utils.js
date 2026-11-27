@@ -379,6 +379,12 @@ async function apiJson(url, options = {}, { keepalive } = {}) {
   return r.json();
 }
 
+// apiJson's options for a JSON request: `body` sent as JSON, or, with none
+// (a DELETE, a POST that only asks), the method alone.
+function jsonInit(method, body) {
+  return { method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) };
+}
+
 async function resolvePdfUrl(rawUrl, allowOa = true, { signal } = {}) {
   // {source_url, note} — note explains e.g. that an open-access preprint was
   // substituted because the published PDF is paywalled. `signal` stops it
@@ -435,4 +441,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, escapeHtml, sha256, getDocIdForUrl, isPdfFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, apiError, proxyRefusal, noteDeletingWorkspace, setShareView, getShareToken, withShare, withWorkspace, blockLinkUrl, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, copyPayload, readNdjson, downloadFetched };
+export { API, makeId, fmtBytes, escapeHtml, sha256, getDocIdForUrl, isPdfFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, jsonInit, apiError, proxyRefusal, noteDeletingWorkspace, setShareView, getShareToken, withShare, withWorkspace, blockLinkUrl, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, copyPayload, readNdjson, downloadFetched };

@@ -19,7 +19,7 @@
 // between the clouds is CLOUDS below; every other sentence names the cloud.
 // docs/dev/settings.md.
 import React from "react";
-import { API, apiJson, copyText } from "../shared/lib/utils";
+import { API, apiJson, jsonInit, copyText } from "../shared/lib/utils";
 import { CopyField, DialogButtons, Field, FormNotice, Row, SubDialog, TestResult } from "./SettingsKit";
 import { useSettingsRead } from "./settingsReads.js";
 import { STORE, folderLabel } from "./backupStores.js";
@@ -27,8 +27,6 @@ import { CloudCheckIcon, CloudIcon, CloudOffIcon, ExternalLinkIcon, HardDriveIco
 import FolderBrowser from "../explorer/FolderBrowser.jsx";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { t } from "../shared/i18n/i18n.js";
-
-const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
 
 // What each cloud says of itself: the company signed in to, its top folder,
 // the dialog's lead (what is asked for, and what Gamma then sees), the
@@ -64,7 +62,7 @@ function PageDialog({ store, endpoint, status, onStatus, onClose, onConnected })
 
   async function start() {
     setError(""); setUrl(""); setOpened(false);
-    try { setUrl((await apiJson(`${endpoint}/authorize`, json("POST", { folder: status.folder || null }))).url); }
+    try { setUrl((await apiJson(`${endpoint}/authorize`, jsonInit("POST", { folder: status.folder || null }))).url); }
     catch (err) { setError(err.message); }
   }
   React.useEffect(() => { start(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -118,7 +116,7 @@ function CodeDialog({ store, endpoint, status, onStatus, onClose, onConnected })
 
   async function start() {
     setAsking(true); setError(""); setCopied(false);
-    try { onStatus(await apiJson(`${endpoint}/connect`, json("POST", { folder: status.folder || null }))); }
+    try { onStatus(await apiJson(`${endpoint}/connect`, jsonInit("POST", { folder: status.folder || null }))); }
     catch (err) { setError(err.message); }
     finally { setAsking(false); }
   }
@@ -133,7 +131,7 @@ function CodeDialog({ store, endpoint, status, onStatus, onClose, onConnected })
     let timer = 0;
     const ask = async () => {
       try {
-        const value = await apiJson(`${endpoint}/poll`, json("POST"));
+        const value = await apiJson(`${endpoint}/poll`, jsonInit("POST"));
         if (stopped) return;
         onStatus(value);
         if (value.pending) {
@@ -153,7 +151,7 @@ function CodeDialog({ store, endpoint, status, onStatus, onClose, onConnected })
 
   async function close() {
     if (pending) {
-      try { onStatus(await apiJson(`${endpoint}/connect`, json("DELETE"))); } catch { /* it expires on its own */ }
+      try { onStatus(await apiJson(`${endpoint}/connect`, jsonInit("DELETE"))); } catch { /* it expires on its own */ }
     }
     onClose();
   }
@@ -201,14 +199,14 @@ function EditDialog({ store, endpoint, status, confirm, onStatus, onClose }) {
   const [source] = React.useState(() => ({
     name: cloud.top(), icon: HardDriveIcon,
     list: (path) => apiJson(`${endpoint}/browse?${new URLSearchParams({ path })}`),
-    create: async (path) => (await apiJson(`${endpoint}/folders`, json("POST", { path }))).path,
+    create: async (path) => (await apiJson(`${endpoint}/folders`, jsonInit("POST", { path }))).path,
   }));
 
   async function save(event) {
     event.preventDefault();
     if (busy) return;
     setBusy(true); setError("");
-    try { onStatus(await apiJson(endpoint, json("PUT", { folder }))); onClose(); }
+    try { onStatus(await apiJson(endpoint, jsonInit("PUT", { folder }))); onClose(); }
     catch (err) { setError(err.message); setBusy(false); }
   }
   function disconnect() {
@@ -220,7 +218,7 @@ function EditDialog({ store, endpoint, status, confirm, onStatus, onClose }) {
         : t("Disconnect {email}? Backup tasks stop copying there and Gamma forgets the access; to revoke it too, remove Gamma from your {company} account's apps. The copies already in “{folder}” stay.", args),
       confirmLabel: t("Disconnect"), danger: true,
       onConfirm: async () => {
-        try { onStatus(await apiJson(endpoint, json("DELETE"))); onClose(); }
+        try { onStatus(await apiJson(endpoint, jsonInit("DELETE"))); onClose(); }
         catch (err) { setError(err.message); }
       },
     });
@@ -258,7 +256,7 @@ export function CloudRow({ store, setStatus, confirm }) {
   async function runTest() {
     setTest({ busy: true });
     try {
-      const value = await apiJson(`${endpoint}/test`, json("POST"));
+      const value = await apiJson(`${endpoint}/test`, jsonInit("POST"));
       setTest({ ok: !!value.ok, message: value.message });
     } catch (err) { setTest({ ok: false, message: err.message }); }
   }
