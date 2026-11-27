@@ -1,6 +1,6 @@
-"""The off-site copies (gamma/offsite.py, gamma/s3.py, docs/dev/debugging.md
-"The off-site rounds") against moto's in-process bucket (skipped
-without moto): a round copying the databases that changed and the uploads
+"""The off-site copies (gamma/offsite.py, gamma/s3.py, docs/dev/backups.md
+"Snapshots and copies in a bucket", docs/dev/debugging.md "The off-site
+rounds") against moto's in-process bucket (skipped without moto): a round copying the databases that changed and the uploads
 the bucket lacks, a second round copying nothing, the pruning to the keep
 count (never past the data directory's first round), a copy or an upload
 that fails, the restore of databases and uploads and its refusals, the
