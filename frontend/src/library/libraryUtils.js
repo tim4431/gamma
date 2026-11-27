@@ -586,14 +586,6 @@ export function findPageForUrl(url, pages) {
   return null;
 }
 
-// An author's surname word, as a match against a reference's text reads
-// it (scorePaperMatch): the last word of the name before any comma, so
-// "Lovelace, Ada" and "Ada Lovelace" are both "Lovelace" and "Pereira
-// Campos, Jorge Fernando" is "Campos", not "Fernando".
-export function authorSurname(name) {
-  return String(name || "").split(",")[0].trim().split(/\s+/).pop() || "";
-}
-
 // Lowercase particles that start a surname ("Jan van der Berg"), and a
 // generational suffix, as backend gamma/names.py reads them.
 const NAME_PARTICLES = new Set("van von der de la du da di del della den ter ten le zu bin al".split(" "));
@@ -635,8 +627,11 @@ export function authorsFromRow(row) {
 }
 
 // How well a library page matches a reference's text (the link dialog's
-// best match first): a DOI or arXiv id weighs most, then author surnames,
-// then title words, the year and the volume, then venue words.
+// best match first): a DOI or arXiv id weighs most, then author surnames
+// (familyName's last word but a suffix, so "Pereira Campos, Jorge
+// Fernando" is "Campos", and "Martin Luther King Jr." and "King Jr.,
+// Martin Luther" are "King"), then title words, the year and the volume,
+// then venue words.
 export function scorePaperMatch(text, page) {
   const normalizedText = (text || "").toLowerCase();
   if (!normalizedText) return 0;
@@ -646,7 +641,7 @@ export function scorePaperMatch(text, page) {
   if (metadata.doi && normalizedText.includes(String(metadata.doi).toLowerCase())) score += 20;
   if (metadata.arxiv_id && normalizedText.includes(metadata.arxiv_id)) score += 20;
   for (const author of (metadata.authors || [])) {
-    const lastName = authorSurname(author).toLowerCase();
+    const lastName = familyName(author).replace(NAME_SUFFIX, "").split(" ").pop().toLowerCase();
     if (lastName.length > 2 && normalizedText.includes(lastName)) score += 4;
   }
   for (const word of String(metadata.title || page.content || "").toLowerCase().split(/[^a-z0-9]+/)) {

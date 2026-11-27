@@ -24,7 +24,7 @@ import { citesSeveralSources, gammaLinkId, isSourceLink, parseGammaLink, relativ
 import { EMBED_RE, NO_LABELS, REF_RE, refIdsOf, refWords, unlinkedText } from "./refLabels.js";
 import { applyLinkChange, linkKey, linkSpans, nthLinkSpan, spanWords } from "./linkEdit.js";
 import { LinkHover, describeLink } from "../shared/ui/LinkCard.jsx";
-import { bareLinkText, siteIconUrl, useSitePreview, webLinkLabel } from "../shared/lib/webLinks.js";
+import { bareLinkText, hostOf, loadSitePreview, siteIconUrl, useSitePreview, webLinkLabel } from "../shared/lib/webLinks.js";
 import { plainSnippet } from "../search/snippets.js";
 import { InkCard } from "../ink/InkLayer";
 import { RecordingCard } from "../recording/RecordingCard";
@@ -1391,16 +1391,12 @@ const BlockRow = React.memo(function BlockRow({
         })
         .catch(() => doReplace(`[${fallback}](${url})`));
     } else if (item.name === "titled") {
-      fetch(`/api/link-preview?url=${encodeURIComponent(pm.url)}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          let label = (d?.title || "").replace(/[[\]\n]/g, " ").trim();
-          if (!label) {
-            try { label = new URL(pm.url).hostname.replace(/^www\./, ""); } catch (_) { label = pm.url; }
-          }
-          doReplace(`[${label}](${pm.url})`);
-        })
-        .catch(() => {});
+      // The title the link chip shows (webLinks, asked once per address),
+      // else the site's name, also when the title could not be asked.
+      loadSitePreview(pm.url).then(({ title }) => {
+        const label = (title || "").replace(/[[\]\n]/g, " ").trim() || hostOf(pm.url) || pm.url;
+        doReplace(`[${label}](${pm.url})`);
+      });
     }
     // "url" / "text": keep the pasted text as-is
   }

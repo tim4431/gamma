@@ -116,23 +116,28 @@ export function useBibliographyStep({ card, reviewing, opts, set, payload, pageI
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
   const [notice, setNotice] = React.useState("");
+  const [refused, setRefused] = React.useState(null);  // {index, key}: the Formatted copy the clipboard refused
   // The engine's chunk comes as the card is picked, ahead of the review
   // that may format with it.
   React.useEffect(() => { if (card) preloadCitations(); }, [card]);
-  // A file saved is the one of the choices it was made with.
-  React.useEffect(() => { setSaved(false); setNotice(""); }, [bibFormat, formatted.style, formatted.locale, formatted.file]);
+  // A file saved, or a copy refused, is one of the list and the choices it
+  // was made with.
+  React.useEffect(() => { setSaved(false); setNotice(""); setRefused(null); },
+    [bibFormat, formatted.style, formatted.locale, formatted.file, bib.data]);
 
   // A bibliography is small and text: copying it is often the whole job, so
   // the step offers that beside the download instead of making the file the
   // only way out. The footer copies the whole bibliography, the right-hand
   // pane one entry. A Formatted one goes as HTML and plain text, built in
   // the click (copyPayload), so a browser that wants the copy made in the
-  // gesture still takes it while the render comes.
+  // gesture still takes it while the render comes. A refusal is kept as
+  // `refused`, which the review says as the citation menus' pill does
+  // (useCitations), with a Copy that tries again in a click of its own.
   const copy = (text, key = "all") => copyText(text).then((ok) => { if (ok) flashCopied(key); });
   const copyFormatted = (index, key = "all") => {
-    setNotice("");
+    setNotice(""); setRefused(null);
     copyPayload(formatted.pair(index))
-      .then((ok) => (ok ? flashCopied(key) : setNotice(t("The browser did not let the copy through. Press the button again."))),
+      .then((ok) => (ok ? flashCopied(key) : setRefused({ index, key })),
         (err) => setNotice(t("Could not format the references: {message}", { message: err.message })));
   };
   const entries = bib.data?.entries || [];
@@ -143,7 +148,7 @@ export function useBibliographyStep({ card, reviewing, opts, set, payload, pageI
   // A Formatted bibliography is made here, so its last step is the review:
   // Download saves the file with no export job.
   async function download() {
-    setSaving(true); setNotice("");
+    setSaving(true); setNotice(""); setRefused(null);
     try {
       // named as the export names this bibliography's file (the answer's
       // `name`), titled by the folder or the page
@@ -163,7 +168,7 @@ export function useBibliographyStep({ card, reviewing, opts, set, payload, pageI
     || (isFormatted && (formatted.loading || !!formatted.error || saving)));
   return { isFormatted, copyAction, download, notReady,
     downloadLabel: <MorphText>{saved ? t("Download again") : t("Download")}</MorphText>,
-    review: { bib, folder, copied, onCopy: copy, onCopyFormatted: copyFormatted, payload, set, formatted, notice, saved } };
+    review: { bib, folder, copied, onCopy: copy, onCopyFormatted: copyFormatted, payload, set, formatted, notice, refused, saved } };
 }
 
 // The Formatted bibliography's choices: its style (the bundled ones and
@@ -187,9 +192,12 @@ function FormattedOptions({ formatted, set }) {
 // the right, the summary, and for a file the link that keeps it up to date.
 // `controls`: the export's switch rows (ExportControl; for a bibliography
 // only "Include pages inside", resolveExport). `onCopy(text, key)` copies a
-// file's text, `onCopyFormatted(index)` a Formatted entry; `notice` is a
-// Formatted copy's or download's failure, `saved` that its file was saved.
-export function BibliographyReview({ bib, folder, summary, copied, onCopy, onCopyFormatted, controls, payload, set, formatted, notice, saved }) {
+// file's text, `onCopyFormatted(index, key)` a Formatted entry or, with
+// key "all", the list; `notice` is a Formatted copy's or download's
+// failure, `refused` the Formatted copy the clipboard refused (said while
+// its entry, or the whole list, is on screen), `saved` that its file was
+// saved.
+export function BibliographyReview({ bib, folder, summary, copied, onCopy, onCopyFormatted, controls, payload, set, formatted, notice, refused, saved }) {
   const { entries = [], skipped = [] } = bib.data || {};
   const [picked, setPicked] = React.useState("");
   const shown = entries.find((entry) => entry.page_id === picked) || entries[0];
@@ -276,6 +284,10 @@ export function BibliographyReview({ bib, folder, summary, copied, onCopy, onCop
     </div>
     <div className="reportModalHint">{summary}</div>
     {saved ? <p className="reportModalHint">{t("Saved to your downloads.")}</p> : null}
+    {refused && (refused.key === "all" || refused.key === shown?.page_id) ? <FormNotice>
+      {t("The clipboard did not take the copy.")}{" "}
+      <button type="button" className="uiBtn sm" onClick={() => onCopyFormatted(refused.index, refused.key)}>{t("Copy")}</button>
+    </FormNotice> : null}
     {notice ? <FormNotice>{notice}</FormNotice> : null}
     {format.server ? <KeepUpToDate url={bib.url} folder={folder} bib={!!format.bib} /> : null}
   </>;

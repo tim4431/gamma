@@ -161,7 +161,7 @@ function ServerDashboard() {
           : info.updates === "app" ? t("inside the Gamma app") : t("run from a checkout")}
         title={t("Gamma {label} · Python {python} · {platform} · data schema {schema_version}", { label: info.label, python: info.python, platform: info.platform, schema_version: info.schema_version })} />
       <StatText icon={ActivityIcon} label={t("uptime")} value={fmtUptime(info.uptime_seconds)}
-        hint={t("since {started}", { started: new Date(info.started_at).toLocaleString() })} />
+        hint={t("since {started}", { started: fmtDate(info.started_at, { dateStyle: "medium", timeStyle: "short" }) })} />
       <StatText icon={AlertCircleIcon} label={t("warnings · errors")} value={`${counts.warning || 0} · ${counts.error || 0}`}
         hint={t("{info} info lines since start", { info: counts.info || 0 })} tone={logTone}
         title={t("Lines logged since the server started, by level. The log below shows the most recent ones.")} />
@@ -353,7 +353,7 @@ function DatabaseCheck({ tasks }) {
   const hint = !result ? t("a quick check of every account and workspace database")
     : bad.length ? tn("{n} damaged database file (of {total})", "{n} damaged database files (of {total})", bad.length, { total: files.length })
       : tn("{n} database file passed · {time}", "All {n} database files passed · {time}", files.length,
-        { time: new Date(result.checked_at).toLocaleTimeString() });
+        { time: fmtDate(result.checked_at, { timeStyle: "medium" }) });
   return <>
     <Row icon={DatabaseIcon} label={t("Check databases")} hint={hint}
       title={t("Runs SQLite's quick_check on users.db and on every workspace's pages.db and data.db. Nothing is changed; a damaged file is best replaced from a backup.")}>

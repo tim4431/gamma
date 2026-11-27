@@ -253,6 +253,8 @@ a work folder's path link its own.
     card, pinned. With Ctrl or Cmd it opens the link.
 - **The site's title** comes from `/api/link-preview` (backend
   `gamma/link_preview.py`), which `loadSitePreview` asks once per address.
+  A request that failed is asked again the next time. Paste as → Titled
+  link writes the same title, or the site's name when there is none.
   - YouTube, X, Reddit, TikTok, Vimeo and Spotify answer through their
     oEmbed endpoints. An X post's text is its title.
   - Any other page is fetched with a browser's headers in the reader's
