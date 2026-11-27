@@ -862,25 +862,28 @@ export async function localAgentScenarios(env) {
 
         const modelChip = dock.locator(".chatModelChip .uiSelectBtn");
         await modelChip.click();
-        // The panel: Codex's models, a pick closing it, then the model's knobs, which leave it open.
+        // The panel: what the model takes; its middle opens Codex's models, and one picked comes back to it.
         const panel = page.locator(".modelPanel");
         const items = panel.locator(".modelPanelList .ctxMenuItem");
+        const middle = panel.locator(".modelPanelPick");
+        const effort = panel.getByRole("slider", { name: "Reasoning effort", exact: true });
+        const fast = panel.getByRole("button", { name: "Fast", exact: true });
+        await middle.click();
         assert((await items.allInnerTexts()).some((s) => s.includes("GPT Fake Mini")) &&
           !(await items.allInnerTexts()).some((s) => s.includes("Hidden")), "the models Codex lists, not its hidden ones");
         await items.filter({ hasText: "GPT Fake Mini" }).click();
-        await modelChip.click();
-        const knobs = panel.locator(".modelPanelKnob > .popoverSection");
-        await until(async () => (await knobs.allInnerTexts()).some((s) => /effort/i.test(s)), { what: "the panel's knobs" });
-        assert(!(await knobs.allInnerTexts()).some((s) => /speed/i.test(s)), "a model with no other tier offers no speed");
+        await middle.filter({ hasText: "GPT Fake Mini" }).waitFor();
+        assertEq(await fast.count(), 0, "a model with no faster tier has no Fast button");
+        await middle.click();
         await items.filter({ hasText: /^\s*GPT Fake\s*$/ }).click();
-        await modelChip.click();
-        const speed = panel.getByRole("group", { name: "Speed", exact: true });
-        await until(async () => (await knobs.allInnerTexts()).some((s) => /speed/i.test(s)), { what: "the speed knob" });
-        assert((await speed.getByRole("button").allInnerTexts()).some((s) => /Default \(standard\)/.test(s)), "its speeds, the default named");
-        await panel.getByRole("group", { name: "Reasoning effort", exact: true }).getByRole("button", { name: "medium", exact: true }).click();
-        await speed.getByRole("button", { name: "Fast", exact: true }).click();
-        await until(async () => /GPT Fake · medium/i.test(await modelChip.innerText())
-          && await dock.locator(".chatModelChip .chatSpeedGlyph").count() === 1, { what: "the chip shows the choice, the speed its glyph" });
+        // its own effort stands on the slider with none picked
+        assert((await effort.getAttribute("aria-valuetext")) !== "Default" && await panel.locator(".stopSliderThumb").count() === 1,
+          "the model's own effort");
+        await effort.press("End");
+        for (let i = 0; i < 8 && (await effort.getAttribute("aria-valuetext")) !== "Medium"; i++) await effort.press("ArrowLeft");
+        await fast.click();
+        await until(async () => (await modelChip.locator(".chatModelText, .chatModelEffort").allInnerTexts()).join(" ") === "GPT Fake Medium"
+          && await modelChip.locator(".chatSpeedGlyph").count() === 1, { what: "the chip shows the choice, Fast its glyph" });
         await page.keyboard.press("Escape");
 
         const replies = dock.locator(".chatBubble.ai");

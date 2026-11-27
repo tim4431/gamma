@@ -244,7 +244,10 @@ def test_read_only_refuses_writes_but_lets_people_leave_with_their_data(plan, ad
     assert admin.delete(f"/api/blocks/{page['id']}").status_code == 423
     # reads, exports, notices, sign-out and sign-in still work
     assert admin.get(f"/api/blocks/{page['id']}").status_code == 200
-    # and so do the reads sent as a POST: the panel's searches, the file chips' lookup, the tabs' summaries
+    # and so do the reads sent as a POST: the panel's searches, the file chips' lookup, the tabs' summaries,
+    # a citation copy's bibliography
+    r = admin.post("/api/bibliography", json={"page_ids": [page["id"]]})
+    assert r.status_code == 200 and [p["page_id"] for p in r.json()["skipped"]] == [page["id"]], r.text
     r = admin.post("/api/block-search", json={"q": "read-only", "pages": [page["id"]]})
     assert r.status_code == 200, r.text
     assert admin.post("/api/document-search", json={"q": "read-only", "pages": [page["id"]]}).status_code == 200

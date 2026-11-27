@@ -5,10 +5,8 @@
 // dialog shows, under syncLinks.js's LINK_BASES.zotero. What a link does
 // once made (sync, settings, conflicts, a page's PDF first) goes through
 // syncLinks.js's paths, as a clone's does.
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { LINK_BASES, linkPath } from "../collaboration/syncLinks.js";
-
-const post = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 // A refusal that Settings › Account mends: no connection, or a key Zotero
 // no longer takes (409).
@@ -19,9 +17,7 @@ export const needsZoteroConnect = (error) => error?.status === 409;
 // (Settings reads it through useSettingsRead).
 export const ZOTERO_ACCOUNT = "/zotero/account";
 
-export const connectZoteroKey = (apiKey) => apiJson(`${API}${ZOTERO_ACCOUNT}`, {
-  method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: apiKey }),
-});
+export const connectZoteroKey = (apiKey) => apiJson(`${API}${ZOTERO_ACCOUNT}`, jsonInit("PUT", { api_key: apiKey }));
 
 export const disconnectZotero = () => apiJson(`${API}${ZOTERO_ACCOUNT}`, { method: "DELETE" });
 
@@ -41,10 +37,10 @@ export const zoteroKeyRefusal = () => getZoteroLibraries()
 // {state, url}: the page opens `url` in a new tab and polls the state, which
 // works in a browser and in the desktop, iPad and Android shells alike (their
 // navigation guards send other origins to the system browser).
-export const startZoteroOAuth = () => apiJson(`${API}/zotero/oauth/start`, post({}));
+export const startZoteroOAuth = () => apiJson(`${API}/zotero/oauth/start`, jsonInit("POST", {}));
 
 // {state: "pending" | "connected" | "error", error?, account?}
-export const zoteroOAuthStatus = (state) => apiJson(`${API}/zotero/oauth/status`, post({ state }));
+export const zoteroOAuthStatus = (state) => apiJson(`${API}/zotero/oauth/status`, jsonInit("POST", { state }));
 
 // Link a library: {library, workspace_id ("" for a new workspace), name,
 // mode, download, upload, auto_tags, send_unrecorded, adopt} → the link's
@@ -52,7 +48,7 @@ export const zoteroOAuthStatus = (state) => apiJson(`${API}/zotero/oauth/status`
 // download, upload, auto_tags, send_unrecorded, poll_s, on_change, status,
 // conflicts_open, …}, as Settings' read of LINK_BASES.zotero lists them);
 // its first round starts in the background.
-export const createZoteroLink = (body) => apiJson(`${API}${LINK_BASES.zotero}`, post(body));
+export const createZoteroLink = (body) => apiJson(`${API}${LINK_BASES.zotero}`, jsonInit("POST", body));
 
 // What the dialog counts before linking (settings/zoteroPreview.js reads
 // it): {items, notes, attachments, pdfs, pdf_bytes, linked_files, partial}
@@ -68,4 +64,4 @@ export const previewZoteroLink = (library, workspaceId = "") => apiJson(
 
 // Bring a page's PDF from Zotero first (the link's queue reorders; a round
 // is asked for): {queued: true}.
-export const fetchZoteroPdf = (ws, pageId) => apiJson(`${API}${linkPath("zotero", ws, "/fetch")}`, post({ page_id: pageId }));
+export const fetchZoteroPdf = (ws, pageId) => apiJson(`${API}${linkPath("zotero", ws, "/fetch")}`, jsonInit("POST", { page_id: pageId }));

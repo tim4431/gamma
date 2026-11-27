@@ -12,9 +12,10 @@
 // library and a citation. `LinkHover` wraps a rendered link: hovering or
 // focusing it previews the card, a right-click or a held finger pins it
 // (menuPress), as Gamma opens a menu. The note editor shows it, pinned,
-// under the link the caret is on (BlockCmEditor.jsx). `describeLink` says
-// what a card shows for a link, the same everywhere.
-import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+// under the link the caret is on (editorLinks.jsx). `describeLink` says
+// what a card shows for a link, the same everywhere; a web address's
+// labels and its page's title are shared/lib/webLinks.js.
+import React, { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CheckIcon, CopyIcon, ExternalLinkIcon, LinkIcon, PencilIcon, UnlinkIcon, XIcon } from "./Icons";
 import FileIcon from "./FileIcon.jsx";
@@ -22,6 +23,7 @@ import { useMenuAim } from "./menuAim";
 import { menuAnchor, placeFloating, surfaceSize, useFloatingPosition } from "./placement.js";
 import { menuPress } from "./press.js";
 import { blockLinkUrl, copyText } from "../lib/utils";
+import { NO_PREVIEW, hostOf, shortUrl, useSitePreview } from "../lib/webLinks.js";
 import { isSourceLink, parseGammaLink, gammaLinkId } from "../model/gammaLinks.js";
 import { t } from "../i18n/i18n.js";
 import { RefRows } from "../../editor/RefPicker.jsx";
@@ -49,85 +51,6 @@ export function useLinkCardValue(values) {
   }), []);
 }
 
-// --- a web page's title --------------------------------------------------------
-
-// GET /api/link-preview's {title, author} of an address (backend
-// gamma/link_preview.py), asked once per address: a bare link's chip label,
-// its card's title and the author on its card's muted line. `sitePreview`
-// is what is known now (null before the answer), `loadSitePreview` the
-// answer ({} for none), `useSitePreview` both for a component.
-const NO_PREVIEW = Object.freeze({});
-const sitePreviews = new Map();   // href → {title, author} | Promise
-const isWeb = (href) => /^https?:\/\//i.test(href || "");
-export function sitePreview(href) {
-  const p = sitePreviews.get(href);
-  return p && !(p instanceof Promise) ? p : null;
-}
-export function loadSitePreview(href) {
-  if (!isWeb(href)) return Promise.resolve(NO_PREVIEW);
-  const known = sitePreviews.get(href);
-  if (known) return known instanceof Promise ? known : Promise.resolve(known);
-  const asked = fetch(`/api/link-preview?url=${encodeURIComponent(href)}`)
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => (d?.title ? { title: d.title, author: d.author || "" } : NO_PREVIEW))
-    .catch(() => NO_PREVIEW)
-    .then((p) => { sitePreviews.set(href, p); return p; });
-  sitePreviews.set(href, asked);
-  return asked;
-}
-export function useSitePreview(href, enabled = true) {
-  const [preview, setPreview] = useState(() => sitePreview(href) || NO_PREVIEW);
-  useEffect(() => {
-    if (!enabled || !isWeb(href)) return undefined;
-    let dead = false;
-    loadSitePreview(href).then((p) => { if (!dead) setPreview(p); });
-    return () => { dead = true; };
-  }, [href, enabled]);
-  return sitePreview(href) || preview;
-}
-
-const hostOf = (href) => { try { return new URL(href).hostname.replace(/^www\./, ""); } catch { return ""; } };
-
-// GitHub addresses read without a fetch: owner/repo, #issue or PR, the file
-// a blob or tree link points at.
-function githubLabel(href) {
-  try {
-    const u = new URL(href);
-    if (!/(^|\.)github\.com$/i.test(u.hostname)) return "";
-    const p = u.pathname.split("/").filter(Boolean);
-    if (p.length === 0) return t("GitHub");
-    if (p.length === 1) return p[0];
-    const repo = `${p[0]}/${p[1]}`;
-    if (["issues", "pull", "discussions"].includes(p[2]) && p[3]) return `${repo} #${p[3]}`;
-    if (["blob", "tree"].includes(p[2]) && p.length > 3) return `${repo} · ${p[p.length - 1]}`;
-    if (p[2] === "releases") return `${repo} · releases`;
-    if (p[2] === "commit" && p[3]) return `${repo} @ ${p[3].slice(0, 7)}`;
-    return repo;
-  } catch { return ""; }
-}
-
-// Whether a web link's words are only its address (a bare link, or link
-// text that is itself an address): its chip then shows what it points to.
-export const bareLinkText = (text) => !String(text || "").trim() || /^(https?:\/\/|www\.)/i.test(String(text).trim());
-// What a web link's chip says, in the rendered view and the editor alike:
-// its own words, else GitHub's readable name, the site's title (`title`,
-// sitePreview's) or the host. `fetches`: whether the site's title would
-// change it (it has no words, and is no GitHub link).
-export function webLinkLabel(href, text, title) {
-  if (!bareLinkText(text)) return { label: text, fetches: false };
-  const gh = githubLabel(href);
-  return { label: gh || title || hostOf(href) || text || href, fetches: !gh };
-}
-// The site's icon a web link's chip shows ("" for an address with no host).
-export function siteIconUrl(href) {
-  const host = hostOf(href);
-  return host ? `https://icons.duckduckgo.com/ip3/${host}.ico` : "";
-}
-// An address as one muted line: host and path, no scheme, cut in the middle.
-function shortUrl(href) {
-  const s = String(href || "").replace(/^https?:\/\/(www\.)?/i, "").replace(/\/$/, "");
-  return s.length > 56 ? `${s.slice(0, 34)}…${s.slice(-18)}` : s;
-}
 const firstLine = (text) => plainSnippet(String(text || "").split("\n")[0]);
 
 // --- what a card shows ------------------------------------------------------------
@@ -409,7 +332,7 @@ export function LinkHover({ describe, edit, siteHref, children }) {
   const timer = useRef(null);
   const [card, setCard] = useState(null);   // {pinned, editing}
   const aim = useMenuAim({ active: !!card });
-  const tipId = useRef(`linkcard-${Math.random().toString(36).slice(2)}`).current;
+  const tipId = useId();
   const site = useSitePreview(siteHref, !!card);
   const later = (fn, ms) => { clearTimeout(timer.current); timer.current = setTimeout(fn, ms); };
   const close = () => { clearTimeout(timer.current); aim.keep(); setCard(null); };

@@ -132,13 +132,15 @@ def _run_create_page(conn, ws: str, scope: dict, args: dict):
 
 # --- exporting ----------------------------------------------------------------------
 
-# The formats export offers, by the name the model uses, and the export mode
-# each is (routers/export.py _BUILDERS).
-EXPORT_FORMATS = {"markdown": "readable", "pdf": "annotated-pdf", "notes-pdf": "notes-pdf", "bibtex": "bibtex",
-                  "obsidian": "obsidian", "zotero": "zotero-rdf", "notion": "notion", "logseq": "logseq-graph"}
-_FORMAT_WORDS = {"markdown": "Markdown", "pdf": "the annotated PDF", "notes-pdf": "a PDF of the notes",
-                 "bibtex": "BibTeX", "obsidian": "an Obsidian vault", "zotero": "Zotero RDF",
-                 "notion": "a Notion import", "logseq": "a Logseq graph"}
+# The formats export offers, by the name the model uses: the export mode
+# each is (routers/export.py _BUILDERS) and how a reply names it.
+EXPORT_FORMATS = {
+    "markdown": ("readable", "Markdown"), "pdf": ("annotated-pdf", "the annotated PDF"),
+    "notes-pdf": ("notes-pdf", "a PDF of the notes"), "bibtex": ("bibtex", "BibTeX"),
+    "biblatex": ("biblatex", "BibLaTeX"), "ris": ("ris", "RIS"), "csljson": ("csljson", "CSL JSON"),
+    "obsidian": ("obsidian", "an Obsidian vault"), "zotero": ("zotero-rdf", "Zotero RDF"),
+    "notion": ("notion", "a Notion import"), "logseq": ("logseq-graph", "a Logseq graph"),
+}
 
 
 def _run_export(conn, ws: str, scope: dict, args: dict):
@@ -169,11 +171,11 @@ def _run_export(conn, ws: str, scope: dict, args: dict):
         page_id, title, folder = "", target["path"], target["id"]
     try:
         job = start_export(ws, owner=scope.get("actor", ""), user=(scope.get("agent") or {}).get("for", ""),
-                           payload=ExportJob(page_id=page_id, folder=folder, mode=EXPORT_FORMATS[fmt],
+                           payload=ExportJob(page_id=page_id, folder=folder, mode=EXPORT_FORMATS[fmt][0],
                                              sub_pages=bool(args.get("sub_pages")) and not folder))
     except HTTPException as e:
         return f"error: {e.detail}", None
-    words = _FORMAT_WORDS[fmt]
+    words = EXPORT_FORMATS[fmt][1]
     return (f"ok — exporting “{title}” as {words}: the file downloads in the user's browser when it is ready, and "
             "stays in Background tasks. Say so; the file's text is not yours to read.",
             {"kind": "export", "page_id": page_id, "title": title, "format": fmt, "job": job,
@@ -264,8 +266,9 @@ TOOLS = [
             "description": (
                 "Export a page (`page_id`; `sub_pages` with the pages inside it) or a folder (`folder`) to a "
                 "file the user downloads, as the Export dialog does: markdown (the default), pdf (the PDF with "
-                "the highlights and notes), notes-pdf (the notes typeset), bibtex, obsidian, zotero, notion or "
-                "logseq. The file goes to the user; only when they ask for one."),
+                "the highlights and notes), notes-pdf (the notes typeset), bibtex, biblatex, ris, csljson (CSL "
+                "JSON, for Pandoc), obsidian, zotero, notion or logseq. The file goes to the user; only when they "
+                "ask for one."),
             "parameters": {
                 "type": "object",
                 "properties": {

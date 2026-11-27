@@ -73,8 +73,8 @@ needs them. What is sent is limited to what the feature requires:
   recording or dictating into the chat sends the audio to that provider's
   speech-to-text service. To learn each
   model's limits the server also downloads a public model list from
-  models.dev; the request carries nothing about you, and
-  `GAMMA_MODEL_CATALOG=off` turns it off.
+  models.dev; the request carries nothing about you, and an admin
+  turns it off in Settings → Server → Online services (AI model catalog).
 - **Online search by the assistant**: when you ask the AI assistant to
   look for papers or read one from the web, your search words go to
   Crossref, arXiv and OpenAlex, and a general web search goes to your AI

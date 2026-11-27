@@ -13,7 +13,7 @@ from collections import Counter, OrderedDict
 from typing import NamedTuple
 from urllib.request import Request as URLRequest
 
-from . import comments, ink as inkmod
+from . import comments, ink as inkmod, names as names_mod
 from .ai_pictures import picture as _picture
 from .ai_protocols.base import Protocol, reasoning_text
 from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filed_folders, filing, folder_paths, label_names,
@@ -2172,8 +2172,7 @@ def page_properties_line(connection, properties: dict, page_id: str = "", tree: 
     if isinstance(meta, dict):
         authors = [str(a).strip() for a in (meta.get("authors") or []) if str(a).strip()]
         if authors:
-            shown = ", ".join(authors[:6]) + (" et al." if len(authors) > 6 else "")
-            bits.append(f"authors: {shown}")
+            bits.append(f"authors: {names_mod.author_list(authors, 6)}")
         for key, label in (("year", "year"), ("venue", "venue"), ("doi", "doi"), ("arxiv_id", "arXiv")):
             if meta.get(key):
                 bits.append(f"{label}: {str(meta[key])[:120]}")

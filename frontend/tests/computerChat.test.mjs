@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   CHANGES_SHOWN, NOTE_MAX, SOURCES_MAX, agentHint, answerBody, askCommand, askPath, askPlace, askRisk, askTitle, awayFrom, canContinue, canSend, chatPath,
-  currentStep, diffRows, emptyLine, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, markParts, modelChoice, modelDisplay,
+  currentStep, diffRows, emptyLine, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, markParts, modelChoice,
   offersMenu, retryOf, revealsFile, scrolledToEnd, sourceNote, sourcesBody, stepNow, stepText, stripLine, turnBody, turnChanges, workPlace,
   turnLabel, waitsThere, historyRows, sessionRows, sessionsAway, sessionsDir, sessionsWords, shownMessages, stepChip,
   steerTaken, steeringTurn,
@@ -318,11 +318,9 @@ test("the model chip: the person's pick, else what the conversation ran with, el
   ];
   const none = modelChoice(models);
   assert.deepEqual({ model: none.model, effort: none.effort, shown: none.shown.id }, { model: "", effort: "", shown: "gpt-5.5" });
-  assert.equal(modelDisplay(none), "GPT-5.5");
   const ran = { messages: [person, agent({ model: "gpt-5.5-mini", effort: "" }), agent({ id: "m4", model: "gpt-5.5", effort: "high" })] };
   const kept = modelChoice(models, ran);
   assert.deepEqual([kept.model, kept.effort], ["gpt-5.5", "high"], "the newest turn's");
-  assert.equal(modelDisplay(kept), "GPT-5.5 · high");
   // a turn run with the defaults says so (null, null); one from before turns kept them says nothing
   const back = modelChoice(models, { messages: [...ran.messages, agent({ id: "m6", model: null, effort: null })] });
   assert.deepEqual([back.model, back.effort], ["", ""], "the defaults, not an older turn's effort");
@@ -340,13 +338,15 @@ test("the model chip: the person's pick, else what the conversation ran with, el
   assert.equal(modelChoice(tiered, null, { model: "", effort: "", speed: "standard" }).speed, "standard");
   assert.equal(modelChoice(tiered, null, { model: "gpt-5.5-mini", effort: "", speed: "fast" }).speed, "",
     "a speed the model lacks goes");
+  const flexed = [{ ...models[0], speeds: ["flex", "standard", "fast"] }];
+  assert.equal(modelChoice(flexed, { messages: [person, agent({ model: null, effort: null, speed: "flex" })] }).speed, "",
+    "a conversation that ran at Flex goes on at the agent's own speed");
   const fast = { messages: [person, agent({ model: null, effort: null, speed: "fast" })] };
   assert.deepEqual([modelChoice(tiered, fast).speed, modelChoice(models, fast).speed], ["fast", ""]);
   assert.equal(modelChoice(tiered, { messages: [...fast.messages, agent({ id: "m5", model: null, effort: null, speed: null })] })
     .speed, "", "a turn at the default speed");
-  assert.equal(modelDisplay(modelChoice([])), "");
   const first = modelChoice([{ id: "sonnet", label: "", efforts: [] }]);
-  assert.equal(modelDisplay(first), "sonnet", "no default: the first, by its id when it has no name");
+  assert.equal(first.shown.id, "sonnet", "no default: the first");
 });
 
 test("a passage chip asks for its source line and notes it", () => {

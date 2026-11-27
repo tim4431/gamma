@@ -73,6 +73,8 @@ export const GROUPS = [
   { id: "remote-work", files: ["remoteWork.mjs"], s: 22 },
   { id: "ink-zoom", files: ["inkZoom.mjs"], s: 22 },
   { id: "ink-ai", files: ["inkAi.mjs"], s: 21 },
+  // measured in a run of three workers, not yet from CI
+  { id: "citations", files: ["citations.mjs"], s: 20 },
   { id: "mcp", files: ["mcp.mjs"], s: 19 },
   { id: "note-mentions", files: ["noteMentions.mjs"], s: 17 },
   { id: "mirror", files: ["mirror.mjs"], s: 15 },
@@ -100,7 +102,7 @@ const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "chat-skills", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "translation", "scan-layer", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "pen", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "translation", "scan-layer", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "pen", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", "citations", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
 // what a change to the handwriting (src/ink/) can break: a text box's menu and a
 // picture's are placed and labelled by the ink layer's helpers; ipad, android: the host
@@ -215,6 +217,8 @@ export const RULES = [
   ["frontend/src/chat/useLocalAgents.js", [...CHAT, "local-agents", "settings"]],
   ["frontend/src/chat/AgentPicker.jsx", [...CHAT, "local-agents", "remote-chat", "remote-asks"]],
   ["frontend/src/chat/ModelChip.jsx", [...CHAT, "local-agents", "settings"]],
+  ["frontend/src/shared/ui/StopSlider.jsx", ["chat-navigation", "local-agents", "settings"]],
+  ["frontend/src/shared/ui/stopSlider.css", ["chat-navigation", "local-agents", "settings"]],
   // the picker of that side; text-anchors: a selection of lines as the chat's chip
   ["frontend/src/chat/ChatDock.jsx", [...CHAT, "ink-zoom", "text-search", "text-anchors", "local-agents", "remote-chat", "remote-asks"]],
   // the one transcript, its cards and History, which draw a computer agent's conversation as Gamma AI's
@@ -237,6 +241,10 @@ export const RULES = [
   ["frontend/src/settings/answeredServers.js", ["settings", "remote-asks"]],
   // Settings → Chat's skills sections, whose writes reach the chat's "/" menu
   ["frontend/src/settings/SettingsSkills.jsx", ["settings", "chat-skills", "i18n"]],
+  // Settings → Citations, and the style menus and the Add style dialog it shares with the Export
+  // dialog's Formatted bibliography: the citations group drives both
+  ["frontend/src/settings/SettingsCitations.jsx", ["settings", "i18n", "citations"]],
+  ["frontend/src/settings/CitationStyles.jsx", ["settings", "i18n", "citations"]],
   // ipad: Apple Pencil, under its host; android: the Stylus section and the server inside the app (SettingsServer.jsx)
   ["frontend/src/settings/SettingsTextRecognition.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link", "scan-layer"]],
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link"]],
@@ -292,6 +300,10 @@ export const RULES = [
   ["frontend/src/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]],
   // cloud-sign-in: the people invited by e-mail and the requests to join
   ["frontend/src/sharing/**", ["notes-pdf-share", "publish", "collab", "cloud-sign-in"]],
+  // the citation engine and its copies: the share popover's Citation section (notes-pdf-share), the
+  // Export dialog's Bibliography (transfers); citations drives each of them, the library's and a
+  // quote's copies and Settings → Citations
+  ["frontend/src/citations/**", ["notes-pdf-share", "transfers", "settings", "citations"]],
   // the Zotero account and links' calls (Account & sync › Zotero, the link dialog)
   ["frontend/src/transfers/zoteroApi.js", ["settings", "mirror", "zotero-link"]],
   // the files a native app was given, which only the ipad and android stand-in shells hand over
@@ -300,10 +312,15 @@ export const RULES = [
   ["frontend/src/transfers/folderZip.js", [...EXPORTS, "android"]],
   ["frontend/src/transfers/FileChip.jsx", [...EXPORTS, "android"]],
   // the export dialog's "Include pages inside" and the import review's pages under their page
-  ["frontend/src/transfers/transferFormats.js", [...EXPORTS, "sub-pages"]],
-  ["frontend/src/transfers/ImportExport.jsx", [...EXPORTS, "sub-pages"]],
+  // (citations: the Bibliography card's formats, its downloads and its Formatted list)
+  ["frontend/src/transfers/transferFormats.js", [...EXPORTS, "sub-pages", "citations"]],
+  ["frontend/src/transfers/ImportExport.jsx", [...EXPORTS, "sub-pages", "citations"]],
+  ["frontend/src/transfers/BibliographyReview.jsx", [...EXPORTS, "citations"]],
   ["frontend/src/transfers/importReview.js", [...EXPORTS, "sub-pages"]],
   ["frontend/src/transfers/ImportTree.jsx", [...EXPORTS, "sub-pages"]],
+  // the bibliography answers (the GET preview, the POST of a selection) that every citation copy
+  // and the share popover's Citation section read
+  ["frontend/src/transfers/exportApi.js", [...EXPORTS, "citations", "notes-pdf-share"]],
   ["frontend/src/transfers/**", EXPORTS],
   ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad", "android", "remote-chat", "remote-asks", "scan-layer"]], // the Background tasks tray and its store; android: a job's file saved through the app; remote-chat: a turn on another computer; remote-asks: one that waits there for an answer; scan-layer: the recognition's rows
   ["frontend/src/support/**", ["settings"]],
@@ -488,7 +505,14 @@ export const RULES = [
   ["backend/gamma/vector_text.py", EXPORTS],
   ["backend/gamma/note_markup.py", EXPORTS],
   ["backend/gamma/fonts/**", EXPORTS],
-  ["backend/gamma/routers/export.py", [...EXPORTS, "sub-pages"]], // a page's export with the pages inside it
+  // a page's export with the pages inside it; citations: the bibliography answer and its files
+  ["backend/gamma/routers/export.py", [...EXPORTS, "sub-pages", "citations"]],
+  // a record as CSL, RIS and BibLaTeX, and the names they split: the bibliography answer every
+  // citation copy and the Bibliography card read (the share popover's, notes-pdf-share)
+  ["backend/gamma/citations.py", ["citations", "transfers", "notes-pdf-share"]],
+  ["backend/gamma/names.py", [...EXPORTS, "citations", "notes-pdf-share"]], // the Zotero export's names too
+  // the account's added styles (Settings → Citations' Add from file, the repository's switch)
+  ["backend/gamma/routers/citations.py", ["citations"]],
   ["backend/gamma/routers/imports.py", EXPORTS],
   ["backend/gamma/jobs.py", [...EXPORTS, "settings", "notes-pdf-share", "scan-layer"]], // exports, backups, the search indexer, the recognition's lane
   ["backend/gamma/routers/jobs.py", [...EXPORTS, "settings", "remote-chat", "remote-asks"]], // remote-chat: a chat turn on another computer; remote-asks: one that waits there

@@ -1,4 +1,4 @@
-import { t } from "../shared/i18n/i18n.js";
+import { fmtMoment, t } from "../shared/i18n/i18n.js";
 // How the account-scoped settings' sync reads in the Settings dialog: the
 // section tag (Section's `scope` + `prefs`) and the Account pane's Gamma
 // Cloud row. Pure, so node can test it (tests/syncState.test.mjs).
@@ -17,15 +17,6 @@ const sentence = (text) => (/[.!?…]$/.test(text) ? text : `${text}.`);
 // The server's last push of the profile to Gamma Cloud failed (a pending
 // push that carries an error is being retried after one).
 const cloudFailed = (profile) => profile.state === "error" || (profile.state === "pending" && !!profile.error);
-
-// "14:37" today, "Sep 3, 14:37" another day, in the viewer's time zone.
-export function syncClock(at, now = new Date()) {
-  const d = new Date(at);
-  if (!at || Number.isNaN(d.getTime())) return "";
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return d.toDateString() === now.toDateString() ? time
-    : `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
-}
 
 // "Synced with Gamma Cloud at 14:37", or without the time when `at` is unknown.
 const syncedLine = (at, clock) => {
@@ -54,7 +45,7 @@ export const BROWSER_TAG = tag("browser", "monitor", t("Kept in this browser onl
 //   when not. The server's acceptance is the commit: it delivers the change
 //   to the cloud on its own schedule (coalesced, retried), so the tag never
 //   waits on that hop — only a failure of it is shown.
-export function profileSyncState(local, cloud, names = [], clock = syncClock) {
+export function profileSyncState(local, cloud, names = [], clock = fmtMoment) {
   const at = local?.state || "loading";
   if (at === "signed-out") return BROWSER_TAG;
   const holds = (set) => !!set && names.some((name) => set.has(name));
@@ -89,7 +80,7 @@ export function profileSyncState(local, cloud, names = [], clock = syncClock) {
 // The Account pane's Settings sync row hint when an identity is linked:
 // "Synced with Gamma Cloud at 14:37", "Not synced: <error>", "Syncing…",
 // or "" when there is nothing to say (the row says "choose" itself).
-export function cloudSyncHint(cloud, clock = syncClock) {
+export function cloudSyncHint(cloud, clock = fmtMoment) {
   const profile = cloud?.profile;
   if (!cloud?.identity?.linked || !profile) return "";
   if (profile.state === "synced") return syncedLine(profile.at, clock);

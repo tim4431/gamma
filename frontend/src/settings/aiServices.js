@@ -9,7 +9,7 @@ import { T, t } from "../shared/i18n/i18n.js";
 
 // The protocols' own names, with the chat's setup tiles' hints, on those
 // tiles and the dialog's cards.
-export const SERVICE_TILES = {
+const SERVICE_TILES = {
   chatgpt: { label: t("ChatGPT"), hint: t("Sign in with your subscription. No API key.") },
   "gemini-signin": { label: t("Gemini"), hint: t("Sign in with your Google account. No API key.") },
   anthropic: { label: t("Anthropic"), hint: t("Claude models, with an API key") },
@@ -20,7 +20,7 @@ export const SERVICE_TILES = {
 // a signed-in connection's row. `paste` is what a sign-in made in a browser
 // on another machine hands back: ChatGPT's redirect address, which fails
 // to load ("address"), or the code Google's page shows ("code").
-export const SIGN_INS = {
+const SIGN_INS = {
   chatgpt: {
     title: t("Sign in with ChatGPT"), billed: t("No API key — usage is billed to your ChatGPT subscription."),
     open: t("Open ChatGPT sign-in"), reopen: t("Re-open ChatGPT sign-in"), plan: t("ChatGPT subscription"),
@@ -80,7 +80,7 @@ export function aiServiceTiles(info) {
 
 // The named services by vendor, in the server's order (the chat's setup
 // card names them on its Other tile).
-export function serviceGroups(services) {
+function serviceGroups(services) {
   const groups = [];
   for (const service of services || []) {
     const name = service.group || service.label;
@@ -101,7 +101,7 @@ export function serviceGroups(services) {
 // id, or "custom". `only(protocolId)` keeps the cards whose protocol it
 // accepts (an edit offers only the kind the entry is). Each card has its
 // billing tag ("" for a custom endpoint, whose billing is the user's).
-export const SERVICE_SECTIONS = [
+const SERVICE_SECTIONS = [
   ["signin", T("Sign in or subscription")], ["key", T("API key")], ["local", T("On your computer or network")],
 ];
 const sectionOf = (preset) => (preset.billing === "subscription" ? "signin" : preset.billing === "local" ? "local" : "key");
@@ -135,7 +135,7 @@ export function serviceSections(info, { only = null } = {}) {
 
 // The named service an entry (or a form) was made from: the preset with its
 // protocol and base URL (the server's service_of), else null.
-export function serviceOf(entry, info) {
+function serviceOf(entry, info) {
   const base = baseOf(entry);
   return (info?.services || []).find((s) => s.protocol === entry?.protocol && s.base_url === base) || null;
 }

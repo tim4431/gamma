@@ -22,7 +22,7 @@ final class TapsTests: XCTestCase {
         app = XCUIApplication()
         // A Data default in the argument domain, in the old plist notation.
         let hex = Self.thisIPad.utf8.map { String(format: "%02x", $0) }.joined()
-        app.launchArguments = ["-gamma.servers", "<\(hex)>"] + arguments
+        app.launchArguments = ["-gamma.servers", "<\(hex)>", "-gamma.noTours"] + arguments
         app.launch()
     }
 
@@ -69,9 +69,8 @@ final class TapsTests: XCTestCase {
 
     /// The library, signed in. An unsigned build has no Keychain, so This
     /// iPad's silent sign-in cannot happen (LocalServer `seed`): the sign-in
-    /// page then continues as a guest, whose first visit opens the welcome
-    /// carousel over the library. The first start of the server on a fresh
-    /// simulator takes minutes.
+    /// page then continues as a guest. The first start of the server on a
+    /// fresh simulator takes minutes.
     private func openLibrary() -> Bool {
         let guest = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Continue as guest'")).firstMatch
         for _ in 0..<240 {
@@ -82,13 +81,7 @@ final class TapsTests: XCTestCase {
             guard guest.exists else { shot("no-library"); return false }
             guest.tap()
         }
-        guard menuButton.waitForExistence(timeout: 60) else { return false }
-        let close = app.buttons["Dismiss guide"].firstMatch
-        if close.waitForExistence(timeout: 4) {
-            close.tap()
-            return close.waitForNonExistence(timeout: 4)
-        }
-        return true
+        return menuButton.waitForExistence(timeout: 60)
     }
 
     /// The page's account menu button: *Account & settings* in landscape,

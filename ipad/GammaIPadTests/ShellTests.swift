@@ -114,46 +114,6 @@ final class KeyboardAccessoryTests: XCTestCase {
     }
 }
 
-/// The native pieces' switches (NativePieces, Settings.bundle).
-final class NativePiecesTests: XCTestCase {
-    private func defaults(_ values: [NativePieces.Key: Bool] = [:]) throws -> UserDefaults {
-        let name = "NativePiecesTests." + UUID().uuidString
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
-        for (key, on) in values { defaults.set(on, forKey: key.rawValue) }
-        return defaults
-    }
-
-    func testEveryPieceIsOnUntilItsOwnSwitchIsTurnedOff() throws {
-        let untouched = NativePieces(try defaults())
-        XCTAssertEqual([untouched.pencilCapture, untouched.hidesAccessoryBar, untouched.pencilGestures], [true, true, true])
-        let noCapture = NativePieces(try defaults([.pencilCapture: false]))
-        XCTAssertEqual([noCapture.pencilCapture, noCapture.hidesAccessoryBar, noCapture.pencilGestures], [false, true, true])
-        let noBar = NativePieces(try defaults([.accessoryBar: false]))
-        XCTAssertEqual([noBar.pencilCapture, noBar.hidesAccessoryBar, noBar.pencilGestures], [true, false, true])
-        let noGestures = NativePieces(try defaults([.pencilGestures: false, .pencilCapture: true]))
-        XCTAssertEqual([noGestures.pencilCapture, noGestures.hidesAccessoryBar, noGestures.pencilGestures], [true, true, false])
-    }
-
-    func testThePageIsToldWhatAPieceThatIsOffWouldDo() throws {
-        let all = HostInfo(version: "0")
-        XCTAssertEqual(all.with(NativePieces(try defaults())), all)
-        XCTAssertEqual(all.with(NativePieces(try defaults([.accessoryBar: false]))), all)
-        let noCapture = all.with(NativePieces(try defaults([.pencilCapture: false])))
-        XCTAssertEqual([noCapture.ink, noCapture.hold, noCapture.pencil, noCapture.pencilPhases], [false, false, true, true])
-        let noGestures = all.with(NativePieces(try defaults([.pencilGestures: false])))
-        XCTAssertEqual([noGestures.ink, noGestures.hold, noGestures.pencil, noGestures.pencilPhases], [true, true, false, false])
-    }
-
-    func testTheSettingsAppWritesTheKeysTheAppReadsAndStartsThemOn() throws {
-        let file = try XCTUnwrap(Bundle.main.url(forResource: "Root", withExtension: "plist", subdirectory: "Settings.bundle"))
-        let root = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: file), format: nil) as? [String: Any])
-        let switches = try XCTUnwrap(root["PreferenceSpecifiers"] as? [[String: Any]]).filter { $0["Type"] as? String == "PSToggleSwitchSpecifier" }
-        XCTAssertEqual(Set(switches.compactMap { $0["Key"] as? String }), Set(NativePieces.Key.allCases.map(\.rawValue)))
-        XCTAssertEqual(switches.compactMap { $0["DefaultValue"] as? Bool }, [true, true, true])
-    }
-}
-
 final class EditMenuTests: XCTestCase {
     @MainActor
     func testTheEditMenuOffersNothingWhileOffButAKeyCommandStillRuns() {
@@ -171,5 +131,19 @@ final class EditMenuTests: XCTestCase {
                        "⌘C is not the menu's")
         webView.editMenuShown = true
         XCTAssertEqual(actions.map { webView.canPerformAction($0, withSender: nil) }, asOn, "on again: WebKit's answers")
+    }
+
+    @MainActor
+    func testANewDocumentAndTheEndOfThePagesProcessBringTheMenuBack() throws {
+        let name = "EditMenuTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let shell = ShellController(model: AppModel(defaults: defaults)).shell
+        shell.webView.editMenuShown = false
+        shell.navigation.webView(shell.webView, didCommit: nil)
+        XCTAssertTrue(shell.webView.editMenuShown, "a page says nothing as it unloads")
+        shell.webView.editMenuShown = false
+        shell.onProcessEnded?()
+        XCTAssertTrue(shell.webView.editMenuShown)
     }
 }

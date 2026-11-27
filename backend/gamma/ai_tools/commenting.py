@@ -7,6 +7,8 @@ Each answers with the id it made and the link list_annotations gives it
 (entries.link_of), and a call made again answers what the first one
 wrote."""
 
+import json
+
 from ..annotations import anchors
 from .base import _annotation_origin, _card_place, _load_scoped_page, _writer, text_diff
 
@@ -156,14 +158,37 @@ def _run_resolve(conn, ws: str, scope: dict, args: dict):
 
 
 def _preview_highlight(conn, scope: dict, args: dict):
+    from ..annotations import hand
+
     plan, answer = _plan_write(conn, scope, args, mark=True)
     if not plan:
         return None, answer
+    try:  # a colour it has not is refused before anyone is asked
+        color = hand.stored_color(str(args.get("color") or ""))
+    except ValueError as e:
+        return None, f"error: {e}"
     found = plan["place"]
     return {"page_id": plan["page_id"], "title": plan["title"],
             "place": _card_place(found.kind, found.page, found.lines, found.props.get("quote", "")),
+            **_highlight_shape(found, color, str(args.get("style") or "highlight")),
             **({"diff": text_diff("", args["note"])} if isinstance(args.get("note"), str) and args["note"].strip()
                else {})}, None
+
+
+def _highlight_shape(found, color: str, style: str) -> dict:
+    """Where a highlight would go on its PDF page, for the page to draw it
+    while the card waits (frontend markup/ReviewLayer.jsx): ``pdf_page`` and
+    a ``shape`` of its rectangles in its position's frame, in the colour the
+    highlight will store (``hand.stored_color``, drawn as a stored one is)
+    and its style. None for a text file's lines."""
+    pos = found.props.get("pdf_position") if found.kind in ("passage", "area") else None
+    if not isinstance(pos, dict) or not pos.get("rects"):
+        return {}
+    rects = [[round(r[k], 1) for k in ("x1", "y1", "x2", "y2")] for r in pos["rects"]]
+    return {"pdf_page": pos.get("pageNumber") or found.page,
+            "shape": {"kind": "highlight", "frame": [pos.get("width"), pos.get("height")], "rects": rects,
+                      "color": color, "style": style,
+                      **({"area": True} if pos.get("area") else {})}}
 
 
 def _run_highlight(conn, ws: str, scope: dict, args: dict):
@@ -186,9 +211,16 @@ def _run_highlight(conn, ws: str, scope: dict, args: dict):
     if not out["created"]:
         return f"error: you highlighted {where} already (highlight {out['block_id']}; {link})", None
     area = place.kind == "area"
+    # What taking it back needs: a new block's record (docs/dev/ai_tools.md
+    # "Reverting a note change"), so the person can undo it from its note or
+    # its row, as a note the agent made; one commented on since stops.
+    row = conn.execute("SELECT parent_id, position, content, properties FROM unified_blocks WHERE id = ?",
+                       (out["block_id"],)).fetchone()
+    revert = {"after": row[2] or "", "parent": row[0], "position": row[1],
+              "props": json.loads(row[3] or "{}")} if row else None
     return (f"ok — highlighted {where}: highlight {out['block_id']}. Link: {link}",
             {"kind": "highlight", "page_id": plan["page_id"], "block_id": out["block_id"], "title": plan["title"],
-             "link": link, **({"area": True} if area else {}),
+             "link": link, **({"area": True} if area else {}), **({"revert": revert} if revert else {}),
              "summary": f"Highlighted {'an area' if area else 'a passage'} in “{plan['title'][:60]}”"})
 
 

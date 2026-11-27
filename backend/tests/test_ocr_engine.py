@@ -17,7 +17,7 @@ import pymupdf
 import pytest
 from ocr_fixtures import PRINTED_TEXT, printed_scan_pdf
 
-from gamma import config, ocr_engine, pdf_ocr, pdf_text, server_options, server_settings
+from gamma import config, ocr_engine, ocr_run, pdf_ocr, pdf_text, server_options, server_settings
 
 TESSDATA = Path(__file__).resolve().parents[1] / "tessdata"
 
@@ -375,7 +375,7 @@ def test_stored_lines_are_fractions_of_the_page_as_drawn():
     class Raster:  # drawn at 2 px a point: what MuPDF's rounding makes of the pixel size does not count
         scale, width_pt, height_pt, width, height = 2.0, 500.0, 250.0, 1001, 501
 
-    stored = pdf_ocr.to_lines([[("Zeno", 100, 50, 300, 100, 95.0)]], Raster)
+    stored = ocr_run.to_lines([[("Zeno", 100, 50, 300, 100, 95.0)]], Raster)
     assert stored == [[["Zeno", 1000, 1000, 3000, 2000, 95.0]]], "the confidence kept for the page rules"
 
 
@@ -405,8 +405,8 @@ def test_the_engine_reads_a_printed_scan(tesserocr):
     raster, _ = pdf_text.page_raster(printed_scan_pdf(), 1, ocr_engine.render_zoom, annots=False, grey=True)
     lines = ocr_engine.recognize(raster)
     assert [" ".join(word[0] for word in line) + "\n" for line in lines] == PRINTED_TEXT.splitlines(keepends=True)
-    assert all(word[5] >= pdf_ocr.PICTURE_CONF for line in lines for word in line)
-    stored = pdf_ocr.to_lines(lines, raster)
+    assert all(word[5] >= ocr_run.PICTURE_CONF for line in lines for word in line)
+    stored = ocr_run.to_lines(lines, raster)
     assert pdf_ocr.page_text(stored) == PRINTED_TEXT
     x0, y0, x1, y1 = stored[0][0][1:5]  # "Quantum", printed at 72 pt from the left on a 110 pt baseline
     assert abs(x0 - round(10000 * 72 / 612)) < 40 and round(10000 * 80 / 792) < y0 < y1 < round(10000 * 116 / 792)
@@ -420,7 +420,7 @@ def test_models_under_a_path_outside_ascii_open(tesserocr, tmp_path, monkeypatch
     monkeypatch.setenv("GAMMA_TESSDATA_DIR", str(folder))
     assert ocr_engine.check() is None
     raster, _ = pdf_text.page_raster(printed_scan_pdf(dpi=150), 1, ocr_engine.render_zoom, grey=True)
-    assert "resonance" in pdf_ocr.page_text(pdf_ocr.to_lines(ocr_engine.recognize(raster), raster))
+    assert "resonance" in pdf_ocr.page_text(ocr_run.to_lines(ocr_engine.recognize(raster), raster))
 
 
 def test_a_blank_picture_reads_as_no_words(tesserocr):

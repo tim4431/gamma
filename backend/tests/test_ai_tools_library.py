@@ -78,7 +78,7 @@ def test_cite_gives_records_and_bibtex(org):
     c, ids = org
     text, action = run_agent_tool(ids["ws"], folder(""), "cite", {"page_ids": [ids["a"], ids["b"]]})
     assert f'## "cavity paper" (page_id {ids["a"]})' in text
-    assert "Authors: Ada One, Bo Two · Year: 2019 · Venue: Nature" in text
+    assert "Authors: Ada One; Bo Two · Year: 2019 · Venue: Nature" in text
     assert "```bibtex\n@article{one2019," in text and "journal = {Nature}" in text  # built from the record
     assert "No paper metadata yet" in text and "do not make a record up" in text
     assert action["kind"] == "cite" and action["summary"] == "Cited “cavity paper” · 1 without metadata"
@@ -118,6 +118,20 @@ def test_cite_prints_the_stored_entry_under_the_pinned_key(org):
                                     "bibtex": "@article{smith2020,\n  title = {Pinned},\n  journal = {J}\n}"})
     text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "cite", {"page_ids": [page]})
     assert "@article{smithAttention," in text and "smith2020" not in text
+
+
+def test_cite_prints_the_fields_a_style_needs_as_a_citation_reads_them(org):
+    c, ids = org
+    meta = {"title": "Issued", "authors": ["S. Smith"], "year": "2020", "date": "2020-03-05", "venue": "Physical Review A",
+            "journal_abbr": "Phys. Rev. A", "issue": "5", "url": "javascript:alert(1)"}
+    page = _page(c, "issued cite", {"folders": [ids["readout"]], "meta": meta, "web_url": "https://example.org/a"})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "cite", {"page_ids": [page]})
+    assert ("Year: 2020 · Date: 2020-03-05 · Venue: Physical Review A · Journal abbreviation: Phys. Rev. A · "
+            "Issue: 5 · URL: https://example.org/a") in text  # the page's address, never a script
+    # A date the year no longer agrees with is not the paper's.
+    page = _page(c, "stale cite", {"folders": [ids["readout"]], "meta": {**meta, "year": "2021"}})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "cite", {"page_ids": [page]})
+    assert "Year: 2021 · Venue" in text and "Date:" not in text and "URL:" not in text
 
 
 # --- save_paper ------------------------------------------------------------------------

@@ -247,27 +247,21 @@ while the account's skills stand. At most 50 skills in 8,000 characters
 is cut to the longest length that fits (Codex's rule), and skills are
 dropped from the end only when the names alone do not fit.
 
-**Loading one is the exception.** The head (`LISTING_HEAD`) states the rule
-the other way round from how it first read. "When a request fits one, call
-load_skill with its name before answering" named no case where a skill does
-not apply, and it is the last thing in the system prompt, so a model took
-every message as something to match against the list and loaded a skill for
-each one: a question about an equation fits "explain a concept", and the
-answer then came in the shape of a whole walkthrough, with the skill's
-instructions added to the prompt again. The head now names the ordinary
-case first — an ordinary question, a follow-up, anything the model can
-answer itself gets no skill — and makes loading one the exception, for a
-message that plainly asks for the whole piece of work a description names.
-It also says that a loaded skill's instructions stay in the conversation
-("Replay" below renders them again from the saved id), so there is nothing
-to gain by loading the same skill a second time; "while you can still see
-them" is what leaves the emergency retry's `elided` stub, which asks for
-another call, working. `load_skill`'s own description says the same, since
-a model may read a tool's description more closely than the prompt. The
-descriptions are the other half: one that covers an ordinary question in
-its own words ("explain … a concept from the paper") pulls the model
-whatever the head says, so a built-in whose words reach that far ends by
-naming what it is not for ("Sources").
+**Loading one is the exception.** The head (`LISTING_HEAD`) names the
+ordinary case first: an ordinary question, a follow-up, anything the model
+can answer itself gets no skill. A skill is for a message that plainly asks
+for the whole piece of work its description names. The listing is the last
+thing in the system prompt, and a rule that said only when to load a skill
+made a model match every message against the list and load one each time.
+The head also says a loaded skill's instructions stay in the conversation
+("Replay" below renders them again from the saved id), so the same skill is
+not loaded twice. Its "while you can still see them" keeps the emergency
+retry's `elided` stub, which asks for another call, working. `load_skill`'s
+own description says the same, since a model may read a tool's description
+more closely than the prompt. A description that covers an ordinary
+question in its own words ("explain … a concept from the paper") pulls the
+model whatever the head says, so a built-in whose words reach that far ends
+by naming what it is not for ("Sources").
 
 **The call.** `load_skill {name}` takes the name alone (a leading `/` is
 stripped): the conversation is its input. It answers with

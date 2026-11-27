@@ -15,12 +15,11 @@ import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import { IconSwap } from "../shared/ui/MotionWidgets";
 import ChatComposerInput from "./ChatComposerInput";
-import ChatTranscript, { SpeedGlyph, UsageLine, knobsLabel } from "./ChatTranscript";
+import ChatTranscript, { UsageLine, knobsLabel } from "./ChatTranscript";
 import ChatHistoryPop, { deleteQuestion, matchRows } from "./ChatHistoryPop";
 import GrantChip from "./GrantChip";
-import { refusalCopy, sendRevert } from "./AgentChanges";
 import RevertChanges from "./RevertChanges";
-import { forReplay, markReverted, revertRefusal, revertible } from "./aiRevert.js";
+import { forReplay, markReverted, revertible } from "./aiRevert.js";
 import * as chatQueue from "./chatQueue.js";
 import { canSteer, messageText, quotedText, quotesOf, sentText, steerBody, steeredMessage, useChatQueue } from "./chatQueue.js";
 import { skillText, skillTitle, splitSkill } from "./skills.js";
@@ -60,7 +59,7 @@ import { PathLinkContext } from "../editor/pathLinkContext.js";
 import FileKindIcon from "../shared/ui/FileIcon.jsx";
 import { formatOf } from "../documents/formats.js";
 import ChipPreview from "./ChipPreview.jsx";
-import { effortFor, speedFor } from "./modelPrefs";
+import { effortFor, fastChoice, modelLabel } from "./modelPrefs";
 import { modelChoiceLabel } from "../ai/modelMenu.js";
 import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, EyeIcon, FileIcon,
   HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteMarkIcon, SearchIcon,
@@ -77,7 +76,7 @@ import { historyRows, lastTurnState, sessionRows, sessionsAway, sessionsDir, ses
 } from "./computer/computerChat.js";
 import ComputerStrip from "./computer/ComputerStrip.jsx";
 import AgentPicker, { agentIcon } from "./AgentPicker.jsx";
-import ModelChip, { effortKnob, speedKnob } from "./ModelChip.jsx";
+import ModelChip from "./ModelChip.jsx";
 import PlaceChip from "./computer/PlaceChip.jsx";
 import { GAMMA, agentChoice, agentLabel, asksNewChat, gammaAgent, newChatQuestion, pickAgent } from "./agents.js";
 import { canRecord, createRecorder, gestureContext } from "../recording/recorder.js";
@@ -479,7 +478,7 @@ export default function ChatDock({
   const chatToolPerms = agentPerms?.[chatKind] || {};
   const toolsEnabled = !!agentEnabled;
   const perm = (key) => permState(chatToolPerms, key) !== "off";
-  // "Allow in this chat" (chat/approvals.js): the permissions this
+  // An approval's "chat" grant (chat/approvals.js): the permissions this
   // conversation stopped asking for, kept per account and conversation in
   // this browser; another tab's change arrives as a storage event.
   const [grantStore, setGrantStore] = useState(readGrants);
@@ -535,9 +534,9 @@ export default function ChatDock({
   const neverWaitHere = () =>
     updateGrants((store) => withoutPaperWait(store, activeUser(), conversationId(chatMessages)));
   // The user's answer on an approval card, or on the bar of the note the
-  // card's edit is drawn in (chat/noteReview.js): the server runs the call or
-  // leaves it; "Allow in this chat" is kept for the conversation and
-  // "Always allow" sets the permission in Settings — once the server took it.
+  // card's change is drawn in (chat/noteReview.js): the server runs the call
+  // or leaves it; a "chat" grant is kept for the conversation and an
+  // "always" one sets the permission in Settings — once the server took it.
   async function decideApproval(approval, decision, note = "") {
     await apiJson(`${API}/ai/approvals/${encodeURIComponent(approval.id)}`, {
       method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ decision, ...(note ? { note } : {}) }),
@@ -600,12 +599,14 @@ export default function ChatDock({
   // must not default on, and turning it on by hand gets a warning, not silence.
   const activeModel = (aiInfo?.models || []).find((m) => m.id === chatModel) || null;
   // Every connection's models; a pick is the account's chat model, on
-  // every device (useAiModels setRole). The chip's panel lists them, the
-  // favorites first (ModelChip).
+  // every device (useAiModels setRole). The chip's panel lists the one in
+  // use and the chat models (the favorites), and opens the menu of all of
+  // them (ModelChip).
   const headerModels = aiInfo?.models || [];
   const headerModel = headerModels.find((m) => m.id === chatModel) || headerModels[0] || null;
   const setChatModel = (id) => aiModels?.setRole("chat", id);
   const favoriteModels = (aiModels?.favorites || []).map((id) => headerModels.find((m) => m.id === id)).filter(Boolean);
+  const quickModels = headerModel && !favoriteModels.includes(headerModel) ? [headerModel, ...favoriteModels] : favoriteModels;
   // The model can't call tools on its connection: its chats go without them,
   // which the composer's No tools chip says (a click checks it again, on an
   // own connection or by an administrator), and the agent's intro and
@@ -642,10 +643,10 @@ export default function ChatDock({
   // switch to a model without "xhigh" and back keeps it.
   const effortLevels = Array.isArray(modelInfo?.efforts) ? modelInfo.efforts : (aiInfo?.efforts || ["low", "medium", "high"]);
   const effort = effortFor(chatEffort, effortLevels);
-  // The service tiers this model can run at ([] = none, and none at all
-  // until model-info answers — a speed is never guessed, it costs money).
-  const speedTiers = Array.isArray(modelInfo?.speeds) ? modelInfo.speeds : [];
-  const speed = speedFor(chatSpeed, speedTiers);
+  // Whether this model runs fast (null: it can't, or model-info has not
+  // answered yet — a speed is never guessed, it costs money).
+  const fast = fastChoice(chatSpeed, modelInfo?.speeds);
+  const speed = fast?.on ? "fast" : "";
   const nativePdf = activeModel ? activeModel.native_pdf !== false : true;
   // The mic shows only when a connection can transcribe (an OpenAI-protocol
   // key — /api/ai/models `transcribe`); without one dictation can only fail.
@@ -701,7 +702,7 @@ export default function ChatDock({
   // on while the revert dialog's run went on.
   const loadedRef = useRef(loadedHere);
   loadedRef.current = loadedHere;
-  // The reply whose "Revert…" opened the dialog that reverts several of the
+  // The reply whose "Undo…" opened the dialog that reverts several of the
   // conversation's changes at once (chat/RevertChanges.jsx); it closes when
   // the dock shows another conversation. A reply offers it while the
   // conversation has two changes or more to take back.
@@ -722,37 +723,7 @@ export default function ChatDock({
     const pages = [...new Set([answer?.page_id, ...touched].filter(Boolean))];
     if (pages.length) onNotesChange?.(pages);
     if (indexes.some((i) => message?.actions?.[i] && changePlace(message.actions[i]) === "library")) onLibraryChange?.();
-    // A note showing the change as tracked changes stops: the row says it now.
-    for (const i of indexes) if (message?.actions?.[i]?.block_id) noteReview.forget(message.actions[i].block_id);
   };
-  // The bar under a note that shows the AI's change (chat/noteReview.js)
-  // reverts one step of it as a row of its reply does, and marks it in the
-  // conversation the reply belongs to, whichever the dock shows now. A
-  // refusal comes back as the row would say it; one whose row would show
-  // what reverting anyway writes sends the user there.
-  const notesChangeRef = useRef(onNotesChange);
-  notesChangeRef.current = onNotesChange;
-  useEffect(() => noteReview.connect(async (step, { force }) => {
-    let answer;
-    try {
-      answer = await sendRevert(step.action, { force });
-    } catch (err) {
-      const refusal = revertRefusal(err);
-      if (refusal.preview?.diff?.length) {
-        return { text: t("The note changed since. Its row in the chat shows what reverting anyway would do."), force: "" };
-      }
-      const copy = refusalCopy(refusal, false);
-      return { text: copy.text, force: copy.force || "" };
-    }
-    const messages = session.getSnapshot().replies.get(step.key)?.messages
-      || (chatKeyRef.current === step.key ? loadedRef.current : null);
-    const next = messages && markReverted(messages, step.reply, [step.index], true);
-    if (next && next !== messages) {
-      session.edit(step.key, next)?.catch((err) => setStatus(t("Couldn't save the conversation: {message}", { message: err.message })));
-    }
-    notesChangeRef.current?.([answer?.page_id || step.action.page_id].filter(Boolean));
-    return null;
-  }), [session]); // eslint-disable-line react-hooks/exhaustive-deps -- the latest state is read through refs
 
   // Show a conversation that came from the server (bucket switch, or a
   // history entry opened). PDF button: on for a conversation without
@@ -1533,7 +1504,6 @@ export default function ChatDock({
     const ctrl = new AbortController();
     if (!session.start(sendKey, [...prevMessages, userMsg], chatTitle, ctrl)) return;
     chatQueue.started(sendKey);
-    noteReview.replying(sendKey, true);
     // Under Unlimited a reply runs until it is done or stopped. A row in
     // Background tasks shows it, and its Stop reaches it from any folder or
     // page (stopChat only stops the conversation on screen). The row follows
@@ -1633,8 +1603,10 @@ export default function ChatDock({
             helpers = withHelper(helpers, ev.helper);
           } else if (ev.approval) {
             approval = ev.approval;
-            // A note edit's card: the note draws the edit too, and its bar
-            // answers the card with the card's four answers.
+            // A change's card: where the change would land draws it too (a
+            // note, a new note's place, a PDF page or a page of paper), and
+            // answering there answers the card, with the card's answers
+            // (Keep, its grants, Undo).
             const asked = ev.approval;
             noteReview.ask(asked, (decision, note) => decideRef.current(asked, decision, note),
               { permission: permissionLabel(asked.perm), kind: chatKindLabel });
@@ -1652,9 +1624,9 @@ export default function ChatDock({
             // Live: the notes panel lights up the block the agent just
             // read/edited (and reloads the tree for an applied edit), and the
             // note shows what an edit changed until the user keeps or
-            // reverts it (chat/noteReview.js).
+            // undoes it (chat/noteReview.js).
             onAgentEvent?.({ type: "action", action: ev.action, key: sendKey });
-            noteReview.landed({ action: ev.action, key: sendKey, reply: replyId, index: actions.length - 1 });
+            noteReview.landed(ev.action);
           } else if (ev.progress) {
             // The agent is still writing a note edit — the block types it in.
             onAgentEvent?.({ type: "progress", ...ev.progress });
@@ -1756,7 +1728,6 @@ export default function ChatDock({
       onAgentEvent?.({ type: "done", key: sendKey, ended });
       // A card the reply left waiting (stopped, or the stream failed) goes from its note too.
       if (approval) noteReview.settle(approval.id);
-      noteReview.replying(sendKey, false);
       // Agent tools changed the library — reload the home feed. Read-only
       // tool calls (list/read/search) render as chips but change nothing.
       if (allActions.some(isChange)) onLibraryChange?.();
@@ -2380,24 +2351,19 @@ export default function ChatDock({
     },
   ].filter(Boolean);
   // The composer's model chip (ModelChip), "Allowed in this chat" and Stop,
-  // for the agent shown: Gamma AI's models, efforts and speeds, or the
-  // computer agent's (useComputerSide). The chip words the model and its
-  // effort, the speed chosen its glyph; its panel lists every connection's
-  // models, the favorites first, and the knobs the model takes.
+  // for the agent shown: Gamma AI's models, effort and speed, or the
+  // computer agent's (useComputerSide).
   const shows = !aiOff && headerModel;
-  const chip = onComputer ? { ...side.chip, glyph: <SpeedGlyph speed={side.chip.speed} /> } : {
+  const chip = onComputer ? side.chip : {
     label: knobsLabel(speed),
-    text: shows ? [headerModel.model, effort].filter(Boolean).join(" · ") : "",
-    logo: shows ? headerModel.service || "" : "",
-    glyph: shows ? <SpeedGlyph speed={speed} /> : null,
-    picker: shows ? { models: headerModels, favorites: aiModels?.favorites || [], missing: aiModels?.aiInfo?.missing,
+    name: shows ? headerModel.model : "", logo: shows ? headerModel.service || "" : "",
+    models: shows ? quickModels.map((m) => ({ id: m.id, name: modelLabel(m), where: m.provider_name, service: m.service || "" })) : [],
+    model: headerModel?.id || "", onModel: setChatModel,
+    effort: shows && effortLevels.length ? { value: effort, levels: effortLevels, onChange: setChatEffort } : null,
+    fast: shows ? fast : null, onSpeed: setChatSpeed,
+    onReset: effort || speed ? () => { if (effort) setChatEffort(""); if (speed) setChatSpeed(""); } : null,
+    all: shows ? { models: headerModels, favorites: aiModels?.favorites || [], missing: aiModels?.aiInfo?.missing,
       value: headerModel.id, onPick: setChatModel, onToggleFavorite: aiModels?.canWrite ? aiModels.toggleFavorite : null } : null,
-    knobs: shows ? [
-      ...(effortLevels.length ? [effortKnob(effort, setChatEffort, effortLevels)] : []),
-      // Only what this model's provider actually offers: a tier it doesn't
-      // have would be refused upstream.
-      ...(speedTiers.length ? [speedKnob(speed, setChatSpeed, speedTiers)] : []),
-    ] : [],
     onManage: shows && openSettings ? () => openSettings("ai") : null,
   };
   const grants = onComputer ? side.grants : grantedHere.length && !aiOff ? {
@@ -2544,8 +2510,7 @@ export default function ChatDock({
             approvals={{ answered: answeredApprovals, kindLabel: chatKindLabel, onDecide: decideApproval }}
             onAnswer={(m, ask, decision, note) => side.chat.answer(m.turnId, ask.id, decision, note)}
             errorActions={errorActions}
-            changes={{ onReverted: readOnly ? null : changesReverted, onRevertMany: setRevertFrom, many: revertibleCount > 1,
-              messages: chatMessages, key: chatKey }}
+            changes={{ onReverted: readOnly ? null : changesReverted, onRevertMany: setRevertFrom, many: revertibleCount > 1 }}
             handoffs={{ readOnly: readOnly || aiOff, autoOpen: fetchInBackground, onNeverWait: neverWaitHere,
               onContinue: (text) => sendChat(text), draft: composerHasDraft }}
             papers={!readOnly && canSave ? { folder: paperFolder, folderName: libraryTree.folders.get(paperFolder)?.name || "",
@@ -2839,7 +2804,7 @@ export default function ChatDock({
               <BanIcon size={14} /><span className="chatGrantLabel">{checkingTools ? t("Checking…") : t("No tools")}</span>
             </button>
           ) : null}
-          {chip.picker || chip.models?.length ? <ModelChip guide="chat.model" {...chip} /> : null}
+          {chip.models.length ? <ModelChip guide="chat.model" {...chip} /> : null}
           {/* The mic, while a reply runs too: its transcript is sent, or
               queued, as a typed message would be. */}
           {dictation === "busy" ? (

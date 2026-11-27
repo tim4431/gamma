@@ -3,8 +3,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  applyLinkChange, linkKey, linkMarkdown, linkSpanAt, linkSpans, nthLinkSpan, pastedLink, spanWords, tablePipe,
+  applyLinkChange, linkKey, linkMarkdown, linkSpanAt, linkSpans, nthLinkSpan, pastedLink, spanWords,
 } from "../src/editor/linkEdit.js";
+import { tablePipe } from "../src/editor/mdScan.js";
 
 const kinds = (text) => linkSpans(text).map((s) => [s.kind, text.slice(s.from, s.to)]);
 

@@ -1,20 +1,20 @@
 import React from "react";
 import { guideEvents } from "../guide/events.js";
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { CopyField, Empty, FormNotice, PaneHead, Section, Row, Segmented, Step, Toggle } from "./SettingsKit";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { LinkIcon, KeyIcon, MonitorIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon, HistoryIcon, TrashIcon,
   UndoIcon } from "../shared/ui/Icons";
-import { refusalCopy } from "../chat/AgentChanges.jsx";
-import { revertRefusal } from "../chat/aiRevert.js";
+import { refusalCopy, revertRefusal } from "../chat/aiRevert.js";
+import { CHANGE_STATES } from "../chat/noteReview.js";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
   claudeRemoveCommands, codexRemoveCommands, dshRemoveCommand } from "./assistantSetup";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { accessBody, accessOf, edits as editsIn } from "./workspaceAccess.js";
 import { useSettingsRead } from "./settingsReads.js";
-import { t } from "../shared/i18n/i18n.js";
+import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 
-const dateOf = (value) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+const dateOf = (value) => fmtDate(value, { year: "numeric", month: "short", day: "numeric" });
 const ASSISTANTS = [["claude", t("Claude Code")], ["codex", t("Codex")], ["dsh", t("DeepSeek Harness")], ["other", t("Other")]];
 const PLATFORMS = [["windows", t("Windows PowerShell")], ["unix", t("macOS / Linux")]];
 
@@ -34,7 +34,7 @@ function ConnectionRow({ item, names, busy, onEdit, onChanges, onRevoke }) {
     : oauth ? item.name.replace(/\s\(OAuth\)$/, "") : item.name;
   const daysLeft = Math.ceil((item.expires_at * 1000 - Date.now()) / 86400000);
   const expiry = daysLeft <= 0 ? t("Expired {date}", { date: dateOf(item.expires_at * 1000) })
-    : t("Expires {expires_at} ({days} left)", { expires_at: dateOf(item.expires_at * 1000), days: daysLeft === 1 ? "1 day" : `${daysLeft} days` });
+    : t("Expires {expires_at} ({days} left)", { expires_at: dateOf(item.expires_at * 1000), days: tn("{n} day", "{n} days", daysLeft) });
   const spaces = item.workspaces.map((id) => names.get(id)).filter(Boolean);
   const reads = item.all_workspaces ? t("Reads all workspaces")
     : spaces.length ? t("Reads {workspaces}", { workspaces: spaces.join(", ") }) : t("Reads no workspace");
@@ -70,38 +70,58 @@ function ConnectionRow({ item, names, busy, onEdit, onChanges, onRevoke }) {
   </Row>;
 }
 
-// What a connection changed in the notes through MCP (gamma/mcp_changes.py),
-// newest first, each with Undo: the chat's revert (gamma/ai_revert.py), as
-// the person. Someone's work since stops it, worded as the chat's row words
-// it (chat/AgentChanges.jsx refusalCopy), with the button that undoes anyway.
+// What a connection changed in the notes through MCP (gamma/agent_changes.py),
+// newest first, by its journal state. One that waits for review (made
+// without asking) has Keep, the person's review as its note's bar gives it;
+// a deletion or a page made has no note to draw it in, so this is where it
+// is kept. Each not undone has Undo: the chat's revert (gamma/ai_revert.py),
+// as the person. Someone's work since stops it, worded as the chat's row
+// words it (chat/aiRevert.js refusalCopy), with the button that undoes
+// anyway. Both act in the change's own workspace, which need not be the one
+// open (Keep's ?ws=, Undo's workspace_id).
 function ConnectionChanges({ item }) {
   const url = `${API}/integrations/tokens/${item.id}/changes`;
   const [changes, setChanges] = React.useState(null);
-  const [failed, setFailed] = React.useState(null);  // {id, refusal}: the last undo's refusal; id "" for the list's
-  const [doing, setDoing] = React.useState("");
+  const [failed, setFailed] = React.useState(null);  // {id, text, force?}: the last action's failure; id "" for the list's
+  const [doing, setDoing] = React.useState(null);  // {id, action}: "keep" or "undo"
   const load = React.useCallback(() => apiJson(url).then((d) => setChanges(d.changes || []))
-    .catch((err) => setFailed({ id: "", refusal: revertRefusal(err) })), [url]);
+    .catch((err) => setFailed({ id: "", text: err?.message || String(err) })), [url]);
   React.useEffect(() => { load(); }, [load]);
-  const undo = async (change, force = false) => {
-    setDoing(change.id); setFailed(null);
+  const act = async (change, action, run, failure) => {
+    setDoing({ id: change.id, action }); setFailed(null);
     try {
-      await apiJson(`${url}/${change.id}/undo`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: change.workspace_id, force }) });
+      await run();
       await load();
-    } catch (err) { setFailed({ id: change.id, refusal: revertRefusal(err) }); } finally { setDoing(""); }
+    } catch (err) { setFailed({ id: change.id, ...failure(err) }); } finally { setDoing(null); }
   };
-  if (!changes) return failed ? <FormNotice>{failed.refusal.detail}</FormNotice> : <p className="setNotice loadingHint">{t("Loading…")}</p>;
+  const undo = (change, force = false) => act(change, "undo",
+    () => apiJson(`${url}/${change.id}/undo`, jsonInit("POST", { workspace_id: change.workspace_id, force })),
+    (err) => refusalCopy(revertRefusal(err), false));
+  const keep = (change) => act(change, "keep",
+    () => apiJson(`${API}/ai/changes/${encodeURIComponent(change.id)}?ws=${encodeURIComponent(change.workspace_id)}`,
+      jsonInit("POST", { decision: "keep" })),
+    (err) => ({ text: err?.message || String(err) }));
+  const busy = (change, action) => doing?.id === change.id && doing.action === action;
+  if (!changes) return failed ? <FormNotice>{failed.text}</FormNotice> : <p className="setNotice loadingHint">{t("Loading…")}</p>;
   if (!changes.length) return <Empty icon={HistoryIcon}>{t("It has changed nothing yet.")}</Empty>;
   return changes.map((change) => {
-    const copy = failed?.id === change.id ? refusalCopy(failed.refusal, false) : null;
-    const when = new Date(change.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    const copy = failed?.id === change.id ? failed : null;
+    const when = fmtDate(change.at, { dateStyle: "medium", timeStyle: "short" });
+    const { state } = change;
     return <React.Fragment key={change.id}>
       <Row icon={change.tool === "delete_block" ? TrashIcon : UndoIcon} label={change.summary}
         hint={[when, change.workspace, change.page_title].filter(Boolean).join(" · ")}>
-        {change.undone ? <span className="uiTag">{t("Undone")}</span>
-          : <button type="button" className="uiBtn sm" disabled={!!doing} onClick={() => undo(change)}>
-            <MorphText>{doing === change.id ? t("Undoing…") : t("Undo")}</MorphText>
-          </button>}
+        {state === CHANGE_STATES.UNDONE ? <span className="uiTag">{t("Undone")}</span> : <div className="integrationActions">
+          {state === CHANGE_STATES.KEPT ? <span className="uiTag">{t("Kept")}</span> : null}
+          {state === CHANGE_STATES.OPEN ? (
+            <button type="button" className="uiBtn sm" disabled={!!doing} title={t("Keep this change")} onClick={() => keep(change)}>
+              <MorphText>{busy(change, "keep") ? t("Keeping…") : t("Keep")}</MorphText>
+            </button>
+          ) : null}
+          <button type="button" className="uiBtn sm" disabled={!!doing} onClick={() => undo(change)}>
+            <MorphText>{busy(change, "undo") ? t("Undoing…") : t("Undo")}</MorphText>
+          </button>
+        </div>}
       </Row>
       {copy ? <FormNotice>{copy.text}{copy.force ? <>{" "}
         <button type="button" className="uiBtn sm" disabled={!!doing} onClick={() => undo(change, true)}>{copy.force}</button>
@@ -160,7 +180,7 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
     try { await work(); } catch (err) { setFailed({ where, text: err.message }); } finally { setDoing(""); }
   };
   const failure = (where) => failed?.where === where ? <FormNotice>{failed.text}</FormNotice> : null;
-  const post = (url, body) => apiJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const post = (url, body) => apiJson(url, jsonInit("POST", body));
   // A read token reads the workspaces ticked, at their levels; a write
   // token is the open workspace's alone.
   const create = () => run("create", async () => {

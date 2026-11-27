@@ -124,19 +124,24 @@ sequenceDiagram
   participant AI as The agent
   participant You
   participant W as Your workspace
-  AI->>You: a card: the change, word by word
-  alt Allow once, in this chat, or always
-    You->>AI: allowed
+  AI->>You: a card: the change, word by word, also drawn where it lands
+  alt Keep (or, from its menu, keep and allow in this chat or always)
+    You->>AI: kept
     AI->>W: the change, checked against your role
-  else Don't allow
+  else Undo
     You->>AI: no, with a note on what to do instead
   end
 ```
 
-The card's diff is built by the same code that will make the change, so
-the card and the change cannot differ. After *Don't allow* the agent is
-told not to retry or work around it. No answer in ten minutes counts as
-no, and a call that would change nothing asks nobody.
+The change is drawn where it would land too, dashed in the note or on the
+PDF page, with the same *Keep* and *Undo*: answering either one answers
+both. A card for a call that is no change (a reading tool set to Ask, a
+comment, a resolve) asks *Allow once*, *Allow in this chat*, *Always allow*
+or *Don't allow*. The card's diff is built by the same code that
+will make the change, so the card and the change cannot differ. After
+*Undo* (or *Don't allow*) the agent is told not to retry or work around
+it. No answer in ten minutes counts as no, and a call that would change
+nothing asks nobody.
 
 Why this shape: the boundary already exists (the chat's scope and your
 role), so no sandbox is needed. The tools are few and named, so pattern
@@ -159,9 +164,11 @@ No setting allows:
 
 Every call shows in the reply, reads included, with lists of what changed.
 A change to a note, and a page renamed, moved, labelled, deleted or
-restored, has *Revert* and *Redo*, in any order, and keeps later edits by
-others. If someone changed the agent's text since, the revert stops and
-shows what would be lost.
+restored, has *Undo* and *Redo*, in any order, and *Keep* while it waits
+for review. Undoing keeps later edits by others. If someone changed the
+agent's text since, undoing stops and shows what would be lost. A kept
+change to a note or a PDF page leaves a mark there for a while (Settings →
+AI → Tool usage → Marks of kept changes), which unfolds it again.
 
 ## Papers from the web
 
@@ -211,10 +218,13 @@ you give it each workspace at one of three levels:
 |---|---|
 | View | read and search |
 | Comment | also comment, resolve and highlight; never asks first, since a comment changes no note, is signed and can be deleted |
-| Edit | also edit, create and move notes; asks you before each change, through the assistant, with a diff (you can turn asking off for a connection) |
+| Edit | also edit, create and move notes; asks you before each change, through the assistant and in Gamma on the page where the change would land, whichever is answered first, with a diff (you can turn asking off for a connection) |
 
-Edit is offered only where your account edits. An assistant never deletes
-a block, and never touches pages, folders, labels or settings. Gamma's own
+Edit is offered only where your account edits. An assistant deletes a note
+only where its connection may delete notes. It can make a page, but never
+changes an existing page's title or place, and never touches folders,
+labels or settings. Its changes wait for your review in Gamma as the chat's
+do. Only you, signed in, keep them or answer its questions there. Gamma's own
 AI connections are never used for it. A link pasted to an assistant grants
 nothing: its access is its token's.
 
@@ -246,6 +256,7 @@ written for them imports as it is.
   [Chat history](../dev/chat_history.md), [Skills](../dev/skills.md).
 - [Local agents](../dev/local_agents.md), [MCP](../dev/mcp.md).
 - [AI permissions](../research/ai-permissions.md),
+  [Reviewing AI changes](../research/ai-change-review.md),
   [Agents as participants](../research/agents-as-participants.md),
   [Skills in the chat](../research/chat-skills.md),
   [Models per task, providers and cost](../research/ai-model-settings.md).

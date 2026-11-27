@@ -17,6 +17,8 @@
 // breaks the app. Plain strings need no codec.
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
 import { PERMISSION_KEYS, defaultPerm, normalizePerm } from "../chat/chatSettings.js";
+import { DEFAULT_STYLE } from "../citations/bundledStyles.js";
+import { QUICK_COPY_FORMATS } from "../citations/formats.js";
 import { normalizeTourProgress } from "../guide/triggers.js";
 import { CHORD_MODES } from "../ink/fingerChords.js";
 import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
@@ -33,6 +35,9 @@ import { TOPBAR } from "./topbarItems.js";
 import { VIEWER_TOOLS } from "./viewerToolItems.js";
 
 export const ACCOUNT = "account";
+// How long an agent's kept change stays marked in its note, in minutes, as
+// Settings offers it (0: till the person clears it).
+export const MARK_MINUTES = [1, 5, 15, 60, 1440, 0];
 export const BROWSER = "browser";
 
 const FLAG = { parse: (raw) => raw === "1", serialize: (v) => (v ? "1" : "0") };
@@ -64,6 +69,12 @@ const json = (normalize) => ({
   parse: (raw) => { try { return normalize(JSON.parse(raw)); } catch { return undefined; } },
   serialize: JSON.stringify,
 });
+
+// A citation style's id (a repository slug, or what an uploaded style's
+// own <id> gave) and a CSL locale tag (en-US, sr-Latn-RS).
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it refuses
+const STYLE_ID = { parse: (raw) => (raw && raw.length <= 200 && !/[\u0000-\u001f\u007f]/.test(raw) ? raw : undefined) };
+const CSL_LOCALE = { parse: (raw) => (/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(raw) ? raw : undefined) };
 
 // AI context-size preferences (chars of extracted PDF text).
 const CONTEXT_CHARS = intIn(100, 1000000);
@@ -235,6 +246,18 @@ export const PREFS = {
   // shell reads it from the profile, desktop/lib/systemFiles.js addsToLibrary).
   openAddsToLibrary: flag("gamma-open-adds-to-library", ACCOUNT, false),
 
+  // --- Citations (Settings → Citations; docs/dev/citations.md) ---
+  // The style citations and bibliographies are made in: a bundled style's
+  // id (citations/bundledStyles.js) or one the account added on a server.
+  // Styles are kept per server, so a profile synced from another may name
+  // one this server lacks; the citations then use APA and say so. The
+  // language of a style's terms and dates (a CSL locale; a style with a
+  // default-locale keeps its own). What Copy bibliography and its shortcut
+  // give (citations/formats.js QUICK_COPY_FORMATS).
+  citationStyle: pref("gamma-citation-style", ACCOUNT, DEFAULT_STYLE, STYLE_ID),
+  citationLocale: pref("gamma-citation-locale", ACCOUNT, "en-US", CSL_LOCALE),
+  quickCopyFormat: pref("gamma-quick-copy", ACCOUNT, "style", oneOf(QUICK_COPY_FORMATS)),
+
   // --- Highlights after a replaced PDF (Settings → Reading › Replacing a
   // PDF; docs/dev/highlight_relocation.md) ---
   // The server's relocate-highlights run reads both from its owner's
@@ -339,11 +362,10 @@ export const PREFS = {
 
   // --- Chat behaviour (Settings → AI → Chat / Tool usage) ---
   chatEffort: pref("gamma-chat-effort", ACCOUNT, ""),
-  // Which service tier the chat asks the provider for ("" = its usual
-  // routing, "flex" cheaper and slower, "fast" the premium low-latency one
-  // — chat/modelPrefs.js SPEED_ORDER). Each model gets it only when it has
+  // Whether the chat asks the provider for its premium low-latency routing
+  // ("fast") or its usual one (""). Each model gets it only when it has
   // that tier; a model without one is called as usual.
-  chatSpeed: pref("gamma-chat-speed", ACCOUNT, ""),
+  chatSpeed: pref("gamma-chat-speed", ACCOUNT, "", oneOf(["", "fast"])),
   // What a message sent while a reply runs does (chat/enterKey.js
   // followUpSteers): "steer" (default) goes into it at once, "queue" waits
   // for the reply to end; Ctrl/⌘+Enter does the other. Codex's "Follow-up
@@ -373,6 +395,11 @@ export const PREFS = {
   // conversation carries the answer and not the paper. Off makes the chat
   // read every document itself.
   delegateReads: flag("gamma-ai-delegate-reads", ACCOUNT, true),
+  // How long an agent's change the person kept stays marked at its note's
+  // edge (chat/noteReview.js setMarkLife), in minutes; 0 keeps the mark
+  // until Clear marks. A minute by default: long enough to look back.
+  aiMarkMinutes: pref("gamma-ai-mark-minutes", ACCOUNT, 1,
+    { parse: (raw) => (MARK_MINUTES.includes(Number(raw)) && raw !== "" ? Number(raw) : undefined) }),
   // Organizer tool-round budget (home/folder chat agent loop), 1–100.
   toolRounds: pref("gamma-ai-tool-rounds", ACCOUNT, 32, intIn(1, 100)),
   // Unlimited rounds: no round limit and no 200-change limit per message

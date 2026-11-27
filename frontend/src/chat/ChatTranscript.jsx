@@ -21,7 +21,6 @@ import StepsPill from "./StepsPill";
 import ApprovalCard, { AskCard } from "./ApprovalCard";
 import ChatErrorCard from "./ChatErrorCard";
 import AgentChanges, { ACTION_ICONS, FileChanges, ThreadsOpened } from "./AgentChanges";
-import { changeSteps, noteReview } from "./noteReview.js";
 import { declinedSummary } from "./approvals.js";
 import { cachedPercent, costLabel, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { areaPicturesNote, canContinueAfterLimit, continueAfterLimitPrompt, coverageNote, limitNote, shortenedNote, trimmedNote,
@@ -31,6 +30,7 @@ import { actionSummary, chipNote, helperStatus, runningLabel, splitActions, step
 import { skillText } from "./skills.js";
 import { sendsOnEnter } from "./enterKey.js";
 import { splitQuoted } from "./chatQuotes.js";
+import { effortLabel } from "./modelPrefs.js";
 import ChipPreview from "./ChipPreview.jsx";
 import { composing } from "../shared/lib/hotkeys.js";
 import { openReport } from "../support/reportContent.js";
@@ -198,7 +198,7 @@ export function UsageLine({ usage, className = "chatMsgUsage" }) {
 // than a word — a bolt for the provider's fast route, a clock for its slow,
 // cheap one — so the chip stays short. Nothing for its usual routing, and
 // the tooltip (`knobsLabel`) names the tier the glyph stands for.
-export const SPEED_ICONS = { fast: ZapIcon, flex: ClockIcon };
+const SPEED_ICONS = { fast: ZapIcon, flex: ClockIcon };
 export function SpeedGlyph({ speed, size = 13 }) {
   const Icon = SPEED_ICONS[speed];
   return Icon ? <Icon size={size} className="chatSpeedGlyph" aria-hidden="true" /> : null;
@@ -401,8 +401,7 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
           {!isUser && m.actions?.length ? (
             <AgentChanges actions={m.actions} onOpenPage={onOpenPage} busy={replying}
               onReverted={changes.onReverted && m.id ? (indexes, answer, reverted) => changes.onReverted(m.id, indexes, answer, reverted) : undefined}
-              onRevertMany={changes.onReverted && m.id && changes.many ? () => changes.onRevertMany(m.id) : undefined}
-              onShowChange={m.id ? (k) => noteReview.show(changeSteps(changes.messages, m.id, k, changes.key)) : undefined} />
+              onRevertMany={changes.onReverted && m.id && changes.many ? () => changes.onRevertMany(m.id) : undefined} />
           ) : null}
           {isUser && m.steered ? (
             <div className="chatMsgSteered" data-markdown-copy-ignore="" title={t("Sent into the reply while it ran: the reply took it in here")}>
@@ -452,7 +451,7 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
         {!responding ? <div className="chatMsgFoot" data-markdown-copy-ignore="">
           {!isUser && m.model ? (
             <span className="chatMsgModel" title={knobsLabel(m.speed)}>
-              {[m.model, m.effort].filter(Boolean).join(" · ")}
+              {[m.model, effortLabel(m.effort)].filter(Boolean).join(" · ")}
               <SpeedGlyph speed={m.speed} size={12} />
             </span>
           ) : null}
@@ -501,9 +500,9 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
 //   onAnswer(m, ask, decision, note)  a computer agent's asks answered
 //   errorActions(m, i)       an error card's buttons
 //   changes                  Gamma AI's changes under a reply: {onReverted
-//                            (null where nothing is reverted: a viewer),
+//                            (null where nothing is undone: a viewer),
 //                            onRevertMany, many (whether the conversation has
-//                            several to revert), messages, key}
+//                            several to undo)}
 //   handoffs                 the fetch handoffs' and the limit's cards:
 //                            {readOnly, autoOpen, onNeverWait, onContinue,
 //                            draft}

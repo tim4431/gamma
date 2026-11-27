@@ -86,11 +86,14 @@ export const ERASER_SIZES = [5, 9, 16];
 // move band and its open editor (markup/TextBoxLayer.jsx), a selected
 // picture, its handles and its crop (markup/PictureLayer.jsx: a picture
 // placed while a pen is armed moves before the pen writes over it), and the
-// comment cards beside a PDF page (comments/CommentMargin.jsx). The ruler's
-// band is the pointer's kind's: a pen about to write writes along it, any
-// other pointer moves it (writesOnBand).
+// page's own controls (PAGE_CONTROLS, which the Text tool leaves alone too:
+// markup/TextBoxLayer.jsx): the comment cards beside a PDF page
+// (comments/CommentMargin.jsx), and the bars and marks of an agent's
+// changes on it (markup/ReviewLayer.jsx). The ruler's band is the pointer's kind's: a pen
+// about to write writes along it, any other pointer moves it (writesOnBand).
 const BESIDE_PAGE = ".commentMargin";
-const NOT_INK = `.inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing, .pagePicture.selected, .pictureCrop, ${BESIDE_PAGE}`;
+export const PAGE_CONTROLS = `${BESIDE_PAGE}, .reviewTag, .reviewObjectMark`;
+const NOT_INK = `.inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing, .pagePicture.selected, .pictureCrop, ${PAGE_CONTROLS}`;
 // What a pen's press decides by (the rule in one place): a tool armed is
 // what it uses. With none, its eraser end (buttons 32) or barrel (2) erases
 // where a pen may ink (`penInk`), as the pen's own eraser (BARREL, no tool
@@ -1950,8 +1953,9 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     const onTouch = (e) => {
       const L = live.current;
       if (!L.width || !(L.tool || L.penInk || drawing)) return;
-      // a Pencil on a comment card scrolls and presses it, as a finger does
-      if (!drawing && e.target.closest?.(BESIDE_PAGE)) return;
+      // a Pencil on a comment card, or on an agent's change's bar or mark,
+      // scrolls and presses it, as a finger does
+      if (!drawing && e.target.closest?.(PAGE_CONTROLS)) return;
       const pencil = Array.from(e.changedTouches).some((t) =>
         t.touchType === "stylus" || (!t.touchType && drawing?.pointerType === "pen"));
       // While the pen is down, direct contacts are palms, not pan/pinch.

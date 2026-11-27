@@ -27,7 +27,7 @@ import { formatRelativeTime } from "../library/libraryUtils";
 import { nativeHost } from "../shared/lib/host.js";
 import { CloudIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, RefreshIcon, Trash2Icon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
-import { T, t, tn } from "../shared/i18n/i18n.js";
+import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 
 const POLICIES = [
   ["refuse", t("Refuse"), null, t("Only accounts already linked to a cloud account can sign in")],
@@ -278,7 +278,7 @@ export function CloudIdentityRow({ setStatus, confirm, onSetUp }) {
       hint={id ? `${id.username}${id.email ? ` · ${id.email}` : ""}${id.plan ? ` · ${id.plan} plan` : ""}`
         : waiting ? t("An admin connects this server to Gamma Cloud first, in Settings → Users → Sign-in")
         : t("Publish pages for free and carry your settings to your other servers")}
-      title={id ? t("Linked {linked_at}. Signing in with this cloud account opens this account.", { linked_at: id.linked_at ? id.linked_at.slice(0, 10) : "" })
+      title={id ? t("Linked {linked_at}. Signing in with this cloud account opens this account.", { linked_at: id.linked_at ? fmtDate(id.linked_at, { dateStyle: "medium" }) : "" })
         : off ? t("Gamma Cloud sign-in is off on this server. An admin turns it on in Settings → Users → Sign-in.")
         : t("Link your Gamma Cloud account: you are sent to the account server and back, then either login opens this account.")}>
       <span className="setRowControls">

@@ -19,7 +19,7 @@ from . import bibtex as bibtex_mod
 from .blocks_store import TRASH, block_to_dict
 from .documents.model import page_document
 from .highlights import is_highlight, is_ink, is_link, page_of
-from .markdown_import import EMPTY_ITEM_RE
+from .markdown_import import EMPTY_ITEM_RE, yaml_list
 from .note_markup import BLOCK_REF_RE, obsidian_image_sizes, ref_alias
 from .notebook import is_sheet
 from .picture import is_picture, markdown_of, picture_page
@@ -134,7 +134,8 @@ def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_fi
             fm.append(f"doi: {meta['doi']}")
         authors = meta.get("authors")
         if isinstance(authors, list) and authors:
-            fm.append(f"authors: {', '.join(str(a) for a in authors)}")
+            # a block list: a "Last, First" name holds the comma a string's items are split at
+            fm.extend(yaml_list("authors", [str(a) for a in authors]))
         elif authors:
             fm.append(f"authors: {authors}")
         if meta.get("year"):

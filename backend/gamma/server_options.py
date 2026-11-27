@@ -1,14 +1,17 @@
-"""Server-wide options an admin sets in Settings, which were environment
-variables before (docs/research/environment-variables.md):
+"""Server-wide options an admin sets in Settings (which environment
+variables stay beside them, and why: docs/research/environment-variables.md):
 
 - ``guest_max`` — how many guest accounts may live at once (Users →
   Guests). ``GAMMA_GUEST_MAX`` overrides it where it is set (the public
   demo; the account server sets 0 on a hosted container), and a hosted
   container takes no guests whatever it says.
 - ``metadata_lookup`` — whether papers are looked up in the registries
-  (arXiv, doi.org, Crossref, OpenAlex, Open Library, Google Books) — and
-  ``model_catalog`` — whether model facts are read from models.dev
-  (Server → Online services). The browser suite turns both off.
+  (arXiv, doi.org, Crossref, OpenAlex, Open Library, Google Books) —,
+  ``model_catalog`` — whether model facts are read from models.dev — and
+  ``citation_styles`` — whether citation styles are searched and fetched
+  in the CSL repository at zotero.org (Settings → Citations → Add style;
+  a style's file can be added either way, gamma/routers/citations.py)
+  (Server → Online services). The browser suite turns all three off.
 - ``vault_keep_mb`` — the largest work-folder file the vault hashes and
   serves; past it a file is listed with no bytes (Server → Work folders,
   docs/dev/documents.md "The listed state").
@@ -61,6 +64,7 @@ OPTIONS = {
     "guest_max": Option("int", 500, 1, 100_000),
     "metadata_lookup": Option("bool", True),
     "model_catalog": Option("bool", True),
+    "citation_styles": Option("bool", True),
     "vault_keep_mb": Option("int", 64, 0, 100_000),
     "searxng_url": Option("url", ""),
     "openalex_key": Option("secret", ""),

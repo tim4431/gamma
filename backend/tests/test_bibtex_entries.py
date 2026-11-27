@@ -13,8 +13,11 @@ from conftest import make_page
 from test_metadata_verify import _paper_page
 
 from gamma import mathml
-from gamma.bibtex import (build_entry, clean_key, default_key, latex_text, normalize_entry, page_entry,
-                          unique_keys)
+from gamma.bibtex import build_entry, normalize_entry, page_entry
+from gamma.bibtex_format import BIBTEX
+from gamma.bibtex_keys import clean_key, default_key, rebuilt_key, unique_keys
+from gamma.bibtex_latex import latex_text
+from gamma.bibtex_parse import parse_entry, record_from_entry
 from gamma.routers import metadata
 from gamma.routers.metadata import _title_in_text
 from gamma.textnorm import plain_text
@@ -163,6 +166,7 @@ def test_build_entry_escapes_values_and_writes_page_ranges():
     assert "title = {Salt \\& Light}" in bib
     assert "journal = {J. Phys. A: Math. \\& Theor.}" in bib
     assert "pages = {436--444}" in bib
+    assert "pages = {436--444}" in build_entry({"title": "T", "venue": "J", "pages": "436‒444"})  # a figure dash
     assert "doi = {10.1/a&b}" in bib   # identifiers are verbatim
     assert "pages = {e12345}" in build_entry({"title": "T", "venue": "J", "pages": "e12345"})
 
@@ -172,7 +176,7 @@ def test_build_entry_type_follows_the_item_type():
     conf = build_entry({**base, "venue": "2016 IEEE CVPR", "pages": "770-778", "publisher": "IEEE",
                         "kind": "conferencePaper"})
     assert conf.startswith("@inproceedings{he2016,")
-    assert "booktitle = {2016 IEEE CVPR}" in conf and "publisher = {IEEE}" in conf and "journal" not in conf
+    assert "booktitle = {2016 {IEEE} {CVPR}}" in conf and "publisher = {IEEE}" in conf and "journal" not in conf
     chapter = build_entry({**base, "venue": "Handbook of X", "isbn": "9780000000002", "kind": "bookSection"})
     assert chapter.startswith("@incollection{") and "booktitle = {Handbook of X}" in chapter
     assert "isbn = {9780000000002}" in chapter
@@ -191,6 +195,48 @@ def test_build_entry_type_follows_the_item_type():
     assert build_entry({**base, "kind": "journalArticle"}).startswith("@misc{he2016,")
 
 
+def test_build_entry_adds_issue_month_and_address_only_when_the_record_has_them():
+    record = {"title": "Collective processes", "authors": ["Bradley A. Chase", "J. M. Geremia"], "year": "2008",
+              "venue": "Physical Review A", "volume": "78", "pages": "052101", "doi": "10.1103/PhysRevA.78.052101",
+              "arxiv_id": "0805.1486", "kind": "journalArticle"}
+    # A record of before the issue, the date and the address: the entry it
+    # always gave, byte for byte (cached entries, and the .bib in a
+    # repository, stay as they are).
+    assert build_entry(record) == (
+        "@article{chase2008,\n"
+        "  title = {Collective processes},\n"
+        "  author = {Bradley A. Chase and J. M. Geremia},\n"
+        "  journal = {Physical Review A},\n"
+        "  volume = {78},\n"
+        "  pages = {052101},\n"
+        "  eprint = {0805.1486},\n"
+        "  archivePrefix = {arXiv},\n"
+        "  year = {2008},\n"
+        "  doi = {10.1103/PhysRevA.78.052101}\n"
+        "}")
+    full = build_entry({**record, "issue": "5", "date": "2008-11-03", "url": "https://example.org/a"})
+    assert "  volume = {78},\n  number = {5},\n  pages = {052101}," in full
+    assert "  year = {2008},\n  month = nov,\n" in full
+    assert "url" not in full  # an article's address is its DOI
+    assert "month" not in build_entry({**record, "date": "2007-11"})  # a date of another year
+    misc = build_entry({"title": "A web page", "year": "2020", "url": "https://example.org/a b"})
+    assert misc.startswith("@misc{") and "url" not in misc  # an address with a space is no address
+    assert "url = {https://example.org/r}" in build_entry({"title": "R", "publisher": "NIST", "kind": "report",
+                                                           "url": "https://example.org/r"})
+
+
+def test_record_from_entry_reads_an_articles_issue_and_month_back():
+    out = normalize_entry(DOI_ORG_CHASE)  # what a page caches: number = {5}, month = sep
+    assert record_from_entry(out) == {"issue": "5", "month": "09"}
+    assert record_from_entry(out, year="2008") == {"issue": "5", "month": "09"}
+    assert record_from_entry(out, year="2009") == {"issue": "5"}  # dated by another year than the record
+    cached = normalize_entry("@article{k, title={T}, journal={J}, number={3–4}, month={July}, year={2001}}")
+    assert "number = {3--4}" in cached and record_from_entry(cached) == {"issue": "3–4", "month": "07"}
+    assert record_from_entry("@article{k, title={T}, journal={J}, month={Spring}, year={2001}}") == {}
+    assert record_from_entry("@techreport{k, title={T}, institution={I}, number={12}, year={2001}}") == {}
+    assert record_from_entry("not an entry") == {}
+
+
 def test_a_published_arxiv_paper_keeps_its_eprint():
     bib = build_entry({"title": "T", "authors": ["B. P. Abbott"], "year": "2016", "venue": "Physical Review Letters",
                        "volume": "116", "arxiv_id": "1602.03837", "doi": "10.1103/x"})
@@ -206,6 +252,136 @@ def test_default_key_survives_an_organisation_or_no_author():
     assert default_key({"authors": [], "year": "2020"}) == "paper2020"
     assert default_key({"authors": ["李"], "year": "1"}) == "paper1"
     assert "author = {N. Aghanim}" in build_entry({"title": "T", "authors": ["", "N. Aghanim"], "year": "2020"})
+    # A name names.join_name writes with a comma keys by its surname: the key
+    # a Zotero name kept as "Pereira Campos, Jorge Fernando" gets is the one
+    # "Jorge Fernando Pereira Campos" always got, and Zotero's suffix in the
+    # first name keys by the surname in both of its forms. Any other string
+    # keys as it did before (a rebuilt entry keeps its key): "Lovelace, Ada"
+    # typed so, "Smith, J.", "King, Martin Luther, Jr.".
+    assert default_key({"authors": ["Pereira Campos, Jorge Fernando"], "year": "2021"}) == \
+        default_key({"authors": ["Jorge Fernando Pereira Campos"], "year": "2021"}) == "campos2021"
+    assert default_key({"authors": ["Den Hengst, Floris"], "year": "2023"}) == "hengst2023"
+    assert default_key({"authors": ["King, Jr., Martin Luther"], "year": "1963"}) == \
+        default_key({"authors": ["Martin Luther, Jr. King"], "year": "1963"}) == "king1963"
+    assert default_key({"authors": ["Robert F., Jr. Kennedy"], "year": "1968"}) == "kennedy1968"
+    assert default_key({"authors": ["Lovelace, Ada"], "year": "1843"}) == "ada1843"
+    assert default_key({"authors": ["Smith, J."], "year": "2001"}) == "j2001"
+    assert default_key({"authors": ["Martin Luther King, Jr."], "year": "1963"}) == "jr1963"
+    assert default_key({"authors": ["Jean Bureau"], "year": "1999"}) == "bureau1999"
+
+
+def test_a_rebuild_keeps_the_key_a_name_in_join_names_comma_form_was_cited_by():
+    """A name stored "Den Hengst, Floris" before release 72 keyed
+    "floris2020" by its last word, which ``default_key`` reads otherwise
+    now: an entry built again (a hand edit, a refetch, a Zotero pull) keeps
+    the key its cached entry carries while the first author and the year
+    stay. A pinned key, another first author or year, a key the old rule
+    never gave (a registrar's) and a name keyed alike either way are keyed
+    as usual."""
+    meta = {"title": "Old", "authors": ["Den Hengst, Floris"], "year": "2020", "kind": "journalArticle"}
+    props = {"meta": meta, "bibtex": build_entry(meta, "floris2020")}
+    assert default_key(meta) == "hengst2020" and rebuilt_key(props, {**meta, "title": "New"}) == "floris2020"
+    assert rebuilt_key(props, meta, "pinned") == "pinned"
+    assert rebuilt_key(props, {**meta, "year": "2021"}) == ""
+    assert rebuilt_key(props, {**meta, "authors": ["Ada Lovelace", "Den Hengst, Floris"]}) == ""
+    assert rebuilt_key({"meta": meta, "bibtex": "@article{Hengst_2020,\n  title = {Old}\n}"}, meta) == ""
+    plain = {"title": "Old", "authors": ["Lovelace, Ada"], "year": "1843"}
+    assert rebuilt_key({"meta": plain, "bibtex": build_entry(plain)}, plain) == ""
+
+
+def test_a_person_named_bureau_stays_a_person_in_every_entry():
+    """"Jean Bureau" (Zotero's "Jean" / "Bureau" as every name stored
+    before 72 holds it) is a person's name, as BibTeX reads it; "U.S. Census
+    Bureau" is an organisation's, braced whole."""
+    meta = {"title": "T", "authors": ["Jean Bureau", "Ada Lovelace"], "year": "2020"}
+    cached = "@article{bureau2020,\n  title = {T},\n  author = {Jean Bureau and Ada Lovelace},\n  year = {2020}\n}"
+    assert "author = {Jean Bureau and Ada Lovelace}" in page_entry({"meta": meta, "bibtex": cached})
+    assert "author = {Jean Bureau and Ada Lovelace}" in build_entry(meta)
+    assert "author = {{U.S. Census Bureau}}" in build_entry({**meta, "authors": ["U.S. Census Bureau"]})
+
+
+# --- cases where Gamma differed from Zotero (the oracle: public Zotero group
+# libraries, each item's own Web API data and Zotero's output for it) --------
+
+def test_a_capital_lambda_is_latex_math():
+    """4989025-WGKJFITX, "... extensions to Λ CDM ...": Unicode names the
+    capital LAMDA, so it stayed raw UTF-8 and pdflatex stopped on it."""
+    assert (mathml.math_command("Λ"), mathml.math_command("λ")) == ("\\Lambda", "\\lambda")
+    assert latex_text("Constraints on extensions to Λ CDM") == "Constraints on extensions to $\\Lambda$ CDM"
+
+
+def test_an_organisation_author_is_braced_whole():
+    """4989025-WGKJFITX and 4989916-SRFMLVB3: bare, BibTeX read "DES
+    Collaboration" as "D. Collaboration" and "Dark Energy Survey and
+    Kilo-Degree Survey Collaboration" as two authors; Zotero braces them.
+    A person stays as the record writes them."""
+    meta = {"title": "Consistent cosmology", "kind": "journalArticle", "venue": "The Open Journal of Astrophysics",
+            "year": "2023", "authors": ["Dark Energy Survey and Kilo-Degree Survey Collaboration", "T. M. C. Abbott",
+                                        "DES Collaboration", "Jan van der Berg", "International Labor Office"]}
+    entry = build_entry(meta)
+    assert ("author = {{Dark Energy Survey and Kilo-Degree Survey Collaboration} and T. M. C. Abbott and "
+            "{DES Collaboration} and Jan van der Berg and {International Labor Office}}") in entry
+    assert entry.startswith("@article{collaboration2023,") and normalize_entry(entry) == entry
+    # An entry an older Gamma cached has them bare: braced when it is
+    # printed, the record naming the one with an "and" of its own.
+    cached = ("@article{collaboration2023,\n  title = {Consistent cosmology},\n"
+              "  author = {Dark Energy Survey and Kilo-Degree Survey Collaboration and T. M. C. Abbott and "
+              "DES Collaboration},\n  journal = {J},\n  year = {2023}\n}")
+    assert ("author = {{Dark Energy Survey and Kilo-Degree Survey Collaboration} and T. M. C. Abbott and "
+            "{DES Collaboration}}") in normalize_entry(cached, meta)
+    # doi.org's braces stay; a "Last, First" name is a person's.
+    assert "author = {{Planck Collaboration} and Aghanim, N. and {LIGO Scientific Collaboration}}" in normalize_entry(
+        "@article{k, author = {{Planck Collaboration} and Aghanim, N. and LIGO Scientific Collaboration},"
+        " title = {T}, journal = {J}, year = 2020}")
+    person = "@article{k,\n  title = {T},\n  author = {Ada Lovelace and Babbage, Charles},\n  journal = {J}\n}"
+    assert normalize_entry(person) == person
+
+
+def test_a_title_keeps_the_capitals_inside_its_words():
+    """4989025-RCS6CG6Z and 23 more: plainnat set "First detection of the
+    gi-type of ..." and "Des y3 + kids-1000". As Zotero's BibLaTeX export
+    does, a title's word with a capital after its first letter is braced,
+    and one of letters and digits with a capital ("Y3", which that rule
+    leaves to plainnat's "y3"); what is braced already, math and commands
+    are left alone."""
+    entry = build_entry({"title": "First Detection of the GI-type of Intrinsic Alignments", "authors": ["Eske M. Pedersen"],
+                         "year": "2020", "venue": "The Astrophysical Journal Letters", "kind": "journalArticle"})
+    assert "title = {First Detection of the {GI}-type of Intrinsic Alignments}" in entry
+    assert "journal = {The Astrophysical Journal Letters}" in entry and normalize_entry(entry) == entry
+    for title, out in (
+            ("DES Y3 + KiDS-1000: Consistent cosmology", "{DES} {Y3} + {KiDS}-1000: Consistent cosmology"),
+            ("Extension of the δ-Plus-SPH model", "Extension of the $\\delta$-Plus-{SPH} model"),
+            ("Constraints on ΛCDM", "Constraints on $\\Lambda${CDM}"),
+            ("The eBOSS LLMs at AIH@IJCAI", "The {eBOSS} {LLMs} at {AIH}@{IJCAI}"),
+            ("<i>Planck</i> 2018 and {COBE} in \\LaTeX", "\\emph{Planck} 2018 and {COBE} in \\LaTeX"),
+            ("CsPbCl<sub>3</sub>, 3D, GNN2R and 2018", "{CsPbCl}\\textsubscript{3}, {3D}, {GNN2R} and 2018"),
+            ("Year 3 of the B-mode", "Year 3 of the B-mode"),
+            ("MÜLLER", "{M{\\\"U}LLER}")):
+        stored = normalize_entry(f"@misc{{k, title = {{{latex_text(title)}}}}}")
+        assert f"title = {{{out}}}" in stored, stored
+        assert normalize_entry(stored) == stored
+
+
+def test_every_entry_dates_its_month_and_keeps_volume_isbn_and_publisher():
+    """4989916-65M89DVE, a thesis dated 2023-10-19: Zotero's BibTeX writes
+    `month = oct` for every type (plainnat prints "October 2023");
+    KE8FBP7F a chapter's volume, R9UH4NJH a conference paper's ISBN and
+    X2K8TXEJ a document published by its university, which the CSL and
+    RIS files carried and the .bib dropped."""
+    thesis = build_entry({"title": "Learning to Behave", "authors": ["Den Hengst, Floris"], "year": "2023",
+                          "date": "2023-10-19", "publisher": "Vrije Universiteit Amsterdam", "kind": "thesis"})
+    assert thesis.startswith("@phdthesis{hengst2023,") and "author = {Den Hengst, Floris}" in thesis
+    assert "  year = {2023},\n  month = oct" in thesis
+    chapter = build_entry({"title": "A Contextualised Semantics", "authors": ["W. G. J. Beek"], "year": "2016",
+                           "venue": "The Semantic Web", "volume": "9678", "pages": "405–419", "kind": "bookSection"})
+    assert "  volume = {9678},\n  pages = {405--419}," in chapter
+    conf = build_entry({"title": "Inductive Entity Representations", "authors": ["Daniel Daza"], "year": "2021",
+                        "venue": "Proceedings of the Web Conference 2021", "isbn": "9781450383127",
+                        "kind": "conferencePaper"})
+    assert "isbn = {9781450383127}" in conf
+    doc = build_entry({"title": "Knowledge Representation", "authors": ["Carretta Zamborlini, V."], "year": "2017",
+                       "publisher": "Vrije Universiteit Amsterdam", "kind": "document"})
+    assert doc.startswith("@misc{zamborlini2017,") and "howpublished = {Vrije Universiteit Amsterdam}" in doc
 
 
 def test_unique_keys_compare_case_insensitively():
@@ -273,7 +449,7 @@ def test_fetch_doi_keeps_the_publisher_of_a_conference_paper(monkeypatch):
     assert meta["kind"] == "conferencePaper" and meta["publisher"] == "IEEE"
     bib = build_entry(meta)
     assert bib.startswith("@inproceedings{he2016,")
-    assert "booktitle = {2016 IEEE Conference" in bib and "pages = {770--778}" in bib
+    assert "booktitle = {2016 {IEEE} Conference" in bib and "pages = {770--778}" in bib
 
 
 def test_crossref_search_cleans_titles_and_carries_the_type(monkeypatch):
@@ -371,7 +547,7 @@ def test_a_hand_edit_keeps_or_changes_the_item_type(guest):
     assert r.status_code == 200, r.text
     assert r.json()["meta"]["kind"] == "conferencePaper"
     assert r.json()["bibtex"].startswith("@inproceedings{he2016,")
-    assert "booktitle = {2016 IEEE CVPR}" in r.json()["bibtex"]
+    assert "booktitle = {2016 {IEEE} {CVPR}}" in r.json()["bibtex"]
     # …the Type row's choice replaces it, and a name that is no type is ignored.
     r = guest.post("/api/metadata/update", json={"block_id": page["id"], "meta": {**edit, "kind": "journalArticle"}})
     assert r.json()["meta"]["kind"] == "journalArticle" and r.json()["bibtex"].startswith("@article{he2016,")
@@ -430,14 +606,13 @@ AWKWARD_STORED = [
 
 
 def _assert_valid_bibtex(entry):
-    from gamma.bibtex import _TYPES, _VENUE, _parse
-    parsed = _parse(entry)
+    parsed = parse_entry(entry)
     assert parsed, entry
     entry_type, key, fields = parsed
-    assert entry_type in _TYPES, entry
+    assert entry_type in BIBTEX.types, entry
     assert key and key.isascii() and clean_key(key) == key, key
     names = dict(fields)
-    assert entry_type not in _VENUE or names.get(_VENUE[entry_type]), entry
+    assert entry_type not in BIBTEX.venue or names.get(BIBTEX.venue[entry_type]), entry
     for name, value in fields:
         depth = 0
         for c in value:

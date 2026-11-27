@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import mcp_changes, ratelimit
+from .. import agent_changes, ratelimit
 from ..ai_revert import RevertError
 from ..auth import SESSION_COOKIE, actor_of, require_personal_user_id, require_ws, ws_role
 from ..computers import registry
@@ -162,20 +162,22 @@ def _token_workspaces(user_id: str, token_id: str) -> list[str]:
         raise HTTPException(404, "This connection is gone.")
     found = granted(row[0], row[1])
     mine = {w["id"] for w in list_for_user(user_id) if not w["deleting"]}
-    return [w for w in mine] if found == ALL else [w for w in found if w in mine]
+    return list(mine) if found == ALL else [w for w in found if w in mine]
 
 
 @router.get("/tokens/{token_id}/changes")
 def token_changes(token_id: str, request: Request, response: Response):
     """The changes the connection made through MCP in the workspaces it
-    reads (gamma/mcp_changes.py), newest first, the latest 100: each one's
-    id, workspace, time, tool, summary, page and whether it was undone."""
+    reads (gamma/agent_changes.py), newest first, the latest 100: each one's
+    id, workspace, time, tool, summary, page, whether it was undone and its
+    review's state."""
     user_id, _ws = _owner(request)
     response.headers["Cache-Control"] = "no-store"
     names = {w["id"]: w["name"] for w in list_for_user(user_id)}
     found = [{"id": c["id"], "workspace_id": ws, "workspace": names.get(ws, ""), "at": c["at"], "tool": c["tool"],
-              "summary": c["summary"], "page_id": c["page_id"], "page_title": c["page_title"], "undone": c["undone"]}
-             for ws in _token_workspaces(user_id, token_id) for c in mcp_changes.listed(ws, token_id, 100)]
+              "summary": c["summary"], "page_id": c["page_id"], "page_title": c["page_title"], "undone": c["undone"],
+              "state": c["state"]}
+             for ws in _token_workspaces(user_id, token_id) for c in agent_changes.listed(ws, token_id, 100)]
     return {"changes": sorted(found, key=lambda c: c["at"], reverse=True)[:100]}
 
 
@@ -197,17 +199,15 @@ def undo_token_change(token_id: str, change_id: str, payload: ChangeUndo, reques
     if ws not in _token_workspaces(user_id, token_id) or role_of(ws, user_id) not in EDITING_ROLES:
         raise HTTPException(403, "You no longer edit that workspace.")
     refuse_writes(ws)
-    change = mcp_changes.find(ws, change_id)
+    change = agent_changes.find(ws, change_id)
     if not change or change["token_id"] != token_id:
         raise HTTPException(404, "That change is gone.")
     if change["undone"]:
         return {"page_id": change["page_id"], "noop": True}
     try:
-        return mcp_changes.undo(ws, change, actor=actor_of(request), force=payload.force)
+        return agent_changes.undo(ws, change, actor=actor_of(request), force=payload.force)
     except RevertError as e:
-        return JSONResponse(status_code=e.status, content={
-            "detail": e.detail, **({"conflict": e.conflict} if e.conflict else {}),
-            **({"preview": e.preview} if e.preview else {})})
+        return JSONResponse(status_code=e.status, content=e.body())
 
 
 @router.delete("/tokens/{token_id}")

@@ -8,7 +8,7 @@
 //   - a Markdown link, [label](href) (an image's ![…](…) is none),
 //   - a bare web address (https://…, as the rendered view links one) or <https://…>,
 // outside code and math, where nothing is a link.
-import { protectedSpans } from "./mdScan.js";
+import { protectedSpans, tablePipe } from "./mdScan.js";
 import { CHIP_RE, refWords } from "./refLabels.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 
@@ -98,13 +98,6 @@ export function nthLinkSpan(content, key, n, transform) {
 
 // --- writing ----------------------------------------------------------------
 
-// The pipe a page link's words take at `at`: "\|" on a table's row, whose
-// cells a bare one would split (note_markup.py table_pipe).
-export function tablePipe(content, at) {
-  const text = String(content || "");
-  return text.slice(text.lastIndexOf("\n", at - 1) + 1, at).trimStart().startsWith("|") ? "\\|" : "|";
-}
-
 // Words as a [[ref]]'s: one line, no brackets (they would end it).
 const refText = (words) => (words || "").replace(/[[\]]/g, "").replace(/\s+/g, " ").trim();
 // Words as a Markdown link's label: one line, a bracket escaped, and a
@@ -136,7 +129,7 @@ export function linkMarkdown(to, words, pipe = "|") {
 }
 
 // What a span links to, as linkMarkdown takes it.
-export const spanTarget = (span) => (span.kind === "ref" ? { kind: "block", id: span.id } : { kind: "url", url: span.href });
+const spanTarget = (span) => (span.kind === "ref" ? { kind: "block", id: span.id } : { kind: "url", url: span.href });
 
 // A link's words as the card's Text field holds them: a page link's own
 // words, a Markdown link's label with its escapes read; "" for none.

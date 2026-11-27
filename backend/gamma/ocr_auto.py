@@ -1,7 +1,7 @@
 """Automatic text recognition: a PDF a person uploads whose pages are all
 pictures, with no text to select or search, has its words recognized by the
 server by itself, one file at a time, by the ``ocr`` job of
-gamma/pdf_ocr.py (docs/dev/documents.md "Recognized text").
+gamma/ocr_run.py (docs/dev/documents.md "Recognized text").
 
 The switch is the admin's (the server option ``ocr_auto``, on by default:
 Settings → Server → Text recognition), and it works only where the
@@ -25,7 +25,7 @@ The markers are the queue (data.db ``pdf_ocr_auto``: ``doc_id``, ``state``,
 ``by`` the uploader, ``at``): ``queued`` (its run to start, or running),
 ``skipped`` (no such scan), ``done`` (its run ended, or failed: never tried
 again; a run a workspace delete stopped stays queued), ``declined`` (a
-person stopped its run, or forgot what it recognized: gamma/pdf_ocr.py
+person stopped its run, or forgot what it recognized: gamma/ocr_run.py
 ``forget_recognized``). ``next`` starts the
 oldest ``queued`` file of any workspace as the workspace's own ``ocr`` job
 (owner ``jobs.WORKSPACE``: its members see it, its editors stop it) when no
@@ -34,8 +34,8 @@ person's comes first: the automatic one ``yields`` (jobs ``Yield``: it stops
 at its next page, its staged pages and its marker kept, and goes on from
 them later). The end of every ``ocr`` job, an automatic one's or one a
 person asked for, settles the file's marker and starts the next
-(``ended``); the jobs' periodic sweep, at startup the first time, starts
-the files a restart left queued (``resume``).
+(``ended``); the app's round beside the jobs' sweep, at startup the first
+time, starts the files a restart left queued (``resume``).
 
 An automatic run's writes (its highlights' quotes respelled, its page's
 failed metadata lookup forgotten, ``meta_error``, so the next open looks
@@ -44,13 +44,15 @@ workspace's personal owner.
 """
 
 import json
-import os
 import threading
 import time
 from contextlib import closing
 
-from . import db, jobs, ocr_engine, pdf_ocr, pdf_text, server_options, workspaces
+from . import db, jobs, ocr_engine, ocr_run, pdf_ocr, pdf_text, server_options, workspaces
+from .blocks_store import page_for_doc, pages_showing, write_lock
+from .highlight_relocate import RESPELL_CLIENT
 from .logbuf import log
+from .ops import after_commit, apply_ops
 
 OCR = "ocr"
 # A file is recognized by itself only when it has at most so many pages that
@@ -92,17 +94,10 @@ def enabled(capability=_ASK) -> bool:
 
 # --- The markers ------------------------------------------------------------------
 
-def _has_data_db(ws: str) -> bool:
-    try:
-        return os.path.isfile(db.ws_db_path(ws, "data.db"))
-    except ValueError:
-        return False
-
-
 def marker(ws: str, doc_id: str) -> str | None:
     """The state of the file's marker, None when it has none (or data.db,
     opened only when it exists, cannot be read: logged)."""
-    if not _has_data_db(ws):
+    if not pdf_ocr.has_data_db(ws):
         return None
     try:
         with db.connect_data_db(ws) as conn:
@@ -134,7 +129,7 @@ def mark(ws: str, doc_id: str, state: str, by: str = "", *, first: bool = False)
 def _queued_in(ws: str) -> list[tuple[str, str, str]]:
     """``(at, doc_id, by)`` of the workspace's queued markers; none when it
     has no data.db. Raises as a read of data.db does."""
-    if not _has_data_db(ws):
+    if not pdf_ocr.has_data_db(ws):
         return []
     with db.connect_data_db(ws) as conn:
         return conn.execute("SELECT at, doc_id, by FROM pdf_ocr_auto WHERE state = ?", (QUEUED,)).fetchall()
@@ -145,7 +140,7 @@ def _queued_in(ws: str) -> list[tuple[str, str, str]]:
 def qualifies(src) -> tuple[int, dict] | None:
     """Whether the PDF at ``src`` is a scan with no text, which this module
     recognizes by itself: ``(pages, kinds)``, its page count and {page:
-    "picture"} of its picture pages (pdf_ocr ``classify``'s shape), or
+    "picture"} of its picture pages (ocr_run ``classify``'s shape), or
     None. Its pages are classified in turn (pdf_text ``page_kinds``), and
     the walk stops at the first scan page with a layer, at the first page
     past ``AUTO_OTHER_PAGES`` that is no picture and at the picture page
@@ -319,9 +314,6 @@ def _queued() -> list[tuple[str, str, str]]:
 def _page_of(ws: str, doc_id: str) -> str:
     """The page an automatic run of the file is for: the library page that
     owns it, else the first page showing it; "" for none."""
-    from .blocks_store import page_for_doc  # local: they import this module's neighbours
-    from .highlight_relocate import pages_showing
-
     with db.connect_pages_db(ws) as conn:
         row = page_for_doc(conn, doc_id)
         if row:
@@ -334,7 +326,7 @@ def _start(ws: str, doc_id: str, by: str) -> dict | None:
     """The queued file's automatic run started: the ``ocr`` job of the
     workspace (``jobs.WORKSPACE``) for the page that shows its stored copy,
     keyed by the workspace and the file as a person's run is, one of the
-    OCR kinds at a time (``pdf_ocr.OCR_KINDS``), ``yields`` so a run
+    OCR kinds at a time (``ocr_run.OCR_KINDS``), ``yields`` so a run
     someone asks for goes first, its params ``{page_id, doc_id, title,
     auto: true}``. Its row of a run a restart cut short goes first (it
     would read as failed beside the new one). None when it does not start:
@@ -367,7 +359,7 @@ def _start(ws: str, doc_id: str, by: str) -> dict | None:
         jobs.dismiss(before["id"])
 
     def run(job):
-        result = pdf_ocr.run(ws, doc_id, src, actor=actor, progress=job.progress)
+        result = ocr_run.run(ws, doc_id, src, actor=actor, progress=job.progress)
         if result["recognized"]:
             _clear_meta_error(ws, page_id, actor)
         return result
@@ -375,7 +367,7 @@ def _start(ws: str, doc_id: str, by: str) -> dict | None:
     try:
         return jobs.start(OCR, owner=jobs.WORKSPACE, ws=ws, key=key, title=f"Recognizing the text of “{title}” automatically",
                           params={"page_id": page_id, "doc_id": doc_id, "title": title, "auto": True}, run=run,
-                          writes=True, exclusive=pdf_ocr.OCR_KINDS, yields=True,
+                          writes=True, exclusive=ocr_run.OCR_KINDS, yields=True,
                           ended=lambda state: ended(ws, doc_id, state))
     except jobs.Busy:
         return None
@@ -387,10 +379,6 @@ def _clear_meta_error(ws: str, page_id: str, actor: str) -> None:
     scan's missing text, and the next open looks the paper up with the
     recognized one. One op under ``actor``; nothing when the page has none.
     Never raises (logged)."""
-    from .blocks_store import write_lock  # local: they import this module's neighbours
-    from .highlight_relocate import RESPELL_CLIENT
-    from .ops import after_commit, apply_ops
-
     try:
         with db.connect_pages_db(ws) as conn:
             write_lock(conn)
@@ -423,9 +411,9 @@ def ended(ws: str, doc_id: str, state: str) -> None:
 
 
 def resume() -> None:
-    """The jobs' periodic sweep (jobs ``sweep``: at startup, after
-    ``jobs.recover`` failed the runs a restart cut short, then every
-    ``jobs.SWEEP_INTERVAL_S``): the queued files started again (``next``),
+    """The app's round after the jobs' sweep (gamma/app.py ``sweep_jobs``:
+    at startup, after ``jobs.recover`` failed the runs a restart cut short,
+    then every ``jobs.SWEEP_INTERVAL_S``): the queued files started again (``next``),
     every workspace looked through for them the first time the switch is
     on (``consider`` names the ones queued since). Nothing while the switch
     is off, which an admin turning it on calls this for. Never raises."""

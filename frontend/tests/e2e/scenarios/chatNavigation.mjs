@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import http from "node:http";
-import { Account, FAKE_AI_MODELS, aiModelsAnswer, fakeAiModels, guideProgress, live, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, aiModelsAnswer, arrived, fakeAiModels, guideProgress, live, wanted } from "../harness.mjs";
 import { TOURS } from "../../../src/guide/tours/index.js";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
@@ -1078,7 +1078,7 @@ export async function chatNavigationScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("chat navigation: the effort and speed menus offer the model's own levels, the nearest effort is sent, and a reply names them", async () => {
+  await step("chat navigation: the model chip's effort slider offers the model's own levels and its Fast button a model that has it, the nearest effort is sent, and a reply names them", async () => {
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     // One page load per model: its levels and speed tiers (the provider's
     // listing, models.dev or the wire itself, pinned by the backend tests)
@@ -1108,19 +1108,38 @@ export async function chatNavigationScenarios(env) {
       return { ctx, page };
     };
     const chip = (page) => page.locator(".chatModelChip .uiSelectBtn");
-    // The speed shows as a glyph, not a word: the chip's text names the model
-    // and effort, the glyph and the tooltip the tier.
+    // What the chip reads: the model, then its effort.
+    const reads = (page, want, what) => until(async () =>
+      (await chip(page).locator(".chatModelText, .chatModelEffort").allInnerTexts()).join(" ") === want, { what });
+    // The speed shows as a glyph, not a word: the glyph and the tooltip the tier.
     const chipSpeed = async (page) => [await chip(page).locator(".chatSpeedGlyph").count(),
       await chip(page).getAttribute("title")];
-    // The panel's choices in their own words: the models' names (not the
-    // connection after one), then each knob's options.
     const panel = (page) => page.locator(".modelPanel");
-    const menuItems = (page) => panel(page).evaluate((el) => [...el.querySelectorAll(".modelMenuName, .modelPanelKnob .segGroup > .uiBtn")]
-      .map((n) => n.textContent.trim())).catch(() => []);
-    // Until model-info answers, the panel offers the generic levels: wait for the model's own.
-    const menuShows = (page, want, what) => until(async () => (await menuItems(page)).join() === want, { what });
-    // A knob's option, by the knob's heading; a knob changed leaves the panel open.
-    const option = (page, knob, name) => panel(page).getByRole("group", { name: knob, exact: true }).getByRole("button", { name, exact: true });
+    const effort = (page) => panel(page).getByRole("slider", { name: "Reasoning effort", exact: true });
+    const fast = (page) => panel(page).getByRole("button", { name: "Fast", exact: true });
+    const reset = (page) => panel(page).getByRole("button", { name: "Reset to default", exact: true });
+    const says = (page, stop) => until(async () => (await effort(page).getAttribute("aria-valuetext")) === stop, { what: `the slider on ${stop}` });
+    // Where stop `i` of `n` is: half a thumb (the control's height) in from the ends.
+    const stopAt = async (page, i, n) => {
+      const box = await effort(page).boundingBox();
+      return [box.x + box.height / 2 + (box.width - box.height) * i / (n - 1), box.y + box.height / 2];
+    };
+    // The slider's stops, each pressed: it says the stop, and its thumb
+    // glides there. Until model-info answers it has the generic levels: wait
+    // for the model's own.
+    const pressStops = async (page, stops) => {
+      await arrived(panel(page));
+      await until(async () => (await effort(page).getAttribute("max")) === String(stops.length - 1), { what: "the model's own levels" });
+      for (const [i, stop] of stops.entries()) {
+        const at = await stopAt(page, i, stops.length);
+        await page.mouse.click(...at);
+        await says(page, stop);
+        await until(async () => {
+          const thumb = await panel(page).locator(".stopSliderThumb").boundingBox();
+          return thumb && Math.abs(thumb.x + thumb.width / 2 - at[0]) < 1;
+        }, { what: `the thumb on ${stop}` });
+      }
+    };
     // The pick is an account preference: wait for it to reach the profile
     // before the next page load reads it.
     const saved = (effort) => until(async () => ((await alice.api("/api/prefs/profile")).value?.chatEffort || "") === effort,
@@ -1136,13 +1155,27 @@ export async function chatNavigationScenarios(env) {
     let { ctx, page } = await load(["low", "medium", "high", "xhigh"]);
     try {
       await chip(page).click();
-      await menuShows(page, "model,Default,low,medium,high,xhigh", "the model's own levels");
-      await option(page, "Reasoning effort", "xhigh").click();
-      await until(async () => (await chip(page).innerText()) === "model · xhigh", { what: "the chip names the effort" });
-      assertEq(await option(page, "Reasoning effort", "xhigh").getAttribute("aria-pressed"), "true", "the panel stays open on the pick");
+      // nothing picked: a bare track, and the first stop can be pressed like any other
+      await says(page, "Default");
+      assertEq(await panel(page).locator(".stopSliderThumb").count(), 0, "no thumb with no effort picked");
+      assertEq(await reset(page).isDisabled(), true, "nothing to reset");
+      await pressStops(page, ["Low", "Medium", "High", "Extra high"]);
+      // dragged from one stop to another, and the keys
+      await page.mouse.move(...await stopAt(page, 3, 4));
+      await page.mouse.down();
+      await page.mouse.move(...await stopAt(page, 1, 4), { steps: 8 });
+      await page.mouse.up();
+      await says(page, "Medium");
+      await effort(page).press("Home");
+      await says(page, "Low");
+      await effort(page).press("ArrowRight");
+      await says(page, "Medium");
+      await effort(page).press("End");
+      await reads(page, "model Extra high", "the chip names the effort, the panel still open");
       await page.keyboard.press("Escape");
+      await panel(page).waitFor({ state: "detached" });
       assertEq((await send(page)).join(), "xhigh,", "the effort, and no speed tier to ask for");
-      await page.locator(".chatMsgModel", { hasText: "model · xhigh" }).waitFor();
+      await page.locator(".chatMsgModel", { hasText: "model · Extra high" }).waitFor();
       await saved("xhigh");
       assertNoProblems(page);
     } finally { await ctx.close(); }
@@ -1151,41 +1184,41 @@ export async function chatNavigationScenarios(env) {
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     ({ ctx, page } = await load(["low", "medium", "high"]));
     try {
-      await until(async () => (await chip(page).innerText()) === "model · high", { what: "the nearest level" });
+      await reads(page, "model High", "the nearest level");
       assertEq((await send(page)).join(), "high,");
-      await page.locator(".chatMsgModel", { hasText: "model · high" }).waitFor();
+      await page.locator(".chatMsgModel", { hasText: "model · High" }).waitFor();
       await chip(page).click();
-      await option(page, "Reasoning effort", "Default").click();
-      await until(async () => (await chip(page).innerText()) === "model", { what: "Default leaves the effort out" });
+      await reset(page).click();
+      await reads(page, "model", "Reset leaves the effort out");
       await saved("");
       assertNoProblems(page);
     } finally { await ctx.close(); }
 
-    // A model with no effort control and no speed tiers: neither section.
+    // A model with no effort control and no speed tiers: the models alone.
     ({ ctx, page } = await load([]));
     try {
       await chip(page).click();
-      await menuShows(page, "model", "no effort levels to offer");
-      assertEq(await panel(page).locator(".modelPanelKnob").count(), 0, "neither knob");
+      await panel(page).locator(".modelPanelList .modelMenuName", { hasText: "model" }).waitFor();
+      assertEq(await effort(page).count() + await fast(page).count(), 0, "neither knob");
       assertNoProblems(page);
     } finally { await ctx.close(); }
 
-    // A model whose provider sells service tiers: the Speed section offers
-    // its own, the pick rides on the request and the reply names it.
+    // A model whose provider sells a faster route: the Fast button turns it
+    // on, it rides on the request and the reply shows it.
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     ({ ctx, page } = await load(["low", "high"], ["flex", "fast"]));
     try {
       await chip(page).click();
-      await menuShows(page, "model,Default,low,high,Default,Flex,Fast", "effort then speed");
-      await option(page, "Speed", "Fast").click();
+      await fast(page).click();
       await until(async () => (await chipSpeed(page)).join() === "1,Model, reasoning effort and speed (fast)",
         { what: "the chip carries the speed glyph" });
+      assertEq(await fast(page).getAttribute("aria-pressed"), "true", "Fast is on");
       // Both knobs in one visit: the words are the model and effort, then the glyph.
-      await option(page, "Reasoning effort", "high").click();
-      await until(async () => (await chip(page).innerText()) === "model · high", { what: "the chip names both" });
+      await effort(page).press("End");
+      await reads(page, "model High", "the chip names both");
       await page.keyboard.press("Escape");
       assertEq((await send(page)).join(), "high,fast");
-      const foot = page.locator(".chatMsgModel", { hasText: "model · high" });
+      const foot = page.locator(".chatMsgModel", { hasText: "model · High" });
       await foot.waitFor();
       assertEq(await foot.locator(".chatSpeedGlyph").count(), 1, "the reply's foot carries the glyph too");
       await until(async () => ((await alice.api("/api/prefs/profile")).value?.chatSpeed || "") === "fast",
@@ -1200,7 +1233,8 @@ export async function chatNavigationScenarios(env) {
       await until(async () => (await chipSpeed(page)).join() === "0,Model, reasoning effort and speed",
         { what: "no speed to ask for" });
       await chip(page).click();
-      await menuShows(page, "model,Default,low,high", "no Speed knob");
+      await effort(page).waitFor();
+      assertEq(await fast(page).count(), 0, "no Fast button");
       assertNoProblems(page);
     } finally { await ctx.close(); }
 
@@ -1208,8 +1242,8 @@ export async function chatNavigationScenarios(env) {
     try {
       await until(async () => (await chipSpeed(page))[0] === 1, { what: "the kept speed" });
       await chip(page).click();
-      await option(page, "Speed", "Default").click();
-      await until(async () => (await chipSpeed(page))[0] === 0, { what: "Default drops the speed" });
+      await fast(page).click();
+      await until(async () => (await chipSpeed(page))[0] === 0, { what: "Fast off drops the speed" });
       // Saved before the page closes: the groups after this one on the worker share alice.
       await until(async () => ((await alice.api("/api/prefs/profile")).value?.chatSpeed || "") === "",
         { what: "the profile drops the speed" });
@@ -1221,12 +1255,12 @@ export async function chatNavigationScenarios(env) {
   });
 
   // Two connections (docs/dev/ai.md "Models for each task"): every
-  // connection's models serve the chat. The chip's panel lists them, the
-  // favorites first, then each connection's (ai/ModelMenu.jsx), and a pick
-  // there is the account's chat model (PUT /api/ai/models/roles, whose
-  // rules are backend/tests/test_ai_model_roles.py's), which the next
-  // message names.
-  await step("chat navigation: the model chip's panel lists every connection's models by connection; a pick from another connection is the account's chat model and the next message's", async () => {
+  // connection's models serve the chat. The chip's panel lists the model in
+  // use and the favorites; its "All models…" turns it into the menu of every
+  // connection's, grouped by connection (ai/ModelMenu.jsx), and a pick there
+  // is the account's chat model (PUT /api/ai/models/roles, whose rules are
+  // backend/tests/test_ai_model_roles.py's), which the next message names.
+  await step("chat navigation: All models… lists every connection's models by connection; a pick from another connection is the account's chat model and the next message's", async () => {
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     const list = [
       { id: "firstAAA:one", provider: "firstAAA", provider_name: "First", model: "one", billing: "api" },
@@ -1270,14 +1304,16 @@ export async function chatNavigationScenarios(env) {
       const chip = page.locator(".chatModelChip .uiSelectBtn");
       await until(async () => (await chip.innerText()) === "one", { what: "the chip on the chat model, the first offered" });
       await chip.click();
-      const all = page.getByRole("listbox", { name: "Models", exact: true });
+      const panel = page.locator(".modelPanel");
+      assertEq((await panel.locator(".modelMenuName").allInnerTexts()).join(), "one", "the panel: the model in use, no chat models yet");
+      await panel.getByRole("button", { name: "All models…", exact: true }).click();
+      const all = page.getByRole("listbox", { name: "All models", exact: true });
       await all.waitFor();
       const groups = await all.getByRole("group").evaluateAll((els) => els.map((g) =>
         `${g.querySelector(".modelMenuGroupName")?.textContent}: ${[...g.querySelectorAll(".modelMenuName")].map((n) => n.textContent).join(" ")}`));
       assertEq(groups.join(" | "), "First: one two | Second: three", "both connections' models, each under its connection");
       await all.getByRole("group", { name: /^Second/ }).getByRole("option", { name: /^three/ }).click();
       await until(async () => (await chip.innerText()) === "three", { what: "the chip on the pick" });
-      await page.locator(".modelPanel").waitFor({ state: "detached" }); // a model picked closes the panel
       assertEq(JSON.stringify(puts), JSON.stringify([{ chat: "secondBB:three" }]), "the account's chat model is the other connection's entry");
       await input.fill("Which model?");
       await input.press("Enter");
@@ -1355,9 +1391,8 @@ export async function chatNavigationScenarios(env) {
       assert((await chip.getAttribute("title")).includes(reason), "the chip names the reason");
       assert((await input.getAttribute("placeholder")).startsWith("Ask… "), "the plain chat's placeholder");
       await page.locator(".chatModelChip .uiSelectBtn").click();
-      const listed = page.locator(".modelPanel [role=option]").first();
-      assertEq(JSON.stringify([await listed.locator(".modelMenuName").innerText(), await listed.locator(".modelMenuTag").innerText()]),
-        JSON.stringify(["model", "no tools"]), "the panel tags the model");
+      await page.locator(".modelPanelPick").click();
+      assertEq(await page.locator(".modelPanelList .modelMenuName").first().innerText(), "model · no tools");
       await page.keyboard.press("Escape");
       await chip.click();
       await until(() => !!checked, { what: "the check posted" });
@@ -1878,7 +1913,7 @@ export async function chatNavigationScenarios(env) {
       await input.waitFor();
       await page.waitForLoadState("networkidle");
 
-      // 1. The note edit waits on its card; "Allow in this chat" runs it.
+      // 1. The note edit waits on its card; "Keep, and allow in this chat" (Keep's menu) runs it.
       const first = await send("Add the key result to my notes", 1);
       assertEq(first.permissions.block_edit, "ask", "a note edit asks by default");
       assertEq(first.permissions.read, "allow");
@@ -1894,8 +1929,9 @@ export async function chatNavigationScenarios(env) {
         await card.screenshot({ path: `${server.dir}/approval-card.png`, animations: "disabled" });
         await page.locator(".chatPanel").screenshot({ path: `${server.dir}/approval-panel.png`, animations: "disabled" });
       }
-      await card.getByRole("button", { name: "Allow in this chat", exact: true }).click();
-      await card.getByText("Allowed. Gamma AI goes on…").waitFor();
+      await card.getByRole("button", { name: "More ways to keep it" }).click();
+      await page.getByRole("menuitem", { name: "Keep, and allow in this chat" }).click();
+      await card.getByText("Kept. Gamma AI goes on…").waitFor();
       await page.locator(".chatSteps").getByText("Appending to a note…").waitFor();
       assertEq(JSON.stringify(await answers()), JSON.stringify([{ id: "a1", decision: "chat" }]));
       await push(edited("chat"));
@@ -1951,14 +1987,15 @@ export async function chatNavigationScenarios(env) {
       assertEq(await page.locator(".chatStepsFailed").count(), 0, "a declined call is not a failure");
       if (flags.keep) await page.locator(".chatPanel").screenshot({ path: `${server.dir}/approval-declined.png`, animations: "disabled" });
 
-      // 3. Asking again for the chat, then "Always allow" sets it in Settings.
+      // 3. Asking again for the chat, then "Keep, and always allow" sets it in Settings.
       await chip.click();
       await until(async () => !(await chip.count()), { what: "the chip goes once the chat asks again" });
       const third = await send("Add one more line", 3);
       assertEq(JSON.stringify(third.granted), "[]");
       await push({ step: { id: "c-a3", tool: "edit_block", args: edit } });
       await push({ approval: editCard("a3") });
-      await card.getByRole("button", { name: "Always allow", exact: true }).click();
+      await card.getByRole("button", { name: "More ways to keep it" }).click();
+      await page.getByRole("menuitem", { name: "Keep, and always allow" }).click();
       await until(async () => (await alice.api("/api/prefs/profile")).value?.agentPerms?.notes?.block_edit === "allow",
         { what: "Always allow sets the notes chat's note editing to Allow" });
       assertEq(JSON.stringify((await answers()).map((a) => a.decision)), JSON.stringify(["chat", "deny", "always"]));
@@ -1983,10 +2020,23 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
-  await step("chat navigation: the AI's note edits show in their notes as tracked changes — one waiting on its card answered there with the card's answers, one that ran without asking a record to hide or revert", async () => {
+  await step("chat navigation: an agent's note changes show in their notes as a diff — asked ones before they are made, answered there as on the card; kept ones fold to a mark that unfolds, as their row in the chat does", async () => {
     const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Tracked page" } });
     const one = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "The cavity has a Q of 1e6." } });
     const two = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "Energy $E = mc$ here.", before: one.position } });
+    const three = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "A third note to tidy.", before: two.position } });
+    // An assistant over MCP that edits without asking: each change it makes is journaled for alice's review.
+    const token = await alice.api("/api/integrations/tokens", { method: "POST", body: { name: "Codex" } });
+    await alice.api(`/api/integrations/tokens/${token.id}`, { method: "PATCH",
+      body: { workspaces: [alice.ws], edit_workspaces: [alice.ws], asks: false } });
+    const mcp = async (name, args) => {
+      const response = await fetch(`${server.base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${token.token}`,
+        "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) });
+      const { result } = await response.json();
+      assert(result && !result.isError, `${name}: ${JSON.stringify(result)}`);
+      return result.structuredContent;
+    };
     // The guide's hint on the first AI change drawn in a note (docs/dev/onboarding.md): every other guide settled, so it is the load's one offer.
     const { value: profile } = await alice.api("/api/prefs/profile");
     const settled = Object.fromEntries(Object.values(TOURS).filter((t) => t.id !== "note-review").map((t) => [t.id, { state: "dismissed", version: t.version }]));
@@ -2022,14 +2072,8 @@ export async function chatNavigationScenarios(env) {
     const push = (event) => page.evaluate((e) => window.chatStream.push(e), event);
     const input = page.getByRole("combobox", { name: "Message AI" });
     const row = (block) => page.locator(`.blockRowWrap[data-block-id="${block.id}"]`);
+    const strip = page.locator(".pageReviewStrip");
     const noteText = (block) => alice.api(`/api/blocks/${block.id}`).then((b) => b.content);
-    // What the agent's edit_block call wrote, and the action it reported.
-    const edited = async (block, before, after, extra = {}) => {
-      await alice.api(`/api/blocks/${block.id}`, { method: "PUT", body: { content: after } });
-      return { action: { kind: "edit", tool: "edit_block", mode: "replace", page_id: notesPage.id, block_id: block.id,
-        title: "Tracked page", summary: "Edited a note in “Tracked page”", args: { block_id: block.id },
-        result: `ok — block [${block.id}] updated`, revert: { before, after }, ...extra } };
-    };
     const send = async (text, n) => {
       await input.fill(text);
       await input.press("Enter");
@@ -2042,58 +2086,84 @@ export async function chatNavigationScenarios(env) {
     try {
       await input.waitFor();
       await page.waitForLoadState("networkidle");
-      await send("Tighten both notes", 1);
 
-      // 1. An edit that ran without asking: struck out where the old words stood, the new ones tinted, the formula set whole.
-      await push(await edited(one, "The cavity has a Q of 1e6.", "The cavity had a Q of 1e6."));
+      // 1. Made while the page is open: the server's word draws it at once, by the agent's name, struck where
+      //    the old words stood, the new ones tinted, the formula set whole; the page's strip counts them.
+      await mcp("edit_block", { block_id: one.id, mode: "patch", find: "has", content: "had" });
       await row(one).locator(".mdDiffView del.mdDiff", { hasText: "has" }).waitFor();
       assertEq(await row(one).locator(".mdDiffView ins.mdDiff").innerText(), "had");
-      await row(one).locator(".noteReviewBar", { hasText: "Edited by AI" }).waitFor();
+      await row(one).locator(".noteReviewBar", { hasText: "Edited by Codex" }).waitFor();
+      assertEq(await row(one).locator(".blockRow.aiReview-open.aiReview-edit").count(), 1, "the note's gutter is marked");
       await page.waitForSelector('[data-guide-offer="note-review"] .guideCard');
       assertEq(await row(one).locator('[data-guide="notes.review"][data-guide-active]').count(), 1, "the hint points at the note's bar");
       await page.getByRole("button", { name: "Got it", exact: true }).click();
       assertEq(await guideProgress(page, "alice", "note-review"), "done");
-      await push(await edited(two, "Energy $E = mc$ here.", "Energy $E = mc^2$ here."));
+      await mcp("edit_block", { block_id: two.id, mode: "patch", find: "mc$", content: "mc^2$" });
       await row(two).locator(".mdDiffView del.mdDiff .katex").waitFor();
       await row(two).locator(".mdDiffView ins.mdDiff .katex").waitFor();
       assertEq(await row(two).locator(".katex-error").count(), 0, "both formulas set");
+      await strip.filter({ hasText: "2 AI changes to review" }).waitFor();
       if (flags.keep) await page.locator(".blockList").screenshot({ path: `${server.dir}/tracked-changes.png`, animations: "disabled" });
-      // A record, nothing waits on it: no Keep. Two changes on the page: each bar offers Hide all.
-      // Revert waits for the reply, as its row does.
-      assertEq(await row(one).getByRole("button", { name: "Keep", exact: true }).count(), 0, "nothing to approve");
-      assertEq(await row(one).getByRole("button", { name: "Hide all", exact: true }).count(), 1);
-      assert(await row(two).getByRole("button", { name: "Revert", exact: true }).isDisabled(), "no revert while the reply streams");
-      await finish("Tightened both.");
-      await until(() => row(two).getByRole("button", { name: "Revert", exact: true }).isEnabled(), { what: "Revert once the reply ended" });
+      // ›  steps to the changes in the page's order.
+      await strip.getByRole("button", { name: "Next change" }).click();
+      await strip.getByText("1 of 2").waitFor();
+      await strip.getByRole("button", { name: "Next change" }).click();
+      await strip.getByText("2 of 2").waitFor();
 
-      // 2. Hide: the note shows its text as it is now.
-      await row(one).getByRole("button", { name: "Hide", exact: true }).click();
-      await until(async () => !(await row(one).locator(".mdDiffView").count()), { what: "a hidden change no longer shows" });
+      // 2. Keep: the diff folds to a mark at the note's edge, the text stays; the mark unfolds it again, with
+      //    Undo and Fold. A reload draws what waits and what is marked, as the journal holds both.
+      await row(one).getByRole("button", { name: "Keep", exact: true }).click();
+      await until(async () => !(await row(one).locator(".mdDiffView, .noteReviewBar").count()), { what: "a kept change folds" });
       assertEq((await row(one).locator(".blockRendered").innerText()).trim(), "The cavity had a Q of 1e6.");
-      assertEq(await row(two).getByRole("button", { name: "Hide all", exact: true }).count(), 0, "one change left: no Hide all");
-      // Its link in the chat draws it again, and opens it.
-      const changeRows = page.locator(".chatChanges", { hasText: "Changed in your notes" }).locator(".chatChange");
-      await changeRows.nth(0).locator(".chatChangeLink").click();
+      const mark = row(one).locator(".aiChangeMark");
+      await mark.waitFor();
+      await strip.filter({ hasText: "1 AI change to review" }).waitFor();
+      await mark.click();
       await row(one).locator(".mdDiffView del.mdDiff", { hasText: "has" }).waitFor();
-      await row(one).getByRole("button", { name: "Hide", exact: true }).click();
-      await until(async () => !(await row(one).locator(".mdDiffView").count()), { what: "hidden again" });
+      const unfolded = row(one).locator(".noteReviewBar", { hasText: "Edited by Codex" });
+      assertEq(JSON.stringify(await unfolded.getByRole("button").allInnerTexts()), JSON.stringify(["Undo", "Fold"]), "a kept change's bar");
+      if (flags.keep) await page.locator(".blockList").screenshot({ path: `${server.dir}/kept-unfolded.png`, animations: "disabled" });
+      await unfolded.getByRole("button", { name: "Fold", exact: true }).click();
+      await until(async () => !(await row(one).locator(".mdDiffView").count()), { what: "folded again" });
+      await page.reload();
+      await row(two).locator(".mdDiffView ins.mdDiff .katex").waitFor();
+      await row(one).locator(".aiChangeMark").waitFor();
+      assertEq(await row(one).locator(".mdDiffView").count(), 0, "the kept change stays folded");
+      if (flags.keep) await page.locator(".blockList").screenshot({ path: `${server.dir}/kept-mark.png`, animations: "disabled" });
 
-      // 3. Revert: taken back on the server like the reply's row, which shows it reverted.
-      await row(two).getByRole("button", { name: "Revert", exact: true }).click();
-      await until(async () => (await noteText(two)) === "Energy $E = mc$ here.", { what: "the edit is reverted" });
-      await until(async () => !(await row(two).locator(".mdDiffView, .noteReviewBar").count()), { what: "a reverted change no longer shows" });
-      const changes = page.locator(".chatChanges", { hasText: "Changed in your notes" });
-      await changes.locator(".chatChange.reverted").waitFor();
-      assertEq(await changes.locator(".chatChange.reverted").count(), 1, "only the reverted one is marked");
-      const marked = await until(async () => {
-        const chat = await alice.api(`/api/chats/${notesPage.id}`);
-        const marks = chat.messages.find((m) => m.role === "ai")?.actions?.map((a) => !!a.reverted) || [];
-        return JSON.stringify(marks) === JSON.stringify([false, true]) && marks;
-      }, { what: "the revert from the note is saved on its action, as a row's is" });
-      assert(marked, "saved");
+      // 3. Undo: taken back on the server. With nothing left to review the strip counts the marks, and Clear
+      //    marks takes them away; the change stays.
+      await row(two).getByRole("button", { name: "Undo", exact: true }).click();
+      await until(async () => (await noteText(two)) === "Energy $E = mc$ here.", { what: "the edit is undone" });
+      await until(async () => !(await row(two).locator(".mdDiffView, .noteReviewBar").count()), { what: "an undone change no longer shows" });
+      await strip.filter({ hasText: "1 AI change marked" }).getByRole("button", { name: "Clear marks" }).click();
+      await until(async () => !(await strip.count()) && !(await row(one).locator(".aiChangeMark").count()), { what: "the marks cleared" });
+      assertEq(await noteText(one), "The cavity had a Q of 1e6.", "clearing a mark keeps the change");
 
-      // 4. An edit waiting on its card: drawn in its note against what it says now, answered there with the
-      //    card's four answers; Allow in this chat is the card's, and is not asked about again.
+      // 4. The reply's row and the note's bar are one decision: kept in the note, the row says Kept; undone
+      //    from the row, the note goes back.
+      const made = await mcp("edit_block", { block_id: three.id, mode: "patch", find: "to tidy", content: "tidied" });
+      await row(three).locator(".noteReviewBar", { hasText: "Edited by Codex" }).waitFor();
+      await send("Tidy the third note", 1);
+      await push({ action: { kind: "edit", tool: "edit_block", mode: "patch", page_id: notesPage.id, block_id: three.id,
+        title: "Tracked page", summary: "Edited a note in “Tracked page”", args: { block_id: three.id }, result: "ok",
+        change_id: made.change_id, revert: { before: "A third note to tidy.", after: "A third note tidied." } } });
+      await finish("Tidied it.");
+      const changeRow = page.locator(".chatChanges", { hasText: "Changed in your notes" }).locator(".chatChange");
+      await changeRow.getByRole("button", { name: "Keep this change" }).waitFor();
+      await row(three).getByRole("button", { name: "Keep", exact: true }).click();
+      await changeRow.filter({ hasText: "Kept" }).waitFor();
+      assertEq(await changeRow.getByRole("button", { name: "Keep this change" }).count(), 0, "kept: nothing left to keep");
+      await row(three).locator(".aiChangeMark").waitFor();
+      // the row's link unfolds the change in its note, as the mark does
+      await changeRow.locator(".chatChangeLink").click();
+      await row(three).locator(".mdDiffView ins.mdDiff", { hasText: "tidied" }).waitFor();
+      await changeRow.getByRole("button", { name: "Undo this change" }).click();
+      await changeRow.filter({ hasText: "Undone" }).waitFor();
+      await until(async () => (await noteText(three)) === "A third note to tidy.", { what: "the row's undo reaches the note" });
+
+      // 5. An edit waiting on its card: drawn in its note against what it says now, with a dashed gutter, and
+      //    answered there with the card's answers, Keep and its grants; Keep, and allow in this chat is the card's.
       await send("Round the Q up", 2);
       await push({ step: { id: "c-t1", tool: "edit_block", args: { block_id: one.id, mode: "patch" } } });
       await push({ approval: { id: "t1", call_id: "c-t1", tool: "edit_block", perm: "block_edit", timeout: 600,
@@ -2104,21 +2174,53 @@ export async function chatNavigationScenarios(env) {
       await card.waitFor();
       await row(one).locator(".mdDiffView ins.mdDiff", { hasText: "2e6." }).waitFor();
       assertEq(await row(one).locator(".mdDiffView del.mdDiff").innerText(), "1e6.");
-      const asking = row(one).locator(".noteReviewBar", { hasText: "Waiting for your approval" });
-      assertEq(JSON.stringify(await asking.getByRole("button").allInnerTexts()),
-        JSON.stringify(["Allow once", "Allow in this chat", "Always allow", "Don't allow"]), "the card's answers");
-      await asking.getByRole("button", { name: "Allow in this chat", exact: true }).click();
-      await card.getByText("Allowed. Gamma AI goes on…").waitFor();
+      assertEq(await row(one).locator(".blockRow.aiReview-ask").count(), 1, "a dashed gutter: not written yet");
+      const asking = row(one).locator(".noteReviewBar", { hasText: "Gamma AI wants to make this change" });
+      assertEq(JSON.stringify(await asking.getByRole("button").evaluateAll((list) => list.map((b) => b.getAttribute("aria-label") || b.innerText.trim()))),
+        JSON.stringify(["Keep", "More ways to keep it", "Undo"]), "the card's answers");
+      assertEq(JSON.stringify(await card.getByRole("button").evaluateAll((list) => list.map((b) => b.getAttribute("aria-label") || b.innerText.trim()))),
+        JSON.stringify(["Show", "Keep", "More ways to keep it", "Undo"]), "the card says the same, and shows where");
+      await asking.getByRole("button", { name: "More ways to keep it" }).click();
+      await page.getByRole("menuitem", { name: "Keep, and allow in this chat" }).click();
+      await card.getByText("Kept. Gamma AI goes on…").waitFor();
       assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "t1", decision: "chat" }]));
       await until(async () => !(await row(one).locator(".noteReviewBar").count()), { what: "the answered card leaves its note" });
-      // Allowed after the user saw it: when it lands it is not marked again.
-      await push(await edited(one, "The cavity had a Q of 1e6.", "The cavity had a Q of 2e6.", { mode: "patch", approval: "chat" }));
-      await until(async () => (await row(one).locator(".blockRendered").innerText()).trim() === "The cavity had a Q of 2e6.",
-        { what: "the allowed edit lands" });
-      assertEq(await row(one).locator(".mdDiffView").count(), 0, "an edit allowed on its card is not shown again");
-      // The chat's later edits run without a card: each lands as a record.
-      await push(await edited(two, "Energy $E = mc$ here.", "Energy $E = mc^2$ here."));
-      await row(two).locator(".noteReviewBar", { hasText: "Edited by AI" }).getByRole("button", { name: "Hide", exact: true }).waitFor();
+      // Kept on its card, the change lands folded to its mark: no review left, the diff a press away.
+      await alice.api(`/api/blocks/${one.id}`, { method: "PUT", body: { content: "The cavity had a Q of 2e6." } });
+      await push({ action: { kind: "edit", tool: "edit_block", mode: "patch", page_id: notesPage.id, block_id: one.id,
+        title: "Tracked page", summary: "Edited part of a note in “Tracked page”", args: { block_id: one.id }, result: "ok",
+        approval: "chat", change_id: "t1-change", revert: { before: "The cavity had a Q of 1e6.", after: "The cavity had a Q of 2e6." } } });
+      await row(one).locator(".aiChangeMark").waitFor();
+      assertEq(await row(one).locator(".mdDiffView").count(), 0, "kept on its card: folded");
+      await row(one).locator(".aiChangeMark").click();
+      await row(one).locator(".mdDiffView ins.mdDiff", { hasText: "2e6." }).waitFor();
+      await row(one).getByRole("button", { name: "Fold", exact: true }).click();
+
+      // 6. A new note and a deletion asked for: the new one a ghost row where it would go, the other struck
+      //    out, each with the card's answers; Undo on the ghost row is the card's.
+      await push({ approval: { id: "t2", call_id: "c-t2", tool: "create_block", perm: "block_edit", timeout: 600, args: {},
+        preview: { page_id: notesPage.id, title: "Tracked page", parent_id: notesPage.id, after_id: two.id, text: "A summary line.",
+          count: 1, after: "Energy", diff: [["ins", "A summary line."]] } } });
+      const ghostRow = page.locator(".aiAskGhostWrap", { hasText: "A summary line." });
+      await ghostRow.waitFor();
+      assertEq(await ghostRow.evaluate((el) => el.previousElementSibling?.getAttribute("data-block-id")), two.id, "where it would go");
+      await ghostRow.getByText("Gamma AI wants to add this note").waitFor();
+      if (flags.keep) await page.locator(".blockList").screenshot({ path: `${server.dir}/ask-ghost.png`, animations: "disabled" });
+      await ghostRow.getByRole("button", { name: "Undo", exact: true }).click();
+      await ghostRow.getByRole("textbox").press("Enter");
+      await page.locator(".chatApproval").last().getByText("Undone. Gamma AI goes on without it…").waitFor();
+      await until(async () => !(await ghostRow.count()), { what: "the answered ghost row goes" });
+      await push({ approval: { id: "t3", call_id: "c-t3", tool: "delete_block", perm: "block_edit", timeout: 600, args: {},
+        preview: { page_id: notesPage.id, title: "Tracked page", block_id: three.id, what: "note", children: 0,
+          diff: [["del", "A third note to tidy."]] } } });
+      await row(three).locator(".blockRow.aiReview-ask.aiReview-delete").waitFor();
+      await row(three).locator(".noteReviewBar", { hasText: "Gamma AI wants to delete this note" }).waitFor();
+      const deleting = page.locator(".chatApproval").last();
+      await deleting.getByRole("button", { name: "Undo", exact: true }).click();
+      await deleting.getByRole("textbox").press("Enter");
+      await until(async () => !(await row(three).locator(".noteReviewBar").count()), { what: "the card's answer leaves the note" });
+      assertEq(JSON.stringify((await page.evaluate(() => window.approvalAnswers)).map((a) => a.decision)),
+        JSON.stringify(["chat", "deny", "deny"]));
       await finish("Rounded it.");
       await page.getByRole("button", { name: "Allowed in this chat: Edit note blocks. Ask again", exact: true }).waitFor();
       assertNoProblems(page);
@@ -2126,6 +2228,95 @@ export async function chatNavigationScenarios(env) {
       await ctx.close();
       await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api(`/api/chats/${notesPage.id}`, { method: "PUT", body: { messages: [] } });
+      await alice.api(`/api/integrations/tokens/${token.id}`, { method: "DELETE" });
+    }
+  });
+
+  await step("chat navigation: a highlight asked for is drawn on its PDF page while its card waits, kept there as on the card, and marked on its page once kept", async () => {
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatBodies = [];
+      window.approvalAnswers = [];
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/api/ai/chat")) {
+          window.chatBodies.push(JSON.parse(init.body));
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        if (url.includes("/api/ai/approvals/")) {
+          window.approvalAnswers.push({ id: decodeURIComponent(url.split("/").pop()), ...JSON.parse(init.body) });
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${pdf.id}`);
+    const input = page.getByRole("combobox", { name: "Message AI" });
+    try {
+      await page.locator('[data-page="1"] .textLayer span').first().waitFor();
+      await input.fill("Highlight the title");
+      await input.press("Enter");
+      await until(() => page.evaluate(() => !!window.chatStream), { what: "the message is sent" });
+      const { width, height } = await page.locator('.pdfPageWrap[data-page="1"]').evaluate((el) => ({
+        width: Number(el.getAttribute("data-pt-width")) || 612, height: 792 }));
+      await page.evaluate((e) => window.chatStream.push(e), { step: { id: "c-p1", tool: "highlight", args: { pdf_page: 1 } } });
+      await page.evaluate((e) => window.chatStream.push(e), { approval: { id: "p1", call_id: "c-p1", tool: "highlight", perm: "comment",
+        timeout: 600, args: { quote: "Chat navigation paper", pdf_page: 1 },
+        preview: { page_id: pdf.id, title: "Chat navigation paper", pdf_page: 1, place: { kind: "passage", page: 1, quote: "Chat navigation paper" },
+          shape: { kind: "highlight", frame: [width, height], rects: [[72, 90, 260, 106]], color: "#aaebaaa6", style: "highlight" } } } });
+      // drawn on its page, faded in a dashed frame, with the card's answers under it
+      const layer = page.locator('.pdfPageWrap[data-page="1"] .reviewLayer');
+      await layer.locator(".reviewFrame").waitFor();
+      assertEq(await layer.locator(".reviewShape rect").getAttribute("fill"), "#aaebaaa6", "the highlight's wash, in the colour it will store");
+      const tag = layer.locator(".reviewTag", { hasText: "Gamma AI wants to highlight this" });
+      await tag.waitFor();
+      if (flags.keep) await page.locator('.pdfPageWrap[data-page="1"]').screenshot({ path: `${server.dir}/ask-highlight.png`, animations: "disabled" });
+      const card = page.locator(".chatApproval");
+      await card.getByRole("button", { name: "Show", exact: true }).waitFor(); // the card, with where its change is drawn
+      // With the pen armed, a press on the page's bar or mark is the bar's or the mark's, never a stroke.
+      const strokes = () => page.locator('.pdfPageWrap[data-page="1"] .inkLayer path').count();
+      await page.click("button[aria-label='Handwriting tools']");
+      await page.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");
+      await tag.getByRole("button", { name: "Keep", exact: true }).click();
+      await card.getByText("Kept. Gamma AI goes on…").waitFor();
+      assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "p1", decision: "once" }]));
+      await until(async () => !(await layer.locator(".reviewFrame").count()), { what: "the answered card leaves its page" });
+      // Kept on its card, the highlight lands marked on its page, as a note's change at its row's edge: the mark
+      // unfolds it, framed, with Undo and Fold, and Fold folds it back.
+      const rect = { x1: 72, y1: 90, x2: 260, y2: 106 };
+      await page.evaluate((e) => window.chatStream.push(e), { action: { kind: "highlight", tool: "highlight", page_id: pdf.id,
+        block_id: "hl-made", title: "Chat navigation paper", summary: "Highlighted a passage in “Chat navigation paper”",
+        args: { pdf_page: 1 }, result: "ok", approval: "once", change_id: "hl-change",
+        revert: { after: "", parent: pdf.id, position: "a0", props: { quote: "Chat navigation paper",
+          pdf_position: { pageNumber: 1, width, height, boundingRect: rect, rects: [rect] } } } } });
+      const objectMark = layer.locator(".aiChangeMark"); // the notes' own mark
+      await objectMark.waitFor();
+      await objectMark.click();
+      await layer.locator(".reviewObjectFrame").waitFor();
+      if (flags.keep) await page.locator('.pdfPageWrap[data-page="1"]').screenshot({ path: `${server.dir}/kept-highlight.png`, animations: "disabled" });
+      await layer.locator(".reviewTag", { hasText: "Added by Gamma AI" }).getByRole("button", { name: "Fold", exact: true }).click();
+      await until(async () => !(await layer.locator(".reviewObjectFrame").count()) && (await objectMark.count()) === 1,
+        { what: "folded back to its mark" });
+      await page.waitForTimeout(300); // (a stroke would be saved by now)
+      assertEq(await strokes(), 0, "the presses on the bar and the mark drew nothing");
+      await page.click("button[aria-label='Handwriting tools']");
+      await page.evaluate(() => { window.chatStream.push({ delta: "Highlighted." }); window.chatStream.finish(); });
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
     }
   });
 
@@ -2186,30 +2377,30 @@ export async function chatNavigationScenarios(env) {
       const changes = page.locator(".chatChanges", { hasText: "Changed in your notes · 2" });
       await changes.waitFor();
       await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
-      assertEq(await changes.getByRole("button", { name: "Revert…" }).count(), 1, "two changes offer Revert…");
+      assertEq(await changes.getByRole("button", { name: "Undo…" }).count(), 1, "two changes offer Undo…");
       const rows = changes.locator(".chatChange");
       // A change nobody touched since goes back at once, on the open page too.
-      await rows.nth(0).getByRole("button", { name: "Revert this change" }).click();
-      await rows.nth(0).filter({ hasText: "Reverted" }).waitFor();
+      await rows.nth(0).getByRole("button", { name: "Undo this change" }).click();
+      await rows.nth(0).filter({ hasText: "Undone" }).waitFor();
       assertEq(await noteText(one.id), "First draft");
       await page.locator(".blockRow", { hasText: "First draft" }).filter({ hasNotText: "improved" }).waitFor();
-      assertEq(await changes.getByRole("button", { name: "Revert…" }).count(), 0, "one change left: no Revert…");
+      assertEq(await changes.getByRole("button", { name: "Undo…" }).count(), 0, "one change left: no Undo…");
       // A reverted change redoes from the same row, and reverts again.
       await rows.nth(0).getByRole("button", { name: "Redo this change" }).click();
-      await rows.nth(0).getByRole("button", { name: "Revert this change" }).waitFor();
-      assertEq(await rows.nth(0).filter({ hasText: "Reverted" }).count(), 0, "a redone change is not marked");
+      await rows.nth(0).getByRole("button", { name: "Undo this change" }).waitFor();
+      assertEq(await rows.nth(0).filter({ hasText: "Undone" }).count(), 0, "a redone change is not marked");
       assertEq(await noteText(one.id), "First draft, improved by AI");
       await page.locator(".blockRow", { hasText: "First draft, improved by AI" }).waitFor();
-      await rows.nth(0).getByRole("button", { name: "Revert this change" }).click();
+      await rows.nth(0).getByRole("button", { name: "Undo this change" }).click();
       await rows.nth(0).getByRole("button", { name: "Redo this change" }).waitFor();
       assertEq(await noteText(one.id), "First draft");
       // One the user changed since asks first and shows what forcing it does.
-      await rows.nth(1).getByRole("button", { name: "Revert this change" }).click();
+      await rows.nth(1).getByRole("button", { name: "Undo this change" }).click();
       const ask = changes.locator(".chatRevertAsk");
       await ask.filter({ hasText: "The note was changed since." }).waitFor();
       assert((await ask.locator("del").innerText()).includes("improved by me"), "the diff shows the user's words going");      assertEq(await noteText(two.id), "Second draft, improved by me", "nothing is written before the user decides");
-      await ask.getByRole("button", { name: "Revert anyway" }).click();
-      await rows.nth(1).filter({ hasText: "Reverted" }).waitFor();
+      await ask.getByRole("button", { name: "Undo anyway" }).click();
+      await rows.nth(1).filter({ hasText: "Undone" }).waitFor();
       assertEq(await ask.count(), 0);
       assertEq(await noteText(two.id), "Second draft");
       // The conversation keeps the marks, and the next request tells the model.
@@ -2232,7 +2423,7 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
-  await step("chat navigation: deleting a folder asks by default with every answer, Allow once in red, and its row puts the folder back with its pages filed", async () => {
+  await step("chat navigation: deleting a folder asks by default with every answer, Keep in red, and its row puts the folder back with its pages filed", async () => {
     const name = "E2E doomed folder";
     const folder = await alice.folder(name);
     const filed = await alice.api("/api/pages", { method: "POST", body: { title: "Doomed folder page" } });
@@ -2296,7 +2487,7 @@ export async function chatNavigationScenarios(env) {
       assertEq(sent.permissions.organize_delete, "ask", "deleting folders asks by default");
       assertEq(sent.permissions.organize, "ask");
 
-      // The card: the four answers, Allow once in red.
+      // The card: Keep in red, its grants in the menu beside it, and Undo.
       await push({ step: { id: "c-d1", tool: "delete_folder", args } });
       await push({ approval: { id: "d1", call_id: "c-d1", tool: "delete_folder", perm: "organize_delete", args, timeout: 600,
         preview: { title: name, diff: [["del", name]], subfolders: [], subfolder_count: 0, pages: ["Doomed folder page"],
@@ -2305,14 +2496,13 @@ export async function chatNavigationScenarios(env) {
       assert((await card.innerText()).includes("Approval needed · Delete folders and labels"), "the card names the permission");
       assertEq(await card.locator(".chatApprovalNote").innerText(), "1 page leaves it and stays in your library: Doomed folder page");
       assertEq((await card.locator("del").innerText()).trim(), name);
-      assertEq(await card.getByRole("button", { name: "Allow in this chat", exact: true }).count(), 1);
-      assertEq(await card.getByRole("button", { name: "Always allow", exact: true }).count(), 1);
-      assertEq(await card.getByRole("button", { name: "Don't allow", exact: true }).count(), 1);
-      const once = card.getByRole("button", { name: "Allow once", exact: true });
-      assert((await once.getAttribute("class")).split(" ").includes("danger"), "Allow once is the red button of a deletion");
+      assertEq(await card.getByRole("button", { name: "More ways to keep it" }).count(), 1);
+      assertEq(await card.getByRole("button", { name: "Undo", exact: true }).count(), 1);
+      const once = card.getByRole("button", { name: "Keep", exact: true });
+      assert((await once.getAttribute("class")).split(" ").includes("danger"), "Keep is the red button of a deletion");
       if (flags.keep) await card.screenshot({ path: `${server.dir}/approval-delete-folder.png`, animations: "disabled" });
       await once.click();
-      await card.getByText("Allowed. Gamma AI goes on…").waitFor();
+      await card.getByText("Kept. Gamma AI goes on…").waitFor();
       await page.locator(".chatSteps").getByText(`Deleting the folder ${name}…`).waitFor();
       assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "d1", decision: "once" }]));
 
@@ -2332,12 +2522,12 @@ export async function chatNavigationScenarios(env) {
       await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
       const row = changes.locator(".chatChange");
       assertEq(await row.locator(".chatChangeText").innerText(), `Deleted the folder ${name}; its 1 page stays in your library`);
-      assertEq(await page.getByRole("button", { name: "Revert…" }).count(), 0, "one change: its row's button, no dialog");
+      assertEq(await page.getByRole("button", { name: "Undo…" }).count(), 0, "one change: its row's button, no dialog");
       await until(async () => !(await listed.count()), { what: "the reply's change reloads the listing" });
 
-      // Revert puts the folder back under its id and files its page again; redo deletes it again.
-      await row.getByRole("button", { name: "Revert this change" }).click();
-      await row.filter({ hasText: "Reverted" }).waitFor();
+      // Undo puts the folder back under its id and files its page again; redo deletes it again.
+      await row.getByRole("button", { name: "Undo this change" }).click();
+      await row.filter({ hasText: "Undone" }).waitFor();
       const back = await alice.api(`/api/blocks/${folder}`);
       assertEq(JSON.stringify([back.content, back.page_id, back.parent_id, back.position]),
         JSON.stringify([name, "folders", "folders", position]));
@@ -2345,8 +2535,8 @@ export async function chatNavigationScenarios(env) {
       await listed.first().waitFor(); // the library listing reads it again
       await savedAs(true);
       await row.getByRole("button", { name: "Redo this change" }).click();
-      await row.getByRole("button", { name: "Revert this change" }).waitFor();
-      assertEq(await row.filter({ hasText: "Reverted" }).count(), 0, "a redone change is not marked");
+      await row.getByRole("button", { name: "Undo this change" }).waitFor();
+      assertEq(await row.filter({ hasText: "Undone" }).count(), 0, "a redone change is not marked");
       assert(await gone(), "the redo deletes the folder again");
       assertEq((await filedIn()).length, 0, "and takes it off its page");
       await until(async () => !(await listed.count()), { what: "the listing loses the folder again" });
@@ -2360,7 +2550,7 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
-  await step("chat navigation: Revert… takes back the ticked changes of several replies, newest first, library and notes alike, and stops at one that asks", async () => {
+  await step("chat navigation: Undo… takes back the ticked changes of several replies, newest first, library and notes alike, and stops at one that asks", async () => {
     const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Dialog page" } });
     const note = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "Dialog draft" } });
     const renamed = await alice.api("/api/pages", { method: "POST", body: { title: "Dialog before" } });
@@ -2391,9 +2581,9 @@ export async function chatNavigationScenarios(env) {
     try {
       const latest = page.locator(".chatChanges", { hasText: "Moved Dialog doomed to Recently deleted" });
       await latest.waitFor();
-      assertEq(await page.getByRole("button", { name: "Revert…" }).count(), 2, "each reply with a change offers it");
-      await latest.getByRole("button", { name: "Revert…" }).click();
-      const dialog = page.getByRole("dialog", { name: "Revert the AI's changes" });
+      assertEq(await page.getByRole("button", { name: "Undo…" }).count(), 2, "each reply with a change offers it");
+      await latest.getByRole("button", { name: "Undo…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Undo the AI's changes" });
       await dialog.waitFor();
       const boxes = dialog.locator(".revertDialogRow input[type=checkbox]");
       assertEq(await boxes.count(), 3, "every change of the conversation is listed");
@@ -2403,16 +2593,16 @@ export async function chatNavigationScenarios(env) {
         "the changes are grouped under the message that asked for them");
       if (flags.keep) await dialog.screenshot({ path: `${server.dir}/revert-dialog.png`, animations: "disabled" });
       await dialog.getByLabel("Select all").check();
-      await dialog.getByRole("button", { name: "Revert 3 changes" }).click();
+      await dialog.getByRole("button", { name: "Undo 3 changes" }).click();
       // The page deletion goes back first; the note the user rewrote stops the run and asks.
       const ask = dialog.locator(".chatRevertAsk", { hasText: "The note was changed since." });
       await ask.waitFor();
       assertEq((await alice.api(`/api/blocks/${doomed.id}`)).content, "Dialog doomed", "the deleted page is back");
       assertEq(await title(renamed.id), "Dialog after", "the run stopped before the older change");
-      assertEq(await ask.getByRole("button", { name: "Revert anyway" }).count(), 1);
+      assertEq(await ask.getByRole("button", { name: "Undo anyway" }).count(), 1);
       await ask.getByRole("button", { name: "Skip it" }).click();
-      await dialog.getByRole("button", { name: "Revert 1 change" }).click();
-      await dialog.getByText("2 changes reverted").waitFor();
+      await dialog.getByRole("button", { name: "Undo 1 change" }).click();
+      await dialog.getByText("2 changes undone").waitFor();
       assertEq(await title(renamed.id), "Dialog before");
       assertEq(await title(note.id), "Dialog draft, improved by me", "the skipped note keeps the user's words");
       const saved = await until(async () => {
@@ -2502,12 +2692,12 @@ export async function chatNavigationScenarios(env) {
       assertEq(await card.locator(".chatApprovalNote").innerText(), "1 page is left out: zzz");
       assertEq((await card.locator(".chatApprovalDiff").innerText()).split("\n").length, 3, "one line per page");
       assertEq(JSON.stringify(await card.locator(".chatApprovalDiff del").allInnerTexts()), JSON.stringify(names));
-      for (const name of ["Allow once", "Allow in this chat", "Always allow", "Don't allow"]) {
+      for (const name of ["Keep", "More ways to keep it", "Undo"]) {
         assertEq(await card.getByRole("button", { name, exact: true }).count(), 1, `the card offers ${name}`);
       }
       if (flags.keep) await card.screenshot({ path: `${server.dir}/approval-batch.png`, animations: "disabled" });
-      await card.getByRole("button", { name: "Allow once", exact: true }).click();
-      await card.getByText("Allowed. Gamma AI goes on…").waitFor();
+      await card.getByRole("button", { name: "Keep", exact: true }).click();
+      await card.getByText("Kept. Gamma AI goes on…").waitFor();
       await page.locator(".chatSteps").getByText("Renaming 3 pages…").waitFor();
       assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "b1", decision: "once" }]));
 
@@ -2533,10 +2723,10 @@ export async function chatNavigationScenarios(env) {
         JSON.stringify(["E2E batch one", "E2E batch two", "E2E batch three"]));
       if (flags.keep) await changes.screenshot({ path: `${server.dir}/changes-batch.png`, animations: "disabled" });
 
-      // Page one was renamed by hand since: the revert puts the other two back, leaves it and says so.
+      // Page one was renamed by hand since: the undo puts the other two back, leaves it and says so.
       await rename(one, "E2E batch hand");
-      await row.getByRole("button", { name: "Revert this change" }).click();
-      await row.filter({ hasText: "Reverted" }).waitFor();
+      await row.getByRole("button", { name: "Undo this change" }).click();
+      await row.filter({ hasText: "Undone" }).waitFor();
       const note = changes.locator(".chatRevertAsk");
       await note.filter({ hasText: "1 of these pages changed since, or was deleted, and was left as it is." }).waitFor();
       assertEq(JSON.stringify(await note.getByRole("button").allInnerTexts()), JSON.stringify(["Dismiss"]), "nothing to force");
@@ -2552,10 +2742,10 @@ export async function chatNavigationScenarios(env) {
       await finish();
       await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
 
-      // Redo renames the two again and leaves page one: the Reverted mark goes, and the count stays, now the redo's.
+      // Redo renames the two again and leaves page one: the Undone mark goes, and the count stays, now the redo's.
       await row.getByRole("button", { name: "Redo this change" }).click();
-      await row.getByRole("button", { name: "Revert this change" }).waitFor();
-      assertEq(await row.filter({ hasText: "Reverted" }).count(), 0, "a redone change is not marked");
+      await row.getByRole("button", { name: "Undo this change" }).waitFor();
+      assertEq(await row.filter({ hasText: "Undone" }).count(), 0, "a redone change is not marked");
       await note.filter({ hasText: "1 of these pages changed since, or was deleted, and was left as it is." }).waitFor();
       assertEq(await titles(), JSON.stringify(["E2E batch hand", "E2E batch 2", "E2E batch 3"]));
       await savedAs({ kept: 1 });
@@ -2563,16 +2753,16 @@ export async function chatNavigationScenarios(env) {
       // Every page renamed by hand since: nothing is written, the row says so and stays revertible.
       await rename(two, "E2E batch hand 2");
       await rename(three, "E2E batch hand 3");
-      await row.getByRole("button", { name: "Revert this change" }).click();
+      await row.getByRole("button", { name: "Undo this change" }).click();
       const ask = changes.locator(".chatRevertAsk", { hasText: "These 3 pages changed since, or were deleted, and were left as they are." });
       await ask.waitFor();
       assertEq(JSON.stringify(await ask.getByRole("button").allInnerTexts()), JSON.stringify(["Dismiss"]), "nothing to force");
-      assertEq(await row.filter({ hasText: "Reverted" }).count(), 0, "a revert that wrote nothing is not marked");
+      assertEq(await row.filter({ hasText: "Undone" }).count(), 0, "an undo that wrote nothing is not marked");
       assertEq(await titles(), JSON.stringify(["E2E batch hand", "E2E batch hand 2", "E2E batch hand 3"]));
       await savedAs({ kept: 1 }); // as the redo left it
       await ask.getByRole("button", { name: "Dismiss", exact: true }).click();
-      await until(async () => !(await ask.count()) && row.getByRole("button", { name: "Revert this change" }).isEnabled(),
-        { what: "the row stays revertible once the note is dismissed" });
+      await until(async () => !(await ask.count()) && row.getByRole("button", { name: "Undo this change" }).isEnabled(),
+        { what: "the row can still undo once the note is dismissed" });
       assertNoProblems(page, ["POST /api/ai/revert -> 409"]); // every page kept, answered above
     } finally {
       await ctx.close();

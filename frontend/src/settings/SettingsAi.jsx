@@ -22,7 +22,8 @@ import { accessSummary, modelList, useProviderEditor } from "./providerEditor.js
 import { ProviderForm } from "./ProviderForm.jsx";
 import { signInWords } from "./aiServices.js";
 import { ActivityIcon, BanIcon, CheckIcon, GlobeIcon, KeyIcon, LanguagesIcon, MessageSquareIcon, MicIcon, PaperIcon, PenIcon, PlusIcon, RefreshIcon, StarIcon, Trash2Icon, UserIcon } from "../shared/ui/Icons";
-import { billingLabel, connectionsInUse, taskRow } from "../ai/aiModels.js";
+import { billingLabel } from "../chat/tokenUsage";
+import { connectionsInUse, taskRow } from "../ai/aiModels.js";
 import { ChatModels, TaskModelMenu } from "../ai/ModelMenu.jsx";
 import { ProviderLogo } from "../ai/ProviderLogo.jsx";
 import { T, fmtDate, getLocale, t } from "../shared/i18n/i18n.js";
@@ -54,9 +55,7 @@ export function ProviderUsage({ usage }) {
         const used = Number(window.used_percent) || 0;
         const left = Number(window.remaining_percent) || 0;
         const reset = window.reset_at
-          ? `resets ${new Date(window.reset_at * 1000).toLocaleString([], {
-              month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-            })}`
+          ? t("resets {time}", { time: fmtDate(window.reset_at * 1000, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) })
           : "";
         const label = [usage.plan_type ? `${usage.plan_type}` : "", window.name]
           .filter(Boolean).join(" · ");

@@ -3,10 +3,8 @@
 // missing languages, and the code card's copy button (shared by the editor
 // widget and the rendered view). The fence scanner is fences.js.
 import hljs from "highlight.js/lib/common";
+import { escapeHtml } from "../shared/lib/format.js";
 import { copyText } from "../shared/lib/utils";
-
-const escapeHtml = (s) => s
-  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 // HTML for a code string: hljs token spans when the language is known,
 // escaped plain text otherwise (no auto-detection — wrong guesses look

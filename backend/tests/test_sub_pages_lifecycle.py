@@ -337,8 +337,8 @@ def test_step_48_indexes_what_went_with_a_page(data_dir):
         db.close_workspace_connections("splOld48")
     migrations._v48_deleted_with("", sqlite3.connect(":memory:"), None)  # a copy without the table
     assert (48, "deleted_with", migrations._v48_deleted_with) in migrations.WORKSPACE_STEPS
-    # a derived column: it moves no workspace format (55 is step 55's positions)
-    assert 48 in migrations.DERIVED_STEPS and migrations.workspace_format() == 55
+    # a derived column: it moves no workspace format (72 is step 72's citation fields)
+    assert 48 in migrations.DERIVED_STEPS and migrations.workspace_format() == 72
 
 
 def test_deleting_a_live_page_for_good_takes_its_descendants(owner):

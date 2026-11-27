@@ -1,81 +1,61 @@
 // What an agent reply changed, listed under its steps pill (grouped by
 // chat/agentSteps.js): renamed, filed, saved, deleted or restored pages,
 // renamed, made, applied or deleted folders and labels, and edited, added or
-// moved notes, each with a link to what changed (a note change's link also
-// draws it in its note again, chat/noteReview.js). A note change, pages the
-// agent renamed, moved, labelled, deleted or restored (one or many in one
-// call), and a deleted folder or label have a revert button
-// (chat/aiRevert.js, gamma/ai_revert.py). A revert keeps what anyone wrote
-// since. When the note changed where the agent wrote, was filled in or moved
-// on, the row asks first: it says so, shows what reverting anyway would do
-// as a word diff, and offers to do it. A reverted change stays listed,
-// marked, with a redo button that puts it back the same way (and asks the
-// same way). A call that changed several pages is one row that unfolds to
-// its pages, and reverts them together; pages changed since are left as
-// they are, and a revert that would leave every one says so instead.
-// "Revert…" in the head opens the dialog that takes back several changes at
-// once, this reply's or any of the conversation's (chat/RevertChanges.jsx).
-import React, { useContext, useState } from "react";
-import { API, apiJson } from "../shared/lib/utils";
+// moved notes, each with a link to what changed. A change the server
+// journaled for review (`change_id`, chat/noteReview.js) is the same
+// decision as its note's bar: while it waits for review its row has Keep
+// and Undo, once kept it says so and keeps Undo, once undone it has Redo,
+// whichever surface decided. A note change, pages the agent renamed,
+// moved, labelled, deleted or restored (one or many in one call), and a
+// deleted folder or label have an undo button (chat/aiRevert.js,
+// gamma/ai_revert.py). An undo keeps what anyone wrote since. When the
+// note changed where the agent wrote, was filled in or moved on, the row
+// asks first: it says so, shows what undoing anyway would do as a word
+// diff, and offers to do it. An undone change stays listed, marked, with a
+// redo button that puts it back the same way (and asks the same way). A
+// call that changed several pages is one row that unfolds to its pages,
+// and undoes them together; pages changed since are left as they are, and
+// an undo that would leave every one says so instead. Keep All in the head
+// keeps the reply's changes that wait for review; "Undo…" opens the dialog
+// that takes back several changes at once, this reply's or any of the
+// conversation's (chat/RevertChanges.jsx).
+import React, { useContext, useState, useSyncExternalStore } from "react";
+import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { GammaNavContext } from "../shared/ui/Widgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { ActivityIcon, BookIcon, BotIcon, CheckIcon, CloudDownloadIcon, ExportIcon, EyeIcon, FilePlusIcon, FileTextIcon,
   FolderIcon, GlobeIcon, HighlightIcon, HistoryIcon, ImageIcon, LabelIcon, ListIcon, LocateIcon, MessageSquareIcon, PenIcon,
-  PencilIcon, PlusIcon, QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, SlashIcon, TerminalIcon, TrashIcon, UndoIcon,
+  PencilIcon, PlusIcon, QuoteMarkIcon, RedoIcon, ScissorsIcon, SearchIcon, SlashIcon, TerminalIcon, TrashIcon, UndoIcon,
   XIcon } from "../shared/ui/Icons";
 import { PathLink } from "../editor/PathLink.jsx";
 import { changeCount, changePlace, isChange, noteChangeText } from "./agentSteps";
-import { canRedo, canRevert, revertKind, revertRefusal } from "./aiRevert.js";
-import { WordDiff } from "./ApprovalCard";
+import { canRedo, canRevert, refusalCopy, revertKind, revertRefusal } from "./aiRevert.js";
+import { WordDiff } from "./ApprovalShell";
+import { CHANGE_STATES, isUndone, noteReview, useChangeState } from "./noteReview.js";
 
 // The icon of each action kind, in this list and on the tool chips under the
 // pill (chat/ChatTranscript.jsx), each chip expanding to the raw call the
 // server ran; a computer agent's steps are chips of kinds of their own
 // (`file`, `fileEdit`, `run`, `work`: chat/computer/computerChat.js
 // stepChip).
-export const ACTION_ICONS = { file: FileTextIcon, fileEdit: PencilIcon, run: TerminalIcon, work: ActivityIcon, rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, comment: MessageSquareIcon, resolve: CheckIcon, highlight: HighlightIcon, write: MessageSquareIcon, show: LocateIcon, skill: SlashIcon, export: ExportIcon, error: XIcon };
+export const ACTION_ICONS = { file: FileTextIcon, fileEdit: PencilIcon, run: TerminalIcon, work: ActivityIcon, rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteMarkIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, comment: MessageSquareIcon, resolve: CheckIcon, highlight: HighlightIcon, write: MessageSquareIcon, show: LocateIcon, skill: SlashIcon, export: ExportIcon, error: XIcon };
 
-// Take one change back, or with `redo` put a reverted one back, as its row
-// and the dialog do: POST /api/ai/revert → `{page_id, noop, kept?}`. A
-// refusal throws the API error, which `revertRefusal` reads.
-export function sendRevert(a, { force = false, redo = false } = {}) {
-  return apiJson(`${API}/ai/revert`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind: revertKind(a), block_id: a.block_id || "", revert: a.revert, force, redo }),
-  });
-}
-
-// What a row that stopped says, and the button that reverts (or redoes)
-// anyway — none when it can't be forced.
-export function refusalCopy({ conflict, preview, detail, status }, redo) {
-  if (conflict === "changed") {
-    return redo
-      ? { text: t("The note was changed since. Redoing anyway makes this change:"), force: t("Redo anyway") }
-      : { text: t("The note was changed since. Reverting anyway makes this change:"), force: t("Revert anyway") };
-  }
-  if (conflict === "filled") {
-    if (preview?.page) {
-      return { text: t("Notes, pages or comments were added to the page since. Reverting moves it to Recently deleted with them."),
-        force: t("Move to Recently deleted anyway") };
+// Take one change back, or with `redo` put an undone one back, as its row
+// and the dialog do: `{page_id, noop, kept?}`. A change the journal holds
+// goes through it (chat/noteReview.js, POST /api/ai/changes/<id>), so its
+// note and every other tab hear of it; one it no longer holds, or saved
+// before it, through POST /api/ai/revert with the record the action keeps.
+// A refusal throws the API error, which `revertRefusal` reads.
+export async function sendRevert(a, { force = false, redo = false } = {}) {
+  if (a.change_id) {
+    try {
+      return await noteReview.decide(a.change_id, redo ? "redo" : "undo", { force });
+    } catch (err) {
+      if (err?.status !== 404) throw err;
     }
-    return {
-      text: preview?.children ? t("Notes were added under it since. Reverting deletes it with them.")
-        : preview?.drawn ? t("Strokes were added to it since. Reverting deletes them with it.")
-          : preview?.threads ? t("It was commented on since. Reverting deletes it, and its comments with it.")
-            : t("It was typed in since. Reverting deletes what it says now:"),
-      force: t("Delete anyway"),
-    };
   }
-  if (conflict === "moved") {
-    return redo
-      ? { text: t("The note was moved since. Redoing puts it where the AI moved it."), force: t("Move anyway") }
-      : { text: t("The note was moved since. Reverting puts it back where the AI found it."), force: t("Move back anyway") };
-  }
-  if (conflict === "kept") {
-    return { text: tn("The page changed since, or was deleted, and was left as it is.",
-      "These {n} pages changed since, or were deleted, and were left as they are.", preview?.kept || 1) };
-  }
-  return { text: status === 404 ? t("The note was deleted since.") : detail };
+  return apiJson(`${API}/ai/revert`,
+    jsonInit("POST", { kind: revertKind(a), block_id: a.block_id || "", revert: a.revert, force, redo }));
 }
 
 const labelChange = (a) => [...(a.added || []).map((n) => `+${n}`), ...(a.removed || []).map((n) => `−${n}`)].join(", ");
@@ -214,15 +194,63 @@ export function ThreadsOpened({ threads }) {
   );
 }
 
+// Keep All in a reply's head: keeps those of `ids` that wait for review,
+// shown while one does. Each id's row asks for its state (ChangeRow).
+function KeepAll({ ids, disabled }) {
+  const states = useSyncExternalStore(noteReview.subscribe, () => noteReview.getSnapshot().states);
+  const open = ids.filter((id) => states.get(id) === CHANGE_STATES.OPEN);
+  if (!open.length) return null;
+  return (
+    <button type="button" className="uiBtn sm ghost chatChangesAll" disabled={disabled} onClick={() => noteReview.keep(open)}
+      title={t("Keep this reply's changes that wait for review")}>
+      <CheckIcon size={14} />{t("Keep All")}
+    </button>
+  );
+}
+
+// One change's row: its sentence, what was decided, and its buttons. A
+// change the journal holds (`change_id`, its state known) goes by that
+// state; another by the mark its conversation saved (`isUndone`).
+function ChangeRow({ a, text, row, working, busy, canAct, onUndo, onKeep, children }) {
+  const state = useChangeState(a.change_id);
+  const undone = isUndone(a, state);
+  const open = state === CHANGE_STATES.OPEN;
+  const Icon = ACTION_ICONS[a.kind] || PencilIcon;
+  const label = undone ? t("Redo this change") : t("Undo this change");
+  const ButtonIcon = undone ? RedoIcon : UndoIcon;
+  const held = working || busy || !!row?.refusal;
+  return (
+    <>
+      <div className={`chatChange${undone ? " reverted" : ""}`}>
+        <Icon size={14} />
+        <span className="chatChangeText">{text}</span>
+        {undone ? <span className="chatChangeTag">{t("Undone")}</span>
+          : state === CHANGE_STATES.KEPT ? <span className="chatChangeTag">{t("Kept")}</span> : null}
+        {canAct && open ? (
+          <button type="button" className="ctlBtn chatChangeRevert" disabled={held} title={t("Keep this change")}
+            aria-label={t("Keep this change")} onClick={onKeep}>
+            <CheckIcon size={14} />
+          </button>
+        ) : null}
+        {canAct && (undone ? canRedo({ ...a, reverted: true }) : canRevert({ ...a, reverted: false })) ? (
+          <button type="button" className="ctlBtn chatChangeRevert" disabled={held}
+            title={label} aria-label={label} onClick={() => onUndo(undone)}>
+            {row?.working ? <span className="transferSpin inline" aria-hidden="true" /> : <ButtonIcon size={14} />}
+          </button>
+        ) : null}
+      </div>
+      {children}
+    </>
+  );
+}
+
 // `onReverted(indexes, answer, reverted)`: the actions at those indexes were
-// reverted (`reverted` false: redone) — the dock marks them in the saved
+// undone (`reverted` false: redone) — the dock marks them in the saved
 // conversation. Without it (a viewer, the share view) nothing can be
-// reverted; `busy` (a reply streaming here) holds the buttons.
+// undone; `busy` (a reply streaming here) holds the buttons.
 // `onRevertMany`: open the dialog on this reply's changes (none: the
-// conversation has fewer than two to take back). `onShowChange(index)`: a
-// note change's link was pressed — its note draws the change again as
-// tracked changes (chat/noteReview.js) as the link opens it.
-export default function AgentChanges({ actions, onOpenPage, onReverted, onRevertMany, onShowChange, busy = false }) {
+// conversation has fewer than two to take back).
+export default function AgentChanges({ actions, onOpenPage, onReverted, onRevertMany, busy = false }) {
   const nav = useContext(GammaNavContext);
   // index → {working} while its request runs, or {refusal, redo} once it stopped
   const [rows, setRows] = useState({});
@@ -250,9 +278,15 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
   const pageLink = (id, label) => id
     ? <button type="button" className="chatChangeLink" onClick={() => onOpenPage?.(id)}>{label}</button>
     : <span>{label}</span>;
+  // A note change's link opens its note with the change unfolded there,
+  // as its mark unfolds it (chat/noteReview.js reveal); one the journal no
+  // longer holds is drawn from this row's record and undone as the row does.
   const blockLink = (a, label) => a.block_id && nav?.openBlock
     ? <button type="button" className="chatChangeLink" onClick={() => {
-      onShowChange?.(actions.indexOf(a));
+      const i = actions.indexOf(a);
+      noteReview.reveal(a, onReverted && canRevert(a) ? {
+        undo: async ({ force }) => onReverted([i], await sendRevert(a, { force }), true),
+      } : {});
       nav.openBlock(a.block_id, a.page_id);
     }}>{label}</button>
     : pageLink(a.page_id, label);
@@ -288,48 +322,46 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
       </div>
     </div>
   );
-  const changeRow = ({ a, i }) => {
-    const Icon = ACTION_ICONS[a.kind] || PencilIcon;
-    const row = rows[i];
-    const redo = !!a.reverted;
-    const label = redo ? t("Redo this change") : t("Revert this change");
-    const ButtonIcon = redo ? RedoIcon : UndoIcon;
-    return (
-      <React.Fragment key={i}>
-        <div className={`chatChange${redo ? " reverted" : ""}`}>
-          <Icon size={14} />
-          <span className="chatChangeText">
-            {changeText(a, links)}
-            {a.items?.length ? (
-              <details className="chatChangeItems">
-                <summary>{t("Show the pages")}</summary>
-                {a.items.map((item, k) => <div key={k}>{libraryText({ ...item, tool: a.tool, kind: a.kind }, pageLink)}</div>)}
-              </details>
-            ) : null}
-          </span>
-          {redo ? <span className="chatChangeTag">{t("Reverted")}</span> : null}
-          {onReverted && (redo ? canRedo(a) : canRevert(a)) ? (
-            <button type="button" className="ctlBtn chatChangeRevert" disabled={working || busy || !!row?.refusal}
-              title={label} aria-label={label} onClick={() => revertOne(i, { redo })}>
-              {row?.working ? <span className="transferSpin inline" aria-hidden="true" /> : <ButtonIcon size={14} />}
-            </button>
-          ) : null}
-        </div>
-        {row?.refusal ? refusalRow(i) : row?.kept ? keptRow(i) : null}
-      </React.Fragment>
-    );
+  const keepOne = async (i) => {
+    setRow(i, { working: true });
+    try {
+      await noteReview.keep([actions[i].change_id]);
+      setRow(i, null);
+    } catch (err) {
+      setRow(i, { refusal: revertRefusal(err), redo: false });
+    }
   };
+  const changeRow = ({ a, i }) => (
+    <ChangeRow key={i} a={a} row={rows[i]} working={working} busy={busy} canAct={!!onReverted}
+      onUndo={(redo) => revertOne(i, { redo })} onKeep={() => keepOne(i)}
+      text={<>
+        {changeText(a, links)}
+        {a.items?.length ? (
+          <details className="chatChangeItems">
+            <summary>{t("Show the pages")}</summary>
+            {a.items.map((item, k) => <div key={k}>{libraryText({ ...item, tool: a.tool, kind: a.kind }, pageLink)}</div>)}
+          </details>
+        ) : null}
+      </>}>
+      {rows[i]?.refusal ? refusalRow(i) : rows[i]?.kept ? keptRow(i) : null}
+    </ChangeRow>
+  );
+  // every journaled change of the reply: Keep All keeps those that wait for review
+  const changeIds = changes.map(({ a }) => a.change_id).filter(Boolean);
   const group = (list, place, first) => list.length ? (
     <ChangesCard key={place} guide="chat.changes"
       head={place === "library"
         ? t("Changed in your library · {n}", { n: list.reduce((n, { a }) => n + changeCount(a), 0) })
         : t("Changed in your notes · {n}", { n: list.length })}
-      tail={first && many ? (
-        <button type="button" className="uiBtn sm ghost chatChangesAll" disabled={working || busy} onClick={onRevertMany}
-          title={t("Choose changes of this conversation to revert together")}>
-          <UndoIcon size={14} />{t("Revert…")}
-        </button>
-      ) : null}>
+      tail={first ? <>
+        {onReverted && changeIds.length ? <KeepAll ids={changeIds} disabled={working || busy} /> : null}
+        {many ? (
+          <button type="button" className="uiBtn sm ghost chatChangesAll" disabled={working || busy} onClick={onRevertMany}
+            title={t("Choose changes of this conversation to undo together")}>
+            <UndoIcon size={14} />{t("Undo…")}
+          </button>
+        ) : null}
+      </> : null}>
       {list.map(changeRow)}
     </ChangesCard>
   ) : null;

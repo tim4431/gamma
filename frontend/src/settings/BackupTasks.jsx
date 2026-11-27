@@ -1,5 +1,5 @@
 import React from "react";
-import { API, apiJson, fmtBytes } from "../shared/lib/utils";
+import { API, apiJson, jsonInit, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { ClockIcon, CloudUploadIcon, DuplicateIcon, HardDriveIcon, MoreIcon, PencilIcon, PlayIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
@@ -9,10 +9,9 @@ import { useSettingsRead } from "./settingsReads.js";
 import { fromUtcCron, localOffset, observesDst, parseCron, shiftTime, toUtcCron } from "./backupSchedule.js";
 import { STORE, STORES, storeText } from "./backupStores.js";
 import "./backupTasks.css";
-import { T, t, tn } from "../shared/i18n/i18n.js";
+import { T, localeTag, t, tn } from "../shared/i18n/i18n.js";
 
 const endpoint = `${API}/backup-tasks`;
-const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const date = (value) => fmtWhen(value, t("Not yet"));
 const pad = (n) => String(n).padStart(2, "0");
 const days = [[1, t("Mon")], [2, t("Tue")], [3, t("Wed")], [4, t("Thu")], [5, t("Fri")], [6, t("Sat")], [0, t("Sun")]];
@@ -24,11 +23,12 @@ const UNITS = [["days", t("Days")], ["weeks", t("Weeks")], ["months", t("Months 
 const MAX_RETENTION = 90;
 const MAX_TASKS = 5;
 
-// This browser's offset from UTC and its zone's short name ("PDT"): what a
+// This browser's offset from UTC and its zone's short name ("PDT"), named
+// in the interface language as SettingsBackups' fmtWhen names it: what a
 // daily, weekly or hourly schedule is entered and shown in (backupSchedule.js).
 const OFFSET = localOffset();
 const ZONE = (() => {
-  try { return new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value || "UTC"; } catch { return "UTC"; }
+  try { return new Intl.DateTimeFormat(localeTag(), { timeZoneName: "short" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value || "UTC"; } catch { return "UTC"; }
 })();
 const clock = (p) => `${pad(p.hour)}:${pad(p.minute)}`;
 const dayNames = (list) => days.filter(([n]) => list.includes(n)).map(([, name]) => name).join(", ");
@@ -129,7 +129,7 @@ function TaskEditor({ initial, workspaces, stores, onClose, onSaved }) {
     setPreview(null);
     setPreviewError("");
     const timer = setTimeout(() => {
-      apiJson(`${endpoint}/preview`, json("POST", { cron })).then((data) => {
+      apiJson(`${endpoint}/preview`, jsonInit("POST", { cron })).then((data) => {
         if (active) setPreview(data.runs);
       }).catch((e) => { if (active) setPreviewError(e.message); });
     }, 250);
@@ -153,7 +153,7 @@ function TaskEditor({ initial, workspaces, stores, onClose, onSaved }) {
     setBusy(true);
     setError("");
     try {
-      await apiJson(initial?.id ? `${endpoint}/${initial.id}` : endpoint, json(initial?.id ? "PUT" : "POST", {
+      await apiJson(initial?.id ? `${endpoint}/${initial.id}` : endpoint, jsonInit(initial?.id ? "PUT" : "POST", {
         ...draft, cron, retention_mode: unit === "count" ? "count" : "days", retention_value: retention,
       }));
       onSaved();
@@ -265,7 +265,7 @@ export function BackupTasks({ workspaces, stores = {}, confirm, onRefresh, onRan
     setBusy(task.id);
     setError("");
     try {
-      if (kind === "toggle") await apiJson(`${endpoint}/${task.id}`, json("PUT", { ...task, enabled: !task.enabled }));
+      if (kind === "toggle") await apiJson(`${endpoint}/${task.id}`, jsonInit("PUT", { ...task, enabled: !task.enabled }));
       else await apiJson(`${endpoint}/${task.id}${kind === "run" ? "/run" : ""}`, { method: kind === "run" ? "POST" : "DELETE" });
       await load();
     } catch (e) { setError(e.message); }

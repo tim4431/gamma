@@ -4,13 +4,16 @@
 // the command palette (Ctrl+Shift+P) lists the same entries, and Settings →
 // Keyboard rebinds them. Only the long-standing keys, Ctrl+Shift+P, F2,
 // Delete, Ctrl+, and Ctrl+Shift+O (the translation shown or hidden) have
-// defaults; the rest are palette entries until the account gives them a
-// chord.
+// defaults, and in the desktop app Ctrl+W and Zotero's Ctrl+Shift+A / C
+// (the citation copies); the rest are palette entries until the account
+// gives them a chord.
 // ctx: { shareMode, homeMode, hasPage, hasPdf (the open page shows a PDF),
 // hasDoc (it carries a document of any format), readOnly, commentsOn (the
 // page shows comments: not a publication, readable), homePick (the one
 // page selected on the home library), homePicks (how many), organize (the
-// library may be changed: library/libraryAccess.js), search(all),
+// library may be changed: library/libraryAccess.js), citePicks (the pages a
+// citation copy takes: the home library's selection, else the open page)
+// and copyCitations(bibliography) (citations/useCitations.js), search(all),
 // palette(prefix), back(), closeTab() (the active tab), undo(redo), renameTitle(), deletePages(), recentlyDeleted(), toggleChat(),
 // toggleComments(), togglePdf(), toggleNotes(), toggleFiles() (the Files
 // window; on a phone its overlay), splitTab(side) and joinGroups()
@@ -145,6 +148,15 @@ export const APP_COMMANDS = [
   // The deleted pages of the last 30 days, to restore or delete for good.
   cmd("app.recentlyDeleted", t("Recently deleted"), GROUP_LIBRARY, null, (c) => { c.recentlyDeleted(); },
     { when: (c) => c.organize }),
+  // Zotero's Quick Copy (docs/dev/citations.md): the in-text citation and
+  // the bibliography of the pages selected on the home library, in the
+  // list's order, else of the open page, in the Quick Copy format; a
+  // viewer copies as an editor does. Zotero's keys in the desktop app
+  // alone: a browser keeps Ctrl+Shift+C for its inspector.
+  cmd("app.copyCitation", t("Copy citation"), GROUP_LIBRARY, IS_DESKTOP ? "Mod-Shift-a" : null, outsideFields((c) => { c.copyCitations(false); }),
+    { when: (c) => c.citePicks > 0 }),
+  cmd("app.copyBibliography", t("Copy bibliography"), GROUP_LIBRARY, IS_DESKTOP ? "Mod-Shift-c" : null, outsideFields((c) => { c.copyCitations(true); }),
+    { when: (c) => c.citePicks > 0 }),
   cmd("app.import", t("Import…"), GROUP_LIBRARY, null, (c) => { c.importDialog(); }, { when: (c) => !c.shareMode }),
   cmd("app.exportObsidian", t("Export the library as an Obsidian vault"), GROUP_LIBRARY, null, (c) => { c.exportAs("obsidian"); }, { when: (c) => !c.shareMode }),
   cmd("app.exportGamma", t("Export the library as a Gamma backup"), GROUP_LIBRARY, null, (c) => { c.exportAs("gamma"); }, { when: (c) => !c.shareMode }),
@@ -156,12 +168,12 @@ export const APP_COMMANDS = [
   // `when`. A key that arrived in a text field is declined, so Ctrl+C in a
   // caption stays the browser's; the strip's More menu and the selection
   // menu run the same commands.
-  cmd("ink.copy", t("Copy handwriting"), GROUP_HANDWRITING, "Mod-c", inkRun((c) => c.inkCopy()), { edits: true, when: (c) => !!c.inkSelected }),
-  cmd("ink.cut", t("Cut handwriting"), GROUP_HANDWRITING, "Mod-x", inkRun((c) => c.inkCut()), { edits: true, when: (c) => !!c.inkSelected }),
-  cmd("ink.paste", t("Paste handwriting"), GROUP_HANDWRITING, "Mod-v", inkRun((c) => c.inkPaste()),
+  cmd("ink.copy", t("Copy handwriting"), GROUP_HANDWRITING, "Mod-c", outsideFields((c) => c.inkCopy()), { edits: true, when: (c) => !!c.inkSelected }),
+  cmd("ink.cut", t("Cut handwriting"), GROUP_HANDWRITING, "Mod-x", outsideFields((c) => c.inkCut()), { edits: true, when: (c) => !!c.inkSelected }),
+  cmd("ink.paste", t("Paste handwriting"), GROUP_HANDWRITING, "Mod-v", outsideFields((c) => c.inkPaste()),
     { edits: true, when: (c) => !!c.inkOpen && !!c.inkTool && !!c.inkClip && textCollapsed() }),
-  cmd("ink.duplicate", t("Duplicate handwriting"), GROUP_HANDWRITING, "Mod-d", inkRun((c) => c.inkDuplicate()), { edits: true, when: (c) => !!c.inkSelected }),
-  cmd("ink.selectAll", t("Select all handwriting on this page"), GROUP_HANDWRITING, "Mod-a", inkRun((c) => c.inkSelectAll()),
+  cmd("ink.duplicate", t("Duplicate handwriting"), GROUP_HANDWRITING, "Mod-d", outsideFields((c) => c.inkDuplicate()), { edits: true, when: (c) => !!c.inkSelected }),
+  cmd("ink.selectAll", t("Select all handwriting on this page"), GROUP_HANDWRITING, "Mod-a", outsideFields((c) => c.inkSelectAll()),
     { edits: true, when: (c) => !!c.inkOpen && !!c.inkTool }),
 
   // The translated view (docs/dev/translation.md "The button"), as the
@@ -186,10 +198,11 @@ export const APP_COMMANDS = [
   held("pdf.peekOriginal", t("Hold to see the original of a translated page"), "Alt"),
 ];
 
-// A handwriting command's run: declined for a key pressed in a text field
-// (the field keeps its own copy and paste); from the palette or a menu
-// there is no event.
-function inkRun(fn) {
+// A run declined for a key pressed in a text field or a note's editor (the
+// field keeps its own copy and paste, and its Ctrl+Shift+A / C): the
+// handwriting commands and the citation copies. From the palette or a
+// menu there is no event.
+function outsideFields(fn) {
   return (c, e) => {
     if (e && isTextField(e.target)) return false;
     return fn(c);

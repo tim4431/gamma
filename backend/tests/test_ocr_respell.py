@@ -1,5 +1,5 @@
 """The highlights of a PDF whose scanned pages' text was recognized
-(highlight_relocate ``respell_quotes``, run by gamma/pdf_ocr.py once the
+(highlight_relocate ``respell_quotes``, run by gamma/ocr_run.py once the
 text goes live): each keeps its place and takes the recognized words under
 its rectangles as its quote when its quote is what the layer read there
 and the two readings agree; a corrected quote, a rectangle off its text,
@@ -21,7 +21,7 @@ from ocr_fake import GARBLE, LIGHT, install, joined, layered_scan
 from ocr_fixtures import PRINTED, W, H, printed_scan_pdf
 
 from gamma import highlight_relocate as hr
-from gamma import jobs, pdf_ocr, pdf_text
+from gamma import jobs, ocr_run, pdf_ocr, pdf_text
 
 USER, PW = "or_alice", "or-alice-pw"
 LINES = {n: (x, y, size, text) for n, (x, y, size, text) in enumerate(PRINTED, start=1)}
@@ -103,7 +103,7 @@ def props(c, block_id):
 
 def recognize(doc):
     ws = workspace_of(USER)
-    return pdf_ocr.run(ws, doc, pdf_ocr.stored_path(ws, doc), actor=account_of(USER))
+    return ocr_run.run(ws, doc, pdf_ocr.stored_path(ws, doc), actor=account_of(USER))
 
 
 def layer_line(n, translate=LIGHT):

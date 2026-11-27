@@ -7,8 +7,7 @@
 // (mdScan.js) locate the nth rendered construct so the components can
 // address "their" source range without a position map from the renderer.
 import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { parseTable, scanImages, scanTables, serializeTable } from "./mdScan";
-import { tablePipe } from "./linkEdit.js";
+import { parseTable, scanImages, scanTables, serializeTable, tablePipe } from "./mdScan";
 import { uploadFilesAsLines } from "../transfers/FileChip";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { ObjectMenuButton, useObjectMenu } from "./MdObject";

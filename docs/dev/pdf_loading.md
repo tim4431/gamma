@@ -672,7 +672,8 @@ the recognized words in place of their own layer, here as on the server.
   old layer staying until the new words are in. Ctrl+F's page texts are
   read again under a new revision, and the viewer's translation seed runs
   again. App's `docNonce` is `pdfDocNonce` plus
-  `ocrState.useOcrNonce(fileHash(doc) || docIdOf(pdfUrl))`, a count of the
+  `ocrState.useOcrNonce(ocrDocId(doc, pdfUrl))` (`pdfSource.js`: the
+  document's stored file, else the upload its URL names), a count of the
   changes of the on-screen document's revision that never goes back, so a
   pinned search runs again for that document alone. The translated view
   hears which pages changed

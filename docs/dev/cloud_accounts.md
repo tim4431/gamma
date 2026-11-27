@@ -2252,9 +2252,10 @@ still go through:
 Reads are untouched, and so are the reads sent as a POST because their ids
 do not fit a URL, `hosted.POST_READS`: `/api/pages/by-docs` (the file
 chips' page lookup), `/api/pages/summaries` (the tabs' and recents' pages
-the listing leaves out) and `POST /api/block-search` and `/api/document-search`
+the listing leaves out), `POST /api/block-search` and `/api/document-search`
 (the Ctrl+F panel's searches, with the folder, label and page ids its
-filters keep). The gate
+filters keep) and `POST /api/bibliography` (the citation copies of a
+selection of pages, [citations.md](citations.md#the-bibliography-answer)). The gate
 treats them as reads, so they also move no `last_write_at`.
 
 Collaboration needs nothing of its own: an op batch is

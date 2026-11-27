@@ -184,6 +184,25 @@ export async function settingsScenarios(env) {
     }
   });
 
+  await step("settings: Marks of kept changes sets how long an agent's kept change stays marked, a minute by default", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Tool usage").click();
+      const choice = row(page, "Marks of kept changes").getByRole("button", { name: "Marks of kept changes", exact: true });
+      assert((await choice.innerText()).includes("1 minute"), "a minute by default");
+      await choice.click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Until I clear them", exact: true }).click();
+      await until(async () => String((await user.api("/api/prefs/profile")).value?.aiMarkMinutes) === "0",
+        { what: "the choice is the account's" });
+      assert((await choice.innerText()).includes("Until I clear them"));
+      assertNoProblems(page);
+    } finally {
+      await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { aiMarkMinutes: 1 } } });
+      await ctx.close();
+    }
+  });
+
   await step("settings: online search services are set up in the Tool usage pane, and the engine choice survives a reload", async () => {
     const { ctx, page } = await setup();
     try {
@@ -933,6 +952,10 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Changes", exact: true }).click();
       const change = page.getByText("Added 2 notes in “Settings undo page”", { exact: true });
       await change.waitFor();
+      // made without asking, it waits for review: Keep there keeps it, and Undo still takes it back
+      await page.getByRole("button", { name: "Keep", exact: true }).click();
+      await page.getByText("Kept", { exact: true }).waitFor();
+      assertEq(await page.getByRole("button", { name: "Keep", exact: true }).count(), 0, "a kept change has no Keep");
       await page.getByRole("button", { name: "Undo", exact: true }).click();
       await page.getByText("Undone", { exact: true }).waitFor();
       assertEq((await user.api(`/api/blocks/${target.id}/children`)).children.length, 0, "the paste is gone");
@@ -1760,7 +1783,7 @@ export async function settingsScenarios(env) {
   // With a computer of the account's shown to the server (GET
   // /api/computers faked: no computer announces itself here), Local agents
   // leads the AI group (SettingsDialog.jsx AI_NAV) and lists it: an admin's
-  // twenty panes fit a full-height dialog (a 900 px window: the dialog's
+  // twenty-one panes fit a full-height dialog (a 900 px window: the dialog's
   // 800 px cap), and a shorter window scrolls the groups alone
   // (.settingsNavList), the account card and Help in view.
   const labPc = { id: "lab-pc", name: "Lab PC", online: true,
@@ -1785,7 +1808,7 @@ export async function settingsScenarios(env) {
               helpIn: help.bottom <= nav.getBoundingClientRect().bottom + 1 };
           });
           assert(fit.railOver <= 1 && fit.helpIn, `the rail itself never scrolls and Help stays in view (${JSON.stringify(fit)})`);
-          if (height === 900) assert(fit.over <= 1, `twenty panes fit the full-height rail (${fit.over}px over)`);
+          if (height === 900) assert(fit.over <= 1, `twenty-one panes fit the full-height rail (${fit.over}px over)`);
           else assert(fit.over > 1, "a short window scrolls the groups");
           await nav(page, "Local agents").click();
           await row(page, "Lab PC").waitFor();
@@ -2186,7 +2209,7 @@ export async function settingsScenarios(env) {
   });
 
   // Settings → Backups › Backup destinations › Google Drive (BackupCloud.jsx,
-  // gamma/gdrive.py, gamma/cloud_account.py, docs/dev/debugging.md "Google
+  // gamma/gdrive.py, gamma/cloud_account.py, docs/dev/backups.md "Google
   // Drive"): a second server whose Google is the fake one
   // (backend/tests/gdrive_fake.py over HTTP, its device codes asking for a
   // 2 s interval), so nothing reaches Google, the app the fake knows given
@@ -2969,11 +2992,13 @@ export async function settingsScenarios(env) {
       await until(async () => (await chatModel().innerText()) === "test-model-b", { what: "the row on the pick" });
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       // The model (with its reasoning effort and speed) is the composer's chip:
-      // its panel lists the favorites, then every connection's models.
+      // the model in use and the chat models, then every connection's under All models….
       const modelChip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
       assert((await modelChip.innerText()).includes("test-model-b"));
       await modelChip.click();
-      await page.getByRole("listbox", { name: "Models", exact: true }).getByRole("option", { name: /^test-model-a/ }).click();
+      await page.locator(".modelPanelPick").click();
+      await page.locator(".modelPanel").getByRole("button", { name: "All models…", exact: true }).click();
+      await page.getByRole("listbox", { name: "All models", exact: true }).getByRole("option", { name: /^test-model-a/ }).click();
       await until(async () => (await modelChip.innerText()).includes("test-model-a"), { what: "the chip on the pick" });
       await until(async () => (await user.api("/api/ai/models")).roles.chat.pick.endsWith(":test-model-a"), { what: "the account's chat model" });
       await page.locator('[title^="Chat settings"]').click();
@@ -2991,7 +3016,7 @@ export async function settingsScenarios(env) {
       // The chat's two model knobs have their defaults here (the chip edits
       // the same preferences — docs/dev/settings.md "Chat settings are global").
       await row(page, "Default reasoning effort").waitFor();
-      assertEq(await row(page, "Default speed").getByRole("button").first().innerText(), "Default");
+      assertEq(await page.getByRole("checkbox", { name: "Fast", exact: true }).isChecked(), false);
       assertEq(await row(page, "Single paper").locator('input[type="number"]').inputValue(), "42000");
       await nav(page, "Tool usage").click();
       await page.getByRole("checkbox", { name: "Assistant tools" }).check();
@@ -3039,14 +3064,15 @@ export async function settingsScenarios(env) {
       await page.getByRole("listbox", { name: "Add a chat model", exact: true }).getByRole("option", { name: /^test-model-b/ }).click();
       await list.getByRole("listitem").filter({ hasText: "test-model-b" }).waitFor();      await until(async () => JSON.stringify(await favorites()) === JSON.stringify([b]), { what: "the account's chat models" });
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
-      // The chip's panel lists the chat models first, each model once, a click apart.
+      // The chip's panel offers the model in use and the chat models, a click apart.
       const modelChip = page.getByRole("button", { name: "Model, reasoning effort and speed", exact: true });
       await modelChip.click();
-      const models = page.getByRole("listbox", { name: "Models", exact: true });
-      const offered = models.getByRole("group", { name: "Chat models", exact: true }).locator(".modelMenuName");
-      assertEq((await offered.allInnerTexts()).join(), "test-model-b", "the panel leads with the chat models");
-      assertEq((await models.locator(".modelMenuName").allInnerTexts()).join(), "test-model-b,test-model-a", "then the others, each once");
+      await page.locator(".modelPanelPick").click();
+      const offered = page.locator(".modelPanel").getByRole("group", { name: "Select model", exact: true }).locator(".modelMenuName");
+      assertEq((await offered.allInnerTexts()).join(), "test-model-a,test-model-b", "the panel lists the one in use, then the chat models");
       await offered.filter({ hasText: "test-model-b" }).click();
+      await page.locator(".modelPanelPick", { hasText: "test-model-b" }).waitFor(); // back where its effort is set
+      await page.keyboard.press("Escape");
       await until(async () => (await modelChip.innerText()).includes("test-model-b"), { what: "the chip on the pick" });
       await until(async () => (await user.api("/api/ai/models")).roles.chat.pick === b, { what: "the account's chat model" });
       await openSettings(page);
@@ -3279,10 +3305,10 @@ export async function settingsScenarios(env) {
         assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), transcribe ? 1 : 0, `mic with transcribe=${transcribe}`);
         assertEq(await page.getByRole("button", { name: "PDF", exact: true }).count(), 0, "no PDF in the library's context");
         await chip.click();
-        const effort = page.locator(".modelPanel").getByRole("group", { name: "Reasoning effort", exact: true });
-        await effort.getByRole("button", { name: "high", exact: true }).click();
-        await until(async () => (await chip.innerText()).includes("model · high"), { what: "the chip names the effort" });
-        await effort.getByRole("button", { name: "Default", exact: true }).click();
+        const effort = page.locator(".modelPanel").getByRole("slider", { name: "Reasoning effort", exact: true });
+        await effort.press("End");
+        await chip.locator(".chatModelEffort", { hasText: "High" }).waitFor();
+        await page.locator(".modelPanel").getByRole("button", { name: "Reset to default", exact: true }).click();
         assertNoProblems(page);
       } finally { await ctx.close(); }
     }

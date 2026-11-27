@@ -14,6 +14,7 @@ Codex does not invoke Gamma's AI provider.
 |---|---|
 | `gamma/mcp_server.py`, `gamma/mcp_lazy.py` | the `/mcp` transport (official Python MCP SDK): the chat registry's read tools (`READ_TOOLS`), link reading, page export, the writing tools at the Comment level (`WRITING_TOOLS`), the note tools at Edit (`EDIT_TOOLS`); `mcp_lazy.py` authenticates the request and loads the SDK adapter on first use |
 | `gamma/annotations/hand.py`, `gamma/annotations/places.py` | what the writing tools write as the connection's agent, and the places they find ([annotations.md](annotations.md) "The writing tools") |
+| `gamma/agent_changes.py`, `gamma/agent_asks.py` | the journal of a connection's changes, one with the chat's ("Undoing a change"), and its question about a change asked in Gamma too, where the change lands ("Asking first") |
 | `gamma/mcp_oauth.py`, `gamma/mcp_oauth_provider.py` | discovery, dynamic registration, PKCE authorization and token exchange, the consent API (`/api/integrations/oauth/*`), `public_base`; the provider issues the 90-day token through `integrations.create_token` |
 | `gamma/mcp_links.py` | local page/block/share link resolution within the connected workspaces; which of them holds an id (`holders`: a block, a comment thread) |
 | `gamma/mcp_export.py` | `export_page`: a page as Markdown text or an embedded PDF, over `routers/export.py` |
@@ -274,13 +275,15 @@ A new reading tool is offered without touching the adapter; `test_mcp.py`
 pins the names. The chat's other tools stay off: the web tools (`search_papers`,
 `fetch_paper`, …), because the assistant has its own web access;
 `list_deleted`, because Recently deleted is out of the reading tools' reach
-and restoring is a change; and every write tool of the chat but the three
-writing tools a connection gets at the Comment level ("The Comment level")
-and the note, page and drawing tools it gets where the user let it edit
-(`delete_block` only where deleting was allowed too, "Editing notes"). The chat's tool permissions (Settings → AI → Tool usage) do not
+and restoring is a change. Every write tool of the chat stays off too, but
+the three writing tools a connection gets at the Comment level ("The
+Comment level") and the note, page and drawing tools it gets where the user
+let it edit ("Editing notes", `delete_block` only where deleting was allowed
+too). The chat's tool permissions (Settings → AI → Tool usage) do not
 govern this connection: the token is its own grant, created, changed and
 revoked in Integrations. `list_workspaces`, `read_gamma_link`,
-`export_page`, `upload_file`, `list_changes` and `undo_change` exist only here.
+`export_page`, `upload_file`, `list_changes` and `undo_change` exist only
+here.
 `view_pdf_page`'s, `view_ink`'s, `view_image`'s and `read_annotation`'s pictures
 go out as MCP `image` items, which the client shows the model as images.
 
@@ -489,9 +492,9 @@ gone.
   the workspace's whole library (`type: folder`), `can_comment` on,
   `can_write` off, and the connection's stamp (`agents.stamp`). `_writes`
   refuses every comment and note change while a hosted server's plan keeps
-  it read-only (`hosted.read_only`; the hosted gate covers `/api/*` only,
-  never `/mcp`), and the hand checks that again, then that the workspace is
-  not being deleted and the account may comment there; a thread must be a live root
+  it read-only (`hosted.read_only`), since the hosted gate covers `/api/*`
+  only, never `/mcp`. The hand checks that again, then that the workspace is
+  not being deleted and the account may comment there. A thread must be a live root
   (`comments.thread_of`) on a page of the library, of any kind: a library
   page's as a work folder's file's. It writes through `comments.create` /
   `comments.resolve` and, for a passage, `ops.apply_ops` (client `ai`), as
@@ -555,108 +558,123 @@ such a token's block writes 403, as any read token's, and takes its
 comments in its own workspace, as at the Comment level ("The Comment
 level").
 
-- **The tools.** Where it may edit, the connection gets four of the chat's
-  note tools (`mcp_server.EDIT_TOOLS`): `edit_block`, `create_block` (the
-  paste, below), `move_block` and `clip_region` (a picture of a PDF region
-  or of handwriting, for a note to embed), the chat's `create_page` (a new
-  page in a folder, inside a page or at the top of the library), MCP's own
-  `upload_file` (below), `list_changes` and `undo_change` ("Undoing a
-  change"), and the chat's drawing tools
-  (`DRAWING_TOOLS`: `draw`, `add_text_box`, `place_picture`, `add_sheet`,
-  each one new block on a PDF page or a page of paper, [ai_tools.md](ai_tools.md)
-  "Drawing on pages"). `delete_block` (`DELETE_TOOLS`) only where deleting
-  was allowed too (below). Nothing of existing pages' titles or places,
-  folders, labels or settings. A drawing's answer carries its
-  picture (image content, as `view_ink`'s) and, since there is no reply to
-  revert it from, says `undo_change` takes a misplaced one back
-  (`ai_tools.drawing._placed_after`). They run through
-  `ai_tools.registry.run_agent_tool` with `can_write` on, as the chat's agent's do:
-  written as the account with client `ai`, a block `create_block` or a
-  drawing tool makes stamped with the connection (`properties.agent`, `agents.stamp`:
-  `{id, name, for}`, [block_centric.md](block_centric.md) "Made by an
-  agent"), planned and checked as in the chat (the edit's three-way merge with what the user typed meanwhile, the
-  picture checks, the write lock), refused in a workspace being deleted and,
-  like the comments, on a hosted server its plan made read-only (`_writes`,
-  before anyone is asked).
-  `list_tools` adds them only for a connection that edits somewhere, with
-  `readOnlyHint: False` (`destructiveHint` true for `edit_block`, whose
-  replace overwrites a note's text, for `delete_block` and for
-  `undo_change`; `openWorldHint` true for `upload_file`,
-  which may fetch from the web); `call_tool` refuses them to one that
-  edits nothing before reading any argument, as the writing tools are
-  refused, and `_call` refuses one aimed at a workspace it only reads,
-  naming those it edits. `parent_id` and `after_id` find the call's
-  workspace, as the reading tools' ids do ("Several workspaces");
-  `list_workspaces` says where it edits (`editable` in its structured
-  content).
-- **Deleting notes.** `delete_block` is its own permission: the token's
+- **The tools.** Where it may edit, the connection gets the chat's tools in
+  `mcp_server.EDIT_TOOLS` and the adapter's own `OWN_EDIT_TOOLS`. It gets
+  nothing of existing pages' titles or places, folders, labels or settings.
+  - The note tools: `edit_block`, `create_block` (the paste, below),
+    `move_block` and `clip_region` (a picture of a PDF region or of
+    handwriting, for a note to embed).
+  - `create_page`: a new page in a folder, inside a page or at the top of
+    the library.
+  - The drawing tools (`DRAWING_TOOLS`: `draw`, `add_text_box`,
+    `place_picture`, `add_sheet`), each one new block on a PDF page or a
+    page of paper ([ai_tools.md](ai_tools.md) "Drawing on pages").
+  - MCP's own `upload_file` (below), `list_changes` and `undo_change`
+    ("Undoing a change").
+  - `delete_block` (`DELETE_TOOLS`) only where deleting was allowed too
+    (below).
+  - A drawing's answer carries its picture (image content, as
+    `view_ink`'s). With no reply to revert it from, it says `undo_change`
+    takes a misplaced one back (`ai_tools.drawing._placed_after`).
+- **How a call runs.** The chat's tools run through
+  `ai_tools.registry.run_agent_tool` with `can_write` on, as the chat's
+  agent's do, written as the account with client `ai`.
+  - A block that `create_block` or a drawing tool makes is stamped with the
+    connection (`properties.agent`, `agents.stamp`: `{id, name, for}`,
+    [block_centric.md](block_centric.md) "Made by an agent").
+  - A call is planned and checked as in the chat: the edit's three-way merge
+    with what the user typed meanwhile, the picture checks, the write lock.
+  - It is refused in a workspace being deleted and, like the comments, on a
+    hosted server its plan made read-only (`_writes`, before anyone is
+    asked).
+  - `list_tools` adds the tools only for a connection that edits somewhere,
+    all but `list_changes` with `readOnlyHint: False`. `destructiveHint` is
+    true for `edit_block` (whose replace overwrites a note's text),
+    `delete_block` and `undo_change`, and `openWorldHint` for `upload_file`,
+    which may fetch from the web.
+  - `call_tool` refuses them to a connection that edits nothing, before
+    reading any argument, as the writing tools are refused. `_call` refuses
+    one aimed at a workspace it only reads, naming those it edits.
+  - `parent_id` and `after_id` find the call's workspace, as the reading
+    tools' ids do ("Several workspaces"). `list_workspaces` says where it
+    edits (`editable` in its structured content).
+- **Deleting notes.** `delete_block` is its own permission, the token's
   `deletes` (`users.db` `integration_tokens.deletes`, schema step 70, 0 on
-  every token made before it), which holds only where the connection edits
-  (`Connection.deletes` is false on a connection that edits nothing).
-  `list_tools` offers it only with `deletes` on, and `call_tool` refuses it
-  without, before reading any argument (`NOT_DELETING`, the steps to allow
-  it and that `undo_change` takes back its own changes meanwhile). No
-  client asks for it and the consent page never offers it: the person turns
-  it on afterwards, on the connection's row (below). A deletion is
-  journaled like any other change, so `undo_change` brings it back.
+  every token made before it). It holds only where the connection edits:
+  `Connection.deletes` is false on a connection that edits nothing.
+  - `list_tools` offers it only with `deletes` on. Without, `call_tool`
+    refuses it before reading any argument (`NOT_DELETING`: the steps to
+    allow it, and that `undo_change` takes back its own changes meanwhile).
+  - No client asks for it and the consent page never offers it. The person
+    turns it on afterwards, on the connection's row (below).
+  - A deletion is journaled like any other change, so `undo_change` brings
+    it back.
 - **The paste.** `create_block`'s `content` may be a whole Markdown
   passage, split as the editor's Paste as → Blocks splits it
   (`markdown_import.md_to_blocks`, [ai_tools.md](ai_tools.md) "edit_block /
-  create_block / move_block"): a heading holds what follows it, list items
-  nest, and a paragraph, table, fence or `$$` math stays one block;
-  `split: false` keeps it in one block. The whole paste is one op batch
-  under the write lock, so it is one question to the person ("Asking
-  first"), at most `ops.MAX_OPS` (500) blocks and 100,000 characters a
-  call. `after_id` names the sibling it lands after, or the parent itself
-  to land first. Every block carries the connection's `properties.agent`,
-  the answer lists the new blocks by id (up to 50 lines), and the
-  structured content carries `block_id` (the first) and `block_ids` (all, in
-  order). Links this server handed out (`gamma_link`'s
-  `https://host/?ws=<id>&…`), here and in what `edit_block` writes, are
-  stored host-free, `/?…`
-  (`ai_tools.base.host_free`, through the scope's `link_base`), as the
-  editor stores a pasted link of its own library; another workspace's
-  links and web links stay as written. The request body takes up to 1 MiB
-  (`mcp_server.MAX_BODY`), room for 100,000 characters in any JSON
-  escaping.
+  create_block / move_block").
+  - A heading holds what follows it, list items nest, and a paragraph,
+    table, fence or `$$` math stays one block. `split: false` keeps the
+    passage in one block.
+  - The whole paste is one op batch under the write lock, so it is one
+    question to the person ("Asking first"). A call takes at most
+    `ops.MAX_OPS` (500) blocks and 100,000 characters.
+  - `after_id` names the sibling it lands after, or the parent itself to
+    land first.
+  - Every block carries the connection's `properties.agent`. The answer
+    lists the new blocks by id (up to 50 lines), and the structured content
+    carries `block_id` (the first) and `block_ids` (all, in order).
+  - Links this server handed out (`gamma_link`'s `https://host/?ws=<id>&…`)
+    are stored host-free, `/?…`, here and in what `edit_block` writes
+    (`ai_tools.base.host_free`, through the scope's `link_base`). The editor
+    stores a pasted link of its own library the same way. Another
+    workspace's links and web links stay as written.
+  - The request body takes up to 1 MiB (`mcp_server.MAX_BODY`), room for
+    100,000 characters in any JSON escaping.
 - **Pictures and files.** A note shows a stored file by a line, `![](url)`
   for a picture or `[name](url)` for a file chip, as the editor writes a
-  dropped one; `missing_uploads` refuses an `/api/uploads/` name the
-  workspace does not hold, and over MCP its refusal names `upload_file`. So
-  a file is stored first, and the line it answers is pasted: `clip_region`
-  for a region of the library's own PDFs or handwriting, `upload_file`
-  (`gamma/mcp_upload.py`, SDK-free like `mcp_export.py`) for anything else.
-  `upload_file` is MCP's own, outside the registry (a ticket belongs to a
-  connection, and the chat has the person's own drop), and takes one of two
-  routes:
-  - `url`: Gamma fetches a public file (`web_fetch.read_bounded`: the SSRF
-    guard, every redirect checked again, 40 MB for a PDF and 5 MB for
-    anything else, a longer body refused, never cut short) with no
-    publisher sign-ins, and refuses a web page. The extension is
-    `formats.upload_extension(name, sniffed picture type)`, `/upload-file`'s
-    rule, the name `name` or the URL's own; a `.ink` is refused. It is
-    stored with `storage.store_file_stream` (the quota, the content checks)
-    and answers `{upload, name, size, markdown, already_existed}`.
+  dropped one. `missing_uploads` refuses an `/api/uploads/` name the
+  workspace does not hold, and over MCP its refusal names `upload_file`.
+  - So a file is stored first, and the line it answers is pasted.
+    `clip_region` stores a region of the library's own PDFs or handwriting,
+    and `upload_file` (`gamma/mcp_upload.py`, SDK-free like `mcp_export.py`)
+    anything else.
+  - `upload_file` is MCP's own, outside the registry: a ticket belongs to a
+    connection, and the chat has the person's own drop. Both its routes
+    answer `markdown`, the line to paste (`mcp_upload.markdown_line`:
+    `![](url)` for a picture extension, else
+    `note_markup.markdown_link(name, url)`).
+  - `url`: Gamma fetches a public file with no publisher sign-ins, and
+    refuses a web page.
+    - The fetch is `web_fetch.read_bounded`: the SSRF guard, every redirect
+      checked again, 40 MB for a PDF and 5 MB for anything else. A longer
+      body is refused, never cut short.
+    - The extension is `formats.upload_extension(name, sniffed picture
+      type)`, `/upload-file`'s rule, from the name `name` or the URL's own.
+      A `.ink` is refused.
+    - It is stored with `storage.store_file_stream` (the quota, the content
+      checks) and answers `{upload, name, size, markdown, already_existed}`.
   - `name` alone (a path or name on the assistant's computer): a one-time
-    ticket, answered as the command that sends the file, `curl -sS
-    --fail-with-body -T <path> -H 'X-Gamma-Upload: <secret>'
-    <base>/api/agent-uploads` (`curl.exe` on Windows), and as structured
-    content `{upload_url, header, ticket, expires_in, max_bytes}`. An
-    executable's or a `.ink`'s name is refused before a ticket is made
-    (`upload_parts.file_extension`). The PUT ([api.md](api.md) "PDFs &
-    uploads") answers `{url, name, size, already_existed, markdown}`.
-
-  `markdown` is the line to paste (`mcp_upload.markdown_line`: `![](url)`
-  for a picture extension, else `note_markup.markdown_link(name, url)`).
-  The tickets live in this process's memory, as the uploads in parts do, so
-  a restart forgets them: only the secret's SHA-256 is kept, a ticket lives
-  `mcp_upload.TICKET_TTL_S` (900 s), the first PUT the route takes spends it
-  whatever its outcome, and a connection holds at most 8 (`MAX_TICKETS`; minting another
-  drops its oldest). The ticket is the only authority the PUT carries; it
-  goes in a header so no access log keeps it, and the connection's token
-  still writes nothing on `/api`. A stored file shows in no note until a
-  note write names it; one that is never pasted is an unreferenced upload,
-  which the upload GC collects as any other.
+    ticket.
+    - The answer is the command that sends the file, `curl -sS
+      --fail-with-body -T <path> -H 'X-Gamma-Upload: <secret>'
+      <base>/api/agent-uploads` (`curl.exe` on Windows). Its structured
+      content is `{upload_url, header, ticket, expires_in, max_bytes}`.
+    - An executable's or a `.ink`'s name is refused before a ticket is made
+      (`upload_parts.file_extension`).
+    - The PUT ([api.md](api.md) "PDFs & uploads") answers `{url, name,
+      size, already_existed, markdown}`.
+    - The tickets live in this process's memory, as the uploads in parts
+      do, so a restart forgets them. Only the secret's SHA-256 is kept.
+    - A ticket lives `mcp_upload.TICKET_TTL_S` (900 s), and the first PUT
+      the route takes spends it whatever its outcome. A connection holds at
+      most 8 (`MAX_TICKETS`), and minting another drops its oldest.
+    - The ticket is the only authority the PUT carries. It goes in a header
+      so no access log keeps it, and the connection's token writes nothing
+      on `/api`.
+  - A stored file shows in no note until a note write names it. One that is
+    never pasted is an unreferenced upload, which the upload GC collects as
+    any other.
 - **What each client can do.**
 
   | Client | A Markdown paste | A library figure (`clip_region`) | A public file (`upload_file(url)`) | A file on the person's computer | Asking first |
@@ -679,18 +697,22 @@ level").
   for 64 connections): `read_block` then `edit_block` works across calls,
   and a replace of a note it never read is refused as in the chat. Two
   sessions of one client share the token, and so share what it read.
-- **Where it is set.** The consent page (an MCP client's sign-in and a setup
-  command's) shows the levels on each ticked workspace and on "All
-  workspaces"; at Edit its summary becomes **Read and edit notes** and its button
-  **Allow reading and editing**, and its Edit line reads "Make pages, and
-  create, edit and move notes with their pictures and files, in the
-  workspaces marked Edit. Deletes nothing unless you allow it later in
-  Settings, and changes no folders or settings." Afterwards, a connection's **Choose
-  workspaces** under Connected assistants changes both, and its row says
-  where it edits ("edits notes in Lab", "edits notes wherever you edit").
-  There, once a workspace is Edit, the `Toggle` **May delete notes** sets
-  `deletes` (`PATCH /api/integrations/tokens/{id}` with `deletes`, off by
-  default). Not a scope: no client asks for either, the person gives them.
+- **Where it is set.** Neither Edit nor deleting is a scope: no client asks
+  for either, the person gives them.
+  - The consent page (an MCP client's sign-in and a setup command's) shows
+    the levels on each ticked workspace and on "All workspaces". At Edit its
+    summary becomes **Read and edit notes** and its button **Allow reading
+    and editing**.
+  - Its Edit line reads "Make pages, and create, edit and move notes with
+    their pictures and files, in the workspaces marked Edit. Deletes
+    nothing unless you allow it later in Settings, and changes no folders or
+    settings."
+  - Afterwards, a connection's **Choose workspaces** under Connected
+    assistants changes the workspaces and their levels, and its row says
+    where it edits ("edits notes in Lab", "edits notes wherever you edit").
+  - There, once a workspace is Edit, the `Toggle` **May delete notes** sets
+    `deletes` (`PATCH /api/integrations/tokens/{id}` with `deletes`, off by
+    default).
 
 #### Asking first
 
@@ -711,14 +733,14 @@ way and not the client's own prompt or a step-up sign-in:
   added one after `+ `, one kept line beside each run of them with its
   links as their text, "…" for the rest, at most 24 lines of 240
   characters), and "Open in Gamma:" with the page's URL. A paste of
-  several blocks says how many and where ("Claude Code wants to add 7 notes
-  to “Paper”, under “Methods”, after “We measured…”. It adds 23 lines, 1
-  picture and 1 file.", or "at the top"), from the preview's `count`,
-  `after` or `first`, `picture_count` and `file_count`, and its lines are
-  the blocks' texts indented two spaces a level. In every line a stored
-  upload is named, `[picture: caption]` or `[file: name]` (`_UPLOAD_LINK`,
-  `_stored`), not shown as its URL; other links on an added or removed
-  line stay as written. Its one field,
+  several blocks says how many and where, from the preview's `count`,
+  `after` or `first`, `picture_count` and `file_count`: "Claude Code wants
+  to add 7 notes to “Paper”, under “Methods”, after “We measured…”. It adds
+  23 lines, 1 picture and 1 file." (or "at the top"). Its lines are the
+  blocks' texts, indented two spaces a level. In every line a stored
+  upload is named, `[picture: caption]` or `[file: name]`, rather than
+  shown as its URL (`_UPLOAD_LINK`, `_stored`). Other links on an added or
+  removed line stay as written. Its one field,
   `remember`, is "Don't ask again for this connection" ("You can turn
   asking back on in Gamma: Settings → AI → Integrations"). Accept runs the call with the preview's digest
   (`run_agent_tool(approved=)`), as the chat's gate does; accept with
@@ -726,23 +748,65 @@ way and not the client's own prompt or a step-up sign-in:
   or cancel, or no answer within the chat card's ten minutes
   (`ai_permissions.APPROVAL_TIMEOUT`), changes nothing, and the model hears
   `DECLINED` or `UNANSWERED`, worded as the chat's.
-- **Storing asks nobody.** A tool that only stores a file for a note to
-  show, `clip_region` (the registry's `"stores": True`, gathered in
-  `ai_tools.registry.STORING_TOOLS`) and `upload_file`, runs without a
-  question: it changes no note, and the note write that pastes its line
-  asks with the picture or file named in it. A figure from a PDF is
-  therefore one question, not two. The chat's `ApprovalGate.asks`
-  (`ai_agent.py`) follows the same rule.
-- **Undoing asks; listing does not.** `list_changes` changes nothing and
-  runs without a question. `undo_change` asks as a change does, its
-  question from the journal rather than a preview (`_undo_question`): "Codex
-  wants to undo its change “Added 7 notes in “Paper””, made 2026-11-20 10:02 UTC, in
-  “Paper”.", with "Someone changed it since: undoing it anyway loses that."
-  when it is forced, and the page's link. A change undone already, or not
-  this connection's, answers without asking. `create_page` asks "<who>
-  wants to make the page “T” in <folder> / inside “P” / at the top of the
-  library.", and `delete_block` "<who> wants to delete a note in “T” with
-  the N notes under it. undo_change can bring it back."
+- **And in Gamma, where the change would land** (`mcp_server._ask_both`,
+  `gamma/agent_asks.py`). The same question is asked in Gamma at once.
+  - `agent_asks.ask` opens a waiting approval
+    (`ai_permissions.open_approval`, the account's, as a chat card's) and
+    lists it with the workspace, the tool, its permission, the planned
+    change and the connection's name. The account's open tabs hear of it
+    (`{t: "ai_changes"}`).
+  - A question no page draws, an undo's or a page made's, opens none and is
+    the client's alone.
+  - A page's read (`GET /api/ai/changes?page_id=`) returns the questions
+    whose change is drawn on it (`asks`). A move's is the page the note is
+    on now (`src_page_id`), though it goes to another.
+  - The page draws each as a chat card's is drawn
+    ([ai.md](ai.md#reviewing-an-agents-changes)), by the connection's name
+    ("Codex wants to add this note"): an edit as tracked changes, a new note
+    as a ghost row, a deletion struck out, a move with where it goes, a
+    highlight, a drawing, a text box or a picture on its PDF page or page
+    of paper.
+  - Its answers are **Keep**, **Keep, and don't ask again** (the question's
+    `remember`) and **Undo**, which takes a line of what to do instead (the
+    model then hears `DECLINED_SAYING`). They go through
+    `POST /api/ai/approvals/{id}`, as a card's do.
+  - Only the person answers there, from a signed-in session. An integration
+    token, the connection's own among them, reads no `asks` and is answered
+    404 for a question `agent_asks` holds (`agent_asks.holds`), so a client
+    that holds the token cannot let itself go on.
+  - The first answer, in the client or in Gamma, decides. The client's
+    question and Gamma's wait race in one task group, Gamma's in a thread
+    that an event stops once the client's side ends. That is an answer, or
+    the call cancelled by the client, the session's end or a shutdown, so a
+    cancelled call takes Gamma's question away at once.
+  - Answered in Gamma, the client's question is withdrawn with
+    `notifications/cancelled` for its request id, and only once it went
+    out. The id is read as the elicitation goes out, since two asks on one
+    session share its counter. Whether a client closes its form for it is
+    the client's.
+  - Either way the question leaves `agent_asks` and its approval is taken
+    off (`agent_asks.settle`). A question lives in this process's memory,
+    as the approvals do: a restart drops it with the call.
+- **Storing asks nobody.** `clip_region` (the registry's `"stores": True`,
+  gathered in `ai_tools.registry.STORING_TOOLS`) and `upload_file` only
+  store a file for a note to show, so they run without a question. The note
+  write that pastes the file's line asks, with the picture or file named in
+  it, so a figure from a PDF is one question, not two.
+  - The chat's `ApprovalGate.asks` (`ai_agent.py`) follows the same rule.
+- **Undoing asks, listing does not.** `list_changes` changes nothing and
+  runs without a question.
+  - `undo_change` asks as a change does, its question from the journal
+    rather than a preview (`_undo_question`): "Codex wants to undo its
+    change “Added 7 notes in “Paper””, made 2026-11-20 10:02 UTC, in
+    “Paper”." A forced one adds "Someone changed it since: undoing it
+    anyway loses that.", and each ends with "Open in Gamma:" and the page's
+    link.
+  - A change undone already, or not this connection's, answers without
+    asking.
+- **A new page and a deletion.** `create_page` asks "<who> wants to make
+  the page “T” in <folder> / inside “P” / at the top of the library." And
+  `delete_block` asks "<who> wants to delete a note in “T” with the N notes
+  under it. undo_change can bring it back."
 - **Two transports** (`GammaMCP.__call__`). The question needs a stateful
   session answered over SSE: the SDK's JSON mode drops a server request made
   during a call, and a stateless request has no session for the answer to
@@ -777,59 +841,94 @@ then the primary Allow and Cancel.
 
 #### Undoing a change
 
-Gamma's chat keeps each change's revert record with its reply, where the
-person takes it back. MCP has no reply, so the adapter journals the changes
-instead (`gamma/mcp_changes.py`, SDK-free like `mcp_export.py`).
+A connection's changes are journaled with the chat's, in one journal
+(`gamma/agent_changes.py`, SDK-free like `mcp_export.py`; [ai.md](ai.md#reviewing-an-agents-changes)).
+Each waits for the person's review in Gamma, as the chat's do. The note
+draws it under the connection's name ("Edited by Codex") with Keep and Undo,
+and the page's strip counts it. The person's open tabs hear of it as it is
+made. A deletion and a page made have nothing in a note to draw on. They
+wait in the connection's Changes in Settings, where Keep and Undo decide
+them (below).
 
-- **The journal.** After a change tool succeeds, `mcp_server._call` hands
-  its action to `mcp_changes.record`, which keeps it when the action carries
-  a revert record of a kind `ai_revert.revert_change` takes back
-  (`mcp_changes.KINDS`): `edit_block`, `create_block` (a paste is one
-  change), `move_block`, `delete_block`, the drawing tools, `add_sheet` and
-  `create_page` (kind `made`). `clip_region` and `upload_file` store a file
-  and make no change. The row goes in the workspace's `pages.db` table
-  `agent_changes` (`db.PAGES_SCHEMA`, additive, so no migration step): id,
-  `token_id` (the connection), `agent` (its stamp then), `at`, `tool`,
-  `kind`, `block_id`, `page_id`, `summary`, `revert` (the tool's record, as
-  JSON) and `undone_at` (`''` while it stands). The answer ends "Change
-  <id>: undo_change(change_id="<id>") takes it back.", and its structured
-  content carries `change_id`.
-- **What is kept.** Each write prunes the table: the newest
-  `KEEP_PER_CONNECTION` (500) per connection, none older than `KEEP_DAYS`
-  (30). It is each account's own and of this server only: the table is in
-  `ws_backup.PRIVATE_TABLES`, so a backup carries none and a restore keeps
-  the live rows, and no mirror or Gamma export carries it. A revert record
-  names blocks of this one database, so it means nothing elsewhere.
-- **`list_changes(limit?)`.** This connection's own changes, newest first
-  (20 by default, at most 100), across the workspaces it edits or the one
-  `workspace` names: each line its change id, time (UTC), summary,
-  "(undone)" once taken back, the workspace on a connection of several, and
-  the page's link; the structured content lists `{change_id, at, summary,
-  undone, page_id, workspace_id}`.
-- **`undo_change(change_id, force?)`.** Takes one back with
-  `ai_revert.revert_change`, written as the account (`mcp_changes.undo`,
-  which marks it undone): the chat's revert, a merge into the notes as they
-  are now. Only this connection's own (`_change_of` looks in the workspaces
-  it still edits), and each once; a redo is the change made again. A page
-  made goes to Recently deleted while it is empty (`ai_revert._plan_made`),
-  so its notes are undone first; the latest change first when several touch
-  one note. When someone's work since would be lost (409 `filled`,
-  `changed` or `moved`) it refuses, saying what forcing would take out, and
-  `force: true` takes it back anyway, which the tool's description says to
-  send only once the user agrees. A hosted server its plan made read-only
-  refuses it, as it does every change, and a workspace being deleted too.
-- **The person's side.** Each editing connection's row in Settings → AI →
-  Integrations has a **Changes** button (`SettingsIntegrations.jsx`
-  `ConnectionChanges`): what it changed, the summary, time, workspace and
-  page, each with **Undo**, or "Undone". A conflict is worded as the chat's
-  revert words it (`chat/AgentChanges.jsx` `refusalCopy`), with the button
-  that undoes anyway. The routes ([api.md](api.md) "Integrations and MCP"):
-  `GET /api/integrations/tokens/{token_id}/changes` (the latest 100 across
-  the workspaces it reads, newest first) and `POST
-  /api/integrations/tokens/{token_id}/changes/{change_id}/undo` with
-  `{workspace_id, force}`, as the person: 409 `{detail, conflict, preview}`
-  as `/api/ai/revert` answers, 404 for another connection's change or one
-  gone, 403 where the account no longer edits.
+- **The journal.** After a change tool succeeds, `run_agent_tool` journals
+  it in the scope `_writes` gives the call. That scope names the journal
+  `{source: "mcp", token}`, for the Comment level's writing tools as for the
+  edit tools. It keeps the change when the action carries a revert record
+  of a kind `ai_revert.revert_change` takes back (`agent_changes.KINDS`).
+  - Those are `edit_block`, `create_block` (a paste is one change),
+    `move_block`, `delete_block`, the drawing tools, `add_sheet`,
+    `create_page` (kind `made`) and `highlight` (kind `create`,
+    `agent_changes.revert_kind`). `highlight` is a Comment-level tool, so a
+    connection that only comments has its highlights drawn on their PDF
+    page for review too.
+  - `comment` and `resolve` carry no revert record and are not journaled.
+    `clip_region` and `upload_file` store a file and make no change.
+  - The row goes in the workspace's `pages.db` table `agent_changes`. Its
+    columns: id, `account` (the connection's account), `source`, `token_id`
+    (the connection), `agent` (its stamp then), `at`, `tool`, `kind`,
+    `block_id`, `page_id`, `summary`, `revert` (the tool's record, as
+    JSON), `kept_at`, `cleared_at` and `undone_at`.
+  - A change the person allowed in Gamma's question ("Asking first") is
+    kept as it is written. One made without asking waits for review.
+  - An edit tool's answer ends "Change <id>: undo_change(change_id="<id>")
+    takes it back.", and its structured content carries `change_id` (`_call`
+    names it for `EDIT_TOOLS | DELETE_TOOLS`). A highlight's names none,
+    though `list_changes` lists it and `undo_change` takes it back where the
+    connection edits.
+- **What is kept.** Each write prunes the table to the newest
+  `KEEP_PER_CONNECTION` (500) per account and connection, none older than
+  `KEEP_DAYS` (30 days).
+  - The table is each account's own and of this server only. It is in
+    `ws_backup.PRIVATE_TABLES`, so a backup carries none and a restore keeps
+    the live rows, and no mirror or Gamma export carries it.
+  - A revert record names blocks of this one database, so it means nothing
+    elsewhere.
+- **`list_changes(limit?)`** lists this connection's own changes, newest
+  first (20 by default, at most 100), across the workspaces it edits or the
+  one `workspace` names.
+  - Each line has its change id, time (UTC), summary, what the person
+    decided ("kept", "undone", "the user has yet to review it"), the
+    workspace on a connection of several, and the page's link. The
+    structured content lists `{change_id, at, summary, undone, state,
+    page_id, workspace_id}`.
+- **`undo_change(change_id, force?)`** takes one back with
+  `ai_revert.revert_change`, written as the account (`agent_changes.undo`,
+  which marks it undone). That is the chat's revert, a merge into the notes
+  as they are now.
+  - It takes back only this connection's own changes (`_change_of` looks in
+    the workspaces it still edits), each once. A redo is the change made
+    again.
+  - A page it made goes to Recently deleted while it is empty
+    (`ai_revert._plan_made`), so its notes are undone first. When several
+    changes touch one note, the latest is undone first.
+  - When someone's work since would be lost (409 `filled`, `changed` or
+    `moved`), it refuses, saying what forcing would take out. `force: true`
+    takes it back anyway, which the tool's description says to send only
+    once the user agrees.
+  - A hosted server its plan made read-only refuses it, as it does every
+    change, and so does a workspace being deleted.
+- **The person's side** is the note, as above, and the connection's row in
+  Settings → AI → Integrations. Each editing connection's row has a
+  **Changes** button (`SettingsIntegrations.jsx` `ConnectionChanges`). It
+  lists what the connection changed, with the summary, time, workspace and
+  page, each by its `state`.
+  - A change waiting for review has **Keep** beside **Undo**. Keep is the
+    note's own decision, `POST /api/ai/changes/{id}`. It is posted with
+    `?ws=` the change's workspace, since the list spans every workspace the
+    connection reads.
+  - A kept one has a "Kept" tag and **Undo**, an undone one "Undone".
+  - It is where a deletion or a page made is reviewed.
+  - A conflict is worded as the chat's revert words it
+    (`chat/aiRevert.js` `refusalCopy`), with the button that undoes
+    anyway.
+  - The routes, as the person ([api.md](api.md) "Integrations and MCP"):
+    `GET /api/integrations/tokens/{token_id}/changes` lists the latest 100
+    across the workspaces it reads, newest first, each with its `state`.
+    `POST /api/integrations/tokens/{token_id}/changes/{change_id}/undo`
+    takes `{workspace_id, force}`.
+  - The undo answers 409 `{detail, conflict, preview}` as `/api/ai/revert`
+    does, 404 for another connection's change or one gone, and 403 where
+    the account no longer edits.
 
 ## Self-hosted and remote connections
 
@@ -927,7 +1026,7 @@ manual tokens in **Integrations**, where users can revoke them.
 
 ## Permissions and credentials
 
-- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads; a viewer may make one) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers); a third, `computer`, is a computer's channel to the server ([computers.md](computers.md)), which opens nothing else and no MCP connection; a fourth, `turn`, is the token of one turn of an agent on this computer ("The token of an agent's turn" below), which opens MCP alone. A read token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first; and of those, the ones it may also comment in, its `comments` (`integrations.comment_grant`, "The Comment level"), and the ones whose notes it may also edit, its `edits` (`integrations.edit_grant`, "Editing notes"), each `''`, `'*'` or a list, edits only where the account edits. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included), but for its comments in its own workspace when it comments there (`auth.token_comments`), whatever else its MCP connection reads. `POST /api/ai/chat` through it arms the reading tools only (`auth.can_write`), and the writing tools where it comments (`auth.can_comment`), so its agent cannot rename, move or edit. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
+- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads; a viewer may make one) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers); a third, `computer`, is a computer's channel to the server ([computers.md](computers.md)), which opens nothing else and no MCP connection; a fourth, `turn`, is the token of one turn of an agent on this computer ("The token of an agent's turn" below), which opens MCP alone. A read token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first; and of those, the ones it may also comment in, its `comments` (`integrations.comment_grant`, "The Comment level"), and the ones whose notes it may also edit, its `edits` (`integrations.edit_grant`, "Editing notes"), each `''`, `'*'` or a list, edits only where the account edits. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included), but for its comments in its own workspace when it comments there (`auth.token_comments`), whatever else its MCP connection reads. No token reviews an agent's change either, whatever its scope. Keeping one, Keep All and Clear marks answer 403 (`auth.TOKEN_REFUSAL`). The page's read lists no question waiting (`asks: []`), and an answer to a question an assistant asks in Gamma is 404 ("Asking first"). So a connection cannot pass its own changes or questions through the person's review. `POST /api/ai/chat` through it arms the reading tools only (`auth.can_write`), and the writing tools where it comments (`auth.can_comment`), so its agent cannot rename, move or edit. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
   `?ws=` and `X-Gamma-Workspace` cannot select another workspace.
 - Only token SHA-256 hashes are stored in `users.db`. Tokens contain 256 random bits.
 - HTTP share URLs also stay within the integration token's workspace and
@@ -947,11 +1046,11 @@ manual tokens in **Integrations**, where users can revoke them.
   (`integrations.forget_workspace`); a list left empty goes with its token.
   Account rename preserves them; password changes through the admin API or
   `manage.py set-password` revoke them along with sessions.
-- MCP always disables the chat's external web tools and its writes, but
-  for the three writing tools in the workspaces a connection may comment in
-  ("The Comment level") and the note, page and drawing tools in those it
-  may edit, `delete_block` only where deleting was allowed too ("Editing
-  notes"). The allowlist is enforced on every dispatch, independent of
+- MCP always disables the chat's external web tools and its writes. The
+  exceptions are the three writing tools in the workspaces a connection may
+  comment in ("The Comment level"), and the note, page and drawing tools in
+  those it may edit, `delete_block` only where deleting was allowed too
+  ("Editing notes"). The allowlist is enforced on every dispatch, independent of
   which tools the client was offered. Deprecated chat aliases are not accepted
   by the MCP transport.
 - Token management requires a normal Gamma session and never accepts an integration

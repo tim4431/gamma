@@ -341,6 +341,30 @@ def test_record_op_writes_the_changed_fields_and_rebuilds_the_entry(side):
     assert "content" not in op and op["props"]["cite_key"] is None and op["props"]["meta"]["title"] == "Newer title"
 
 
+def test_a_pull_keeps_the_key_a_stored_comma_name_was_cited_by(side):
+    """A Zotero pull builds the entry again: a record stored before 72 with
+    "Den Hengst, Floris" first keeps its cached "floris2020"
+    (``bibtex_keys.rebuilt_key``), as a hand edit does."""
+    meta = {"title": "Old", "authors": ["Den Hengst, Floris"], "year": "2020", "source": "doi"}
+    page = _page(side.c, "Old", meta=meta, bibtex="@article{floris2020,\n  title = {Old},\n  year = {2020}\n}")
+    op = zl.record_op(_block(side.ws, page), {"title": "New title"})
+    assert op["props"]["bibtex"].startswith("@misc{floris2020,")
+
+
+def test_a_pulled_year_takes_a_date_of_another_year_with_it(side):
+    """Zotero's year written on a record whose date is of another year:
+    the date goes (the popover's Date row would show it and, saved, set the
+    year back), and nothing else the link does not carry changes. A pull
+    that keeps the year, or brings other fields, keeps the date."""
+    page = _page(side.c, "Dated", meta={"title": "Dated", "authors": ["A. Author"], "year": "2017",
+                                        "issue": "7", "date": "2017-06-12", "source": "doi"})
+    op = zl.record_op(_block(side.ws, page), {"title": "Dated again", "year": "2017"})
+    assert op["props"]["meta"]["date"] == "2017-06-12"
+    op = zl.record_op(_block(side.ws, page), {"year": "2018"})
+    assert op["props"]["meta"] == {"title": "Dated", "authors": ["A. Author"], "year": "2018", "issue": "7",
+                                   "source": "doi"}
+
+
 def test_record_op_gives_a_page_without_a_record_zoteros(side):
     page = _page(side.c, "paper.pdf", auto_title="paper.pdf")
     op = zl.record_op(_block(side.ws, page), {"title": "A Found Paper", "authors": ["B. Writer"], "kind": "preprint"})

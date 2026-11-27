@@ -2,10 +2,11 @@ import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { newPageViaUi } from "./notes.mjs";
+import { waitForPdf } from "./pdf.mjs";
 import { Account, wanted } from "../harness.mjs";
 
 export async function mcpScenarios(env) {
-  const { server, browser, alice, step, openPage, assert, assertEq, assertNoProblems, sleep, until } = env;
+  const { server, browser, alice, makePdf, step, openPage, assert, assertEq, assertNoProblems, sleep, until } = env;
   if (!wanted("mcp")) return;
   await step("mcp: administrator confirms the suggested server URL and it persists", async () => {
     await server.manage("create-user", "mcp-admin", "mcp-admin-pw");
@@ -209,48 +210,55 @@ export async function mcpScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("mcp: a connection that edits asks before each change through the client, and makes only the changes allowed", async () => {
+  // The JSON-RPC messages of an SSE answer, as they come.
+  async function* messages(response) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, "\n");
+      for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
+        const data = buffer.slice(0, end).split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5)).join("");
+        buffer = buffer.slice(end + 2);
+        if (data.trim()) yield JSON.parse(data);
+      }
+    }
+  }
+  // A session over a connection's token, opened by a client that can show a
+  // question (elicitation): `send(message)` posts a message in it.
+  async function askedSession(token) {
+    const post = (body, session) => fetch(`${server.base}/mcp`, { method: "POST", headers: {
+      Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream",
+      "MCP-Protocol-Version": "2025-11-25", ...(session ? { "Mcp-Session-Id": session } : {}) }, body: JSON.stringify(body) });
+    const opened = await post({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25",
+      capabilities: { elicitation: { form: {} } }, clientInfo: { name: "asked-e2e", version: "0" } } });
+    const session = opened.headers.get("mcp-session-id");
+    assert(session, "a client that can be asked gets a session");
+    for await (const message of messages(opened)) { assertEq(message.result?.serverInfo?.name, "Gamma"); break; }
+    assertEq((await post({ jsonrpc: "2.0", method: "notifications/initialized" }, session)).status, 202);
+    return (body) => post(body, session);
+  }
+
+  await step("mcp: a connection that edits asks before each change through the client and in Gamma, and makes only the changes allowed", async () => {
     // A client that can show a question (elicitation) and a connection that
     // edits alice's workspace, asking first (the default).
     const agent = await alice.api("/api/integrations/tokens", { method: "POST", body: { name: "Asked agent", edit_workspaces: [alice.ws] } });
     const page = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Asked page" } });
-    const post = (body, session) => fetch(`${server.base}/mcp`, { method: "POST", headers: {
-      Authorization: `Bearer ${agent.token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream",
-      "MCP-Protocol-Version": "2025-11-25", ...(session ? { "Mcp-Session-Id": session } : {}) }, body: JSON.stringify(body) });
-    // The JSON-RPC messages of an SSE answer, as they come.
-    async function* messages(response) {
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) return;
-        buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, "\n");
-        for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
-          const data = buffer.slice(0, end).split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5)).join("");
-          buffer = buffer.slice(end + 2);
-          if (data.trim()) yield JSON.parse(data);
-        }
-      }
-    }
     const notes = async () => (await alice.api(`/api/blocks/${page.id}/children`)).children.map((b) => b.content);
     try {
-      const opened = await post({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25",
-        capabilities: { elicitation: { form: {} } }, clientInfo: { name: "asked-e2e", version: "0" } } });
-      const session = opened.headers.get("mcp-session-id");
-      assert(session, "a client that can be asked gets a session");
-      for await (const message of messages(opened)) { assertEq(message.result?.serverInfo?.name, "Gamma"); break; }
-      assertEq((await post({ jsonrpc: "2.0", method: "notifications/initialized" }, session)).status, 202);
+      const send = await askedSession(agent.token);
       // One change: Gamma's question comes on the call's stream, the answer goes back in the session.
       let id = 10;
       const change = async (content, answer) => {
-        const call = messages(await post({ jsonrpc: "2.0", id: ++id, method: "tools/call", params: {
-          name: "create_block", arguments: { parent_id: page.id, content } } }, session));
+        const call = messages(await send({ jsonrpc: "2.0", id: ++id, method: "tools/call", params: {
+          name: "create_block", arguments: { parent_id: page.id, content } } }));
         let { value: message } = await call.next();
         let question = null;
         if (message.method === "elicitation/create") {
           question = message.params;
-          assertEq((await post({ jsonrpc: "2.0", id: message.id, result: answer }, session)).status, 202);
+          assertEq((await send({ jsonrpc: "2.0", id: message.id, result: answer })).status, 202);
           ({ value: message } = await call.next());
         }
         assertEq(message.id, id, "the call's own result");
@@ -271,6 +279,34 @@ export async function mcpScenarios(env) {
         pasted.question?.message);
       assert(!pasted.result.isError && pasted.result.structuredContent.block_ids.length === 3, JSON.stringify(pasted.result));
       assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note", "Pasted one", "- pasted two", "- pasted three"]));
+      // Answered in Gamma: the open page draws the question where the note would go, by the agent's name, with
+      // Keep and Undo; Keep there makes the change, the client's question is withdrawn, and the note lands
+      // folded to its mark (kept on its question).
+      const ctx = await alice.context(browser);
+      try {
+        const tab = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${page.id}`);
+        await tab.locator(".blockRowWrap", { hasText: "Asked note" }).waitFor();
+        const call = messages(await send({ jsonrpc: "2.0", id: ++id, method: "tools/call", params: {
+          name: "create_block", arguments: { parent_id: page.id, content: "Kept in Gamma" } } }));
+        const { value: asking } = await call.next();
+        assertEq(asking.method, "elicitation/create");
+        const ghost = tab.locator(".aiAskGhostWrap", { hasText: "Kept in Gamma" });
+        await ghost.waitFor();
+        await ghost.getByText("Asked agent wants to add this note").waitFor();
+        await ghost.getByRole("button", { name: "Keep", exact: true }).click();
+        const { value: withdrawn } = await call.next();
+        assertEq(withdrawn.method, "notifications/cancelled");
+        assertEq(withdrawn.params.requestId, asking.id, "the client's own question is withdrawn");
+        const { value: done } = await call.next();
+        assert(done.id === id && !done.result.isError, JSON.stringify(done));
+        await until(async () => !(await ghost.count()), { what: "answered, the page draws the question no more" });
+        await tab.locator(".blockRowWrap", { hasText: "Kept in Gamma" }).locator(".aiChangeMark").waitFor();
+        assertNoProblems(tab);
+      } finally {
+        await ctx.close();
+      }
+      assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note", "Pasted one", "- pasted two", "- pasted three",
+        "Kept in Gamma"]));
       // "Don't ask again": this change goes through, and the next one is not asked about.
       const remembered = await change("Remembered note", { action: "accept", content: { remember: true } });
       assert(remembered.question && !remembered.result.isError, JSON.stringify(remembered.result));
@@ -278,8 +314,75 @@ export async function mcpScenarios(env) {
       const unasked = await change("Unasked note", null);
       assert(!unasked.question && !unasked.result.isError, "no question once it changes without asking");
       assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note", "Pasted one", "- pasted two", "- pasted three",
-        "Remembered note", "Unasked note"]));
+        "Kept in Gamma", "Remembered note", "Unasked note"]));
     } finally {
+      await alice.api(`/api/integrations/tokens/${agent.id}`, { method: "DELETE" });
+    }
+  });
+
+  await step("mcp: an assistant's question is drawn in Gamma whatever the notes show: a drawing on the PDF with the Notes window closed, a note on a page with none", async () => {
+    const agent = await alice.api("/api/integrations/tokens", { method: "POST", body: { name: "Drawing agent", edit_workspaces: [alice.ws] } });
+    const up = await alice.upload("/api/uploads", makePdf([["A page the assistant draws on", "a passage to box"]]), "asked.pdf", "application/pdf");
+    const paper = (await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
+      body: { default_title: "Asked paper", source_url: up.source_url } })).id;
+    const bare = await alice.upload("/api/uploads", makePdf([["A paper nobody annotated yet"]]), "bare.pdf", "application/pdf");
+    const empty = (await alice.api(`/api/blocks/by-doc/${bare.doc_id}`, { method: "POST",
+      body: { default_title: "Unannotated paper", source_url: bare.source_url } })).id;
+    const ctx = await alice.context(browser);
+    try {
+      const send = await askedSession(agent.token);
+      // A call's question: the call's stream, and the question it opens with.
+      const ask = async (id, name, args) => {
+        const call = messages(await send({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }));
+        const { value: asking } = await call.next();
+        assertEq(asking.method, "elicitation/create");
+        return { call, asking };
+      };
+      const tab = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${paper}`);
+      await waitForPdf(tab, 1);
+      // the Notes window closed: the PDF alone shows the page
+      await tab.getByRole("button", { name: "View", exact: true }).click();
+      const notesItem = tab.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "Notes" });
+      if ((await notesItem.getAttribute("aria-checked")) === "true") await notesItem.click();
+      await tab.keyboard.press("Escape");
+      await until(async () => !(await tab.locator('[data-guide="dock.notes"]').count()), { what: "the Notes window closed" });
+      const strokes = () => tab.locator('.pdfViewer [data-page="1"] .inkLayer path').count();
+      assertEq(await strokes(), 0, "nothing drawn yet");
+      // The drawing is drawn where it would land, by the agent's name, with Keep; Keep there answers the client too.
+      const drawing = await ask(31, "draw", { page_id: paper, pdf_page: 1, shapes: [{ kind: "rect", box: [0.1, 0.1, 0.6, 0.3] }] });
+      const layer = tab.locator('.pdfPageWrap[data-page="1"] .reviewLayer');
+      await layer.locator(".reviewFrame").waitFor();
+      const tag = layer.locator(".reviewTag", { hasText: "Drawing agent wants to draw this" });
+      await tag.waitFor();
+      await tag.getByRole("button", { name: "Keep", exact: true }).click();
+      const { value: withdrawn } = await drawing.call.next();
+      assertEq(withdrawn.method, "notifications/cancelled");
+      assertEq(withdrawn.params.requestId, drawing.asking.id, "the client's own question is withdrawn");
+      const { value: drawn } = await drawing.call.next();
+      assert(drawn.id === 31 && !drawn.result.isError, JSON.stringify(drawn));
+      await until(async () => !(await layer.locator(".reviewFrame").count()), { what: "answered, the page draws the question no more" });
+      await until(async () => (await strokes()) > 0, { what: "the drawing on page 1" });
+      await layer.locator(".reviewObjectMark").waitFor(); // kept on its question: marked where it landed
+      // A paper with no notes yet (a PDF's page seeds no placeholder note, so its tree is empty), the Notes
+      // window open again, draws a new note it asks to add; declined in the client, it goes from the page.
+      await tab.goto(`${server.base}/?ws=${alice.ws}&page=${empty}`);
+      await waitForPdf(tab, 1);
+      await tab.getByRole("button", { name: "View", exact: true }).click();
+      if ((await notesItem.getAttribute("aria-checked")) !== "true") await notesItem.click();
+      await tab.keyboard.press("Escape");
+      await tab.locator(".notesTail.isEmpty").waitFor();
+      const note = await ask(32, "create_block", { parent_id: empty, content: "A first note, asked for" });
+      const ghost = tab.locator(".aiAskGhostWrap", { hasText: "A first note, asked for" });
+      await ghost.waitFor();
+      await ghost.getByText("Drawing agent wants to add this note").waitFor();
+      assertEq((await send({ jsonrpc: "2.0", id: note.asking.id, result: { action: "decline" } })).status, 202);
+      const { value: declined } = await note.call.next();
+      assert(declined.id === 32 && declined.result.isError, JSON.stringify(declined));
+      await until(async () => !(await ghost.count()), { what: "answered in the client, the page draws the question no more" });
+      assertEq((await alice.api(`/api/blocks/${empty}/children`)).children.length, 0, "declined: no note");
+      assertNoProblems(tab);
+    } finally {
+      await ctx.close();
       await alice.api(`/api/integrations/tokens/${agent.id}`, { method: "DELETE" });
     }
   });

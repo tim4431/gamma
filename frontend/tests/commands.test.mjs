@@ -81,6 +81,23 @@ test("the handwriting commands keep to the strip's selection and clipboard, and 
   assert.deepEqual(calls, ["copy", "all"]);
 });
 
+// Zotero's Ctrl+Shift+A / C (the desktop app's defaults) copy the picked
+// pages' citation or bibliography, but not from a text field or a note's
+// editor, whose keys they are there.
+test("the citation copies need a page to cite and decline a key typed in a field or a note", () => {
+  const copied = [];
+  const ctx = { citePicks: 2, copyCitations: (bibliography) => copied.push(bibliography) };
+  for (const id of ["app.copyCitation", "app.copyBibliography"]) {
+    const cmd = commandById(id);
+    assert.equal(cmd.when({ citePicks: 0 }), false, `${id} waits for a page`);
+    assert.equal(cmd.run(ctx, { target: { tagName: "INPUT" } }), false, `${id}: a text field keeps its key`);
+    assert.equal(cmd.run(ctx, { target: { tagName: "DIV", isContentEditable: true } }), false, `${id}: a note's editor keeps its key`);
+    cmd.run(ctx);  // the palette
+    cmd.run(ctx, { target: { tagName: "DIV", isContentEditable: false } });
+  }
+  assert.deepEqual(copied, [false, false, true, true]);
+});
+
 // Ctrl+F with the focus in the chat window is ChatDock's find-in-chat, and
 // in the code view (documents/viewers/TextViewer.jsx) CodeMirror's own Find
 // panel: the search commands decline there and run anywhere else.

@@ -19,8 +19,9 @@
 //   request does (the server checks a stored file's opening pages itself).
 // The translate endpoints are answered locally ("译:" + each text).
 //
-// Then the server's text recognition (docs/dev/pdf_loading.md, gamma/pdf_ocr.py,
-// pdf/ocrState.js, pdf/ocrText.js), with the real engine: a printed scan
+// Then the server's text recognition (docs/dev/pdf_loading.md, gamma/ocr_run.py
+// for the run, gamma/pdf_ocr.py for the store and the view the text readers
+// take, pdf/ocrState.js, pdf/ocrText.js), with the real engine: a printed scan
 // whose invisible layer a poor OCR garbled (backend/tests/ocr_fixtures.py
 // printed_scan_pdf, built through the backend's Python), read through the
 // Document menu's "Recognize text in this PDF":
@@ -814,7 +815,7 @@ async function recognitionSteps({ server, browser, alice, step, until, assert, a
 }
 
 // A second account's tab on a shared workspace's scan, while the file's
-// recognized text changes elsewhere (gamma/pdf_ocr.py announce,
+// recognized text changes elsewhere (gamma/ocr_run.py announce,
 // collab.publish_file; collaboration/collabSession.js onOcr): the job is
 // another account's, so the tab hears of it from its page's socket alone.
 async function otherTabSteps({ server, browser, alice, bob, step, until, assert, assertEq, assertNoProblems, openPage }) {

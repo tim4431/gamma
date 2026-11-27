@@ -19,7 +19,7 @@ const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(
 // A session over fakes; `api(path, init)` answers the HTTP calls. Timers
 // never fire on their own: h.fire() runs whatever is armed.
 function setup(t, api, { canWrite = true, connect = true } = {}) {
-  const h = { calls: [], remote: [], reloads: [], status: [], notices: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null, comments: [], inbox: 0, vault: 0, computer: 0, ocr: [] };
+  const h = { calls: [], remote: [], reloads: [], status: [], notices: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null, comments: [], inbox: 0, vault: 0, computer: 0, ocr: [], aiChanges: [] };
   let timerId = 0;
   const options = {
     pageId: "page-a", canWrite,
@@ -48,6 +48,7 @@ function setup(t, api, { canWrite = true, connect = true } = {}) {
     onPeers: (p) => { h.peers = p; },
     onMe: (m) => { h.me = m; },
     onInbox: () => { h.inbox += 1; },
+    onAiChanges: (pageId) => h.aiChanges.push(pageId),
     timers: { set: (fn, ms) => { h.timers.set(++timerId, { fn, ms }); return timerId; }, clear: (id) => h.timers.delete(id) },
   });
   h.options = options;
@@ -794,6 +795,23 @@ test("a computer's nudge is the account's, on any page, and every hello reads th
   h.message({ t: "computer" });
   assert.equal(h.computer, 4, "kept: the nudge is the account's, and the page open now is asked");
   assert.equal(h.vault, 2, "a vault's nudge is not one");
+});
+
+test("an agent change's nudge is the account's, on any page, and every hello asks for the page's again", async (t) => {
+  const h = setup(t, async () => ({ seq: 0, batches: [] }));
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.deepEqual(h.aiChanges, ["page-a"], "the join asks: the page's read may have gone before it");
+  h.message({ t: "ai_changes", ws: "w", page_id: "page-x" });
+  assert.deepEqual(h.aiChanges, ["page-a", "page-x"], "passed on, whichever page it names");
+  h.socket().onclose({});
+  h.fire(); // the reconnect
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.equal(h.aiChanges.at(-1), "page-a", "the rejoin asks again: a nudge may have come while the socket was away");
+  h.load("page-b", [block("p")]); // navigated away while the socket is still the old page's
+  h.message({ t: "ai_changes", ws: "w", page_id: "page-b" });
+  assert.equal(h.aiChanges.at(-1), "page-b", "kept: the nudge is the account's");
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.equal(h.aiChanges.length, 4, "the old page's rejoin asks nothing for the page open now");
 });
 
 test("a recognition's nudge names its file, on any page; a hello after a dropped socket asks for the PDF on screen, the page's first does not", async (t) => {

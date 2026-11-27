@@ -2004,6 +2004,54 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
+  // "Paste as → Titled link" writes the page's title from /api/link-preview,
+  // the site's name when there is none or the request failed, and asks
+  // again for an address whose request failed (shared/lib/webLinks.js).
+  await step("notes: Paste as Titled link writes the page's title, else the site's name, and asks again after a failed request", async () => {
+    const pg = await alice2.api("/api/pages", { method: "POST", body: { title: "Titled links" } });
+    await alice2.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "tlfirst", parent: pg.id, position: "a0", content: "links:" }] } });
+    const ctxL = await alice2.context(browser);
+    const p2 = await openPage(ctxL, `${server.base}/?ws=${second.id}&page=${pg.id}`);
+    const paper = "https://example.org/paper", flaky = "https://example.org/flaky";
+    let down = true;
+    try {
+      await p2.route("https://icons.duckduckgo.com/**", (route) => route.fulfill({ status: 404, body: "" }));
+      await p2.route("**/api/link-preview?**", (route) => {
+        const url = new URL(route.request().url()).searchParams.get("url");
+        if (url === flaky && down) return route.fulfill({ status: 503, json: { detail: "unavailable" } });
+        route.fulfill({ json: { url, host: "example.org", title: url === paper ? "The Paper" : url === flaky ? "Back Up" : null, author: null } });
+      });
+      // The open editor's source: a bare address's chip already reads as the
+      // site's name, so only the source tells the link was written.
+      const source = () => p2.locator(".blockEditorCm .cm-content").evaluate((el) => el.cmTile.root.view.state.doc.toString());
+      const pasteTitled = async (url, label) => {
+        await p2.keyboard.type(" ");
+        await p2.evaluate((text) => {
+          const dt = new DataTransfer();
+          dt.setData("text/plain", text);
+          document.activeElement.closest(".cm-content")
+            .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        }, url);
+        await p2.locator(".slashMenu .slashMenuItem", { hasText: "Titled link" }).first().click();
+        await until(async () => (await source()).endsWith(`[${label}](${url})`), { what: `the link written as [${label}](${url})` });
+      };
+      await editRow(p2, "links:");
+      await p2.keyboard.press("End");
+      await pasteTitled(paper, "The Paper");
+      await pasteTitled(flaky, "example.org");
+      down = false;
+      await pasteTitled(flaky, "Back Up");
+      await closeEditor(p2);
+      await until(async () => (await tree(alice2, pg.id))[0]?.content
+        === `links: [The Paper](${paper}) [example.org](${flaky}) [Back Up](${flaky})`, { what: "the three links saved" });
+      assertNoProblems(p2, [/link-preview.* -> 503$/]);
+    } finally {
+      await p2.close();
+      await ctxL.close();
+    }
+  });
+
   // Text over the server's limit (collabSession's MAX_CONTENT, 200,000
   // characters) is held back: the notice says why, and the editor stays open
   // on it (App's onStartEdit) until it is short enough to save.

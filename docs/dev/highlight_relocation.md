@@ -717,7 +717,7 @@ already reading `now` counts in none, so a second run writes nothing. A
 respelled quote reaches Zotero (`annotationText`) and a synced vault's
 callout as any changed quote does.
 
-**Forgetting the recognized text** (`pdf_ocr.forget_recognized`) respells
+**Forgetting the recognized text** (`ocr_run.forget_recognized`) respells
 the other way first, while the recognized words are still live:
 `respell_quotes(…, back=True)` swaps the two readings, so `was` is the
 recognized words and `now` the layer, under the same guards. A highlight

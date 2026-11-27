@@ -5,12 +5,12 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { generateKeyBetween } from "fractional-indexing";
 import {
-  LANGUAGE_LABELS, NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
+  LANGUAGE_LABELS, NO_LABEL, NO_LABEL_TITLE, addToFolder, authorList, authorsFromRow, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
   firstFolderPath, folderAtPath, folderChain, folderCompletion, folderEntries, folderInside, folderMatches,
   folderNeighbour, folderPath, folderPathHolds, folderPathNames, folderPosition, folderPositions, folderSubtree, folderTargets,
-  formatFullDate, formatLabel, formatRelativeTime, formatShortDate,
+  familyName, formatFullDate, formatLabel, formatRelativeTime, formatShortDate,
   inFolder, isFreshLibrary, isLinkInput, labelName, libraryTree, normalizeLinkInput, pageBlocksOf, pageFormat, pageKindLabel,
-  placeFolder, siblingFolders,
+  placeFolder, scorePaperMatch, siblingFolders,
 } from "../src/library/libraryUtils.js";
 
 // The listing's trees: physics (with a subfolder whose name holds the path
@@ -348,4 +348,36 @@ test("defaultPageTitle: the document's name, else its address's tail, else Untit
   assert.equal(defaultPageTitle({ url: "https://x.test/dir/a%20b.pdf" }), "a b.pdf");
   assert.equal(defaultPageTitle({ url: "https://x.test/dir/" }), "Untitled");
   assert.equal(defaultPageTitle({ name: "", url: "/api/uploads/d1.pdf" }), "d1.pdf", "a stored file without a name");
+});
+
+test("scorePaperMatch counts an author by the surname: not the given name of a \"Last, First\" one, not a suffix", () => {
+  const by = (author) => ({ properties: { meta: { authors: [author] } } });
+  assert.equal(scorePaperMatch("J. F. Pereira Campos et al.", by("Pereira Campos, Jorge Fernando")), 4);
+  assert.equal(scorePaperMatch("Fernando Alonso", by("Pereira Campos, Jorge Fernando")), 0);
+  assert.equal(scorePaperMatch("A. Lovelace, Sketch of the Engine", by("Lovelace, Ada")), 4);
+  assert.equal(scorePaperMatch("M. L. King, Letter from Birmingham Jail", by("Martin Luther King Jr.")), 4);
+  assert.equal(scorePaperMatch("H. Ford, My Life and Work", by("Henry Ford II")), 4);
+  // the suffix inside a "Last Suffix, First" name, as BibTeX and the record write it
+  assert.equal(scorePaperMatch("M. L. King, Letter from Birmingham Jail", by("King Jr., Martin Luther")), 4);
+  assert.equal(scorePaperMatch("J. F. Pereira Campos et al.", by("Pereira Campos III, Jorge Fernando")), 4);
+  assert.equal(scorePaperMatch("Part III of the review", by("Pereira Campos III, Jorge Fernando")), 0);
+});
+
+test("a name's label is the surname a reference prints; a list of names puts semicolons between them", () => {
+  assert.deepEqual(["Pereira Campos, Jorge Fernando", "Jan van der Berg", "Ada Lovelace", "Martin Luther King Jr.",
+    "King, Jr., Martin Luther", "Plato", ""].map(familyName),
+  ["Pereira Campos", "van der Berg", "Lovelace", "King", "King", "Plato", ""]);
+  assert.equal(authorList(["Pereira Campos, Jorge Fernando", " Den Hengst, Floris ", ""]),
+    "Pereira Campos, Jorge Fernando; Den Hengst, Floris");
+  assert.equal(authorList(["A", "B", "C"], 2), "A; B et al.");
+});
+
+test("the Authors row goes split at its semicolons, a single 'Last, First' name whole", () => {
+  assert.deepEqual(authorsFromRow("Pereira Campos, Jorge Fernando; Den  Hengst, Floris; "),
+    ["Pereira Campos, Jorge Fernando", "Den Hengst, Floris"]);
+  assert.deepEqual(authorsFromRow(" Pereira Campos, Jorge Fernando "), ["Pereira Campos, Jorge Fernando"]);
+  // any other row as typed: the server splits it at its commas and "and"s
+  assert.equal(authorsFromRow("Ada Lovelace, Grace Hopper, Alan Turing"), "Ada Lovelace, Grace Hopper, Alan Turing");
+  assert.equal(authorsFromRow("Ada Lovelace and Grace Hopper, Jr."), "Ada Lovelace and Grace Hopper, Jr.");
+  assert.equal(authorsFromRow("Ada Lovelace"), "Ada Lovelace");
 });

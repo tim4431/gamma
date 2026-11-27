@@ -1,4 +1,4 @@
-"""The ``ocr`` run (gamma/pdf_ocr.py ``run``) with a fake engine
+"""The ``ocr`` run (gamma/ocr_run.py ``run``) with a fake engine
 (tests/ocr_fake.py): which pages it reads and what each becomes (a layer
 kept or replaced, a picture page read, keeping its own text or empty,
 born-digital pages never touched), the sample that stops it on a file
@@ -12,7 +12,7 @@ from ocr_fake import GARBLE, LIGHT, install, joined, layered_scan
 from ocr_fixtures import PRINTED_TEXT, W, H, picture_pdf, printed_scan_pdf
 from test_pdf_ocr_store import store
 
-from gamma import db, jobs, pdf_ocr, pdf_text, translate, translate_store
+from gamma import db, jobs, ocr_run, pdf_ocr, pdf_text, translate, translate_store
 from gamma.search import index
 
 WS, DOC = "wrun", "c" * 24
@@ -35,7 +35,7 @@ def born_digital() -> bytes:
 
 
 def run(path, progress=None, doc_id=DOC):
-    return pdf_ocr.run(WS, doc_id, str(path), actor=ACTOR, progress=progress)
+    return ocr_run.run(WS, doc_id, str(path), actor=ACTOR, progress=progress)
 
 
 def test_a_mixed_file_reads_its_scans_and_pictures_and_leaves_its_born_digital_pages(data_dir, monkeypatch):
@@ -73,7 +73,7 @@ def test_a_good_layer_is_kept_and_the_sample_stops_the_run(data_dir, monkeypatch
     assert result["good_layer"] and result["shared"] == 1.0 and result["kept"] == 3 and result["recognized"] == 1
     assert fake.calls == 4, "the sample's three pages and the picture page; the fourth layered page is not read"
     found = pdf_ocr.state(WS, DOC)
-    assert found["kept"] == [1, 2, 3] and found["recognized"] == [5] and pdf_ocr.reads_well(found), \
+    assert found["kept"] == [1, 2, 3] and found["recognized"] == [5] and ocr_run.reads_well(found), \
         "page 4 is left unread: the file's own text reads well"
     assert pdf_text.extract_pages(str(path))[:4] == pdf_text.extract_pages(str(path), ocr=False)[:4], \
         "their own layers"
@@ -89,7 +89,7 @@ def test_a_good_layer_alone_changes_nothing_anyone_reads(data_dir, monkeypatch):
     assert result["good_layer"] and result["recognized"] == 0 and result["kept"] == 2
     found = pdf_ocr.state(WS, DOC)
     assert found["stamp"] == "" and not found["pending"] and pdf_ocr.view_of(str(path)) is None
-    assert pdf_ocr.reads_well(found), "every scanned page kept its layer"
+    assert ocr_run.reads_well(found), "every scanned page kept its layer"
 
 
 def test_a_layer_kept_when_the_recognition_reads_too_few_of_its_words(data_dir, monkeypatch):
@@ -101,7 +101,7 @@ def test_a_layer_kept_when_the_recognition_reads_too_few_of_its_words(data_dir, 
         "kept for a poor recognition, which says nothing of how the layer reads: every page is read"
     found = pdf_ocr.state(WS, DOC)
     assert found["kept"] == [1, 2] and found["shared"] == {1: 0.0, 2: 0.0} and pdf_ocr.view_of(str(path)) is None
-    assert not pdf_ocr.reads_well(found)
+    assert not ocr_run.reads_well(found)
 
 
 def test_a_picture_page_without_real_text_is_read_as_none(data_dir, monkeypatch):
@@ -123,7 +123,7 @@ def test_a_picture_page_keeps_the_text_it_shows_of_its_own(data_dir, monkeypatch
     assert pdf_text.extract_pages(str(path))[3] == cover, "the cover's title is read as before"
     found = pdf_ocr.state(WS, DOC)
     assert found["kept"] == [1, 2, 3, 4] and set(found["shared"]) == {1, 2, 3}
-    assert pdf_ocr.reads_well(found), "a picture page keeping its own text has no layer to count against it"
+    assert ocr_run.reads_well(found), "a picture page keeping its own text has no layer to count against it"
 
 
 def test_a_failed_page_is_not_kept_and_is_read_again_next_time(data_dir, monkeypatch):
@@ -254,7 +254,7 @@ def test_the_briefs_go_and_the_paid_translations_stay(data_dir, monkeypatch):
 
 def test_more_scanned_pages_than_a_run_reads_are_refused(data_dir, monkeypatch):
     install(monkeypatch)
-    monkeypatch.setattr(pdf_ocr, "MAX_PAGES", 1)
+    monkeypatch.setattr(ocr_run, "MAX_PAGES", 1)
     path = store(WS, DOC, joined(printed_scan_pdf(dpi=72), printed_scan_pdf(dpi=72)))
     with pytest.raises(ValueError, match="2 scanned pages"):
         run(path)

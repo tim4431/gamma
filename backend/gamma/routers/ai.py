@@ -16,8 +16,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import (agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_steer, ai_usage,
-                chatgpt_oauth, fetch_handoff, net_proxy, pdf_ocr, search_services, skills, translate_engines)
+from .. import (agent_asks, agent_changes, agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_steer,
+                ai_usage, chatgpt_oauth, fetch_handoff, net_proxy, pdf_ocr, search_services, skills, translate_engines)
 from ..ai_client import (
     Alarm,
     CallRefused,
@@ -63,18 +63,18 @@ from ..ai_context import (
 from ..ai_permissions import permission_state
 from ..ai_protocols import DEFAULT_MAX_TOKENS
 from ..ai_protocols.base import reasoning_text, truncated_stop
+from ..ai_roles import ModelUnavailable, import_roles, resolve_model as _resolve_model, set_roles
 from ..ai_settings import (
     MAX_MODELS_LEN,
     MAX_NAME_LEN,
     MAX_PROVIDERS,
     MAX_TOOL_REASON,
-    ModelUnavailable,
     ai_runtime,
     billing_of,
     clear_refresh_backoff,
+    entry_base_url,
     entry_models,
     forget_tool_check,
-    import_roles,
     is_oauth_protocol as _is_oauth_protocol,
     is_server_id,
     key_optional,
@@ -89,10 +89,8 @@ from ..ai_settings import (
     provider_label,
     renew_rejected,
     require_ai_runtime,
-    resolve_model as _resolve_model,
     save_tool_check,
     server_entries_for,
-    set_roles,
     shared_allowance,
     stored_tool_check,
     transcriber_for,
@@ -100,8 +98,8 @@ from ..ai_settings import (
     update_entry,
     update_provider_entries,
 )
-from ..auth import (actor_of, can_comment, can_write, is_token, link_ratelimit, require_personal_user_id,
-                    require_user_id, require_ws, require_ws_writer)
+from ..auth import (can_comment, can_write, is_token, link_ratelimit, require_personal_user_id, require_user_id,
+                    require_ws, require_ws_writer)
 from ..blocks_store import PATH_SEP, folder_path, page_root_id
 from ..db import connect_data_db, connect_pages_db, page_now
 from ..logbuf import log
@@ -630,7 +628,7 @@ class ModelRolesRequest(BaseModel):
 @router.put("/ai/models/roles")
 def ai_model_roles(payload: ModelRolesRequest, request: Request):
     """Set the model some tasks use, and add or remove favorites, in one
-    write of the account's ``ai-models`` pref (ai_settings.set_roles): 400
+    write of the account's ``ai-models`` pref (ai_roles.set_roles): 400
     for a pick not offered or past 50 favorites; a chat pick clears
     ``chat_migrated``. Any account, a guest's too (among the models it may
     use); never a link visitor or an integration token."""
@@ -651,7 +649,7 @@ class ModelImportRequest(BaseModel):
 @router.post("/ai/models/import")
 def ai_model_import(payload: ModelImportRequest, request: Request):
     """The client's one-time move of a browser's own picks into the
-    account (ai_settings.import_roles): each taken only while the account's
+    account (ai_roles.import_roles): each taken only while the account's
     is unset (chat also while it holds step 71's pick), atomically; a pick
     not offered is skipped. {taken, roles, favorites, chat_migrated}."""
     user_id = require_user_id(request)
@@ -1077,14 +1075,6 @@ def ai_provider_test(provider_id: str, request: Request, payload: AIProviderTest
     return _probe_entry(user_id, entry, payload.model if payload else "", tools_model=tools_model)
 
 
-def _entry_conf(entry: dict) -> dict:
-    """A saved entry's protocol and effective base URL: what tells its
-    service preset (and so its quota reader) apart."""
-    proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
-    base = ((entry.get("base_url") or "").strip() or (proto.base_url if proto else "")).rstrip("/")
-    return {"protocol": entry.get("protocol"), "base_url": base}
-
-
 # Sync def: this read-only account call runs in FastAPI's threadpool.
 @router.post("/ai/providers/{provider_id}/usage")
 def ai_provider_usage(provider_id: str, request: Request):
@@ -1101,7 +1091,8 @@ def ai_provider_usage(provider_id: str, request: Request):
     entry = _saved_entry(request, user_id, provider_id)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
-    reader = ai_protocols.quota_reader(_entry_conf(entry))
+    # The protocol and the endpoint tell its service preset, and so its reader, apart.
+    reader = ai_protocols.quota_reader({"protocol": entry.get("protocol"), "base_url": entry_base_url(entry)})
     if reader is None:
         return {"available": False,
                 "reason": "This API-key provider does not expose a standard remaining-usage percentage."}
@@ -1756,6 +1747,9 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
             # What a block or a comment the chat makes says of who made it
             # (agents.stamp): Gamma AI, or a token's connection that drives it.
             "agent": agents.stamp(agents.of_request(request) or agents.gamma(), request.state.user or ""),
+            # Where its changes are journaled for the person's review
+            # (gamma/agent_changes.py): the chat's, and the token that drives it.
+            "journal": {"source": "chat", "token": request.state.token_id if is_token(request) else ""},
             # The skills a message may run and load_skill may load
             # (gamma/skills.py): the account's own only in its own session,
             # the built-ins alone for a guest, a share link or an integration
@@ -1844,6 +1838,9 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     catalog = scope.get("skills") or []
     if payload.skill and not skills.find(catalog, payload.skill["id"]):
         raise skills.SkillGone(payload.skill)
+    # A change the person undid since, wherever they undid it, replays as
+    # undone (its journal row, not the mark the chat saved).
+    agent_changes.mark_history(ws, scope.get("actor") or "", payload.history)
     crops = []
     quote_budget = quote_budget or passage_budget(payload)
     quoted = {"budget": quote_budget}
@@ -1913,8 +1910,13 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
     the conversation, from now on, or not at all. Authenticated like the
     chat itself; only the account whose chat asked can answer. 404 when no
     approval of theirs waits under that id: answered already, timed out,
-    or its chat was stopped."""
+    or its chat was stopped. An assistant's question over MCP drawn in
+    Gamma (gamma/agent_asks.py) is answered here too, by a signed-in
+    session only: to an integration token, the connection's own among
+    them, it is no approval of theirs."""
     require_ws(request)
+    if is_token(request) and agent_asks.holds(approval_id):
+        raise HTTPException(404, "This approval is no longer waiting")
     if not ai_permissions.answer(approval_id, request.state.user_id or "", payload.decision, payload.note):
         raise HTTPException(404, "This approval is no longer waiting")
     return {"ok": True}
@@ -1940,36 +1942,6 @@ def ai_chat_steer(reply_id: str, payload: AISteer, request: Request):
     if not ai_steer.push(reply_id, request.state.user_id or "", payload.model_dump()):
         raise HTTPException(404, "This reply is no longer running")
     return {"ok": True}
-
-
-class AIRevert(BaseModel):
-    kind: Literal["edit", "create", "move", "delete", "pages", "trash", "made"]
-    block_id: str = Field(default="", max_length=64)  # "" for "pages": a page tool's record names its pages
-    revert: dict   # the action's `revert`, as the tool recorded it
-    force: bool = False
-    redo: bool = False  # put a reverted change back
-
-
-@router.post("/ai/revert")
-def ai_revert_change(payload: AIRevert, request: Request):
-    """Take back one change the agent made to the notes, the pages it
-    renamed, moved or labelled (``kind: "pages"``), or a folder or label it
-    deleted, or with ``redo`` put a reverted one back, from its row under
-    the reply (gamma/ai_revert.py): ``{page_id, noop, kept?}``. 409
-    ``{detail, conflict, preview?}`` when the note changed since —
-    ``preview`` is what ``force`` would do — or can't go there, and 409
-    ``conflict: "kept"`` (``preview.kept``) when every page of a page
-    tool's change changed since; 404 when it is gone. A workspace
-    editor's, like the chat's writes; the change is theirs to make by hand
-    anyway. Sync: it waits on the write lock."""
-    ws = require_ws(request, write=True)
-    try:
-        return ai_revert.revert_change(ws, payload.kind, payload.block_id, payload.revert,
-                                       force=payload.force, redo=payload.redo, actor=actor_of(request))
-    except ai_revert.RevertError as e:
-        return JSONResponse(status_code=e.status, content={
-            "detail": e.detail, **({"conflict": e.conflict} if e.conflict else {}),
-            **({"preview": e.preview} if e.preview else {})})
 
 
 class AIChatContextRequest(AIChatRequest):

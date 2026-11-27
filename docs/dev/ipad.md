@@ -220,7 +220,7 @@ Both shells take messages only from the server's own main frame.
 | `{type: "fileData", id, offset}` | `{data}`, or `{}` | Up to 2 MiB of that file from byte `offset`, in base64; `""` at its end. `{}`: the shell holds no such file, or the offset is past its end |
 | `{type: "fileDone", id}` | `{}` | The page is done with that file (taken, refused or put aside): the shell deletes its copy |
 | `{type: "shellBar", shown?}` | `{shown}` | The View menu's *Server bar* row (`app/useShellBar.js`): `shown` hides or shows the shell's bar ([The chrome](#the-chrome)). Without it, as the page loads, it only asks, and so does a `shown` that is no Bool. The reply is the person's choice; the bar still shows while it is needed |
-| `{type: "editMenu", shown}` | `{}` | The system's edit menu over a selection (Copy, Look Up, Translate, Share, …): off while the selection is a PDF page's text or a text file's in its code view, where the selection popup opens and the menu would cover it, and on again once the selection is anything else, a note's or none (`pdf/PdfViewer.jsx`, `documents/viewers/TextTip.jsx`). The page says so on the selection change itself, not after the popup's wait, so the menu is off before it would open, and the popup carries Copy in its place. A `shown` that is missing or no Bool is on. The shell's web view (`ShellWebView`, `WebShell.swift`) then refuses every action UIKit asks the menu about and empties the edit menu's builder, and a menu already open closes; a key command, ⌘C on a keyboard, still runs |
+| `{type: "editMenu", shown}` | `{}` | The system's edit menu over a selection (Copy, Look Up, Translate, Share, …): off while the selection is a PDF page's text or a text file's in its code view, where the selection popup opens and the menu would cover it, and on again once the selection is anything else, a note's or none (`pdf/PdfViewer.jsx`, `documents/viewers/TextTip.jsx`). The page says so on the selection change itself, not after the popup's wait, so the menu is off before it would open, and the popup carries Copy in its place. A `shown` that is missing or no Bool is on. The shell's web view (`ShellWebView`, `WebShell.swift`) then refuses every action UIKit asks the menu about and empties the edit menu's builder, and a menu already open closes; a key command, ⌘C on a keyboard, still runs. A new document and the end of the page's process bring the menu back (`ShellController.pageGone`), since a page says nothing as it unloads |
 | `{type: "keepAwake", on}` | `{}` | Under `keepAwake`: the screen kept on (`on` true) or let sleep again (anything else, a missing `on` included). The page asks from the start of a text recognition that reads a scan's pages in the window to its end, stop or failure (`keepAwake` in `shared/lib/host.js`, called by `pdf/ocrRuns.js`; [documents.md](documents.md#recognized-text)): the run pauses while the page is hidden, so Auto-Lock or a screen timeout would stop it. The iPad turns the system's idle timer off (`UIApplication.shared.isIdleTimerDisabled`) only while the page asks and the app is in front: on again in the background, off again when the app is active. Android adds `FLAG_KEEP_SCREEN_ON` to the activity's window, which holds only while the window shows. What the page asked is its document's, so a new document, or the end of the page's process, lets the screen sleep (`ScreenAwake` in `ShellView.swift`; [android.md](android.md) "The bridge") |
 | `{type: "save", name, mime, size}` | `{id}`, or `{}` | Under `save`: begin a file the page saves, of exactly `size` bytes (`saveBlob` in `shared/lib/saveFile.js`). `name` and `mime` may be `""`. `{}`: the host refuses it, and the page says the app did not take the file |
 | `{type: "saveData", id, offset, data}` | `{}` | The file's next bytes in base64, from `offset`, which is the count of bytes sent so far. The page sends 2,097,150 raw bytes at a time (`SAVE_CHUNK`, a multiple of 3, so only the last chunk's base64 ends in padding and the host may decode each chunk on its own or join them). An unknown id, or an offset that is not the bytes so far, gets an error reply |
@@ -675,7 +675,9 @@ a pen or highlighter stroke is claimed.
    saving work as for the page's own strokes.
    The live line stays until the reply, which comes after the page has
    painted the stroke, so the swap never blinks. A page that never
-   answers loses the line after three seconds.
+   answers loses the line after three seconds. A stroke that
+   cannot be delivered goes again with no samples (`Bridge.sendStroke`),
+   which ends the claim.
 8. **Cancelled.** When the system cancels a captured touch, the line goes,
    and the shell sends `stroke` with no samples, which ends the claim and
    saves nothing.
@@ -711,12 +713,10 @@ last touched: `InkLayer.jsx` `penGone` (the drag, the shell's pointer, the
 pen's place among the contacts), `pdf/penSelect.js`, `shared/ui/regionDrag.js`,
 `shared/ui/useDragOrder.js` and the finger chords' palm rule
 (`ink/fingerChords.js`). Which touches lose their lift, and why, is device
-check 38. A freeze this does not end is open: on an iPad Air with an Apple
-Pencil Pro the page answers no tap from the Pencil's first contact, and a
-reload does not help. Its likely cause, the capture that never settled
-(step 1), is fixed and waits for that iPad
-([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md),
-[The touch report](#the-touch-report)).
+check 38. Some of what was put down to lost lifts may have been the capture
+that never settled (step 1), which left an iPad Air with an Apple Pencil Pro
+answering no tap, a reload included
+([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)).
 
 **Gestures.** `PencilGestures` (`UIPencilInteraction`) forwards the double
 tap as `pencil`, and the squeeze in its phases: `squeeze` `began` when it
@@ -1255,8 +1255,9 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
 
 ### The touch report
 
-What the shell knew about touches when the page stopped answering them,
-for a freeze no device here shows
+What the shell knew about touches when Reload was pressed: for a page
+that stops answering taps while the bar still works, as the Pencil Pro
+freeze did up to 0.4.9
 ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)).
 `PencilCapture` sees every touch on the web views' container. Through
 `onTouch` it hands `TouchReport` each touch's begin, a Pencil touch's end
@@ -1273,7 +1274,6 @@ which the launcher's *Show server log* opens in Files). A report holds:
 - the build, iPadOS, the model and the screen's size and rate;
 - the Apple Pencil's system settings (`UIPencilInteraction`: only draws,
   double tap, squeeze, hover preview);
-- the native pieces' switches (below), `OFF` for one turned off;
 - `PencilCapture`'s state, its capture, recordings and claim queue;
 - every recognizer and interaction from the window down: each view that
   has one, by its depth, each recognizer's class and state, `disabled`,
@@ -1282,27 +1282,6 @@ which the launcher's *Show server log* opens in Files). A report holds:
 
 A file past 1 MB keeps its newest half. Nothing leaves the iPad unless its
 owner shares the file.
-
-### The native pieces' switches
-
-The iPad's Settings app has three switches under Gamma
-(`Resources/Settings.bundle`, read by `NativePieces`), one for each native
-piece that reaches the page's web view. They are there to find which one
-makes the Pencil Pro freeze
-([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)),
-and go once that is known. All are on by default, and a change takes effect
-at the next launch. *Off*:
-
-- **Native Pencil drawing** (`gamma.native.pencilCapture`): no
-  `PencilCapture`. The shell declares `ink` and `hold` false, so the page
-  claims no stroke and draws as in Safari. The touch report then has no
-  touch lines.
-- **Hide keyboard bar** (`gamma.native.hideAccessoryBar`): the content view
-  keeps its class, and the keyboard its accessory bar.
-- **Pencil gestures** (`gamma.native.pencilGestures`): no
-  `UIPencilInteraction`. The shell declares `pencil` and `pencilPhases`
-  false, so the double tap and the squeeze do nothing and their settings
-  are not shown.
 
 ### Tests
 
@@ -1364,9 +1343,11 @@ at the next launch. *Off*:
     bar hidden on a real `WKWebView`, and `ShellWebView`'s edit menu:
     every action refused while it is off but a key command's, and
     WebKit's own answers once it is on again (`ShellTests`)
-  - the native pieces' switches (`NativePiecesTests`, in `ShellTests`):
-    each on until its own is turned off, what the shell then declares,
-    and the Settings bundle writing the keys the app reads, all on
+  - a claimed stroke's end reaching the page in a real web view, once with
+    its samples and without them when they cannot be encoded
+    (`StrokeEndTests`, in `BridgeTests.swift`), and the edit menu back on
+    with a new document and at the end of the page's process
+    (`EditMenuTests`)
   - the touch report's parts (`TouchReportTests`): the latest lines
     kept, a touch's recognizers counted, the recognizer tree with its
     depth and its interactions, bare views skipped and a long tree cut,
@@ -1416,8 +1397,10 @@ at the next launch. *Off*:
   `-gamma.servers` with `SavedServers` as a Data default, in the old
   plist notation. An unsigned build has no Keychain (see
   `LocalServerStartTests`), so it gets no silent sign-in: the test
-  continues as a guest, and dismisses the guide a new guest is shown. Both
-  tests take about two minutes. Screenshots go into the result bundle, and also as PNGs
+  continues as a guest. `-gamma.noTours` turns *Suggest tours* off before
+  the page's scripts run (`UITestPage`, a debug simulator build only), as
+  the browser suite does, so no welcome deck or tour's card covers what a
+  test taps. Both tests take about two minutes. Screenshots go into the result bundle, and also as PNGs
   into the folder `TEST_RUNNER_GAMMA_UITEST_SHOTS` names. `TapsTests`
   opens the welcome PDF, selects a word of its text with a long press
   (the edit menu goes off) and checks that a tap still opens the
@@ -1774,15 +1757,11 @@ Only an iPad can show these, and none has been run yet:
     see which touches end without a lift, and whether the hover comes
     with its own `pointerId`. Try with Scribble on and off, and in Safari
     beside the app. Fingers must scroll and tap the PDF once the Pencil
-    hovers or touches again. On 0.4.7 an iPad Air 11-inch (M3) with an
-    Apple Pencil Pro on iPadOS 27.2.1 freezes from the Pencil's first
-    contact, whatever is armed. Hover still reaches the page and the bar
-    answers both a finger and the Pencil, but a reload does not help, so
-    this rule is not what ends it
-    ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)).
-    On such an iPad, take a touch report ([The touch report](#the-touch-report))
-    from a frozen session and from a fresh one. The same web code in Safari
-    on that iPad does not freeze.
+    hovers or touches again. The freeze an iPad Air with an Apple Pencil Pro
+    had up to 0.4.9 was the capture's and is reported solved in 0.4.11
+    ([research/ipad-pencil-pro-freeze.md](../research/ipad-pencil-pro-freeze.md)),
+    so whether any lift is lost at all is this check's question. A page deaf
+    to taps again is worth a touch report ([The touch report](#the-touch-report)).
 39. SVG pictures ([pictures.md](pictures.md#svg-pictures)). Playwright's
     WebKit on Linux draws an SVG's `<img>` as Chromium does, under the
     file's own policy. On the iPad: an SVG from Files placed on a page and

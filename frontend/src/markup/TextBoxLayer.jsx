@@ -27,7 +27,7 @@ import { BlockMarkdown, renderNoteTable } from "../editor/BlockTree";
 import { sourceOffsetAtPoint } from "../editor/clickToSource";
 import { pickerColors } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
-import { ColorChoices, InkTooltips, useSelectionMenuAnchor } from "../ink/InkLayer";
+import { ColorChoices, InkTooltips, PAGE_CONTROLS, useSelectionMenuAnchor } from "../ink/InkLayer";
 import { swallowClick } from "../shared/ui/press.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
 import { t } from "../shared/i18n/i18n.js";
@@ -71,9 +71,10 @@ export function TextBoxLayer({ surface, wrapRef, width, height, marks }) {
       if (!L.armed || !L.width) return;
       if (press) { end(); return; } // a second finger: a pinch, not a box
       // a box, the ruler (its band moves it, ink/InkLayer.jsx InkRuler), a
-      // selected picture and its controls (markup/PictureLayer.jsx) or a
-      // comment card beside the page keeps its press
-      if (e.button !== 0 || e.target.closest?.(".textBox, .inkRuler, .pagePicture.selected, .pictureHandle, .pictureCrop, .commentMargin")) return;
+      // selected picture and its controls (markup/PictureLayer.jsx) or the
+      // page's own controls (ink/InkLayer.jsx PAGE_CONTROLS: a comment card
+      // beside the page, an agent's change's bar or mark) keeps its press
+      if (e.button !== 0 || e.target.closest?.(`.textBox, .inkRuler, .pagePicture.selected, .pictureHandle, .pictureCrop, ${PAGE_CONTROLS}`)) return;
       e.preventDefault();
       e.stopPropagation();
       // The box being typed in is left at the press, an edit before the new box exists.

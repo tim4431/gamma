@@ -181,3 +181,13 @@ test("a page the agent made reverts as kind made, and a drawing as a new block w
   assert.equal(revertKind(drawn), "create");
   assert.equal(canRedo({ ...drawn, reverted: true }), true);
 });
+
+test("a highlight the agent made is undone from its row as a new block, and redone with its place", () => {
+  const highlight = { kind: "highlight", tool: "highlight", summary: "Highlighted a passage in “P”", page_id: "p",
+    block_id: "h1", title: "P", revert: { after: "", parent: "p", position: "a0", props: { quote: "a passage" } } };
+  assert.equal(canRevert(highlight), true);
+  assert.equal(revertKind(highlight), "create");
+  assert.equal(canRedo({ ...highlight, reverted: true }), true);
+  assert.equal(canRedo({ ...highlight, reverted: true, revert: { after: "" } }), false); // no place to put it back
+  assert.deepEqual(revertible([{ id: "m1", role: "assistant", actions: [highlight] }]), [{ id: "m1", index: 0, action: highlight }]);
+});

@@ -59,9 +59,9 @@ const mayHaveLanded = (status) => retryableStatus(status);
 export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJson, API, keepaliveRoom, keeps = () => false,
   hidden = () => typeof document !== "undefined" && document.visibilityState === "hidden", timeoutMs = SAVE_TIMEOUT_MS }) {
   // The pending-upload timer, 0 when none.
-  const inkTimerRef = { current: 0 };
+  let timer = 0;
   // When the first edit since the last flush was made (the 5 s cap).
-  const inkDirtySinceRef = { current: 0 };
+  let dirtySince = 0;
   // What the server's merge dropped or brought back, on the pill.
   function reportInkConflict(conflict) {
     const said = conflictMessage(conflict);
@@ -72,7 +72,7 @@ export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJ
   // (pagehide after the flush on going hidden) sends only what is not on
   // its way already with keepalive. Their bytes are the page's keepalive
   // ledger's (shared/lib/keepalive.js).
-  const inkFlightRef = { current: { uploads: new Map(), puts: new Map(), deletes: new Map() } };
+  const flight = { uploads: new Map(), puts: new Map(), deletes: new Map() };
   // Each group's save on its way, its LANE, one at a time per group: {ink,
   // phase ('upload' until its PUT is known, then 'put'; or 'delete'),
   // batch, snap (the draft it sends), put {url, body, uploaded}, ka (its
@@ -111,15 +111,15 @@ export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJ
   // timeoutMs either way. `request(signal, opts)`.
   const go = (ka, track, ink, bytes, request) => {
     const ctl = typeof AbortController === "function" ? new AbortController() : null;
-    const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : 0;
-    const run = (o) => request(ctl?.signal, o).finally(() => clearTimeout(timer));
+    const giveUp = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : 0;
+    const run = (o) => request(ctl?.signal, o).finally(() => clearTimeout(giveUp));
     if (!ka || bytes > keepaliveRoom("low")) return run();
     const sent = run({ keepalive: "low" });
     track.set(ink, sent);
     return sent.finally(() => { if (track.get(ink) === sent) track.delete(ink); });
   };
   const json = { "Content-Type": "application/json" };
-  const upload = (ka, ink, body) => go(ka, inkFlightRef.current.uploads, ink, bodyBytes(body, KEEPALIVE_CAP),
+  const upload = (ka, ink, body) => go(ka, flight.uploads, ink, bodyBytes(body, KEEPALIVE_CAP),
     (signal, o) => apiJson(`${API}/upload-ink`, { method: "POST", headers: json, body, signal }, o));
   const putBodyOf = (d, url, batch) => JSON.stringify({ properties: inkProps(d.ink, url), base_properties: { ink_url: d.base || "" },
     base_ids: d.baseIds || [], batch });
@@ -140,7 +140,7 @@ export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJ
   }
   // One transmission of the lane's PUT, `lane.put.body` under its batch.
   function transmitPut(lane, id, ka) {
-    track(lane, go(ka, inkFlightRef.current.puts, lane.ink, bodyBytes(lane.put.body),
+    track(lane, go(ka, flight.puts, lane.ink, bodyBytes(lane.put.body),
       (signal, o) => apiJson(`${API}/blocks/${id}`, { method: "PUT", headers: json, body: lane.put.body, signal }, o))
       .then((saved) => { lane.answer ||= saved || {}; }, (err) => noteFailure(lane, err)));
   }
@@ -148,7 +148,7 @@ export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJ
   // longer shows: it went, by an earlier one whose answer was lost or by
   // someone else. One still on the page may wait for its insert (queued).
   function transmitDelete(lane, id, ka) {
-    track(lane, go(ka, inkFlightRef.current.deletes, lane.ink, 0, (signal, o) => apiJson(`${API}/blocks/${id}`, { method: "DELETE", signal }, o))
+    track(lane, go(ka, flight.deletes, lane.ink, 0, (signal, o) => apiJson(`${API}/blocks/${id}`, { method: "DELETE", signal }, o))
       .then(() => { lane.answer ||= {}; }, (err) => {
         if (err?.status === 404 && !inTree(id)) lane.answer ||= {};
         else noteFailure(lane, err);
@@ -175,7 +175,7 @@ export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJ
     const status = err?.status || 0;
     if (retryableStatus(status) || status === 404) {
       setStatus(t("Handwriting not saved yet: {err}", { err: err.message || err }));
-      if (!inkTimerRef.current) inkTimerRef.current = setTimeout(() => flushInk({ keepalive: hidden() }), 2000);
+      if (!timer) timer = setTimeout(() => flushInk({ keepalive: hidden() }), 2000);
       return true;
     }
     setStatus(t("Handwriting not saved: {err}", { err: err.message || err }), null, { sticky: true });
@@ -313,7 +313,7 @@ export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJ
       if (lanes.get(id) === lane) lanes.delete(id);
       if (lane.superseded || retry || !inkStore.draft(id)?.dirty) return null;
       if (lane.again) return flushInk({ keepalive: lane.again.keepalive || hidden() });
-      if (answered && !inkTimerRef.current) scheduleInk();
+      if (answered && !timer) scheduleInk();
       return null;
     })();
     return lane.done;
@@ -364,11 +364,10 @@ export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJ
   // waits (the journal keeps it). → once every save this flush started or
   // left to finish has settled, with what follows them.
   const flushInk = async ({ keepalive = false, leaving = false } = {}) => {
-    clearTimeout(inkTimerRef.current);
-    inkTimerRef.current = 0;
-    inkDirtySinceRef.current = 0;
+    clearTimeout(timer);
+    timer = 0;
+    dirtySince = 0;
     const away = keepalive || leaving;
-    const flight = inkFlightRef.current;
     const flat = flattenBlocks(blocksRef.current);
     const waits = [];
     // the server holds the draft's base: the block names it, or the tree is behind this tab's own save of it
@@ -430,13 +429,13 @@ export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJ
   // 700 ms after the last edit, but never more than 5 s after the first
   // unsaved one, so files land while writing goes on.
   function scheduleInk() {
-    clearTimeout(inkTimerRef.current);
+    clearTimeout(timer);
     const now = Date.now();
-    if (!inkDirtySinceRef.current) inkDirtySinceRef.current = now;
-    inkTimerRef.current = setTimeout(flushInk, Math.max(0, Math.min(700, inkDirtySinceRef.current + 5000 - now)));
+    if (!dirtySince) dirtySince = now;
+    timer = setTimeout(flushInk, Math.max(0, Math.min(700, dirtySince + 5000 - now)));
   }
   // A save waits: on its timer, behind a group's save on its way, or as a
   // PUT a group owes — so going hidden and leaving the page flush them.
-  const pending = () => !!inkTimerRef.current || owed.size > 0 || [...lanes.values()].some((l) => l.again);
+  const pending = () => !!timer || owed.size > 0 || [...lanes.values()].some((l) => l.again);
   return { flushInk, scheduleInk, pending };
 }

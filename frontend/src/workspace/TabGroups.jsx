@@ -34,7 +34,7 @@
 import React, { useCallback, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { OpenTabs } from "../shared/ui/Widgets";
+import { OpenTabs } from "./OpenTabs.jsx";
 import { useTabDrag } from "../shared/ui/tabDrag.js";
 import { activeGroup, groupById } from "./tabLayout.js";
 import "./workspace.css";

@@ -1,4 +1,4 @@
-"""OneDrive as a backup store (docs/dev/debugging.md "OneDrive",
+"""OneDrive as a backup store (docs/dev/backups.md "OneDrive",
 docs/research/onedrive-icloud-backup.md): ``MICROSOFT``, how a server signs
 in to a Microsoft account (gamma/cloud_oauth.py; gamma/cloud_account.py
 keeps the connection), and ``Client``, one folder of that account's
@@ -41,10 +41,8 @@ import io
 import json
 import os
 import re
-import secrets
 import threading
 import urllib.parse
-from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -89,13 +87,6 @@ def _at(path: str, action: str = "") -> str:
     if not path:
         return _graph("/me/drive/root" + (f"/{action}" if action else ""))
     return _graph(f"/me/drive/root:/{_quote(path)}" + (f":/{action}" if action else ""))
-
-
-def _mtime(stamp: str) -> float:
-    try:
-        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
-    except (AttributeError, ValueError):
-        return 0.0
 
 
 def _next_byte(ranges) -> int | None:
@@ -294,25 +285,8 @@ class Client:
         file beside it, flushed and renamed over it); False when there is no
         such file."""
         check_key(key)
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.part")
-        try:
-            with open(tmp, "xb") as f:
-                resp = self._call("GET", _at(self._path(key), "content"), sink=f)
-                if resp.status == 200:
-                    f.flush()
-                    os.fsync(f.fileno())
-            if resp.status == 404:
-                tmp.unlink(missing_ok=True)
-                return False
-            if resp.status != 200:
-                raise self._fail(f"GET {key}", resp)
-            os.replace(tmp, path)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
-        return True
+        return cloud_http.download(path, lambda f: self._call("GET", _at(self._path(key), "content"), sink=f),
+                                   lambda resp: self._fail(f"GET {key}", resp))
 
     def get_bytes(self, key: str) -> bytes | None:
         check_key(key)
@@ -345,7 +319,7 @@ class Client:
                     check_key(key)
                 except ValueError:
                     continue
-                out.append((key, int(item.get("size") or 0), _mtime(str(item.get("lastModifiedDateTime") or ""))))
+                out.append((key, int(item.get("size") or 0), cloud_http.mtime(str(item.get("lastModifiedDateTime") or ""))))
         return sorted(out)
 
     def delete_object(self, key: str) -> None:

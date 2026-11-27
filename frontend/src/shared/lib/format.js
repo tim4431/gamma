@@ -10,3 +10,7 @@ export function fmtBytes(n) {
   if (n < 1073741824) return `${(n / 1048576).toFixed(1)} MB`;
   return `${(n / 1073741824).toFixed(1)} GB`;
 }
+
+// Text as HTML that shows it as it is: &, < and > escaped (for an element's
+// text; an attribute's value needs its quotes escaped too).
+export const escapeHtml = (text) => String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

@@ -8,24 +8,20 @@
 // with the server's own cases in tests/shared/ai_models.json).
 import { T, t } from "../shared/i18n/i18n.js";
 import { FREE_TRANSLATE_ENGINE } from "../app/prefDefs.js";
+import { billingLabel } from "../chat/tokenUsage.js";
 
 // The tasks, in the order Settings lists them. Dictation is no task model:
 // it keeps its own transcription pick.
 export const ROLES = ["chat", "metadata", "translate", "ink"];
-export const ROLE_LABELS = {
+const ROLE_LABELS = {
   chat: T("Chat"),
   metadata: T("Metadata & citations"),
   translate: T("Translation"),
   ink: T("Handwriting"),
 };
-export const roleLabel = (role) => t(ROLE_LABELS[role] || role);
+const roleLabel = (role) => t(ROLE_LABELS[role] || role);
 
-// How a connection is paid for (/api/ai/models `billing`, the masked
-// entry's, resolved per connection by the server), worded by chat/tokenUsage.js.
-import { billingLabel } from "../chat/tokenUsage.js";
-export { billingLabel };
-
-// Each task's model, {role: {pick, model, state}}: gamma/ai_settings.py
+// Each task's model, {role: {pick, model, state}}: gamma/ai_roles.py
 // resolve_roles, case for case (tests/shared/ai_models.json). `models` the
 // registry's ([{id}]), `picks` the account's ({role: id}, "" or none for
 // no pick), `engines` the ids of the translation services set up. `state`
@@ -80,7 +76,7 @@ export function modelName(info, id) {
 
 // The connection a model goes through, by name: an offered one's, else
 // the entry `missing` names ("" once the entry itself is gone).
-export function connectionName(info, id) {
+function connectionName(info, id) {
   const offered = (info?.models || []).find((m) => m.id === id);
   return offered ? offered.provider_name || offered.provider : info?.missing?.[id]?.connection || "";
 }
@@ -88,7 +84,7 @@ export function connectionName(info, id) {
 // A model as a sentence names it: "claude-sonnet-4-6 (Work key)", a
 // service by its label; one whose connection is gone is on "a removed
 // connection".
-export function modelTitle(info, id) {
+function modelTitle(info, id) {
   if ((info?.translate_engines || []).some((e) => e.id === id)) return modelName(info, id);
   return `${modelName(info, id)} (${connectionName(info, id) || t("a removed connection")})`;
 }
@@ -177,7 +173,7 @@ export function probeModel(info, providerId) {
 // forgotten. The server takes each only where the account has none of its
 // own, and skips one it does not offer (an old chat pick of a bare model
 // name among them).
-export const LEGACY_KEYS = { chat: "gamma-chat-model", metadata: "gamma-meta-model", translate: "gamma-translate-model" };
+const LEGACY_KEYS = { chat: "gamma-chat-model", metadata: "gamma-meta-model", translate: "gamma-translate-model" };
 const LEGACY_LEFTOVERS = ["gamma-chat-model-by-key"];
 
 // `storage` is localStorage's shape, `post(body)` the import request.

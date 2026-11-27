@@ -196,7 +196,7 @@ def test_the_redirect_is_caught_on_this_machine(google, monkeypatch):
     _code_assist(monkeypatch, google, SIGNED_UP)
     started = go.begin("someone", local=True)
     assert started["local"] is True
-    port = go._server.server_address[1]
+    port = go._listener.server.server_address[1]
     assert _query(started["auth_url"])["redirect_uri"] == f"http://127.0.0.1:{port}/oauth2callback"
     back = google.authorize(started["auth_url"])  # the person allows on Google's page
     assert go.status("someone", started["state"]) == {"ready": False, "error": ""}

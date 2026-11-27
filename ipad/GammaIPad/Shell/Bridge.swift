@@ -53,22 +53,6 @@ struct HostInfo: Encodable, Equatable {
 
     static var current: HostInfo {
         HostInfo(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0")
-            .with(.current)
-    }
-
-    /// Without what a piece that is off would do (NativePieces): the page
-    /// then claims no stroke, or offers no Pencil gesture's setting.
-    func with(_ pieces: NativePieces) -> HostInfo {
-        var info = self
-        if !pieces.pencilCapture {
-            info.ink = false
-            info.hold = false
-        }
-        if !pieces.pencilGestures {
-            info.pencil = false
-            info.pencilPhases = false
-        }
-        return info
     }
 
     /// The document-start script. `receive` is a stub that queues whatever
@@ -459,6 +443,16 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
     func send(_ message: HostMessage) async -> Bool {
         let result: Any? = await deliver(message, running: "await window.gammaNative.receive(JSON.parse(json)); return true;")
         return result != nil
+    }
+
+    /// A claimed stroke's end, which the page's claim waits for: one that
+    /// cannot be delivered (a sample JSON has no number for) goes again with
+    /// no samples, which ends the claim and saves nothing. Without it the
+    /// page would hold the stroke for drawn still, and leave the Pencil's
+    /// double tap and squeeze unanswered until a reload.
+    func sendStroke(pointerId: Int, samples: [[Double]], held: Int?) async {
+        if await send(.stroke(pointerId: pointerId, samples: samples, held: held)) { return }
+        await send(.stroke(pointerId: pointerId, samples: []))
     }
 
     /// Delivers `message` and hands back what the web's promise resolved

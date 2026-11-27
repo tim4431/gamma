@@ -1,5 +1,5 @@
 """The backup tasks' snapshots copied off this server, to a bucket or a
-cloud (docs/dev/debugging.md "Snapshots and copies in a bucket", "Cloud
+cloud (docs/dev/backups.md "Snapshots and copies in a bucket", "Cloud
 destinations").
 
 ``DESTINATIONS`` names the stores a task may copy to, each with what a

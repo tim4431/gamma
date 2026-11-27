@@ -113,7 +113,8 @@ search/            the document text index (text_fts in data.db): index (schema,
 pdf_meta.py        a PDF's manifest for the viewer: bytes, page count, page sizes (data.db)
 pdf_text.py        PDF reading through PyMuPDF: text, glyphs, labels, a page as pixels (page_raster, page_rasters); a recognized page's words in place of its layer
 pdf_scan.py        scanned pages: a page told a scan (an invisible OCR layer) or a picture, and a layer's words put back in visual rows
-pdf_ocr.py         text recognized from a stored PDF's scanned pages: the store every reader reads through, the runs (server, window), forgetting it (docs/dev/documents.md "Recognized text")
+pdf_ocr.py         text recognized from a stored PDF's scanned pages: the store, and the view every reader reads it through (docs/dev/documents.md "Recognized text")
+ocr_run.py         the runs that recognize it (on the server, in a window) and the forget that drops it: the page rules, the plan, the finishing steps
 ocr_engine.py      the recognition engine (Tesseract through tesserocr, backend/tessdata's models): where text is recognized, the engines lent a page at a time
 ocr_auto.py        the automatic recognition of a scan uploaded with no text: the markers, one file at a time, yielding to a person's run
 textnorm.py        search text normalization and fuzzy matching (both indexes, block search)
@@ -129,10 +130,13 @@ json_response.py   OrjsonResponse: large JSON answers encoded in the handler's w
 # AI: providers, the agent and its reach
 ai_protocols/      one adapter per AI wire protocol (request, stream, usage, models, quota)
 ai_client.py       provider-agnostic AI transport (open, read, stream, errors)
-ai_catalog.py      live model listings + context windows (provider, then models.dev)
+ai_catalog.py      live model listings, context windows and prices (provider, then models.dev)
 ai_settings.py     AI provider entries (GUI-managed keys): each account's own, the server's shared ones
+ai_roles.py        the model each task uses (the ai-models pref) and the model a request runs on
 chatgpt_oauth.py   ChatGPT subscription sign-in (OAuth PKCE, the flow Codex CLI uses)
-ai_usage.py        token usage per AI call (users.db ai_usage) and the summary Settings → AI shows
+gemini_oauth.py    Gemini through a Google sign-in (the flow Gemini CLI uses) and its Code Assist setup
+oauth_callback.py  the loopback listener both sign-ins catch their redirect on
+ai_usage.py        token usage and estimated cost per AI call (users.db ai_usage), the summary Settings → AI → Usage shows
 ai_context.py      PDF attachments, extraction, and chat context assembly
 ai_pictures.py     the chat's pictures: one size, the store, the budget, the label lines
 chat_export.py     a chat conversation as Markdown with its pictures (docs/dev/chat_history.md)
@@ -141,6 +145,7 @@ ai_agent.py        the agent tool loop, its two user-facing pauses, and the help
 ai_permissions.py  the chat tools' Allow / Ask / Off states and the approvals a reply waits on
 ai_steer.py        the messages a user steers into their chat reply while it runs
 ai_revert.py       taking back one change the agent made: a note change, pages it renamed, moved or labelled, or a folder or label it deleted; and putting it back
+agent_changes.py   the journal of every agent's changes, the chat's and MCP's, as the person reviews them: open, kept, marks cleared, undone
 ai_web.py          the agent's scholarly reach: search_papers, related_papers, fetch_paper (the paper resolver first, then the page) and the papers' cache
 openalex.py        OpenAlex: a registry search_papers asks, the citation graph behind related_papers
 search_services.py online search: the engines behind search_web (Brave, Tavily, SearXNG, the chat's AI connection), their adapters, and the account's settings
@@ -156,6 +161,7 @@ pdf_font_cmap.py   a Unicode cmap for a paper's composite font that has none, fr
 
 # Assistants (MCP)
 mcp_server.py      the MCP endpoint over the chat's tools, plus pasted links (mcp_links) and page files (mcp_export)
+agent_asks.py      an MCP client's question about a change, asked in Gamma too where the change lands
 mcp_oauth*.py      browser consent for MCP clients; mcp_lazy.py loads the optional SDK on first use
 
 # Import and export
@@ -172,7 +178,16 @@ note_app_import.py what the Notability and GoodNotes imports share: the run over
 rtf.py             the RTF Cocoa writes (a GoodNotes text box), read as spans
 obsidian_export.py an Obsidian vault export
 import_*.py        the reviewed library imports: staged uploads, preview and selection, the guarded zip walk
-bibtex.py          BibTeX entries and bibliographies, every printed entry valid BibTeX
+bibtex.py          a page's BibTeX entry (built from its record, or its stored one made valid) and the .bib file
+bibtex_format.py   an entry written out valid, in BibTeX's dialect or BibLaTeX's: each one's types, venue fields and field order
+bibtex_parse.py    a stored entry read as BibTeX reads it; the issue and month an @article gives its record
+bibtex_keys.py     citation keys: cleaned, generated, kept through a rebuild, pinned, unique in a bibliography
+bibtex_names.py    the authors as a BibTeX name list, an organisation braced whole
+bibtex_latex.py    a field value as ASCII LaTeX: registry markup as macros, MathML as math, accented letters, escapes
+bibtex_case.py     the capitals of a title a sentence-case style must keep, braced by Zotero's BibLaTeX rule
+citations.py       a paper record as CSL JSON, RIS and BibLaTeX, as Zotero maps it
+names.py           an author's name split for the formats that split it, joined from two fields, compared by the Zotero link
+meta_fields.py     the record fields a citation needs beyond the year: issue, journal abbreviation, full date, address
 item_types.py      what a paper record describes (meta.kind), in Zotero's item-type names
 mathml.py          MathML in registry titles, as LaTeX math or as plain text
 

@@ -3,9 +3,9 @@
 // opens. The server's kinds are gamma/jobs.py's, each started by its own
 // POST /api/jobs/<route> — `retry` names the route and body that start the
 // same work again; `stop` the route that stops it when that is not the
-// job's cancel. The local kinds are this tab's own work. Pure but for the
-// window's hidden time a recognition read here leaves out of its pace
-// (`noteHidden`): tests/tasks.test.mjs.
+// job's cancel. The local kinds are this tab's own work. Pure but for what
+// it reads of this window's own recognitions (pdf/ocrRuns.js):
+// tests/tasks.test.mjs.
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { fmtBytes } from "../shared/lib/format.js";
 import { exportFormatOf } from "../transfers/transferFormats.js";
@@ -14,30 +14,6 @@ import * as ocrRuns from "../pdf/ocrRuns.js";
 import { elapsed, fmtElapsed, isActive, remainingMs } from "./taskModel.js";
 
 const named = (value) => value || t("Untitled");
-
-// The spans this window was hidden, [from, to] (ms; `to` null while it
-// is), the last HIDDEN_KEPT of them: a recognition read in this window (kind
-// `ocr-tab`) stops while a phone or a tablet locks or shows another app, so
-// its pace leaves that time out. In a browser the document's visibility
-// tells them from the module's first load; `noteHidden` is what it calls.
-const HIDDEN_KEPT = 64;
-const hiddenSpans = [];
-export function noteHidden(hidden, at = Date.now()) {
-  const last = hiddenSpans.at(-1);
-  if (hidden && (!last || last[1] !== null)) hiddenSpans.push([at, null]);
-  else if (!hidden && last && last[1] === null) last[1] = at;
-  if (hiddenSpans.length > HIDDEN_KEPT) hiddenSpans.shift();
-}
-if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
-  if (document.visibilityState === "hidden") noteHidden(true);
-  document.addEventListener("visibilitychange", () => noteHidden(document.visibilityState === "hidden"));
-}
-// How long this window was hidden between `since` and `now` (ms).
-export function hiddenSince(since, now = Date.now()) {
-  let ms = 0;
-  for (const [from, to] of hiddenSpans) ms += Math.max(0, Math.min(to ?? now, now) - Math.max(from, since));
-  return ms;
-}
 
 // A recognition's time left while it recognizes, at the pace of this run's
 // pages (`since`, ms, when the phase began, at `from` pages done: a run goes
@@ -158,7 +134,7 @@ export const TASK_KINDS = {
     retry: ({ params }) => ["relocate-highlights", { page_id: params.page_id }],
   },
   // A stored PDF's scanned pages read from their pictures (the Document
-  // menu's "Recognize text in this PDF", gamma/pdf_ocr.py), one run at a
+  // menu's "Recognize text in this PDF", gamma/ocr_run.py), one run at a
   // time on the server: one waiting its turn reads so. While it recognizes,
   // the line says how long it still takes (`ocrLeft`). The server's own run
   // of a scan uploaded with no text (`params.auto`, gamma/ocr_auto.py) is the
@@ -185,11 +161,11 @@ export const TASK_KINDS = {
     title: ({ params }) => t("Reading the text of “{title}” in a window", { title: named(params.title) }),
     retry: ({ params }) => ["ocr", { page_id: params.page_id, window: params.window }],
     left: ({ progress, params }, now, here = ocrRuns.running(params?.doc_id)) => (
-      ocrLeft(progress, now, here && Number.isFinite(progress?.since) ? hiddenSince(progress.since, now) : 0)),
+      ocrLeft(progress, now, here && Number.isFinite(progress?.since) ? ocrRuns.hiddenSince(progress.since, now) : 0)),
     halt: ({ id }) => ocrRuns.jobStopped(id),
   },
   // The recognized text of a stored PDF forgotten (the Document menu's
-  // "Forget the recognized text…", gamma/pdf_ocr.py forget_recognized): no
+  // "Forget the recognized text…", gamma/ocr_run.py forget_recognized): no
   // stop (it updates from its start), no retry (its confirm starts it).
   "ocr-drop": {
     icon: "scanText",
@@ -491,7 +467,7 @@ export function relocationSummary(r) {
 
 // What the tab that started a recognition (kind `ocr`, or `ocr-tab` read in
 // a window) says when it ends, from the job and, once done, its result
-// (gamma/pdf_ocr.py run, window_run): the pages
+// (gamma/ocr_run.py run, window_run): the pages
 // whose text it recognized and the highlights there that took the new text
 // as their quote; or that the PDF's own text already reads well (its first
 // scanned pages' words match a fresh recognition, `shared` of them), so it
@@ -563,7 +539,7 @@ export function ocrAutoSummary(job, result) {
 }
 
 // What the tab that started a forget of a PDF's recognized text (kind
-// `ocr-drop`) says when it is done, from its result (gamma/pdf_ocr.py
+// `ocr-drop`) says when it is done, from its result (gamma/ocr_run.py
 // forget_recognized): the pages that read the PDF's own text again, and
 // their highlights: those that took that text as their quote, those that
 // kept theirs because it does not read like the text under them (a quote

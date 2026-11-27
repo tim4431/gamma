@@ -94,6 +94,12 @@ def test_tie_needs_the_title_page():
     assert _tie(_Document(QPM_TEXT), CHAPTER) == "phrase"
     # The first page's largest type counts as the title too.
     assert _tie(_Document("one line of body text naming Lee", guess=REAL_TITLE), REAL_META) == "title"
+    # A registry's "Last, First" name (names.join_name) is matched by its
+    # surname where the page prints initials.
+    for record, printed in ((["Pereira Campos, Jorge Fernando"], "J. F. Pereira Campos"),
+                            (["Den Hengst, Floris"], "F. den Hengst")):
+        doc = _Document(REAL_TITLE + chr(10) + printed, guess=REAL_TITLE)
+        assert _tie(doc, dict(REAL_META, authors=record)) == "title", printed
 
 
 def test_same_work_needs_near_identical_titles_and_years():

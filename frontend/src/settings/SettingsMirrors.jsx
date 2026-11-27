@@ -22,7 +22,7 @@
 // (DELETE /api/pages/{id}/publish for each page), never the clone actions.
 import React from "react";
 import { guideEvents } from "../guide/events.js";
-import { API, apiJson, fmtBytes } from "../shared/lib/utils";
+import { API, apiJson, jsonInit, fmtBytes } from "../shared/lib/utils";
 import { Section, SubDialog, Field, DialogButtons, IconChoices, Segmented, Empty, WorkspaceFolder } from "./SettingsKit";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import {
@@ -30,7 +30,7 @@ import {
   KeyIcon, LinkIcon, MoreIcon, PlusIcon, RefreshIcon, SettingsIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
-import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, publishedPages, roundSummary, versionGap } from "../collaboration/MirrorPopover";
+import { hostOf, isPublication, isPullOnly, mirrorState, n, publishedPages, roundSummary, versionGap } from "../collaboration/MirrorPopover";
 import { ConflictCard, useConflicts } from "../collaboration/MergeResolver";
 import {
   LINK_ACTIONS, LINK_BASES, followSync, linkCandidates, linkKind, linkPath, pullByKey, reconnectOnly, roundAhead, unsentEdits,
@@ -39,7 +39,7 @@ import {
 import { createZoteroLink } from "../transfers/zoteroApi";
 import { ZoteroLinkDialog, ZoteroLinkSettingsDialog } from "./ZoteroLinkDialog";
 import { useSettingsRead } from "./settingsReads.js";
-import { T, t } from "../shared/i18n/i18n.js";
+import { T, fmtMoment, t } from "../shared/i18n/i18n.js";
 
 // A list the pane reads (null while loading; [] when not read, or failed
 // with nothing read yet), and while one of its rounds is asked for or runs
@@ -87,7 +87,7 @@ export function mirrorStatusLine(m) {
   const p = s.progress;
   const st = mirrorState(m);
   const zotero = linkKind(m) === "zotero";
-  if (m.detached || m.mode === "off") return t("detached{detached_at} · reattach to merge what both sides did meanwhile", { detached_at: s.detached_at ? ` ${clock(s.detached_at)}` : "" });
+  if (m.detached || m.mode === "off") return t("detached{detached_at} · reattach to merge what both sides did meanwhile", { detached_at: s.detached_at ? ` ${fmtMoment(s.detached_at)}` : "" });
   if (st.tone === "busy") {
     const way = p?.file ? (p.file.dir === "up" ? (zotero ? t("sending") : t("pushing")) : zotero ? t("downloading") : t("pulling")) : "";
     const file = p?.file ? ` · ${way} ${p.file.name} ${fmtBytes(p.file.done)}${p.file.total ? ` / ${fmtBytes(p.file.total)}` : ""}` : "";
@@ -103,14 +103,14 @@ export function mirrorStatusLine(m) {
   if (gap) return gap === "here" ? t("paused · update this Gamma to sync again") : t("paused · sync resumes once the remote is updated");
   if (s.last_error) return t("problem: {error}", { error: s.last_error });
   if (!s.last_sync) return s.interrupted ? t("interrupted · continues at the next round") : zotero ? t("not synced yet") : t("not cloned yet");
-  if (unsentEdits(m)) return zotero ? t("local edits not sent yet · up to date {last_sync}", { last_sync: clock(s.last_sync) })
-    : t("local edits not pushed yet · up to date {last_sync}", { last_sync: clock(s.last_sync) });
+  if (unsentEdits(m)) return zotero ? t("local edits not sent yet · up to date {last_sync}", { last_sync: fmtMoment(s.last_sync) })
+    : t("local edits not pushed yet · up to date {last_sync}", { last_sync: fmtMoment(s.last_sync) });
   const changed = roundSummary(s) || t("nothing had changed");
-  if (!zotero) return t("up to date {last_sync} · {changed}", { last_sync: clock(s.last_sync), changed });
+  if (!zotero) return t("up to date {last_sync} · {changed}", { last_sync: fmtMoment(s.last_sync), changed });
   const waiting = zoteroWaitingState(m);
   const queued = zoteroQueued(m) ? t(" · {n} changes queued", { n: Number(s.backlog).toLocaleString() }) : "";
-  const line = queued ? t("last round {last_sync} · {changed}", { last_sync: clock(s.last_sync), changed })
-    : t("up to date {last_sync} · {changed}", { last_sync: clock(s.last_sync), changed });
+  const line = queued ? t("last round {last_sync} · {changed}", { last_sync: fmtMoment(s.last_sync), changed })
+    : t("up to date {last_sync} · {changed}", { last_sync: fmtMoment(s.last_sync), changed });
   return `${waiting ? `${waiting.text} · ` : ""}${line}${queued}`;
 }
 
@@ -337,7 +337,6 @@ export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId,
       if (m.workspace_id === currentId && (path === "/relink" || path === "/detach")) refreshSession?.();
     }
   }
-  const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   function nameOf(m) {
     if (linkKind(m) === "zotero") return m.name || byWs[m.workspace_id]?.name || zoteroLibraryLabel(m);
     return m.name || byWs[m.workspace_id]?.name || t("this clone");
@@ -353,7 +352,7 @@ export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId,
           ? t("Make “{m}” identical to {remote_name} on {remote_url}? Only differing pages are written; your texts it replaces or removes are kept as conflicts.", { m: nameOf(m), remote_name: m.remote_name, remote_url: hostOf(m.remote_url) })
           : t("Make {remote_name} on {remote_url} identical to “{m}”? Only differing pages are written; origin's texts it replaces or removes are kept as conflicts.", { remote_name: m.remote_name, remote_url: hostOf(m.remote_url), m: nameOf(m) }),
       confirmLabel: direction === "pull" ? t("Force pull") : t("Force push"), danger: true,
-      onConfirm: () => call(m, "/force", json({ direction }), t("{action} running in the background.", { action: direction === "pull" ? t("Force pull") : t("Force push") })),
+      onConfirm: () => call(m, "/force", jsonInit("POST", { direction }), t("{action} running in the background.", { action: direction === "pull" ? t("Force pull") : t("Force push") })),
     });
   }
   function forget(m) {
@@ -393,7 +392,7 @@ export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId,
     const words = LINK_ACTIONS[linkKind(m)];
     const more = detached ? [
       { icon: LinkIcon, label: T("Reattach"), title: words.reattach,
-        onClick: () => call(m, "/relink", json({}), t("Reattached — syncing in the background.")) },
+        onClick: () => call(m, "/relink", jsonInit("POST", {}), t("Reattached — syncing in the background.")) },
     ] : [
       ...(zotero ? [{ icon: SettingsIcon, label: T("Link settings…"), title: T("When Zotero's changes come in, the direction, and what PDFs and tags travel"),
         onClick: () => setSettingsOf(m) }] : []),
@@ -461,7 +460,7 @@ export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId,
           ) : null}
           {onlyReconnect ? null : detached ? (
             <button className="uiBtn sm primary" disabled={busy} title={t(words.reattach)}
-              onClick={() => call(m, "/relink", json({}), t("Reattached — syncing in the background."))}>
+              onClick={() => call(m, "/relink", jsonInit("POST", {}), t("Reattached — syncing in the background."))}>
               <LinkIcon size={14} /> {t("Reattach")}
             </button>
           ) : (

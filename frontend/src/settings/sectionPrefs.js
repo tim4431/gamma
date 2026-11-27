@@ -56,6 +56,9 @@ export const SECTION_PREFS = Object.freeze({
     Service: ["translateKeep"],
     Speed: ["translateEffort", "translateSpeed", "translateParallel"],
   }),
+  citations: sections({
+    Citations: ["citationStyle", "citationLocale", "quickCopyFormat"],
+  }),
   keyboard: sections({
     Shortcuts: ["keybindings"],
     "Built in": ["enterNewBlock"],
@@ -70,7 +73,7 @@ export const SECTION_PREFS = Object.freeze({
     "Context size": ["chatContextChars", "metaContextChars", "multiContextChars", "chatPictures"],
   }),
   tools: sections({
-    Tools: ["agentEnabled", "agentPerms", "fetchInBackground", "delegateReads"],
+    Tools: ["agentEnabled", "agentPerms", "fetchInBackground", "delegateReads", "aiMarkMinutes"],
     "Tool limits": ["toolRounds", "toolRoundsUnlimited", "agentReadChars"],
   }),
   diagnostics: sections({

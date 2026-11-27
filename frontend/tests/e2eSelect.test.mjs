@@ -70,7 +70,7 @@ test("a change selects the groups that exercise it", () => {
   for (const file of ["frontend/src/ink/usePencil.js", "frontend/src/settings/SettingsDialog.jsx", "frontend/src/transfers/folderZip.js",
     "frontend/src/transfers/FileChip.jsx", "frontend/src/tasks/tasksApi.js"]) assert.ok(pick([file]).includes("android"), file);
   for (const file of ["frontend/src/transfers/folderZip.js", "frontend/src/transfers/FileChip.jsx"]) {
-    assert.deepEqual(pick([file]).filter((id) => id !== "android").sort(), pick(["frontend/src/transfers/exportApi.js"]).sort(), file);
+    assert.deepEqual(pick([file]).filter((id) => id !== "android").sort(), pick(["frontend/src/transfers/importApi.js"]).sort(), file);
   }
   assert.deepEqual(pick(["android/app/src/main/kotlin/com/gammapdf/gamma/MainActivity.kt"]), [], "the app's Kotlin has its own tests");
   // the shells' stand-ins are the ipad and android groups', and the pen's, which runs on both

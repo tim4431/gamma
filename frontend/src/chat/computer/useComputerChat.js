@@ -10,7 +10,7 @@
 // plain functions under the imports read and change what History lists of
 // the computer's agents.
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { API, apiJson, makeId } from "../../shared/lib/utils";
+import { API, apiJson, jsonInit, makeId } from "../../shared/lib/utils";
 import { IS_DESKTOP } from "../../shared/lib/connector.js";
 import { GammaNavContext } from "../../shared/ui/Widgets";
 import { t } from "../../shared/i18n/i18n.js";
@@ -18,15 +18,13 @@ import { askShellWatching } from "../../vault/useVault.js";
 import { stripFacts } from "../agents.js";
 import { readLocalAgents } from "../useLocalAgents.js";
 import { refreshSkills } from "../useSkills.js";
-import { effortKnob, speedKnob } from "../ModelChip.jsx";
+import { fastChoice } from "../modelPrefs.js";
 import { noteDirUsed, usedDirs } from "./usedDirs.js";
 import {
   AWAY_POLL_MS, POLL_MS, SOURCES_MAX, TEXT_MAX, answerBody, askPath, awayFrom, canSend, chatPath, emptyLine, isRemote,
-  lastEnded, liveTurn, modelChoice, modelDisplay, retryOf, shownMessages, sourcesBody, steeringTurn, turnBody, workPlace,
+  lastEnded, liveTurn, modelChoice, retryOf, shownMessages, sourcesBody, steeringTurn, turnBody, workPlace,
 } from "./computerChat.js";
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
-const post = (body) => ({ method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
 // A bucket with the agent picked for it and the conversation it shows in
 // place of its own (`shown`: a comment thread's, a co-author's; null for
 // its own), as one key ("" for no bucket).
@@ -43,7 +41,7 @@ const shownOf = (seat) => {
 // conversation with a computer's agent archived, whichever agent it has;
 // throws the server's refusal (a turn of it still to end).
 export function newComputerChat(bucket) {
-  return apiJson(`${API}/local-agents/chat/new`, post({ bucket }));
+  return apiJson(`${API}/local-agents/chat/new`, jsonInit("POST", { bucket }));
 }
 
 // The bucket's conversations with the computer's agents, as History lists
@@ -57,7 +55,7 @@ export function computerHistory(bucket) {
 // archived; throws the server's refusal (a turn of the active one still to
 // end).
 export function openComputerChat(id) {
-  return apiJson(`${API}/local-agents/chat/history/${encodeURIComponent(id)}/open`, post({}));
+  return apiJson(`${API}/local-agents/chat/history/${encodeURIComponent(id)}/open`, jsonInit("POST", {}));
 }
 
 // An archived conversation deleted, its session, grants and directory of
@@ -82,7 +80,7 @@ export function computerSessions(agent, dir) {
 // open, another chat continues it, a turn still to end, the other computer
 // offline or not answering).
 export function openComputerSession(body) {
-  return apiJson(`${API}/local-agents/sessions/open`, post(body));
+  return apiJson(`${API}/local-agents/sessions/open`, jsonInit("POST", body));
 }
 
 // Where a conversation, active or archived, downloads from.
@@ -236,7 +234,7 @@ export function useComputerChat(pageId, agent, setStatus, shown = null) {
   const send = useCallback((text, selections, choice = null, skill = null) => act(async (page, key) => {
     if (!turnId.current) turnId.current = makeId();
     const body = turnBody(turnId.current, page, text, selections, { ...choice, agent: agentOf(key) }, skill);
-    const answer = await apiJson(`${API}/local-agents/chat/turns`, post(body)).catch((err) => {
+    const answer = await apiJson(`${API}/local-agents/chat/turns`, jsonInit("POST", body)).catch((err) => {
       if (err?.data?.kind === "skill") refreshSkills();
       throw err;
     });
@@ -250,7 +248,7 @@ export function useComputerChat(pageId, agent, setStatus, shown = null) {
   // card says itself, and the conversation is read again at once.
   const answer = useCallback(async (id, askId, decision, note = "") => {
     try {
-      await apiJson(`${API}${askPath(id, askId)}`, post(answerBody(decision, note)));
+      await apiJson(`${API}${askPath(id, askId)}`, jsonInit("POST", answerBody(decision, note)));
     } catch (err) {
       load();
       throw err;
@@ -262,10 +260,10 @@ export function useComputerChat(pageId, agent, setStatus, shown = null) {
   // step; throws the server's refusal (409: the turn takes none now, and the
   // queue sends it as the next turn).
   const steer = useCallback((id, item) => apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(id)}/steer`,
-    post({ id: item.id, text: String(item.text).slice(0, TEXT_MAX), selections: item.parts?.selections || [] })), []);
+    jsonInit("POST", { id: item.id, text: String(item.text).slice(0, TEXT_MAX), selections: item.parts?.selections || [] })), []);
 
   const stop = useCallback((id) => act(async () => {
-    await apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(id)}/stop`, post({}));
+    await apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(id)}/stop`, jsonInit("POST", {}));
   }, (message) => t("Couldn't stop {agent}: {message}", { agent: label, message })), [act, label]);
 
   const newChat = useCallback(() => act(async (page, key) => {
@@ -328,9 +326,9 @@ const places = new Map();
 //               go now
 //   steering    the turn a queued message's Steer goes to: the one whose
 //               agent works now, "" for none (computerChat.js steeringTurn)
-//   chip        the model chip's props (chat/ModelChip.jsx: label, text,
-//               speed, models, model, onModel, knobs): the agent's
-//               models, efforts and speeds, the choice the conversation's
+//   chip        the model chip's props (chat/ModelChip.jsx): the agent's
+//               models, its efforts and whether it runs fast, the choice
+//               the conversation's
 //   grants      the Allowed in this chat chip's props (GrantChip), null
 //               while nothing is allowed
 //   place, pickPlace   where the conversation works (workPlace), the
@@ -449,24 +447,21 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], here =
       : shown ? t("This conversation is no longer one you can read.")
         : emptyLine(info, label, where, place, page), again: false } : null;
 
-  // The composer's model chip (chat/ModelChip.jsx): the agent's models, and
-  // the model's efforts and speeds as its knobs (each Default naming the
-  // agent's own where it says: a Codex set up for priority runs Fast
-  // unless Standard is picked), the choice the conversation's; `speed`
-  // the one chosen, which ChatDock draws as Gamma AI's glyph.
+  // The composer's model chip (chat/ModelChip.jsx): the agent's models, the
+  // effort levels of the one shown (the agent's own where it says) and
+  // whether it runs fast (a Codex set up for priority does unless it is
+  // turned off); the choice is the conversation's.
   const efforts = choice.shown?.efforts || [];
-  const speeds = choice.shown?.speeds || [];
   const pick = (change) => pickModel({ model: choice.model, effort: choice.effort, speed: choice.speed, ...change });
+  const nameOf = (m) => m?.label || m?.id || "";
   const chip = {
-    label: t("{agent}'s model", { agent: label }), text: modelDisplay(choice), speed: choice.speed,
-    models: models.map((m) => [m.id, m.label || m.id]), model: choice.model || choice.shown?.id || "",
+    label: t("{agent}'s model", { agent: label }), name: nameOf(choice.shown),
+    models: models.map((m) => ({ id: m.id, name: nameOf(m) })), model: choice.model || choice.shown?.id || "",
     onModel: (model) => pick({ model }),
-    knobs: [
-      ...(efforts.length ? [effortKnob(choice.effort, (effort) => pick({ effort }), efforts,
-        choice.shown.effort ? t("Default ({effort})", { effort: choice.shown.effort }) : t("Default"))] : []),
-      ...(speeds.length ? [speedKnob(choice.speed, (speed) => pick({ speed }), speeds,
-        choice.shown.speed ? t("Default ({speed})", { speed: choice.shown.speed }) : t("Default"))] : []),
-    ],
+    effort: efforts.length ? { value: choice.effort, levels: efforts, own: choice.shown.effort || "", onChange: (effort) => pick({ effort }) } : null,
+    fast: fastChoice(choice.speed, choice.shown?.speeds, choice.shown?.speed || ""),
+    onSpeed: (speed) => pick({ speed }),
+    onReset: choice.effort || choice.speed ? () => pick({ effort: "", speed: "" }) : null,
   };
   // The commands allowed in this chat (Gamma AI's GrantChip), null for none.
   const allowed = (chat.computer?.grants || []).map((g) => g.command).join(", ");
@@ -512,7 +507,7 @@ export function usePassageSources(pageId, selections, ended = null) {
     const timer = setTimeout(async () => {
       const asked = missingRef.current;
       try {
-        const answer = await apiJson(`${API}/local-agents/chat/sources`, post(sourcesBody(pageId, asked)));
+        const answer = await apiJson(`${API}/local-agents/chat/sources`, jsonInit("POST", sourcesBody(pageId, asked)));
         if (sourcesKnown.size > SOURCES_KEPT) sourcesKnown.clear();
         const at = Date.now();
         asked.forEach((s, i) => sourcesKnown.set(passageKey(pageId, s, ended), { source: answer.sources?.[i] || null, at }));

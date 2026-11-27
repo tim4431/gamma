@@ -1693,10 +1693,12 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   60% { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
   100% { background: transparent; box-shadow: inset 3px 0 0 transparent; }
 }
-/* The ghost row's handle columns are inert stand-ins that keep its card
-   aligned with its siblings'. Its tint is the one the block it becomes
-   starts its fade from (ai-create), so the handoff does not pulse. */
-.sortableBlockWrap.aiGhostWrap > .rowHandles { visibility: hidden; pointer-events: none; }
+/* A ghost row's handle column (a note streaming in, a note asked for,
+   editor/BlockTree.jsx GhostRow) is an inert stand-in that keeps its card
+   aligned with its siblings'. The streaming row's tint is the one the
+   block it becomes starts its fade from (ai-create), so the handoff does
+   not pulse. */
+.sortableBlockWrap:is(.aiGhostWrap, .aiAskGhostWrap) > .rowHandles { visibility: hidden; pointer-events: none; }
 .aiGhostWrap .blockRow { animation: none; background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
 .blockRendered.aiStreaming { min-height: 1.45em; }
 .blockRendered.aiStreaming > :last-child { display: inline-block; margin-bottom: 0; }
@@ -1730,11 +1732,76 @@ ins.mdDiff img { outline-color: color-mix(in srgb, var(--ok) 60%, transparent); 
 .mdDiffBlock.del > * { opacity: 0.6; }
 .mdDiffBlock.ins { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .mdDiffBlock.mixed { border-color: var(--warn); background: var(--warn-bg); }
+/* A picture the change replaced by another (editor/PictureDiff.jsx): one
+   frame centred as a note's picture is, its Swipe / Side by side choice
+   above it. Swipe sizes the frame by the picture after and lays the one
+   before over it, cut at the divider (--split); side by side sets the two
+   in equal columns. */
+.pictureDiff { display: block; width: fit-content; max-width: 100%; margin: var(--space-2) auto; }
+.pictureDiffBar { display: flex; justify-content: flex-end; margin-bottom: var(--space-3); }
+.pictureDiffSwipe {
+  position: relative;
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: var(--radius-sm);
+  outline: 2px solid color-mix(in srgb, var(--warn) 60%, transparent);
+  outline-offset: 2px;
+  cursor: ew-resize;
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.pictureDiff .pictureDiffImg { display: block; max-width: 100%; height: auto; }
+.pictureDiffBefore { position: absolute; inset: 0; clip-path: inset(0 calc(100% - var(--split)) 0 0); }
+.pictureDiffBefore > .pictureDiffImg { width: 100%; height: 100%; object-fit: contain; background: var(--bg-surface); }
+/* The labels on the frame: what went's is cut with its picture, what
+   came's lies under the picture before, so each shows only on its side. */
+.pictureDiffTag {
+  position: absolute;
+  top: var(--space-2);
+  padding: 0 var(--space-2);
+  font-size: var(--fs-2xs);
+  border-radius: var(--radius-xs);
+  background: var(--bg-elevated);
+  pointer-events: none;
+}
+.pictureDiffTag.before { left: var(--space-2); color: var(--danger); }
+.pictureDiffTag.after { right: var(--space-2); color: var(--ok); }
+.pictureDiffHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--split);
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  outline: none;
+}
+.pictureDiffHandle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--bg-surface);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+.pictureDiffHandle:focus-visible::after { box-shadow: 0 0 0 3px var(--accent-bg); }
+.pictureDiffSides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+.pictureDiffSide { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+.pictureDiffSide > .pictureDiffImg { cursor: zoom-in; }
+.pictureDiffLabel { margin-bottom: var(--space-1); font-size: var(--fs-2xs); }
+.pictureDiffLabel.before { color: var(--danger); }
+.pictureDiffLabel.after { color: var(--ok); }
 .blockRendered.mdDiffNew {
   padding-left: var(--space-3);
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--ok) 10%, transparent);
-  box-shadow: inset 3px 0 0 var(--ok);
 }
 .noteReviewBar {
   display: flex;
@@ -1755,6 +1822,101 @@ ins.mdDiff img { outline-color: color-mix(in srgb, var(--ok) 60%, transparent); 
 .noteReviewBar .chatApprovalDecline .aiKeyInput { flex: 1 1 14rem; width: auto; min-width: 0; margin: 0; }
 .noteReviewBar .chatApprovalDecline .chatApprovalActions { margin-top: 0; }
 .noteReviewBar > :is(.chatApprovalStatus, .chatApprovalError) { flex-basis: 100%; margin-top: 0; }
+.noteReviewBar > .chatApprovalDiff { flex-basis: 100%; }
+/* The card's Show: to where its change is drawn while it waits. */
+.chatApprovalShow { align-self: flex-start; margin-bottom: var(--space-1); }
+/* An agent's change marks its row's left edge, as a diff's gutter marks a
+   line (chat/noteReview.js): the accent for an edit or a move, green for
+   what was added (a note, a drawing, a text box, a picture, a highlight),
+   red for a deletion asked for; dashed while it waits on its card (not
+   written yet), solid once made. A kept change's mark is a button that
+   unfolds it (.aiChangeMark). A pseudo-element or the button, never the
+   row's own box-shadow, which the fading tint of an agent's edit (.ai-edit)
+   keeps at its last frame. */
+.blockRow.aiReview { position: relative; --review-mark: var(--accent); }
+.blockRow:is(.aiReview-add, .aiReview-object) { --review-mark: var(--ok); }
+.blockRow.aiReview-delete { --review-mark: var(--danger); }
+.blockRow.aiReview::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: 3px;
+  border-radius: var(--radius-xs);
+  background: var(--review-mark);
+  pointer-events: none;
+}
+.blockRow.aiReview-ask::before { background: repeating-linear-gradient(to bottom, var(--review-mark) 0 4px, transparent 4px 7px); }
+.blockRow.aiReview-kept::before { display: none; }
+/* A note asked to go: struck out and faded, its bar as it is. */
+.blockRow.aiReview-ask.aiReview-delete .blockBody > :not(.noteReviewBar) {
+  opacity: 0.55;
+  text-decoration: line-through;
+  text-decoration-color: var(--danger);
+}
+/* A change unfolded that is no text (a move, a placed block): the row
+   tinted in its mark's colour while the bar shows. */
+.blockRow.aiReview-unfolded:is(.aiReview-move, .aiReview-object) .blockBody {
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--review-mark) 8%, transparent);
+}
+/* The kept change's mark: a 3px bar with a wider hit area, which widens
+   under the pointer and while the change is unfolded. */
+.aiChangeMark {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: -3px;
+  z-index: 1;
+  width: 9px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  cursor: pointer;
+}
+.aiChangeMark::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 3px;
+  border-radius: var(--radius-xs);
+  background: var(--accent);
+  transition: left var(--dur-fast) var(--ease-out), width var(--dur-fast) var(--ease-out);
+}
+.aiChangeMark:is(.aiChangeMark-add, .aiChangeMark-object)::after { background: var(--ok); }
+.aiChangeMark:is(:hover, [aria-expanded="true"])::after { left: 2px; width: 5px; }
+.aiChangeMark:focus-visible { outline-offset: 1px; }
+/* The change the page's strip stepped to flashes once. */
+.blockRow.reviewFocus { animation: blockLanded 1.2s ease-out; }
+/* The strip at the foot of a page's notes while agents' changes on it wait
+   for review (editor/PageReviewStrip.jsx): it stays in view as the notes
+   scroll, over them. */
+.pageReviewStrip {
+  position: sticky;
+  bottom: var(--space-2);
+  z-index: var(--z-float);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) var(--space-2) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-2);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+.pageReviewCount { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-primary); }
+.pageReviewCount svg { color: var(--accent); }
+.pageReviewNav { display: inline-flex; align-items: center; gap: var(--space-1); }
+.pageReviewAt { min-width: 3.5em; text-align: center; font-variant-numeric: tabular-nums; }
+.pageReviewSpacer { flex: 1 1 auto; }
 /* Whole-page read (read_page / read_block on the page id): the outline's
    left edge breathes once. */
 .blockList.aiPageRead { animation: aiPageReadPulse 1.6s ease-in-out 2; }
@@ -3013,9 +3175,6 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 .topbar .sharePopover .setPickItem { padding: 5px 7px; border: 0; border-radius: var(--radius-sm); background: transparent; font-size: var(--fs-xs); }
 .topbar .sharePopover .setPickItem:is(.cursor, :hover) { background: var(--bg-hover); }
 .topbar .sharePopover .setPickItem.picked { background: var(--accent-bg); }
-/* Slide citation / BibTeX: a sub-label line, then a copy box. */
-.citeHead { display: flex; align-items: baseline; gap: 4px; padding: 6px 8px 4px; }
-.citeLabel { font-size: var(--fs-xs); font-weight: 600; color: var(--text-secondary); }
 .copyBox {
   position: relative;
   background: var(--bg-block);
@@ -3630,7 +3789,11 @@ mark.searchMark {
   overflow-y: auto;
 }
 /* A flyout in the sheet opens under its row: beside it, the sheet's own
-   scroll box would clip it (the account menu's Tours). */
+   scroll box would clip it (the account menu's Tours). Its rows keep the
+   glyph column the sheet's rows have, though none of them has a glyph (the
+   shared rule drops an unused one, .ctxMenuIcon below), so they stay
+   indented under their row's label. */
+.phoneBottomBar .popover:has(.ctxMenuIcon:not(:empty)) .ctxSubMenu.ctxMenu .ctxMenuIcon:empty { display: inline-flex; }
 .phoneBottomBar .popover .ctxSubMenu {
   position: static;
   min-width: 0;
@@ -3929,10 +4092,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   font-size: var(--fs-2xs);
   font-weight: 400;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 .citeSourceTag.warn { color: var(--danger); }
 .metaWarnDot.inline { position: static; display: inline-block; }
-.citeWarnHint { color: var(--danger); padding: 0 8px 4px; }
+.citeWarnHint { color: var(--danger); padding: 0 0 6px; }
 .sourcePopover { min-width: 300px; right: 0; }
 
 .searchResult.active { background: color-mix(in srgb, var(--accent-fill) 14%, transparent); }
@@ -5111,10 +5275,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 :is(.chatModelChip, .chatPlaceChip) .uiSelectBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .chatPlaceChip .uiSelectBtn > svg { flex-shrink: 0; }
-/* The chip's label is a row: the model with its effort, ellipsized, then
-   the speed tier's glyph. In a reply's foot the same glyph sits inline. */
+/* The chip's label is a row: the bolt while it runs fast, the logo, the
+   model, ellipsized, then its effort, whole. In a reply's foot the bolt
+   sits inline. */
+.chatModelChip .uiSelectBtn { max-width: 240px; }
 .chatModelChip .uiSelectLabel { display: inline-flex; align-items: center; gap: 5px; overflow: hidden; }
 .chatModelChip .chatModelText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatModelChip .chatModelEffort { flex: none; color: var(--text-dim); }
 /* Who answers (AgentPicker.jsx): a frameless pill leading the chat
    header's buttons, the agent's icon before its name. It keeps its width
    (a long name ellipsized at the cap); in a narrow header it is the icon
@@ -5767,7 +5934,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatChange > svg { flex: none; margin-top: 0.2em; color: var(--text-muted); }
 .chatChangeText { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 /* Taking a change back (chat/AgentChanges.jsx): a frameless undo icon at
-   the row's end, "Revert…" in the head, a reverted row muted with its tag,
+   the row's end, "Undo…" in the head, an undone row muted with its tag,
    and the prompt a row shows when the note changed since. */
 /* The compact buttons give back what they stand above an 18 px line (16 in
    the head), so a row keeps its text's height. */
@@ -5776,6 +5943,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatChange.reverted .chatChangeLink { color: inherit; }
 .chatChangeTag { flex: none; color: var(--text-muted); font-size: calc(var(--fs-2xs) * var(--text-scale, 1)); }
 .uiBtn.chatChangesAll { gap: 4px; min-height: var(--ctl-icon-btn-xs); margin-block: calc((16px - var(--ctl-icon-btn-xs)) / 2); margin-left: auto; padding: 0 var(--space-2); }
+/* Keep All and Undo… side by side: the head's end holds them together. */
+.uiBtn.chatChangesAll + .uiBtn.chatChangesAll { margin-left: 0; }
 .chatRevertAsk { margin: 0 0 4px 21px; color: var(--text-secondary); }
 .chatRevertAsk .chatApprovalActions { margin-top: 6px; }
 .chatChangeOld { color: var(--text-muted); }
@@ -6853,6 +7022,53 @@ a.shareBrand:hover { background: var(--bg-hover); }
 
 .pptCitePreview { min-width: 0; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-secondary); }
 .pptCitePreview p { margin: 0; }
+/* --- citations (citations/CitationHtml.jsx, CitationShareSection.jsx, ReferenceLine.jsx) --- */
+/* A part's label line (Reference, Slide citation, BibTeX), level with the
+   section's title and its boxes: one left edge. Its control at its end
+   (the Reference's style picker, the slide citation's Regenerate) drops
+   under the label where the line is too narrow (a phone). */
+.citeHead { display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; row-gap: var(--space-2); padding: 10px 0 6px; }
+.citeLabel { font-size: var(--fs-xs); font-weight: 600; color: var(--text-secondary); }
+.citeHeadEnd { margin-left: auto; display: flex; align-items: center; min-width: 0; max-width: 100%; }
+.citeHeadEnd .uiSelectBtn { max-width: 100%; }
+.citeHeadEnd .uiSelectBtn .uiSelectLabel { max-width: 200px; }
+/* A part's one-line state ("Formatting…", "Not made yet.", the AI's
+   Set up AI…). */
+.citeHint { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); min-height: var(--ctl-btn-sm); }
+/* Citation HTML as the engine renders it, read as text on screen
+   (CitationHtml's screen variant: no print spacing, the hanging indent on
+   each entry): an entry gap, the reading line height, the label columns
+   (IEEE's [1]) never broken, links in the accent. The Settings pane's
+   preview and the Export dialog's list; the popovers' references
+   (citeRefPreview) quieter and tighter. */
+.citeHtml { min-width: 0; font-size: var(--fs-sm); line-height: var(--lh-read); color: var(--text-primary); overflow-wrap: anywhere; }
+.citeHtml .csl-entry + .csl-entry { margin-top: var(--space-3); }
+.citeHtml .csl-left-margin { overflow-wrap: normal; white-space: nowrap; }
+.citeHtml a { color: var(--accent); text-decoration: none; }
+.citeHtml a:hover { text-decoration: underline; }
+.citeRefPreview { color: var(--text-secondary); line-height: var(--lh-ui); }
+/* The entry picked in a list (the Export dialog's paper), tinted as the
+   picked paper's row is. */
+.citeHtml .csl-entry.citeMark { background: var(--bg-selected); box-shadow: 0 0 0 var(--space-2) var(--bg-selected); border-radius: var(--radius-xs); }
+/* Copy citation under the Reference, the in-text citation beside it, on
+   two lines at most (a note style's note is long). */
+.citeInText { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-3) 0 var(--space-1); min-width: 0; }
+.citeInText .uiBtn { flex-shrink: 0; }
+.citeInTextPreview {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-ui);
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+/* The metadata popover's Reference, full width under its table. */
+.metaRefBlock { padding: 2px 4px 4px; }
+.metaRefBlock .citeHead { padding-top: 8px; }
+/* --- end citations --- */
 /* Full BibTeX entry in the share dialog: scrolls instead of growing. */
 .bibtexPre {
   min-width: 0;
@@ -6865,17 +7081,17 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   white-space: pre;
 }
-/* The BibTeX review needs room for two panes; every other step keeps the
+/* The bibliography review needs room for two panes; every other step keeps the
    dialog's usual width. */
 .reportModal.transferModalWide { width: min(1000px, calc(100vw - 32px)); max-width: 1000px; }
-/* The picked paper's entry in the BibTeX step: taller than the share
+/* The picked paper's entry in the bibliography step: taller than the share
    popover's, and long titles wrap instead of scrolling sideways. */
 .bibtexPreview {
   max-height: 240px;
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* The BibTeX step's two panes, the shape the Zotero import review uses: the
+/* The bibliography step's two panes, the shape the Zotero import review uses: the
    papers on the left, the picked one's entry on the right. The dialog widens
    for this step only (.transferModalWide). */
 .bibColumns {
@@ -6925,6 +7141,22 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .bibPaperSkipped:hover { background: transparent; }
 .bibPaperSkipped .bibPaperKey { font-family: inherit; }
 .bibPaneEmpty { margin: 4px 2px; color: var(--text-muted); font-size: var(--fs-xs); }
+/* The bibliography's choices over its panes: the format, a Formatted one's
+   style, language and file, and Include pages inside. */
+.bibOptions { margin-bottom: 10px; }
+/* A reference list in the right-hand pane, as the style renders it: one
+   box filling the pane and scrolling inside, so its copy button stays in
+   view while the picked entry is scrolled to; room inside for that
+   entry's tint. */
+.bibFormattedPreview { padding: 2px 0; }
+.bibEntryPane:has(> .copyBox .bibFormattedPreview) { display: flex; flex-direction: column; overflow: hidden; }
+.bibEntryPane > .copyBox:has(.bibFormattedPreview) { display: flex; flex: 1; min-height: 0; }
+.bibEntryPane > .copyBox:has(.bibFormattedPreview) > .copyBoxBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2);
+  margin: calc(-1 * var(--space-2));
+}
 /* One column on a phone, at the import review's breakpoint (importReview.css). */
 @media (max-width: 640px) {
   .bibColumns { grid-template-columns: minmax(0, 1fr); }
@@ -6932,12 +7164,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 
 /* --- paper metadata popover --- */
-.metaPopover { min-width: 340px; max-width: 420px; }
+.metaPopover { min-width: min(340px, calc(100vw - 16px)); max-width: min(420px, calc(100vw - 16px)); }
 .metaTable { display: flex; flex-direction: column; gap: 4px; padding: 2px 4px; }
 .metaRow { display: flex; gap: 8px; font-size: var(--fs-xs); line-height: 1.45; }
-/* Wide enough for the longest key, a conference paper's "Proceedings", on
-   one line. */
-.metaKey { color: var(--text-dim); flex: 0 0 74px; }
+/* Wide enough for the longest keys, a conference paper's "Proceedings" and
+   an article's "Journal abbr.", on one line. */
+.metaKey { color: var(--text-dim); flex: 0 0 84px; }
 .metaVal { color: var(--text-secondary); min-width: 0; word-break: break-word; }
 .metaVal a { color: var(--accent); text-decoration: none; }
 .metaVal a:hover { text-decoration: underline; }
@@ -7056,6 +7288,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-muted);
   flex-shrink: 0;
 }
+/* A menu or flyout none of whose rows has a glyph keeps no empty glyph
+   column: its labels start at the rows' own padding (the Copy as ▸
+   flyout's formats and styles; a flyout drawn inline in the phone's sheet
+   keeps it, above). */
+.ctxMenu:not(:has(.ctxMenuIcon:not(:empty))) .ctxMenuIcon:empty { display: none; }
 /* Label column of an iconed row — long folder paths ellipsize instead of
    stretching the menu across the screen (the full path stays in the title). */
 .ctxMenuText {
@@ -7710,7 +7947,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkEditOptions .ctlBtn, .inkEditOptions .colorBtn { min-width: 32px; min-height: 32px; }
 /* The selection menu's second row (More edits): the first row's targets. */
 .inkEditOptions.inkEditMore .ctlBtn { flex: 1; min-width: 36px; min-height: 36px; }
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .inkWetCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
+/* A dark page flips its ink and its text boxes' bodies with it, and so an
+   agent's strokes and text box asked for (.reviewInk, markup/ReviewLayer.jsx),
+   which look as they will once written. */
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .inkWetCanvas, .textBoxBody, .reviewInk) { filter: invert(1) hue-rotate(180deg); }
 /* Turned over with the page, a highlighter screens, multiply's dual: the
    dark page shows the light page's highlight inverted, the light text under
    it staying light. */

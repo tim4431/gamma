@@ -18,7 +18,7 @@ from conftest import drop_user, login, make_user, workspace_of
 from ocr_fake import GARBLE, install, layered_scan
 from ocr_fixtures import printed_scan_pdf
 
-from gamma import jobs, ocr_engine, pdf_ocr, pdf_text, storage
+from gamma import jobs, ocr_engine, ocr_run, pdf_ocr, pdf_text, storage
 from gamma.db import connect_data_db
 from gamma.documents.model import url_hash
 from gamma.routers.ocr import ELSEWHERE, GUESTS, STOPPING
@@ -168,14 +168,14 @@ def test_one_run_at_a_time_for_a_workspaces_file_whoever_starts_it(alice, lab, m
     ws, bob = lab
     page_id, doc = scan_page(alice, headers=_in(ws))
     started, release = threading.Event(), threading.Event()
-    real = pdf_ocr.run
+    real = ocr_run.run
 
     def held(*args, progress=None, **kwargs):
         started.set()
         assert release.wait(10), "the test never let the run go on"
         return real(*args, progress=progress, **kwargs)
 
-    monkeypatch.setattr(pdf_ocr, "run", held)
+    monkeypatch.setattr(ocr_run, "run", held)
     try:
         first = start(alice, page_id, _in(ws)).json()
         assert started.wait(10)

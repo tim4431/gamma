@@ -1,13 +1,17 @@
 """The BibTeX bibliography: the entry builder and its citation keys
-(gamma/bibtex.py), the `?mode=bibtex` export of a page and of a folder, the
-pinned key that survives a refetch, and the share-link URL a LaTeX editor
-refreshes a folder's .bib from.
+(gamma/bibtex.py, gamma/bibtex_keys.py), the `?mode=bibtex` export of a
+page and of a folder, the pinned key that survives a refetch, and the
+share-link URL a LaTeX editor refreshes a folder's .bib from; the same
+bibliography as BibLaTeX, RIS and CSL JSON under the same keys, and a
+selection's (POST /api/bibliography).
 """
+
+import json
 
 import pytest
 
 from conftest import login, make_folder, make_page, make_user
-from gamma import bibtex
+from gamma import bibtex, bibtex_keys
 
 
 @pytest.fixture(scope="module")
@@ -41,31 +45,31 @@ def _share(c, path):
 # --- the entry and its key ---------------------------------------------------
 
 def test_default_key_is_surname_and_year():
-    assert bibtex.default_key({"authors": ["Ada Lovelace"], "year": "1843"}) == "lovelace1843"
-    assert bibtex.default_key({"authors": [], "year": "1999"}) == "paper1999"
-    assert bibtex.default_key({}) == "paper"
+    assert bibtex_keys.default_key({"authors": ["Ada Lovelace"], "year": "1843"}) == "lovelace1843"
+    assert bibtex_keys.default_key({"authors": [], "year": "1999"}) == "paper1999"
+    assert bibtex_keys.default_key({}) == "paper"
 
 
 def test_clean_key_drops_what_bibtex_breaks_on():
-    assert bibtex.clean_key("  smith:2020-attention ") == "smith:2020-attention"
-    assert bibtex.clean_key("a b,c{d}e=f") == "abcdef"
-    assert bibtex.clean_key("   ") == ""
+    assert bibtex_keys.clean_key("  smith:2020-attention ") == "smith:2020-attention"
+    assert bibtex_keys.clean_key("a b,c{d}e=f") == "abcdef"
+    assert bibtex_keys.clean_key("   ") == ""
 
 
 def test_entry_key_round_trips_through_with_key():
     entry = bibtex.build_entry({"title": "T", "authors": ["Ada Lovelace"], "year": "1843"})
-    assert bibtex.entry_key(entry) == "lovelace1843"
-    moved = bibtex.with_key(entry, "pinned:1")
-    assert bibtex.entry_key(moved) == "pinned:1"
+    assert bibtex_keys.entry_key(entry) == "lovelace1843"
+    moved = bibtex_keys.with_key(entry, "pinned:1")
+    assert bibtex_keys.entry_key(moved) == "pinned:1"
     assert "title = {T}" in moved          # only the key changed
-    assert bibtex.with_key(entry, "") == entry  # nothing to pin
+    assert bibtex_keys.with_key(entry, "") == entry  # nothing to pin
 
 
 def test_pinned_keys_are_assigned_before_generated_ones():
     def rec(title, pinned):
         return {"text": f"@article{{lovelace1843,\n  title = {{{title}}}\n}}",
                 "key": "lovelace1843", "pinned": pinned, "title": title}
-    keys = [r["key"] for r in bibtex.unique_keys([rec("A", False), rec("B", True), rec("C", False)])]
+    keys = [r["key"] for r in bibtex_keys.unique_keys([rec("A", False), rec("B", True), rec("C", False)])]
     # The pin keeps the bare key wherever it sits in the order; the generated
     # clashes move out of its way, in input order.
     assert keys == ["lovelace1843a", "lovelace1843", "lovelace1843b"]
@@ -74,7 +78,7 @@ def test_pinned_keys_are_assigned_before_generated_ones():
 
 def test_suffixes_pass_z():
     records = [{"text": "@article{k,\n}", "key": "k", "pinned": False} for _ in range(28)]
-    keys = [r["key"] for r in bibtex.unique_keys(records)]
+    keys = [r["key"] for r in bibtex_keys.unique_keys(records)]
     assert keys[:3] == ["k", "ka", "kb"]
     assert keys[26:] == ["kz", "kaa"]
     assert len(set(keys)) == 28
@@ -82,7 +86,7 @@ def test_suffixes_pass_z():
 
 def test_bibliography_has_no_timestamp():
     entry = bibtex.build_entry({"title": "T", "authors": ["Ada Lovelace"], "year": "1843"})
-    records = bibtex.unique_keys([{"text": entry, "key": "lovelace1843", "pinned": False}])
+    records = bibtex_keys.unique_keys([{"text": entry, "key": "lovelace1843", "pinned": False}])
     text = bibtex.bibliography(records, "Optics")
     assert text.startswith("% 1 entry from Optics, exported from Gamma")
     assert text == bibtex.bibliography(records, "Optics")  # byte-identical re-export
@@ -223,8 +227,9 @@ def test_a_share_token_cannot_reach_another_folders_bib(user, anon):
 def test_preview_pairs_every_paper_with_its_entry(user):
     _paper(user, "Preview one", "Bib preview")
     _paper(user, "Preview two", "Bib preview", cite_key="pinned:two")
-    make_page(user, "Preview note", {"folders": [make_folder(user, "Bib preview")]})
-    r = user.get("/api/bibliography", params={"folder": make_folder(user, "Bib preview")})
+    folder = make_folder(user, "Bib preview")
+    make_page(user, "Preview note", {"folders": [folder]})
+    r = user.get("/api/bibliography", params={"folder": folder})
     assert r.status_code == 200, r.text
     data = r.json()
     assert [(e["title"], e["key"], e["pinned"]) for e in data["entries"]] == [
@@ -232,10 +237,21 @@ def test_preview_pairs_every_paper_with_its_entry(user):
     assert all(e["page_id"] and e["text"].startswith("@article{") for e in data["entries"])
     assert data["skipped"] == [{"page_id": data["skipped"][0]["page_id"], "title": "Preview note",
                                 "reason": "page has no paper metadata"}]
-    # The text is the file the download would write, entry for entry.
-    assert data["text"] == user.get(_export_url(user, "Bib preview"), params={"mode": "bibtex"}).text
-    for entry in data["entries"]:
-        assert entry["text"] in data["text"]
+    assert data["name"] == "Bib preview"  # the export's file name, which a Formatted download takes
+    # In each format the text is the file that mode's download writes, entry
+    # for entry, under the same keys; every entry carries its CSL JSON item.
+    for mode in ("bibtex", "biblatex", "ris", "csljson"):
+        answer = user.get("/api/bibliography", params={"folder": folder, "format": mode}).json()
+        download = user.get(f"/api/folders/{folder}/export", params={"mode": mode})
+        assert answer["format"] == mode and download.content == answer["text"].encode(), mode
+        for entry, keyed in zip(answer["entries"], data["entries"], strict=True):
+            assert entry["key"] == entry["csl"]["id"] == keyed["key"], mode
+            if mode == "csljson":
+                assert json.loads(entry["text"]) == [entry["csl"]]
+            else:
+                assert entry["text"] in download.text, mode
+    assert data == user.get("/api/bibliography", params={"folder": folder, "format": "bibtex"}).json()  # the default
+    assert user.get("/api/bibliography", params={"folder": folder, "format": "readable"}).status_code == 400
 
 
 def test_preview_of_a_page_without_metadata_is_empty_not_an_error(user):
@@ -254,3 +270,94 @@ def test_preview_needs_a_target_and_honours_the_share_scope(user, anon):
     assert anon.get("/api/bibliography", params={"folder": make_folder(user, "Bib shared"), "share": token}).status_code == 200
     assert anon.get("/api/bibliography", params={"folder": make_folder(user, "Bib private"), "share": token}).status_code == 403
     assert anon.get("/api/bibliography", params={"folder": make_folder(user, "Bib shared")}).status_code == 401
+
+
+# --- the other citation formats ------------------------------------------------
+
+def test_each_citation_mode_downloads_its_own_file(user):
+    page = _paper(user, "Analytical engine notes", "Bib modes", meta={"issue": "2", "date": "1843-09"})
+    for mode, name, media_type in (("biblatex", ".bib", "application/x-bibtex"),
+                                   ("ris", ".ris", "application/x-research-info-systems"),
+                                   ("csljson", ".json", "application/vnd.citationstyles.csl+json")):
+        r = user.get(f"/api/pages/{page['id']}/export", params={"mode": mode})
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"].startswith(media_type), mode
+        assert f'{name}"' in r.headers["content-disposition"], mode
+    r = user.get(f"/api/pages/{page['id']}/export", params={"mode": "ris"})
+    assert r.content.startswith(b"TY  - JOUR\r\nTI  - Analytical engine notes\r\n")
+    assert b"\r\nDA  - 1843/09//\r\n" in r.content and b"\r\nIS  - 2\r\n" in r.content
+    item, = user.get(f"/api/pages/{page['id']}/export", params={"mode": "csljson"}).json()
+    assert item["id"] == "lovelace1843" and item["issued"] == {"date-parts": [[1843, 9]]}
+    r = user.get(f"/api/pages/{page['id']}/export", params={"mode": "biblatex"})
+    assert r.text.startswith("% 1 entry, exported from Gamma\n\n@article{lovelace1843,\n")
+    assert "journaltitle = {Notes}" in r.text and "date = {1843-09}" in r.text
+
+
+def test_every_format_carries_the_bib_files_keys(user):
+    _paper(user, "Keyed one", "Bib keyed")
+    _paper(user, "Keyed two", "Bib keyed")
+    _paper(user, "Keyed pinned", "Bib keyed", cite_key="lovelace1843")
+    url = _export_url(user, "Bib keyed")
+    bib = sorted(key for _, key in _entries(user.get(url, params={"mode": "bibtex"}).text))
+    assert bib == ["lovelace1843", "lovelace1843a", "lovelace1843b"]
+    biblatex = [line.split("{", 1)[1].rstrip(",") for line in user.get(url, params={"mode": "biblatex"}).text.splitlines()
+                if line.startswith("@")]
+    ris = [line[6:] for line in user.get(url, params={"mode": "ris"}).text.split("\r\n") if line.startswith("ID  - ")]
+    csl = [item["id"] for item in user.get(url, params={"mode": "csljson"}).json()]
+    assert sorted(biblatex) == sorted(ris) == sorted(csl) == bib
+
+
+# --- a selection's bibliography ----------------------------------------------
+
+def test_a_selection_comes_back_in_the_order_asked(user):
+    first = _paper(user, "Selected first", "Bib selection")
+    second = _paper(user, "Selected second", "Bib selection")
+    third = _paper(user, "Selected third", "Bib selection")
+    notes = make_page(user, "Selected notes", {"folders": [make_folder(user, "Bib selection")]})
+    folder = make_folder(user, "Bib selection")
+    in_folder = {e["page_id"]: e["key"] for e in user.get("/api/bibliography", params={"folder": folder}).json()["entries"]}
+    asked = [third["id"], notes["id"], first["id"], third["id"]]
+    data = user.post("/api/bibliography", json={"page_ids": asked}).json()
+    assert [e["title"] for e in data["entries"]] == ["Selected third", "Selected first"]  # a repeat dropped
+    assert [s["title"] for s in data["skipped"]] == ["Selected notes"]
+    # Keys unique over the two asked, as their own .bib would have them…
+    assert sorted(e["key"] for e in data["entries"]) == ["lovelace1843", "lovelace1843a"]
+    # The text is their entries in that order, without the .bib's head comment.
+    assert data["text"] == "\n\n".join(e["text"] for e in data["entries"]) + "\n"
+    # … or, made inside the folder, the folder's .bib's keys, a page asked
+    # from outside it keyed around them: one whose title sorts first, and
+    # one whose pinned key is a folder page's.
+    outside = _paper(user, "Aardvark outside", "Bib selection other")
+    pinned = _paper(user, "Pinned outside", "Bib selection other", cite_key="lovelace1843")
+    asked = [pinned["id"], third["id"], outside["id"], first["id"]]
+    data = user.post("/api/bibliography", json={"page_ids": asked, "key_folder": folder}).json()
+    assert [(e["page_id"], e["key"]) for e in data["entries"]] == [
+        (pinned["id"], "lovelace1843c"), (third["id"], in_folder[third["id"]]),
+        (outside["id"], "lovelace1843d"), (first["id"], in_folder[first["id"]])]
+    assert "Selected second" not in data["text"] and data["text"].startswith("@article{lovelace1843c,")
+    # Every format holds the entries in that order: what a numeric style numbers by.
+    keys = [e["key"] for e in data["entries"]]
+    csl = user.post("/api/bibliography", json={"page_ids": asked, "key_folder": folder, "format": "csljson"}).json()
+    assert [item["id"] for item in json.loads(csl["text"])] == keys
+    assert [item["id"] for e in csl["entries"] for item in json.loads(e["text"])] == keys
+    ris = user.post("/api/bibliography", json={"page_ids": asked, "key_folder": folder, "format": "ris"}).json()
+    assert [line[6:] for line in ris["text"].split("\r\n") if line.startswith("ID  - ")] == keys
+    assert ris["text"] == "\r\n".join(e["text"] for e in ris["entries"])
+    assert user.post("/api/bibliography", json={"page_ids": asked, "format": "zotero-rdf"}).status_code == 400
+
+
+def test_a_selection_is_checked_page_by_page(user, anon):
+    page = _paper(user, "Checked paper", "Bib checked")
+    other = _paper(user, "Unshared paper", "Bib checked")
+    note = user.post("/api/blocks", json={"parent_id": page["id"], "content": "a note"}).json()
+    assert user.post("/api/bibliography", json={"page_ids": [page["id"], note["id"]]}).status_code == 404
+    assert user.get("/api/bibliography", params={"page_id": note["id"]}).status_code == 404
+    assert user.post("/api/bibliography", json={"page_ids": []}).status_code == 400
+    assert user.post("/api/bibliography", json={"page_ids": [f"p{n}" for n in range(1001)]}).status_code == 413
+    token = user.post(f"/api/share/{page['id']}").json()["token"]
+    shared = anon.post(f"/api/bibliography?share={token}", json={"page_ids": [page["id"]]})
+    assert shared.status_code == 200, shared.text
+    assert [e["title"] for e in shared.json()["entries"]] == ["Checked paper"]
+    assert anon.post(f"/api/bibliography?share={token}", json={"page_ids": [page["id"], other["id"]]}).status_code == 403
+    assert anon.post(f"/api/bibliography?share={token}",
+                     json={"page_ids": [page["id"]], "key_folder": make_folder(user, "Bib checked")}).status_code == 403

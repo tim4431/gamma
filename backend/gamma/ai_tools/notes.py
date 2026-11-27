@@ -499,7 +499,9 @@ def _plan_create_block(conn, scope: dict, args: dict):
 def _preview_create_block(conn, scope: dict, args: dict):
     # `diff`: the blocks' texts as lines, indented by depth (one block: its
     # text as written); `count` the blocks, `after` the sibling they follow
-    # or `first`; the pictures and files the paste shows, counted.
+    # or `first`; the pictures and files the paste shows, counted. Where the
+    # note draws it while the card waits: under `parent_id`, after
+    # `after_id` ("" when first), its `text` as written.
     plan, answer = _plan_create_block(conn, scope, args)
     if not plan:
         return None, answer
@@ -510,6 +512,8 @@ def _preview_create_block(conn, scope: dict, args: dict):
     text = content if plan["count"] == 1 else "\n".join(_outline(plan["nodes"]))
     return {"page_id": page_id, "title": plan["title"],
             "parent": "" if parent["id"] == page_id else _excerpt(parent["content"]),
+            "parent_id": parent["id"], "after_id": "" if plan["first"] else str(args.get("after_id") or ""),
+            "text": content,
             "count": plan["count"], **({"first": True} if plan["first"] else {"after": _excerpt(after)} if after else {}),
             "picture_count": len(pictures), "file_count": len(upload_refs(content, {})) - len(pictures),
             "diff": text_diff("", text), **_preview_pictures(content)}, None
@@ -656,7 +660,7 @@ def _preview_move_block(conn, scope: dict, args: dict):
         return None, answer
     parent, page_id = plan["parent"], plan["page_id"]
     preview = {"page_id": page_id, "title": plan["page_title"], "block_id": plan["block"]["id"],
-               "parent": "" if parent["id"] == page_id else _excerpt(parent["content"]),
+               "parent": "" if parent["id"] == page_id else _excerpt(parent["content"]), "parent_id": parent["id"],
                "diff": [["ctx", _excerpt(plan["block"]["content"], 600)]]}
     if plan["src_page_id"] != page_id:
         preview.update(src_page_id=plan["src_page_id"], src_title=plan["src_title"])

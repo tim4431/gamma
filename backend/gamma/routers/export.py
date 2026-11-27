@@ -1,12 +1,13 @@
 """Exporting pages: one driver (``_run_export``) walks the selected page
 subtrees and feeds them to the format's ``_Builder`` — Markdown, an Obsidian
 vault, a Logseq graph, a Zotero RDF library, a zip for Notion's importer, a
-scoped Gamma backup, a BibTeX bibliography, the notes typeset as a PDF document,
-Notability notes, GoodNotes notebooks, or the annotated PDFs themselves. Most
-builders produce a zip; a bare .md (nothing to bundle), the .bib, the notes
-PDF, one page's annotated PDF, note and notebook are single files. A page's
-export takes the pages inside it too when asked (``sub_pages``), laid out
-as a folder's pages are. The same builders serve the downloads
+scoped Gamma backup, a bibliography (BibTeX, BibLaTeX, RIS or CSL JSON), the
+notes typeset as a PDF document, Notability notes, GoodNotes notebooks, or the
+annotated PDFs themselves. Most builders produce a zip; a bare .md (nothing to
+bundle), the bibliography, the notes PDF, one page's annotated PDF, note and
+notebook are single files. A page's export takes the pages inside it too
+when asked (``sub_pages``), laid out as a folder's pages are. The same
+builders serve the downloads
 (``/pages/{id}/export``, ``/folders/{id}/export``: an import by link, scripts)
 and the background job the web app starts (``POST /api/jobs/export``)."""
 
@@ -30,8 +31,8 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from .. import bibtex as bibtex_mod
 from .. import ink as inkmod
-from .. import (comments, goodnotes_export, jobs, notability_export, notebook, notion_export, pdf_text,
-                pdf_translated, storage)
+from .. import (bibtex_keys, citations, comments, goodnotes_export, jobs, notability_export, notebook, notion_export,
+                pdf_text, pdf_translated, storage)
 from ..auth import (link_ratelimit, require_user, require_ws, resolve_ws, share_job_owner, share_lookup,
                     share_scope)
 from ..blocks_store import (
@@ -861,7 +862,7 @@ class _ZoteroBuilder(_Builder):
             "key": self._item_key(page, props),
             "title": title,
             "meta": meta or {},
-            "cite_key": bibtex_mod.pinned_key(props),
+            "cite_key": bibtex_keys.pinned_key(props),
             "tags": self.filing.tags(props),
             "folders": self.filing.folders(page["id"], props),
             "pdf_path": pdf_arc,
@@ -1270,24 +1271,68 @@ class _NotionBuilder(_Builder):
         return {**super().summary(), "warnings": self.ctx.warnings}
 
 
-class _BibtexBuilder(_Builder):
-    """One ``.bib`` bibliography: the citation entry of every page that has
-    paper metadata — ``properties.bibtex``, the entry the metadata lookup
-    cached, rebuilt from ``properties.meta`` for a page that has a record but
-    no rendering. Clashing citation keys are suffixed a, b, … and a key
-    pinned on a page (``properties.cite_key``) keeps its exact spelling, so
-    the .tex files already citing it go on working (``gamma/bibtex.py``).
-    Entries are sorted by key: an unchanged library re-exports
-    byte-identically, so a bibliography kept in a repository — or refreshed
-    from a share link — only shows a diff when the metadata changed. A page
-    without metadata is left out and the finished export lists it; a set
-    where no page has any fails with the reason."""
-    suffix = ".bib"
+# The citation formats a bibliography is written in (``_CitationBuilder``),
+# each a mode of its own.
+CITATION_FORMATS = ("bibtex", "biblatex", "ris", "csljson")
+
+
+def _entry_in(fmt: str, record: dict):
+    """A keyed bibliography record's entry in the citation format ``fmt``:
+    the .bib's BibTeX entry itself, or the entry ``citations`` builds from
+    the page's record under the same key (a CSL JSON item as a dict)."""
+    if fmt == "bibtex":
+        return record["text"]
+    build = {"biblatex": citations.biblatex_entry, "ris": citations.ris_entry, "csljson": citations.csl_item}[fmt]
+    return build(record["record"], record["key"])
+
+
+def _citation_file(fmt: str, entries: list, source: str, head: bool = True) -> str:
+    """The file of ``entries`` (each in the format ``fmt``, ``_entry_in``):
+    a .bib's head comment naming ``source`` (not without ``head``) and its
+    entries, a .ris's records, a CSL JSON array."""
+    if fmt == "csljson":
+        return citations.csl_json(entries)
+    if fmt == "ris":
+        return citations.ris_file(entries)
+    return bibtex_mod.bibliography([{"text": entry} for entry in entries], source, head)
+
+
+def _citation_mode(fmt: str) -> str:
+    """``fmt`` as a citation format's mode; 400 when it is none."""
+    if fmt not in CITATION_FORMATS:
+        raise HTTPException(status_code=400, detail=f"format must be one of: {', '.join(CITATION_FORMATS)}")
+    return fmt
+
+
+class _CitationBuilder(_Builder):
+    """One bibliography file, a subclass per citation format (``fmt``,
+    ``suffix``, ``media_type``): the citation entry of every page that has
+    paper metadata. Its key is the BibTeX entry's — ``properties.bibtex``,
+    the entry the metadata lookup cached, rebuilt from ``properties.meta``
+    for a page that has a record but no rendering — and every format is
+    keyed alike (``keyed_records``): the .bib's key is a BibLaTeX key, an
+    RIS ``ID`` and a CSL JSON ``id``, so a document cites one key from any
+    of them. The other formats are built from the page's record
+    (``citations.record``; a page with a cached entry and no record is
+    cited by its title). Clashing citation keys are suffixed a, b, … and a
+    key pinned on a page (``properties.cite_key``) keeps its exact
+    spelling, so the .tex files already citing it go on working
+    (``gamma/bibtex_keys.py``). Entries are sorted by key: an unchanged library
+    re-exports byte-identically, so a bibliography kept in a repository —
+    or refreshed from a share link — only shows a diff when the metadata
+    changed. A page without metadata is left out and the finished export
+    lists it; a set where no page has any fails with the reason."""
     roots_only = True  # a bibliography reads page properties, never the notes
+    fmt = ""
+    media_type = ""
 
     def __init__(self, ws, base, opts):
         super().__init__(ws, base, opts)
         self.records = []
+        # Pages keyed after the rest, around the keys the rest took
+        # (POST /bibliography's pages outside its key_folder), so the
+        # folder's own keep the keys its .bib has.
+        self.later = set()
 
     def add_page(self, n, rows, page):
         props = page.get("properties") or {}
@@ -1295,27 +1340,48 @@ class _BibtexBuilder(_Builder):
         if not text:
             self.skip(page, "page has no paper metadata")
             return
-        self.records.append({"text": text, "key": bibtex_mod.entry_key(text), "pinned": bool(bibtex_mod.pinned_key(props)),
-                             "page_id": page["id"], "title": (page.get("content") or "").strip()})
+        title = (page.get("content") or "").strip()
+        self.records.append({"text": text, "key": bibtex_keys.entry_key(text),
+                             "pinned": bool(bibtex_keys.pinned_key(props)), "page_id": page["id"], "title": title,
+                             "record": citations.record(props) or {"title": title}})
 
     def keyed_records(self) -> list[dict]:
         """The records as the file will hold them: sorted by key, then title,
-        with the keys made unique. One source for the download and for the
-        export dialog's review, so the review cannot disagree with the file.
-        (Not ``entries`` — that is the base class's list of zip parts.)"""
-        return bibtex_mod.unique_keys(sorted(self.records, key=lambda r: (r["key"], r["title"])))
+        with the keys made unique; those of ``later`` after the rest, keyed
+        around every key the rest took (a pinned key of theirs yields too).
+        One source for the download and for the export dialog's review, so
+        the review cannot disagree with the file. (Not ``entries`` — that is
+        the base class's list of zip parts.)"""
+        ordered = sorted(self.records, key=lambda r: (r["key"], r["title"]))
+        first = bibtex_keys.unique_keys([r for r in ordered if r["page_id"] not in self.later])
+        rest = [r for r in ordered if r["page_id"] in self.later]
+        return first + bibtex_keys.unique_keys(rest, {r["key"].lower() for r in first})
 
-    def text(self) -> str:
-        """The .bib file itself."""
-        return bibtex_mod.bibliography(self.keyed_records(), self.filing.title)
-
-    def preview(self) -> dict:
-        """What the export dialog reviews (GET /api/bibliography): a record per
-        citable page, the pages left out with the reason, and the file's own
-        text. An empty bibliography is data here rather than the refusal
-        ``save`` raises, so the dialog can show the pages it could not cite
-        instead of an error."""
-        return {"entries": self.keyed_records(), "skipped": self.skipped, "text": self.text()}
+    def preview(self, records: list[dict] | None = None) -> dict:
+        """What the export dialog reviews and a copy takes (/api/bibliography),
+        in the builder's format: an entry per citable page with its entry in
+        that format (``text``; CSL JSON's a one-item array) and its CSL JSON
+        item, which the web app renders styles from (``csl``), the pages
+        left out with the reason, and ``text``, the file: by default every
+        record, in the file's order, and the download's bytes; given a
+        selection's keyed ``records``, those in their order, the file
+        without a .bib's head comment; and ``name``, the export's file name
+        without its suffix, which a Formatted bibliography's download takes
+        (transfers/BibliographyReview.jsx). An empty bibliography is data here
+        rather than the refusal ``save`` raises, so the dialog can show the
+        pages it could not cite instead of an error."""
+        whole = records is None
+        records = self.keyed_records() if whole else records
+        entries, written = [], []
+        for record in records:
+            csl = _entry_in("csljson", record)
+            entry = csl if self.fmt == "csljson" else _entry_in(self.fmt, record)
+            written.append(entry)
+            entries.append({"page_id": record["page_id"], "title": record["title"], "key": record["key"],
+                            "pinned": record["pinned"],
+                            "text": citations.csl_json([csl]) if self.fmt == "csljson" else entry, "csl": csl})
+        return {"format": self.fmt, "name": self.base, "entries": entries, "skipped": self.skipped,
+                "text": _citation_file(self.fmt, written, self.filing.title, head=whole)}
 
     def save(self, dest, progress=jobs.no_progress):
         try:
@@ -1323,18 +1389,38 @@ class _BibtexBuilder(_Builder):
                 raise HTTPException(status_code=400, detail=(
                     "none of these pages has paper metadata to cite" if self.opts.get("folder_scope") or self.walked > 1
                     else "this page has no paper metadata to cite"))
+            entries = [_entry_in(self.fmt, record) for record in self.keyed_records()]
             # newline="": write the text as it is, so the file a Windows
             # server serves is the same bytes as a Linux one and as the
-            # dialog's preview.
-            Path(dest).write_text(self.text(), encoding="utf-8", newline="")
+            # dialog's preview (and an RIS record's lines keep their CR LF).
+            Path(dest).write_text(_citation_file(self.fmt, entries, self.filing.title), encoding="utf-8", newline="")
         finally:
             self.discard()
-        return f"{self.base}.bib", "application/x-bibtex; charset=utf-8"
+        return f"{self.base}{self.suffix}", self.media_type
+
+
+class _BibtexBuilder(_CitationBuilder):
+    fmt, suffix, media_type = "bibtex", ".bib", "application/x-bibtex; charset=utf-8"
+
+
+class _BiblatexBuilder(_CitationBuilder):
+    fmt, suffix, media_type = "biblatex", ".bib", "application/x-bibtex; charset=utf-8"
+
+
+class _RisBuilder(_CitationBuilder):
+    fmt, suffix, media_type = "ris", ".ris", "application/x-research-info-systems; charset=utf-8"
+
+
+class _CslJsonBuilder(_CitationBuilder):
+    fmt, suffix, media_type = "csljson", ".json", "application/vnd.citationstyles.csl+json; charset=utf-8"
 
 
 _BUILDERS = {
     "readable": _MarkdownBuilder,
     "bibtex": _BibtexBuilder,
+    "biblatex": _BiblatexBuilder,
+    "ris": _RisBuilder,
+    "csljson": _CslJsonBuilder,
     "obsidian": _ObsidianBuilder,
     "logseq-graph": _LogseqBuilder,
     "zotero-rdf": _ZoteroBuilder,
@@ -1405,17 +1491,27 @@ def _page_ids(conn, page_id: str, sub_pages: bool) -> list[str]:
     return with_sub_pages(conn, [page_id]) if sub_pages else [page_id]
 
 
+def _checked_page(conn, page_id: str, scope) -> str:
+    """The title of the page ``page_id`` an export or a bibliography is
+    asked for: 403 outside a share-scoped request's ``scope``
+    (``assert_block_in_scope``; None for a member), 404 for an id that is
+    no page of the library — none, a note inside a page, or a page in
+    Recently deleted."""
+    assert_block_in_scope(conn, page_id, scope)
+    row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    if row is None or page_root_id(conn, page_id) != page_id:
+        raise HTTPException(status_code=404, detail="page not found")
+    return row[0] or ""
+
+
 def page_builder(ws: str, block_id: str, mode: str, opts: dict, scope=None, sub_pages=False) -> _Builder:
     """One page walked through the mode's builder (named by the page's slug,
     ``builder.base``), with ``sub_pages`` the pages inside it too
     (``_page_ids``). ``scope`` is the request's share scope, None for a
     member. Raises HTTPException like the routes."""
     with connect_pages_db(ws) as conn:
-        assert_block_in_scope(conn, block_id, scope)
-        row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
-        if row is None or page_root_id(conn, block_id) is None:  # none, or in Recently deleted
-            raise HTTPException(status_code=404, detail="page not found")
-        return _run_export(conn, ws, mode, _page_ids(conn, block_id, sub_pages), slugify(row[0], block_id), opts)
+        title = _checked_page(conn, block_id, scope)
+        return _run_export(conn, ws, mode, _page_ids(conn, block_id, sub_pages), slugify(title, block_id), opts)
 
 
 def page_markdown(ws: str, page_id: str, *, highlights=True, notes=True) -> tuple[str, str]:
@@ -1638,7 +1734,8 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     as there), ``logseq-graph`` (a complete
     Logseq file graph, both switches pinned on), ``zotero-rdf`` (a one-item
     Zotero RDF library), ``bibtex`` (the page's citation entry as a .bib
-    file), ``notion`` (a zip for Notion's importer: the page as ``<Title>.md``
+    file; ``biblatex``, ``ris`` and ``csljson`` the same entry as a BibLaTeX
+    .bib, an .ris or a CSL JSON .json), ``notion`` (a zip for Notion's importer: the page as ``<Title>.md``
     with its images, always a zip), ``notability`` or ``goodnotes`` (the page
     as a Notability .note or a GoodNotes .goodnotes), or ``gamma`` (a scoped
     account backup any Gamma imports via /api/import-data?mode=merge).
@@ -1723,13 +1820,15 @@ def export_folder(folder_id: str, request: Request, mode: str = "readable", pdf:
     page's annotated PDF, the subfolders as directories), ``logseq-graph``
     (a complete Logseq file graph), ``zotero-rdf`` (a Zotero RDF library —
     subfolders become collections), ``bibtex`` (one .bib with every paper's
-    citation entry), ``notion`` (a zip for Notion's importer: subfolders as
+    citation entry; ``biblatex``, ``ris``, ``csljson`` the same in those
+    formats), ``notion`` (a zip for Notion's importer: subfolders as
     directories) or ``gamma`` (a scoped account backup any Gamma imports
     via /api/import-data?mode=merge). The web app, a share view's too,
     exports through a job instead (``POST /api/jobs/export``); this is
     another Gamma's import by link and the scripts' download — with a
-    folder share token, a ``mode=bibtex`` URL is the stable bibliography
-    link a LaTeX editor refreshes from. 404 for an
+    folder share token, a ``mode=bibtex`` URL (or another citation
+    format's) is the stable bibliography link a LaTeX editor refreshes
+    from. 404 for an
     id that is no folder or a folder without pages, 403 for a folder outside
     the request's share."""
     scope = share_scope(request)
@@ -1746,28 +1845,90 @@ def export_folder(folder_id: str, request: Request, mode: str = "readable", pdf:
 
 
 @router.get("/bibliography")
-def bibliography_preview(request: Request, page_id: str = "", folder: str = "", sub_pages: int = 0):
-    """The bibliography a ``mode=bibtex`` export would write, as data for the
-    Export dialog to review before it downloads anything: ``entries`` (one
-    per citable page — its page id and title, the citation key the file will
-    use, whether that key is pinned on the page, and the entry itself),
-    ``skipped`` (the pages left out, with the reason) and ``text`` (the file).
-    Name a ``page_id`` (``sub_pages=1``: with the pages inside it) or a
-    ``folder`` (a folder id). Same builder as the
-    download, so the review is what the file will be; page properties are
-    all it reads, so a whole library answers in one query per page."""
+def bibliography_preview(request: Request, page_id: str = "", folder: str = "", sub_pages: int = 0,
+                         format: str = "bibtex"):
+    """The bibliography a citation export in ``format`` (``bibtex``, the
+    default, ``biblatex``, ``ris`` or ``csljson``; 400 for another) would
+    write, as data for the Export dialog to review before it downloads
+    anything and for a copy of it: ``format``, ``name`` (the download's
+    file name without its suffix), ``entries`` (one per citable
+    page — its page id and title, the citation key the file will use,
+    whether that key is pinned on the page, the entry in that format as
+    ``text``, CSL JSON's a one-item array, and its CSL JSON item, which the
+    web app renders styles from, as ``csl``), ``skipped`` (the pages left
+    out, with the reason) and ``text``, the file that mode's download is,
+    byte for byte. Name a ``page_id`` (``sub_pages=1``: with the pages
+    inside it) or a ``folder`` (a folder id). Same builder as the download,
+    so the review is what the file will be; page properties are all it
+    reads, so a whole library answers in one query per page."""
+    mode = _citation_mode(format)
     scope = share_scope(request)
     ws = resolve_ws(request)
     if folder:
         opts = _export_opts(folder_scope=folder)
         with connect_pages_db(ws) as conn:
             path = _export_folder(conn, folder, scope)
-            builder = _run_export(conn, ws, "bibtex", pages_in_folder(conn, folder), _folder_base(path), opts)
+            builder = _run_export(conn, ws, mode, pages_in_folder(conn, folder), _folder_base(path), opts)
     elif page_id:
-        builder = page_builder(ws, page_id, "bibtex", _export_opts(), scope, sub_pages=bool(sub_pages))
+        builder = page_builder(ws, page_id, mode, _export_opts(), scope, sub_pages=bool(sub_pages))
     else:
         raise HTTPException(status_code=400, detail="name a page or a folder")
     return builder.preview()
+
+
+# The pages one POST /bibliography may name (a library selection), as many
+# as one bulk action takes (routers/blocks.py MAX_BULK); a GET's query of
+# that many ids would pass the mobile servers' 16 KB request head.
+BIBLIOGRAPHY_PAGES_MAX = 1000
+
+
+class BibliographyRequest(BaseModel):
+    page_ids: list[Annotated[str, Field(max_length=128)]] = Field(default_factory=list)
+    key_folder: str | None = None   # a folder whose .bib's keys the entries carry
+    format: str = "bibtex"          # the citation format of the entries and the text (CITATION_FORMATS)
+
+
+@router.post("/bibliography")
+def bibliography_of_pages(payload: BibliographyRequest, request: Request):
+    """``GET /bibliography``'s answer for the pages ``page_ids`` (a
+    selection: at most ``BIBLIOGRAPHY_PAGES_MAX``, a repeat dropped): its
+    entries and skipped pages in the order asked, which a numeric style
+    numbers by, and as ``text`` those entries in the format's file layout:
+    without a .bib's head comment, an .ris's records, one CSL JSON array.
+    The keys are made unique over the pages' key-sorted list as a .bib's
+    are; with ``key_folder`` over that folder's papers, so a copy made
+    inside a folder carries the keys the folder's .bib has (an asked page
+    outside it is keyed after them and around them, a key pinned on it
+    too). Each id is checked as a page export's is: 403 outside a share,
+    404 for one that is no page of the library (a note's, a page in
+    Recently deleted); 400 for an unknown ``format``, 413 past the
+    limit."""
+    mode = _citation_mode(payload.format)
+    scope = share_scope(request)
+    ws = resolve_ws(request)
+    asked = list(dict.fromkeys(page_id for page_id in payload.page_ids if page_id))
+    if not asked:
+        raise HTTPException(status_code=400, detail="name the pages")
+    if len(asked) > BIBLIOGRAPHY_PAGES_MAX:
+        raise HTTPException(status_code=413, detail=f"too many pages in one request (>{BIBLIOGRAPHY_PAGES_MAX})")
+    with connect_pages_db(ws) as conn:
+        for page_id in asked:
+            _checked_page(conn, page_id, scope)
+        if payload.key_folder:
+            path = _export_folder(conn, payload.key_folder, scope)
+            walked = pages_in_folder(conn, payload.key_folder)
+            inside = set(walked)
+            outside = [page_id for page_id in asked if page_id not in inside]
+            builder = _run_export(conn, ws, mode, walked + outside, _folder_base(path),
+                                  _export_opts(folder_scope=payload.key_folder))
+            builder.later = set(outside)
+        else:
+            builder = _run_export(conn, ws, mode, asked, "bibliography", _export_opts())
+    keyed = {record["page_id"]: record for record in builder.keyed_records()}
+    order = {page_id: n for n, page_id in enumerate(asked)}
+    builder.skipped = sorted((page for page in builder.skipped if page["page_id"] in order),
+                             key=lambda page: order[page["page_id"]])
+    return builder.preview([keyed[page_id] for page_id in asked if page_id in keyed])
 
 
 # The translated view the viewer shows of a page's PDF, for its annotated PDF
@@ -2003,11 +2164,8 @@ def start_export(ws: str, *, owner: str, user: str, payload: ExportJob, scope=No
                 raise HTTPException(status_code=404, detail="no pages in that folder")
             title, base = PATH_SEP.join(path), _folder_base(path)
         elif page_id:
-            assert_block_in_scope(conn, page_id, scope)
-            row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-            if row is None or page_root_id(conn, page_id) is None:  # none, or in Recently deleted
-                raise HTTPException(status_code=404, detail="page not found")
-            title, base = (row[0] or "").strip() or "Untitled", slugify(row[0], page_id)
+            content = _checked_page(conn, page_id, scope)
+            title, base = content.strip() or "Untitled", slugify(content, page_id)
         else:
             raise HTTPException(status_code=400, detail="name a page or a folder to export")
     opts = _export_opts(payload.pdf, payload.highlights, payload.notes, folder_scope=folder or None, author=user,

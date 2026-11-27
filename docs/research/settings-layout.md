@@ -90,6 +90,13 @@ the rows taller, only the groups scroll, between the account card and Help
 (`.settingsNavList`, a thin scrollbar so "Language & translation" keeps its
 line).
 
+The twenty-first, **Citations** (after Handwriting, Zotero's Cite pane;
+[citations.md](../dev/citations.md)), put the groups 25 px over the
+800 px dialog, measured by the settings scenario's rail step in Chromium
+on Windows. Each row lost 1 px of padding above and below (27.5 to
+25.5 px, 38 px over its nineteen rows between the card and Help), and the
+step passes again at 900 px and scrolls at 640 px.
+
 ## Weighed and left
 
 - **Network proxy into Server.** It would have saved a rail row, and a

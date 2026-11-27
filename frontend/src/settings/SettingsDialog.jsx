@@ -16,7 +16,7 @@ import { SQUEEZE_HOLDS } from "../ink/pencilActions.js";
 import { nativeHost } from "../shared/lib/host.js";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
-import { EFFORT_ORDER, SPEED_LABELS, SPEED_ORDER } from "../chat/modelPrefs.js";
+import { EFFORT_ORDER, effortLabel } from "../chat/modelPrefs.js";
 import { showsLocalAgents } from "../chat/agents.js";
 import { useLocalAgents } from "../chat/useLocalAgents.js";
 import { AppearanceSettings } from "./SettingsAppearance";
@@ -37,10 +37,12 @@ import { WorkspaceBackups } from "./SettingsBackups";
 import { AccessSettings, ServerSettings } from "./SettingsServer";
 import { ProxySettings } from "./SettingsProxy";
 import { dotTone } from "../app/notices";
+import { MARK_MINUTES } from "../app/prefDefs.js";
 import { resolveSettingsPane, settingsSection } from "./settingsNavigation";
 import { hostCaps, searchSettings } from "./settingsSearch.js";
 import { SettingsReadsContext, createSettingsReads, useSettingsRead } from "./settingsReads.js";
 import { TranslationSettings } from "./SettingsTranslation";
+import { CitationSettings } from "./SettingsCitations";
 import {
   ActivityIcon,
   BookIcon,
@@ -78,12 +80,14 @@ import {
   PaperIcon,
   PencilIcon,
   PenIcon,
+  QuoteMarkIcon,
   RectSelectIcon,
   RefreshIcon,
   SearchIcon,
   ServerIcon,
   ShieldIcon,
   SlidersIcon,
+  HistoryIcon,
   SparklesIcon,
   TerminalIcon,
   TextSearchIcon,
@@ -103,7 +107,8 @@ import { DialogOverlay } from "../shared/ui/Surfaces";
 // — with Help & diagnostics pinned to the bottom. Every pane is one click
 // from any other; nothing opens a second dialog. A pane holds one subject:
 // how things look (Appearance) apart from what the bars offer (Toolbars),
-// papers and notes (Reading & editing) apart from the pen (Handwriting),
+// papers and notes (Reading & editing) apart from the pen (Handwriting) and
+// from what citing them makes (Citations, Zotero's Cite pane),
 // the agents on the account's computers (Local agents, offered only with
 // one to show) apart from the models and the AI services that supply them
 // (Models).
@@ -113,6 +118,7 @@ const PREFERENCE_NAV = [
   ["toolbars", T("Toolbars"), PanelTopIcon],
   ["reading", T("Reading & editing"), BookIcon],
   ["handwriting", T("Handwriting"), PenIcon],
+  ["citations", T("Citations"), QuoteMarkIcon],
   ["translation", T("Language & translation"), LanguagesIcon],
   ["keyboard", T("Keyboard"), KeyboardIcon],
 ];
@@ -949,19 +955,17 @@ function PromptsSettings({ value }) {
   );
 }
 
-// The chat's defaults (effort, speed, a follow-up while a reply runs, snapshots).
+// The chat's defaults (effort, Fast, a follow-up while a reply runs, snapshots).
 function ChatDefaults({ value, ai }) {
   return (
     <Section title={t("Chat")} scope="account" prefs={SECTION_PREFS.assistant["Chat"]}>
       <Row icon={ActivityIcon} label={t("Default reasoning effort")} hint={t("Each model gets the nearest level it takes")}>
         <MenuSelect label={t("Default reasoning effort")} value={ai.chatEffort} onChange={ai.setChatEffort}
-          options={[["", t("Default")], ...EFFORT_ORDER.map((v) => [v, v])]} />
+          options={[["", t("Default")], ...EFFORT_ORDER.map((v) => [v, effortLabel(v)])]} />
       </Row>
-      <Row icon={ZapIcon} label={t("Default speed")} hint={t("Only models whose provider offers that tier")}
-        title={t("Which service tier chats ask the provider for: \"fast\" buys its premium low-latency routing (Anthropic's fast mode, OpenAI's and Codex's Fast) at a higher price per token, \"flex\" trades latency for a lower one. A model whose provider offers neither is called as usual.")}>
-        <MenuSelect label={t("Default speed")} value={ai.chatSpeed} onChange={ai.setChatSpeed}
-          options={[["", t("Default")], ...SPEED_ORDER.map((v) => [v, t(SPEED_LABELS[v])])]} />
-      </Row>
+      <Toggle icon={ZapIcon} label={t("Fast")} hint={t("Only models whose provider offers it")}
+        title={t("Chats ask the provider for its premium low-latency routing (Anthropic's fast mode, OpenAI's and Codex's Fast), at a higher price per token. A model whose provider doesn't offer it is called as usual.")}
+        checked={ai.chatSpeed === "fast"} onChange={(on) => ai.setChatSpeed(on ? "fast" : "")} />
       <Row icon={CornerDownRightIcon} label={t("Follow-up while a reply runs")}
         hint={t("{key} does the other", { key: chordLabel("Mod-Enter") })}
         title={t("What Enter and Send do with a message you send while a reply is still running: Steer hands it to the reply at once, which takes it in at its next step; Queue keeps it until the reply ends and sends it then.")}>
@@ -1027,6 +1031,14 @@ function ContextSize({ value }) {
 
 // --- Tool usage: what the assistant may do, where it searches, its limits ---
 
+// How long a kept change's mark stays, in words (prefDefs.js MARK_MINUTES).
+function markLifeWords(minutes) {
+  if (!minutes) return t("Until I clear them");
+  if (minutes % 1440 === 0) return tn("{n} day", "{n} days", minutes / 1440);
+  if (minutes % 60 === 0) return tn("{n} hour", "{n} hours", minutes / 60);
+  return tn("{n} minute", "{n} minutes", minutes);
+}
+
 // The master switch and each chat kind's permissions, the two fetching and
 // reading helpers, the online search services and the tool limits.
 function ToolUsageSettings({ value, admin, setStatus }) {
@@ -1046,6 +1058,13 @@ function ToolUsageSettings({ value, admin, setStatus }) {
           hint={t("A second pass reads the document and hands back a cited answer")}
           title={t("When the answer could be anywhere in a long paper, or the same question is asked of several papers, the chat gives the job to a helper on the same connection: it reads as many pages as it needs and hands back a cited answer, so the conversation carries the answer instead of the whole document. It usually costs less than reading every page in the chat, and the reply's token line counts it. Off, the chat reads every document itself.")}
           checked={value.delegateReads} onChange={value.setDelegateReads} />
+        <Row icon={HistoryIcon} label={t("Marks of kept changes")}
+          hint={t("How long an AI change you kept stays marked in its note")}
+          title={t("A change you kept, on its card or in its note, leaves a mark at the note's edge; pressing the mark shows the change again, with Undo. The mark stays this long, or until you press Clear marks; the change itself stays either way, and its row in the chat can still undo it.")}>
+          <MenuSelect label={t("Marks of kept changes")} value={String(value.aiMarkMinutes)}
+            onChange={(v) => value.setAiMarkMinutes(Number(v))}
+            options={MARK_MINUTES.map((m) => [String(m), markLifeWords(m)])} />
+        </Row>
       </Section>
       {/* The account's search services live on the server, not in the profile. */}
       <Section title={t("Online search")}>
@@ -1445,6 +1464,10 @@ export default function SettingsDialog({
                 {pane === "handwriting" ? <>
                   <PaneHead icon={PenIcon} title={t("Handwriting")} />
                   <HandwritingSettings value={papers} />
+                </> : null}
+                {pane === "citations" ? <>
+                  <PaneHead icon={QuoteMarkIcon} title={t("Citations")} />
+                  <CitationSettings value={papers} setStatus={library?.setStatus} />
                 </> : null}
                 {pane === "translation" ? <>
                   <PaneHead icon={LanguagesIcon} title={t("Language & translation")} />

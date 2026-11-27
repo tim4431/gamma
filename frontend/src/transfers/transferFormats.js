@@ -1,4 +1,6 @@
 import { t, tn, T } from "../shared/i18n/i18n.js";
+import { escapeHtml } from "../shared/lib/format.js";
+import { FILE_FORMATS, formatName } from "../citations/formats.js";
 // Format capabilities are independent of the dialog. Only editable options
 // become switches; fixed values still reach the preview and export handler.
 // What the Highlights / Notes / Comments / Bundle switches mean per format: a
@@ -74,10 +76,13 @@ const EXPORT_FORMATS = [
     hint: T("Your original paper, with annotations"), editable: ["highlights", "notes", "notesAt", "comments"],
     fixed: { bundle: false },
     folder: { category: "Papers", hint: T("Each paper's PDF with its annotations, in one .zip") } },
-  { id: "bibtex", mode: "bibtex", label: "BibTeX", category: "This paper",
-    hint: T("A citation entry for LaTeX"), editable: [], fixed: { highlights: false, notes: false, bundle: false },
-    review: true,  // its step shows the real entries, so it has one without any switch
-    folder: { category: "Papers", hint: T("One .bib with every paper's entry") } },
+  // A bibliography in one of BIBLIOGRAPHY_FORMATS, picked in its review
+  // step (the payload's `bibFormat`), which shows the real entries, so it
+  // has one without any switch. Its server mode is that format's.
+  { id: "bibliography", label: T("Bibliography"), category: "This paper",
+    hint: T("BibTeX, RIS, CSL JSON or a formatted reference list"), editable: [], fixed: { highlights: false, notes: false, bundle: false },
+    review: true,
+    folder: { category: "Papers", hint: T("Every paper's entry in one file, or a formatted reference list") } },
   { id: "notespdf", mode: "notes-pdf", label: "PDF", category: "Notes",
     hint: T("A typeset document of highlights and notes"), editable: ["highlights", "notes"], fixed: { bundle: false } },
   { id: "markdown", mode: "readable", label: T("Markdown"), category: "Notes",
@@ -108,41 +113,90 @@ const EXPORT_FORMATS = [
     hint: T("A complete copy for another Gamma library"), editable: [], fixed: { highlights: true, notes: true, bundle: true } },
 ];
 
+// What the Bibliography card writes: the server's citation files, each an
+// export mode of its own (routers/export.py _CitationBuilder), or Formatted,
+// a reference list in a citation style that the browser renders
+// (citations/render.js) and saves or copies itself, with no export job.
+// The files are citations/formats.js FILE_FORMATS, under its names; `bib`:
+// a .bib for LaTeX, whose review offers the Overleaf steps.
+const FILE_HINTS = {
+  bibtex: T("For LaTeX with BibTeX or natbib"),
+  biblatex: T("For LaTeX with biblatex and Biber"),
+  ris: T("For EndNote, Mendeley, Zotero and other reference managers"),
+  csljson: T("For Pandoc and other tools that read CSL"),
+};
+export const BIBLIOGRAPHY_FORMATS = [
+  ...FILE_FORMATS.map((id) => ({ id, label: formatName(id), hint: FILE_HINTS[id], server: true, bib: id === "bibtex" || id === "biblatex" })),
+  { id: "formatted", label: T("Reference list"), hint: T("A reference list in a citation style, as HTML, RTF or text") },
+];
+export const bibliographyFormat = (id) => BIBLIOGRAPHY_FORMATS.find((f) => f.id === id) || BIBLIOGRAPHY_FORMATS[0];
+// The server mode a bibliography payload exports as, and the format its
+// review reads (Formatted has none of its own: BibTeX's, for the CSL items).
+export const bibliographyMode = (bibFormat) => (FILE_FORMATS.includes(bibFormat) ? bibFormat : "bibtex");
+
+// The files a Formatted bibliography saves as: [value, label] for its
+// choice, and what each file is (formattedFile).
+export const FORMATTED_FILES = [["html", "HTML"], ["rtf", "RTF"], ["text", T("Plain text")]];
+
+// The file a Formatted bibliography is saved as: `output` is the render
+// in the file's own format (render.js: html, rtf — already a whole RTF
+// document — or text). The HTML, a fragment, becomes a page of its own in
+// UTF-8, titled `title`, so a browser or a word processor opens it with its
+// accents intact. {body, type, suffix}.
+export function formattedFile(file, output, title = "") {
+  const text = String(output || "");
+  if (file === "rtf") return { body: text, type: "application/rtf", suffix: ".rtf" };
+  if (file === "text") return { body: text.endsWith("\n") ? text : `${text}\n`, type: "text/plain;charset=utf-8", suffix: ".txt" };
+  return {
+    body: `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>${escapeHtml(title || t("Bibliography"))}</title>\n</head>\n<body>\n${text}\n</body>\n</html>\n`,
+    type: "text/html;charset=utf-8", suffix: ".html",
+  };
+}
+
 // The bibliography endpoint for a page or a folder (its id; routers/export.py
-// ?mode=bibtex). `base` is `<origin>/api`: the link someone pastes into
-// Overleaf. With `share` it carries a share token, which names the workspace
-// and so needs neither a session nor a ?ws=. `subPages`: a page's with the
-// pages inside it (`sub_pages=1`).
-export function bibliographyUrl(base, { pageId = "", folder = "", share = "", subPages = false } = {}) {
+// ?mode=, one of the server's BIBLIOGRAPHY_FORMATS). `base` is
+// `<origin>/api`: the link someone pastes into Overleaf. With `share` it
+// carries a share token, which names the workspace and so needs neither a
+// session nor a ?ws=. `subPages`: a page's with the pages inside it
+// (`sub_pages=1`).
+export function bibliographyUrl(base, { pageId = "", folder = "", share = "", subPages = false, mode = "bibtex" } = {}) {
   const token = share ? `&share=${encodeURIComponent(share)}` : "";
+  const fmt = bibliographyMode(mode);
   return folder
-    ? `${base}/folders/${encodeURIComponent(folder)}/export?mode=bibtex${token}`
-    : `${base}/pages/${encodeURIComponent(pageId)}/export?mode=bibtex${subPages ? "&sub_pages=1" : ""}${token}`;
+    ? `${base}/folders/${encodeURIComponent(folder)}/export?mode=${fmt}${token}`
+    : `${base}/pages/${encodeURIComponent(pageId)}/export?mode=${fmt}${subPages ? "&sub_pages=1" : ""}${token}`;
 }
 
 // The review the dialog reads before it downloads anything
 // (routers/export.py GET /api/bibliography): the same entries, keys and
-// left-out pages the file will have. `subPages`: a page's with the pages
-// inside it (`sub_pages=1`), as its export would hold them.
-export function bibliographyPreviewUrl(base, { pageId = "", folder = "", subPages = false } = {}) {
+// left-out pages the file will have, and the file itself, in `format` (a
+// bibFormat: Formatted reads BibTeX's). `subPages`: a page's with the
+// pages inside it (`sub_pages=1`), as its export would hold them.
+export function bibliographyPreviewUrl(base, { pageId = "", folder = "", subPages = false, format = "bibtex" } = {}) {
+  const fmt = `format=${bibliographyMode(format)}`;
   return folder
-    ? `${base}/bibliography?folder=${encodeURIComponent(folder)}`
-    : `${base}/bibliography?page_id=${encodeURIComponent(pageId)}${subPages ? "&sub_pages=1" : ""}`;
+    ? `${base}/bibliography?folder=${encodeURIComponent(folder)}&${fmt}`
+    : `${base}/bibliography?page_id=${encodeURIComponent(pageId)}${subPages ? "&sub_pages=1" : ""}&${fmt}`;
 }
 
-// The format a server export mode is (an export job's params name the mode).
+// The format a server export mode is (an export job's params name the
+// mode), or a card's id. A citation file's mode is the Bibliography card
+// under that file's own name and `bibFormat`, so its job is titled
+// "… as RIS" and its last step says what to do with an .ris.
 export function exportFormatOf(mode) {
+  const file = FILE_FORMATS.includes(mode) && bibliographyFormat(mode);
+  if (file) return { ...EXPORT_FORMATS.find(({ id }) => id === "bibliography"), mode, label: file.label, bibFormat: file.id };
   return EXPORT_FORMATS.find((format) => format.mode === mode || format.id === mode) || null;
 }
 
 // What an export job is asked to do: the dialog's payload for a page or a
 // folder, in the server's terms (routers/export.py ExportJob). A page's
 // says whether the pages inside it come along (`sub_pages`); a folder's
-// always bring them.
+// always bring them. A bibliography's mode is its file's.
 export function exportJobBody(payload, { pageId = "", folder = "" } = {}) {
   const format = exportFormatOf(payload.format);
   const body = { ...(folder ? { folder } : { page_id: pageId, sub_pages: Boolean(payload.subPages) }),
-    mode: format?.mode || "readable",
+    mode: (format?.id === "bibliography" ? bibliographyMode(payload.bibFormat) : format?.mode) || "readable",
     pdf: Boolean(payload.bundle), highlights: Boolean(payload.highlights), notes: Boolean(payload.notes) };
   // The annotated PDF's own options go with it alone.
   return format?.editable.includes("comments")
@@ -156,7 +210,8 @@ export function exportJobBody(payload, { pageId = "", folder = "" } = {}) {
 export const offersSubPages = ({ folder, subPages }) => !folder && subPages > 0;
 
 // Whether a format's export goes through a review step: one with a switch to
-// flip, or one whose own step is worth seeing (BibTeX shows the real entries).
+// flip, or one whose own step is worth seeing (a bibliography shows the real
+// entries).
 // Both the setup and the job step read this, so their breadcrumbs agree.
 export function hasReviewStep(format, controls) {
   return Boolean(format?.review) || (controls || format?.editable || []).length > 0;
@@ -179,11 +234,16 @@ export function hasReviewStep(format, controls) {
 // changes, there is no switch for it. A folder's is {papers, language,
 // counting}: how many of its papers go translated (pdf/folderTranslation.js;
 // while they are being read, `counting`, how many may).
+// A bibliography's file is `opts.bibFormat` (BibTeX by default); a
+// `format` that names one of BIBLIOGRAPHY_FORMATS (an older dialog's saved
+// "bibtex", a preset) is the Bibliography card with that file.
 export function resolveExport(opts, { hasPdf, pdfStored, folder, hasMeta, subPages = 0, subPagesDirect = false, translated = null } = {}) {
   const formats = EXPORT_FORMATS
-    .filter(({ id }) => (id !== "pdf" || hasPdf || folder) && (id !== "bibtex" || hasMeta || folder))
+    .filter(({ id }) => (id !== "pdf" || hasPdf || folder) && (id !== "bibliography" || hasMeta || folder))
     .map((format) => (folder && format.folder ? { ...format, ...format.folder } : format));
-  const definition = formats.find(({ id }) => id === opts.format) || formats.find(({ id }) => id === "notespdf");
+  const presetFile = BIBLIOGRAPHY_FORMATS.some(({ id }) => id === opts.format) ? opts.format : "";
+  const asked = presetFile ? "bibliography" : opts.format;
+  const definition = formats.find(({ id }) => id === asked) || formats.find(({ id }) => id === "notespdf");
   const noPdfCopy = definition.id === "pdf" && !folder && !pdfStored;
   // Comments and the notes' place are the annotated PDF's own options.
   const own = (key) => definition.editable.includes(key);
@@ -209,6 +269,7 @@ export function resolveExport(opts, { hasPdf, pdfStored, folder, hasMeta, subPag
         : tn("Adds the {n} page inside it", "Adds the {n} pages inside it, at any depth", subPages),
       title: t("Export every page inside this one with it, at any depth, each under the page it is in. Off: this page alone.") });
   }
+  if (definition.id === "bibliography") values.bibFormat = bibliographyFormat(presetFile || opts.bibFormat).id;
   return { definition, formats, noPdfCopy, subPages: withSubPages ? subPages : 0,
     subPagesDirect: withSubPages && Boolean(subPagesDirect), controls,
     translated: definition.id === "pdf" && !noPdfCopy && (folder ? translated?.papers : translated?.pages) > 0 ? translated : null,
@@ -229,10 +290,10 @@ function cardsSummary({ notes, comments, notesAt }) {
 
 // What the review step says the export will be: the format's sentence, and
 // with the "Include pages inside" switch on, that the pages inside come too
-// (BibTeX's own sentence says which of them it cites).
+// (a bibliography's own sentence says which of them it cites).
 export function exportSummary(resolved, folder) {
   const summary = formatSummary(resolved, folder);
-  if (!resolved.payload.subPages || resolved.payload.format === "bibtex") return summary;
+  if (!resolved.payload.subPages || resolved.payload.format === "bibliography") return summary;
   const inside = resolved.subPagesDirect ? t("The pages inside it are exported with it.")
     : tn("The {n} page inside it is exported with it.", "The {n} pages inside it are exported with it.", resolved.subPages);
   return `${summary} ${inside}`;
@@ -258,6 +319,35 @@ export function notionFiles({ highlights, notes }) {
   return { summary: "", title: t("No images or handwriting"), hint: t("The .zip holds the Markdown alone") };
 }
 
+// A bibliography's sentence: what its file holds for a folder, a page with
+// the pages inside it or a page alone; then, for a list, how the keys are
+// kept apart (every file cites by them: a .bib's key, an RIS ID, a CSL
+// JSON id) and that pages without a record stay out.
+function bibliographySummary({ bibFormat, subPages }, folder) {
+  const list = folder || subPages;
+  const file = {
+    bibtex: folder ? t("One .bib file with the citation entry of every paper in the folder.")
+      : subPages ? t("One .bib file with the citation entry of this paper and of every page inside it.")
+        : t("This paper's citation entry as a .bib file, under its citation key."),
+    biblatex: folder ? t("One BibLaTeX .bib file with the entry of every paper in the folder.")
+      : subPages ? t("One BibLaTeX .bib file with the entry of this paper and of every page inside it.")
+        : t("This paper's BibLaTeX entry as a .bib file, under its citation key."),
+    ris: folder ? t("One .ris file with the record of every paper in the folder, for EndNote, Mendeley, Zotero and other reference managers.")
+      : subPages ? t("One .ris file with the record of this paper and of every page inside it, for EndNote, Mendeley, Zotero and other reference managers.")
+        : t("This paper's record as a .ris file, for EndNote, Mendeley, Zotero and other reference managers, under its citation key."),
+    csljson: folder ? t("One CSL JSON file with every paper in the folder, for Pandoc and other tools that read CSL.")
+      : subPages ? t("One CSL JSON file with this paper and every page inside it, for Pandoc and other tools that read CSL.")
+        : t("This paper as a CSL JSON file, for Pandoc and other tools that read CSL, under its citation key."),
+    formatted: folder ? t("Every paper in the folder as a reference list in the style chosen, to save as HTML, RTF or plain text, or to copy with its formatting.")
+      : subPages ? t("This paper and every page inside it as a reference list in the style chosen, to save as HTML, RTF or plain text, or to copy with its formatting.")
+        : t("This paper's reference in the style chosen, to save as HTML, RTF or plain text, or to copy with its formatting."),
+  }[bibFormat];
+  if (!list) return file;
+  return [file,
+    bibFormat === "formatted" ? "" : t("Clashing citation keys get a, b, … and a key you pinned on a page keeps its exact spelling."),
+    t("Pages without paper metadata are left out.")].filter(Boolean).join(" ");
+}
+
 function formatSummary({ payload, noPdfCopy, translated }, folder) {
   const { format, highlights, notes, comments } = payload;
   // An annotated PDF takes the translation the viewer shows in place of the
@@ -280,11 +370,8 @@ function formatSummary({ payload, noPdfCopy, translated }, folder) {
       "The translation into {language} replaces the original text on {n} pages. To export the original, show it first with the translate button.",
       translated.pages, { language: translated.language });
   switch (format) {
-    case "bibtex":
-      if (folder) return t("One .bib file with the citation entry of every paper in the folder. Clashing citation keys get a, b, … and a key you pinned on a page keeps its exact spelling. Pages without paper metadata are left out.");
-      return payload.subPages
-        ? t("One .bib file with the citation entry of this paper and of every page inside it. Clashing citation keys get a, b, … and a key you pinned on a page keeps its exact spelling. Pages without paper metadata are left out.")
-        : t("This paper's citation entry as a .bib file, under its citation key.");
+    case "bibliography":
+      return bibliographySummary(payload, folder);
     case "gamma":
       return t("A complete copy{folder}: pages, highlights, notes, metadata, AI chats and files. Ready to import into another Gamma library.", { folder: folder ? t(" of the folder") : "" });
     case "notability":

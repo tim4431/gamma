@@ -148,7 +148,7 @@ def test_results_carry_links_and_structured_content(client, connection, monkeypa
     with connect_data_db(ws) as db:
         store_doc(db, "l" * 24, [(2, normalize_text(pages[1]))])
     monkeypatch.setattr("gamma.pdf_text.iter_page_texts",
-                        lambda src, max_pages=None, start_page=1: iter(pages[start_page - 1:]))
+                        lambda src, max_pages=None, start_page=1, **_: iter(pages[start_page - 1:]))
     monkeypatch.setattr("gamma.ai_context.extract_text", extract_text)
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
     prefix = f"http://localhost/?ws={ws}"
@@ -816,8 +816,8 @@ def test_a_connection_undoes_its_own_changes(client, connection):
     """Every change a connection makes is journaled under a change id its
     answer names: undo_change takes it back once, only that connection's,
     and stops, saying what would be lost, when someone changed it since;
-    the person sees the same changes under its row in Settings and undoes
-    them there. create_page makes a page, and its undo moves it away."""
+    the person sees the same changes under its row in Settings and keeps or
+    undoes them there. create_page makes a page, and its undo moves it away."""
     c, ws, item = connection
     token = item["token"]
     other = c.post("/api/integrations/tokens", json={"name": "Other"}).json()
@@ -834,6 +834,11 @@ def test_a_connection_undoes_its_own_changes(client, connection):
         second = edited["structuredContent"]["change_id"]
         listed = call(client, token, "list_changes", {})["structuredContent"]["changes"]
         assert [x["change_id"] for x in listed] == [second, first] and not any(x["undone"] for x in listed)
+        assert {x["state"] for x in listed} == {"open"}
+        # the person's note draws them, by the connection's name, as the chat's
+        drawn = c.get("/api/ai/changes", params={"page_id": page["id"]}).json()["changes"]
+        assert [x["id"] for x in drawn] == [first, second] and {x["source"] for x in drawn} == {"mcp"}
+        assert drawn[1]["agent"]["name"] == "Codex" and drawn[1]["revert"]["after"].endswith("McpAppended")
         theirs = call(client, other["token"], "undo_change", {"change_id": second})
         assert theirs["isError"] and "No change of this connection" in theirs["content"][0]["text"]
         undone = call(client, token, "undo_change", {"change_id": second})
@@ -855,6 +860,12 @@ def test_a_connection_undoes_its_own_changes(client, connection):
         changes = c.get(f"/api/integrations/tokens/{item['id']}/changes").json()["changes"]
         assert changes[0]["summary"] == "Made the page “McpMadePage”"
         assert [x["undone"] for x in changes] == [False, True, True]
+        # the person keeps it there (the note's own decision, for the change's workspace), the
+        # connection hears it was kept, and a kept change still undoes
+        kept = c.post(f"/api/ai/changes/{changes[0]['id']}", params={"ws": ws}, json={"decision": "keep"})
+        assert kept.status_code == 200 and kept.json()["state"] == "kept", kept.text
+        assert c.get(f"/api/integrations/tokens/{item['id']}/changes").json()["changes"][0]["state"] == "kept"
+        assert "Made the page “McpMadePage” (kept)" in call(client, token, "list_changes", {})["content"][0]["text"]
         r = c.post(f"/api/integrations/tokens/{item['id']}/changes/{changes[0]['id']}/undo", json={"workspace_id": ws})
         assert r.status_code == 200, r.text
         with connect_pages_db(ws) as conn:

@@ -145,7 +145,7 @@ recognition, one per workspace and file) starts with `exclusive=True`:
 same turn of the lock as the job is added, so two starts at the same
 moment get one run. `exclusive` may also be a tuple of kinds, for works
 that must not run beside one another: the three that change a file's
-recognized text pass `pdf_ocr.OCR_KINDS` (`ocr`, `ocr-tab`, `ocr-drop`),
+recognized text pass `ocr_run.OCR_KINDS` (`ocr`, `ocr-tab`, `ocr-drop`),
 and `Busy.job`'s `kind` says which was found. `jobs.live(kind, key)` reads
 such a job of any owner, and `jobs.live_count(kind)` counts a kind's
 queued and running jobs, whoever owns them.
@@ -175,7 +175,7 @@ the viewer's layout this way, so it can be started again
 
 **Ending.** A finished job is kept 24 hours (`RETENTION_S`). The sweep
 (`jobs.sweep`, every 10 minutes from the app lifespan) removes it with its
-file and what it kept, the jobs of a share that no longer exists, job directories no row names and uploads no job took, then starts the automatic text recognitions left waiting (`ocr_auto.resume`). At startup
+file and what it kept, the jobs of a share that no longer exists, job directories no row names and uploads no job took; the same round (`app.sweep_jobs`) then starts the automatic text recognitions left waiting (`ocr_auto.resume`). At startup
 `jobs.recover` fails the jobs a stopped process left queued or running
 ("interrupted: the server restarted while this ran"). A process only
 recovers rows another process stamped (`instance`), so a second app
@@ -341,7 +341,7 @@ replacement stands and its answer says why (`relocation_error`).
 
 A text recognition (`ocr`, `ocr-tab`) and a forget (`ocr-drop`) are keyed
 by the workspace and the file (`<ws>:<doc_id>`) and start with
-`exclusive=pdf_ocr.OCR_KINDS`: one of the three at a time for a file,
+`exclusive=ocr_run.OCR_KINDS`: one of the three at a time for a file,
 whoever starts it. A start beside one is answered by `busy_job`: the same
 account's job of the kind asked for answers it (409 while it is still
 stopping); a forget going gets 409 "This PDF's recognized text is being
@@ -377,7 +377,7 @@ dismisses the interrupted row the restart left.
 
 A run in a window (`ocr-tab`) holds no lane place, since the window's CPU
 does the reading. Its job waits for the window's pages and applies them
-(`pdf_ocr.window_run`). A Stop by its owner, a person's or the window's
+(`ocr_run.window_run`). A Stop by its owner, a person's or the window's
 own after a failure on its side, ends the job at its next report, within
 2 s. The job ends cancelled without `progress.idle`, which only its idle
 end sets, and its staged pages are kept. Until then it reads `running`
@@ -419,14 +419,15 @@ with `stopping: true`, and a page sent meanwhile or after lands nowhere
   (`ocrRuns.jobStopped`), so the run does not wait for its next request.
 
 `taskModel.js` and `taskKinds.js` are pure, tested in
-`tests/tasks.test.mjs`, except for what `ocr-tab` reads of this window:
-its hidden time and its run here. `taskModel.js` holds the states, the
+`tests/tasks.test.mjs`, except for what `ocr-tab` reads of this
+window's runs (`pdf/ocrRuns.js`): its run here and how long the window
+was hidden. `taskModel.js` holds the states, the
 order (what runs first, oldest on top; then what ended, newest on top) and
 the tray badge. `taskKinds.js` gives each kind its icon, title, detail line and row
 actions, how long a kind that can tell still takes (`left(task, now)`,
 after the counts: the `ocr` row's, at the pace of this run's pages since
 `since`; the `ocr-tab` row's in the window reading it leaves out the time
-that window was hidden, `noteHidden`), where a click opens it (`open`) and
+that window was hidden, `ocrRuns.hiddenSince`), where a click opens it (`open`) and
 how to start it again (`retry`: the same route and body; an `ocr-tab` row
 is read again in this window, or on the server where the server now reads
 text itself, `ocrState.recognizeAgain`; an export that carried the viewer's

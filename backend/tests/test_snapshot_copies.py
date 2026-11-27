@@ -1,5 +1,5 @@
 """The backup tasks' copies in the bucket (gamma/snapshot_copies.py,
-gamma/backup_schedule.py, docs/dev/debugging.md "Snapshots and copies in a
+gamma/backup_schedule.py, docs/dev/backups.md "Snapshots and copies in a
 bucket") against moto's in-process bucket (skipped without moto): a task
 copying each snapshot it takes and pruning its copies to its retention,
 never another task's; who may copy and with what bucket; a copy that fails

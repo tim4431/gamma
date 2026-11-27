@@ -10,8 +10,8 @@ import { guideEvents } from "../guide/events.js";
 import {
   AlignLeftIcon, CalendarIcon, CalloutIcon, CopyIcon, DiagramIcon, DividerIcon, EmbedIcon, FilePlusIcon, FileTextIcon,
   GlobeIcon, Heading1Icon, Heading2Icon, Heading3Icon, HighlightIcon, ImageIcon, IndentIcon, LinkIcon, ListIcon,
-  ListOrderedIcon, NotebookPenIcon, OutlineIcon, QuoteIcon, QuoteMarkIcon, SigmaIcon, SquareCheckIcon,
-  SquareCodeIcon, SquareSigmaIcon, TableIcon, TypeIcon,
+  ListOrderedIcon, NotebookPenIcon, OutlineIcon, QuoteMarkIcon, SigmaIcon, SquareCheckIcon,
+  SquareCodeIcon, SquareSigmaIcon, TableIcon, TextQuoteIcon, TypeIcon,
 } from "../shared/ui/Icons";
 
 export { filterSlashCommands } from "./slashCommands.js";
@@ -21,11 +21,11 @@ export { filterSlashCommands } from "./slashCommands.js";
 // without one shows its text `glyph` instead (the colors' tinted "A").
 const MENU_ICONS = {
   h1: Heading1Icon, h2: Heading2Icon, h3: Heading3Icon, todo: SquareCheckIcon, bullet: ListIcon,
-  number: ListOrderedIcon, quote: QuoteMarkIcon, callout: CalloutIcon, divider: DividerIcon,
+  number: ListOrderedIcon, quote: TextQuoteIcon, callout: CalloutIcon, divider: DividerIcon,
   math: SigmaIcon, equation: SquareSigmaIcon, page: FilePlusIcon, note: NotebookPenIcon, table: TableIcon,
   code: SquareCodeIcon, mermaid: DiagramIcon, image: ImageIcon, date: CalendarIcon, link: LinkIcon,
   embed: EmbedIcon, highlight: HighlightIcon,
-  url: GlobeIcon, citation: QuoteIcon, pageCard: FileTextIcon, title: TypeIcon, text: AlignLeftIcon,
+  url: GlobeIcon, citation: QuoteMarkIcon, pageCard: FileTextIcon, title: TypeIcon, text: AlignLeftIcon,
   blocks: OutlineIcon, indent: IndentIcon, copy: CopyIcon,
 };
 
