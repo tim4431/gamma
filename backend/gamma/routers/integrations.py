@@ -169,7 +169,8 @@ def _token_workspaces(user_id: str, token_id: str) -> list[str]:
 def token_changes(token_id: str, request: Request, response: Response):
     """The changes the connection made through MCP in the workspaces it
     reads (gamma/agent_changes.py), newest first, the latest 100: each one's
-    id, workspace, time, tool, summary, page and whether it was undone."""
+    id, workspace, time, tool, summary, page, whether it was undone and its
+    review's state."""
     user_id, _ws = _owner(request)
     response.headers["Cache-Control"] = "no-store"
     names = {w["id"]: w["name"] for w in list_for_user(user_id)}

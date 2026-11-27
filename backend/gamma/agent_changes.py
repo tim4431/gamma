@@ -87,7 +87,7 @@ def nudge(account: str, ws: str, page_id: str) -> None:
 
 
 def record(ws: str, *, account: str, source: str, token_id: str, agent: dict, tool: str, action: dict,
-           kept: bool = False) -> str:
+           kept: bool) -> str:
     """Journal one change ``account``'s agent made (``source`` ``chat`` or
     ``mcp``; ``token_id`` the connection, '' for a person's chat), with the
     stamp it made it under, when its action carries a revert record: its
@@ -121,12 +121,12 @@ _COLUMNS = ("c.id, c.token_id, c.at, c.tool, c.kind, c.block_id, c.page_id, c.su
             "p.content, c.account, c.source, c.kept_at, c.agent")
 
 
-def state_of(undone_at: str, kept_at: str) -> str:
+def _state(undone_at: str, kept_at: str) -> str:
     return UNDONE if undone_at else KEPT if kept_at else OPEN
 
 
 def _change(row) -> dict:
-    state = state_of(row[9], row[13])
+    state = _state(row[9], row[13])
     return {"id": row[0], "token_id": row[1], "at": row[2], "tool": row[3], "kind": row[4], "block_id": row[5],
             "page_id": row[6], "summary": row[7], "revert": json.loads(row[8]), "undone": state == UNDONE,
             "state": state, "page_title": row[10] or "", "account": row[11], "source": row[12],
@@ -138,7 +138,7 @@ def _select(where: str) -> str:
             f"WHERE {where}")
 
 
-def listed(ws: str, token_id: str, limit: int = 20) -> list[dict]:
+def listed(ws: str, token_id: str, limit: int) -> list[dict]:
     """The connection's changes in ``ws``, newest first, with their page's
     title (empty when the page is gone)."""
     with connect_pages_db(ws) as conn:
@@ -146,11 +146,11 @@ def listed(ws: str, token_id: str, limit: int = 20) -> list[dict]:
     return [_change(r) for r in rows]
 
 
-def marked_on(ws: str, account: str, page_id: str, kept_since: float = 0) -> list[dict]:
+def marked_on(ws: str, account: str, page_id: str, kept_since: float) -> list[dict]:
     """The changes made for ``account`` on the page that its note draws,
     oldest first: those that wait for review, and the kept ones whose mark
-    was not cleared — with ``kept_since`` (seconds), only those kept that
-    recently (the account's marks last that long). A kept one carries
+    was not cleared — with ``kept_since`` (seconds) above 0, only those kept
+    that recently (the account's marks last that long). A kept one carries
     ``kept_ago``, the seconds since it was kept by this server's clock, so a
     client times its mark out on its own clock."""
     now = datetime.now(timezone.utc)
@@ -182,7 +182,7 @@ def states(ws: str, account: str, ids) -> dict:
     with connect_pages_db(ws) as conn:
         rows = conn.execute(f"SELECT id, undone_at, kept_at FROM agent_changes WHERE account = ? AND id IN "
                             f"({', '.join('?' * len(wanted))})", (account, *wanted)).fetchall()
-    return {r[0]: state_of(r[1], r[2]) for r in rows}
+    return {r[0]: _state(r[1], r[2]) for r in rows}
 
 
 def find(ws: str, change_id: str) -> dict | None:

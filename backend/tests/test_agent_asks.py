@@ -158,20 +158,20 @@ def test_answered_in_the_client_first_gamma_draws_it_no_more(monkeypatch):
 def test_a_client_that_cannot_show_it_and_a_question_with_nothing_to_draw(monkeypatch):
     assert _ask(Session(RuntimeError("no form")), monkeypatch)[0] == "cannot"
     assert agent_asks.on_page("u-asks", "ws1", "p1") == []
-    # an undo's question has nothing to draw: the client alone asks
+    # an undo's question, and a page made, have nothing to draw: the client alone asks
     assert _ask(Session(SimpleNamespace(action="accept", content={})), monkeypatch, shown=None) == ("once", "")
+    made = ("ws1", {"title": "New notes", "diff": [["ins", "New notes"]]})
+    assert _ask(Session(SimpleNamespace(action="accept", content={})), monkeypatch, shown=made) == ("once", "")
 
 
 def test_a_move_to_another_page_is_asked_where_the_note_is_now():
-    approval = ai_permissions.open_approval("u-asks")
-    agent_asks.show(approval, user="u-asks", ws="ws1", tool="move_block", perm="block_edit",
-                    preview={**PREVIEW, "page_id": "p2", "src_page_id": "p1"}, agent="Codex")
+    approval = agent_asks.ask("u-asks", "ws1", {**PREVIEW, "page_id": "p2", "src_page_id": "p1"},
+                              tool="move_block", agent="Codex")
     try:
         assert [a["id"] for a in agent_asks.on_page("u-asks", "ws1", "p1")] == [approval]
         assert agent_asks.on_page("u-asks", "ws1", "p2") == []
     finally:
         agent_asks.settle(approval)
-        ai_permissions.wait_for(approval, timeout=0)
 
 
 def test_the_pages_read_lists_the_questions_waiting_on_it_for_its_account(client):
@@ -180,10 +180,8 @@ def test_the_pages_read_lists_the_questions_waiting_on_it_for_its_account(client
     me, ws = account_of("asks-reader"), workspace_of("asks-reader")
     page = make_page(c, "Asked page")["id"]
     preview = {**PREVIEW, "page_id": page}
-    approval = ai_permissions.open_approval(me)
-    agent_asks.show(approval, user=me, ws=ws, tool="edit_block", perm="block_edit", preview=preview, agent="Codex")
-    other = ai_permissions.open_approval("someone-else")
-    agent_asks.show(other, user="someone-else", ws=ws, tool="edit_block", perm="block_edit", preview=preview, agent="Codex")
+    approval = agent_asks.ask(me, ws, preview, tool="edit_block", agent="Codex")
+    other = agent_asks.ask("someone-else", ws, preview, tool="edit_block", agent="Codex")
     try:
         asks = c.get("/api/ai/changes", params={"page_id": page}).json()["asks"]
         assert asks == [{"id": approval, "tool": "edit_block", "perm": "block_edit", "preview": preview, "agent": "Codex"}]
@@ -193,7 +191,6 @@ def test_the_pages_read_lists_the_questions_waiting_on_it_for_its_account(client
     finally:
         agent_asks.settle(approval)
         agent_asks.settle(other)
-        ai_permissions.wait_for(other, timeout=0)
     assert c.get("/api/ai/changes", params={"page_id": page}).json()["asks"] == []
 
 
@@ -208,9 +205,7 @@ def test_the_connections_own_token_neither_reads_nor_answers_its_question(client
     page = make_page(c, "Asked page")["id"]
     agent = fresh_client()
     agent.headers["Authorization"] = f"Bearer {token_for(c, 'read', 'Codex')}"
-    approval = ai_permissions.open_approval(me)
-    agent_asks.show(approval, user=me, ws=ws, tool="edit_block", perm="block_edit",
-                    preview={**PREVIEW, "page_id": page}, agent="Codex")
+    approval = agent_asks.ask(me, ws, {**PREVIEW, "page_id": page}, tool="edit_block", agent="Codex")
     card = ai_permissions.open_approval(me)  # a card of the token's own chat
     try:
         r = agent.get("/api/ai/changes", params={"page_id": page})
@@ -225,6 +220,5 @@ def test_the_connections_own_token_neither_reads_nor_answers_its_question(client
         assert ai_permissions.wait_for(card, timeout=1) == ("once", "")
     finally:
         agent_asks.settle(approval)
-        ai_permissions.wait_for(approval, timeout=0)
         ai_permissions.wait_for(card, timeout=0)
         agent.close()

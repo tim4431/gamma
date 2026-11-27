@@ -1475,8 +1475,7 @@ PAGES_SCHEMA = [
     # mark from its note. The newest per account and connection only, and
     # none older than agent_changes.KEEP_DAYS. Each account's own: a backup
     # carries none (ws_backup.PRIVATE_TABLES), and no mirror or Gamma export
-    # does. `account`, `source`, `kept_at` and `cleared_at` came with step 73
-    # (step 72 is citations').
+    # does. `account`, `source`, `kept_at` and `cleared_at` came with step 73.
     """CREATE TABLE IF NOT EXISTS agent_changes (
         id TEXT PRIMARY KEY,
         token_id TEXT NOT NULL,

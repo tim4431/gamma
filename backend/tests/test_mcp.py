@@ -816,8 +816,8 @@ def test_a_connection_undoes_its_own_changes(client, connection):
     """Every change a connection makes is journaled under a change id its
     answer names: undo_change takes it back once, only that connection's,
     and stops, saying what would be lost, when someone changed it since;
-    the person sees the same changes under its row in Settings and undoes
-    them there. create_page makes a page, and its undo moves it away."""
+    the person sees the same changes under its row in Settings and keeps or
+    undoes them there. create_page makes a page, and its undo moves it away."""
     c, ws, item = connection
     token = item["token"]
     other = c.post("/api/integrations/tokens", json={"name": "Other"}).json()
@@ -860,6 +860,12 @@ def test_a_connection_undoes_its_own_changes(client, connection):
         changes = c.get(f"/api/integrations/tokens/{item['id']}/changes").json()["changes"]
         assert changes[0]["summary"] == "Made the page “McpMadePage”"
         assert [x["undone"] for x in changes] == [False, True, True]
+        # the person keeps it there (the note's own decision, for the change's workspace), the
+        # connection hears it was kept, and a kept change still undoes
+        kept = c.post(f"/api/ai/changes/{changes[0]['id']}", params={"ws": ws}, json={"decision": "keep"})
+        assert kept.status_code == 200 and kept.json()["state"] == "kept", kept.text
+        assert c.get(f"/api/integrations/tokens/{item['id']}/changes").json()["changes"][0]["state"] == "kept"
+        assert "Made the page “McpMadePage” (kept)" in call(client, token, "list_changes", {})["content"][0]["text"]
         r = c.post(f"/api/integrations/tokens/{item['id']}/changes/{changes[0]['id']}/undo", json={"workspace_id": ws})
         assert r.status_code == 200, r.text
         with connect_pages_db(ws) as conn:

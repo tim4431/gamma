@@ -50,7 +50,7 @@ from . import agent_asks, ai_permissions
 from .ai_tools.base import gamma_link
 from .ai_tools.prompt import citation_prompt
 from .ai_tools.registry import (STORING_TOOLS, WRITING_TOOLS, agent_tools, approval_preview, mcp_tools,
-                                run_agent_tool, tool_permission)
+                                run_agent_tool)
 from .agents import of_connection, stamp
 from . import hosted
 from .integrations import Connection, set_asks
@@ -468,7 +468,7 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
     # A change with a revert record is journaled for the person's review
     # (run_agent_tool, gamma/agent_changes.py), and its answer names how to
     # take it back.
-    change_id = action.get("change_id") or "" if changing else ""
+    change_id = action.get("change_id") if changing else ""
     if change_id:
         structured["change_id"] = change_id
         result += f'\n\nChange {change_id}: undo_change(change_id="{change_id}") takes it back.'
@@ -702,7 +702,7 @@ def _preview(connection: Connection, base: str, name: str, arguments: dict):
     ws, scope = found
     preview, answer = approval_preview(ws, scope, name, arguments)
     if answer is not None:
-        return CallToolResult(content=[TextContent(type="text", text=answer)], isError=answer.startswith("error"))
+        return _error(answer) if answer.startswith("error") else _answer(answer)
     preview = preview or {}
     link = gamma_link(scope, preview["page_id"]) if preview.get("page_id") else ""
     return _question(connection, name, preview, link), str(preview.get("digest") or ""), (ws, preview)
@@ -771,13 +771,11 @@ async def _ask_both(context, conn: Connection, name: str, question: str, shown) 
     "cannot" when the client could not show it. Answered in Gamma, the
     client's question is withdrawn (``notifications/cancelled`` for it;
     whether a client closes its form for it is the client's). The call
-    cancelled while it asks, Gamma's question goes at once too."""
+    cancelled while it asks, Gamma's question goes at once too. A change
+    no page draws, an undo (``shown`` None) or a page made, is asked in the
+    client alone."""
     session = context.session
-    approval_id = ai_permissions.open_approval(conn.user_id) if shown else None
-    if approval_id:
-        ws, preview = shown
-        agent_asks.show(approval_id, user=conn.user_id, ws=ws, tool=name, perm=tool_permission(name),
-                        preview=preview, agent=of_connection(conn).label)
+    approval_id = agent_asks.ask(conn.user_id, *shown, tool=name, agent=of_connection(conn).label) if shown else None
     # ends Gamma's wait, which its thread cannot abandon, once the client
     # answered or the call ended
     stopped = threading.Event()
@@ -813,11 +811,8 @@ async def _ask_both(context, conn: Connection, name: str, question: str, shown) 
                 group.start_soon(in_gamma, group)
     finally:
         stopped.set()
-        if approval_id:
+        if approval_id:  # its approval goes too, though Gamma's wait never began
             agent_asks.settle(approval_id)
-            # its approval goes too, though Gamma's wait never began: a stopped
-            # wait takes it off and returns at once
-            ai_permissions.wait_for(approval_id, stopped)
     # withdrawn only once it went out: Gamma's answer may come before it does
     if found["gamma"] and isinstance(found["elicit"], int):
         try:
