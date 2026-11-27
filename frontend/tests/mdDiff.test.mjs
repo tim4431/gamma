@@ -1,6 +1,7 @@
 // An AI's change drawn in its note as tracked changes (editor/mdDiff.js):
 // the merged source, and what the note's own renderer makes of it with
-// rehypeDiffMarks between the sanitizer and KaTeX, as BlockMarkdown runs it.
+// rehypeDiffMarks and rehypePictureDiffs between the sanitizer and KaTeX, as
+// BlockMarkdown runs them.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import React from "react";
@@ -11,7 +12,9 @@ import katex from "rehype-katex";
 import breaks from "remark-breaks";
 import gfm from "remark-gfm";
 import math from "remark-math";
-import { DEL, DEL_END, INS, INS_END, diffMarkdown, marksChange, rehypeDiffMarks, wordsOf } from "../src/editor/mdDiff.js";
+import {
+  DEL, DEL_END, INS, INS_END, PICTURE_DIFF, diffMarkdown, marksChange, pairPictureDiffs, rehypeDiffMarks, rehypePictureDiffs, wordsOf,
+} from "../src/editor/mdDiff.js";
 import { rehypeNoteSanitize } from "../src/editor/noteSanitize.js";
 import { remarkCallouts } from "../src/editor/callouts.js";
 import { remarkDiagrams } from "../src/shared/lib/diagramMarkdown.js";
@@ -19,9 +22,10 @@ import { remarkDiagrams } from "../src/shared/lib/diagramMarkdown.js";
 // The marks as text a failure message can show: {+ came +}, [- went -].
 const shown = (s) => s.replaceAll(INS, "{+").replaceAll(INS_END, "+}").replaceAll(DEL, "[-").replaceAll(DEL_END, "-]");
 const merged = (a, b) => shown(diffMarkdown(a, b));
-const render = (text) => renderToStaticMarkup(React.createElement(Markdown, {
+const render = (text, options = {}) => renderToStaticMarkup(React.createElement(Markdown, {
   remarkPlugins: [gfm, math, remarkCallouts, breaks, remarkDiagrams],
-  rehypePlugins: [raw, rehypeNoteSanitize, rehypeDiffMarks, katex],
+  rehypePlugins: [raw, rehypeNoteSanitize, rehypeDiffMarks, rehypePictureDiffs, katex],
+  ...options,
 }, text));
 const drawn = (a, b) => render(diffMarkdown(a, b));
 const DEL_RE = /<del class="mdDiff">([^<]*)<\/del>/g;
@@ -94,11 +98,58 @@ test("a formula, a code span, a link and a picture change whole, set by their ow
     /<del class="mdDiff"><a href="https:\/\/a.org">a<\/a><\/del><ins class="mdDiff"><a href="https:\/\/b.org">b<\/a><\/ins>/);
   // A bare address beside a mark still links (GFM links one only after a space).
   assert.match(drawn("see https://a.org now", "see https://b.org now"), /<ins class="mdDiff"><a href="https:\/\/b.org">/);
-  assert.match(drawn("See ![pic](/api/uploads/a.png)", "See ![pic](/api/uploads/b.png)"),
-    /<del class="mdDiff"><img src="\/api\/uploads\/a.png" alt="pic"\/><\/del><ins class="mdDiff"><img src="\/api\/uploads\/b.png"/);
+  assert.match(drawn("See ![pic](/api/uploads/a.png)", "Look ![pic](/api/uploads/b.png)"),
+    /<del class="mdDiff"><img src="\/api\/uploads\/a.png" alt="pic"\/><\/del><ins class="mdDiff">Look <\/ins><ins class="mdDiff"><img src="\/api\/uploads\/b.png"/);
   // Each of them is one word to the comparison.
   assert.deepEqual(wordsOf("a $x + y$ `c d` [l m](u) @alice <u>").filter((w) => w.k !== "space").map((w) => w.k),
     ["word", "math", "code", "atom", "mention", "tag"]);
+});
+
+// A hast tree by hand, and its shape as text: a picture by its src.
+const el = (tagName, children = [], properties = {}) => ({ type: "element", tagName, properties, children });
+const img = (src) => el("img", [], { src, alt: src });
+const gone = (...children) => el("del", children, { className: ["mdDiff"] });
+const cameIn = (...children) => el("ins", children, { className: ["mdDiff"] });
+const text = (value) => ({ type: "text", value });
+const shape = (n) => (n.type === "text" ? n.value : n.tagName === "img" ? n.properties.src : `${n.tagName}[${n.children.map(shape).join("|")}]`);
+const paired = (...children) => shape(pairPictureDiffs({ type: "root", children: [el("p", children)] }).children[0]);
+
+test("a picture replaced where it stood is one compare frame, any other picture change stays marked", () => {
+  // The one that went and the one that came, in that order, blank text between them dropped.
+  assert.equal(paired(text("See "), gone(img("a")), text(" "), cameIn(img("b")), text(" here")), "p[See |picture-diff[a|b]| here]");
+  const deep = pairPictureDiffs({ type: "root", children: [el("ul", [el("li", [gone(img("a")), cameIn(img("b"))])])] });
+  assert.equal(shape(deep.children[0]), "ul[li[picture-diff[a|b]]]");
+  // Two replaced apart are two frames, each picture in one.
+  assert.equal(paired(gone(img("a")), cameIn(img("b")), text(" and then "), gone(img("c")), cameIn(img("d"))),
+    "p[picture-diff[a|b]| and then |picture-diff[c|d]]");
+  // Left as drawn: a picture only removed or only added, one in a link, one
+  // that went with words, several replaced together, a note's own <del>.
+  const kept = [
+    [gone(img("a")), text(" text")],
+    [text("text "), cameIn(img("b"))],
+    [gone(el("a", [img("a")])), cameIn(el("a", [img("b")]))],
+    [gone(text("old ")), gone(img("a")), cameIn(img("b"))],
+    [gone(img("a")), gone(text(" ")), gone(img("b")), cameIn(img("c")), cameIn(text(" ")), cameIn(img("d"))],
+    [gone(img("a")), cameIn(img("b")), cameIn(img("c"))],
+    [el("del", [img("a")]), el("ins", [img("b")])],
+  ];
+  for (const children of kept) assert.equal(paired(...children), shape(el("p", children)));
+
+  // In the note's pipeline, from the two texts.
+  assert.match(drawn("See ![old](/api/uploads/a.png) here", "See ![new](/api/uploads/b.png) here"),
+    /<p>See <picture-diff><img src="\/api\/uploads\/a.png" alt="old"\/><img src="\/api\/uploads\/b.png" alt="new"\/><\/picture-diff> here<\/p>/);
+  for (const [before, after] of [
+    ["Intro\n\n![a](/api/uploads/1.png)", "Intro"],
+    ["Intro", "Intro\n\n![b](/api/uploads/2.png)"],
+    ["[![a](/api/uploads/1.png)](https://x.org)", "[![b](/api/uploads/2.png)](https://x.org)"],
+    ["![a](/api/uploads/1.png) ![b](/api/uploads/2.png)", "![c](/api/uploads/3.png) ![d](/api/uploads/4.png)"],
+  ]) assert.doesNotMatch(drawn(before, after), new RegExp(PICTURE_DIFF), `${before} → ${after}`);
+  // Its pictures' URLs go through the note's transform, as BlockMarkdown reads them.
+  const frame = render(diffMarkdown("![a](/api/uploads/1.png)", "![b](/api/uploads/2.png)"), {
+    urlTransform: (url) => `${url}?share=t`,
+    components: { [PICTURE_DIFF]: ({ node }) => node.children.map((c) => `${c.properties.src} ${c.properties.alt}`).join(", ") },
+  });
+  assert.match(frame, /<p>\/api\/uploads\/1.png\?share=t a, \/api\/uploads\/2.png\?share=t b<\/p>/);
 });
 
 test("a code block, a display formula and a table change as one unit, marked whole", () => {

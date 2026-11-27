@@ -1,16 +1,20 @@
 // Taking back the agent's note changes from the reply that made them. Each
-// edit, new note, move or deletion the agent made carries `revert` (what
-// undoing it needs, recorded by its tool — gamma/ai_tools/), and so do a
-// folder or label it deleted and a page tool's rename, move or label change
-// (`revert.pages`, one page or many); POST /api/ai/revert
-// undoes it as a merge into the notes or the library as they are now
-// (gamma/ai_revert.py) and the action is marked `reverted` in the saved
-// conversation, which tells the model on the next turn (ai_context's
-// replay). A revert or redo that left pages as they were saves how many
-// (`kept`), which the replay tells the model. The request's history leaves
-// out `revert` and a batch's `items`. The rows that do it are
+// edit, new note, move, deletion or highlight the agent made carries
+// `revert` (what undoing it needs, recorded by its tool — gamma/ai_tools/),
+// and so do a folder or label it deleted and a page tool's rename, move or
+// label change (`revert.pages`, one page or many). A change the server
+// journaled for review (`change_id`) is undone by its id (POST
+// /api/ai/changes/<id>, chat/noteReview.js), another by its record (POST
+// /api/ai/revert); either is a merge into the notes or the library as they
+// are now (gamma/ai_revert.py), and the action is marked `reverted` in the
+// saved conversation. The next turn's replay tells the model, from the
+// journal's state where it holds the change (agent_changes.mark_history). A
+// revert or redo that left pages as they were saves how many (`kept`),
+// which the replay tells the model. The request's history leaves out
+// `revert` and a batch's `items`. The rows that do it are
 // chat/AgentChanges.jsx, and the dialog that takes back several at once,
 // any of the conversation's, chat/RevertChanges.jsx.
+import { t, tn } from "../shared/i18n/i18n.js";
 import { changePlace, isChange } from "./agentSteps.js";
 
 const REVERTIBLE = new Set(["edit", "create", "move", "delete"]);
@@ -30,6 +34,10 @@ const TRASH_REVERTIBLE = new Set(["delete_page", "restore_page"]);
 // (gamma/ai_revert.py _plan_made).
 const MADE_REVERTIBLE = "create_page";
 const listed = (ids) => Array.isArray(ids) && ids.length > 0;
+// A note change's kind as its revert takes it: a highlight is a block the
+// agent made, taken back as a new block is (gamma/agent_changes.py
+// revert_kind).
+const noteKind = (a) => (a?.tool === "highlight" ? "create" : a?.kind);
 
 // A change recorded for reverting (changes saved by an older version have
 // no `revert`).
@@ -39,15 +47,16 @@ function recorded(a) {
   if (TRASH_REVERTIBLE.has(a.tool)) return listed(a.revert.trash) || listed(a.revert.restore);
   if (a.tool === MADE_REVERTIBLE) return typeof a.revert.made === "string" && a.revert.made === a.block_id;
   if (!a.block_id) return false;
-  return changePlace(a) === "notes" ? REVERTIBLE.has(a.kind) : LIBRARY_REVERTIBLE.has(a.tool);
+  return changePlace(a) === "notes" ? REVERTIBLE.has(noteKind(a)) : LIBRARY_REVERTIBLE.has(a.tool);
 }
 
 // The revert endpoint's kind for an action: "pages" for a page tool's
 // record (a page move's own kind, "move", is the note move's there; a
 // deleted folder's or label's `revert.pages` is its own, kind "delete"),
-// "trash" for pages deleted or restored, "made" for a page made.
+// "trash" for pages deleted or restored, "made" for a page made, "create"
+// for a highlight.
 export const revertKind = (a) => (PAGE_REVERTIBLE.has(a?.tool) ? "pages"
-  : TRASH_REVERTIBLE.has(a?.tool) ? "trash" : a?.tool === MADE_REVERTIBLE ? "made" : a?.kind);
+  : TRASH_REVERTIBLE.has(a?.tool) ? "trash" : a?.tool === MADE_REVERTIBLE ? "made" : noteKind(a));
 
 // A change this reply can still take back.
 export function canRevert(a) {
@@ -59,7 +68,7 @@ export function canRevert(a) {
 // and a paste of several notes records every block it made (`blocks`).
 export function canRedo(a) {
   return recorded(a) && !!a.reverted
-    && (a.kind !== "create" || a.tool === MADE_REVERTIBLE || typeof a.revert.parent === "string"
+    && (noteKind(a) !== "create" || a.tool === MADE_REVERTIBLE || typeof a.revert.parent === "string"
       || Array.isArray(a.revert.blocks));
 }
 
@@ -117,4 +126,38 @@ export function revertRefusal(err) {
     conflict: err?.status === 409 ? data.conflict || "" : "",
     preview: data.preview || null,
   };
+}
+
+// What a refusal (`revertRefusal`) says where it stopped (a reply's row,
+// the dialog, a note's review bar, a connection's list in Settings), and
+// the button that reverts (or redoes) anyway — none when it can't be forced.
+export function refusalCopy({ conflict, preview, detail, status }, redo) {
+  if (conflict === "changed") {
+    return redo
+      ? { text: t("The note was changed since. Redoing anyway makes this change:"), force: t("Redo anyway") }
+      : { text: t("The note was changed since. Undoing anyway makes this change:"), force: t("Undo anyway") };
+  }
+  if (conflict === "filled") {
+    if (preview?.page) {
+      return { text: t("Notes, pages or comments were added to the page since. Undoing moves it to Recently deleted with them."),
+        force: t("Move to Recently deleted anyway") };
+    }
+    return {
+      text: preview?.children ? t("Notes were added under it since. Undoing deletes it with them.")
+        : preview?.drawn ? t("Strokes were added to it since. Undoing deletes them with it.")
+          : preview?.threads ? t("It was commented on since. Undoing deletes it, and its comments with it.")
+            : t("It was typed in since. Undoing deletes what it says now:"),
+      force: t("Delete anyway"),
+    };
+  }
+  if (conflict === "moved") {
+    return redo
+      ? { text: t("The note was moved since. Redoing puts it where the AI moved it."), force: t("Move anyway") }
+      : { text: t("The note was moved since. Undoing puts it back where the AI found it."), force: t("Move back anyway") };
+  }
+  if (conflict === "kept") {
+    return { text: tn("The page changed since, or was deleted, and was left as it is.",
+      "These {n} pages changed since, or were deleted, and were left as they are.", preview?.kept || 1) };
+  }
+  return { text: status === 404 ? t("The note was deleted since.") : detail };
 }

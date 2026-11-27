@@ -282,7 +282,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: command palette | the 3rd Ctrl+P of a load (`palette.opened`, `count: 3`), unless the command palette was found (`doneOn: commands.opened`, Ctrl+Shift+P or `>` typed); desktop | the palette's box: `>` or Ctrl+Shift+P runs any command, the unbound ones included |
 | hint: tabs | the 4th page of a load to get a tab (`tab.opened`, `count: 4`); desktop; a tab's menu answers it (`answeredBy: tab.menu`); version 2 since it names Split right | the tab strip: right-click pins a tab, or Split right shows its page beside this one |
 | hint: Files window | the Files window comes up (`window.shown {id: "files"}`: the View menu, the palette); desktop — the phone's is an overlay with no grip | the Files title: the library's folders and the synced folders in one tree, and Ctrl+P finds a file by name |
-| hint: AI change | an AI's change that ran without asking is drawn in its note (`note.aiChange`, from NoteReviewBar) | the bar under the note: Revert takes it back, Hide keeps it (the asking kind is the approvals hint's) |
+| hint: AI change | an agent's change is marked in its note, kept or waiting for review (`note.aiChange`, from BlockTree's row; version 2) | the mark at the note's edge or the bar under it: the mark unfolds the change, Undo takes it back (the asking kind is the approvals hint's) |
 | hint: picture | a picture is put on a PDF page or a sheet and selected (`picture.placed`, from `markup/usePictures.js`'s `create`) | the picture's bar: drag to move, crop, flip, layer, lock |
 | hint: Send to | writing begins in a comment field that can ask an agent (`comment.agentOffered`, once per field); retired once a comment has asked one (`doneOn: comment.created {agent: true}`) | that field's Send to tick (`comments.sendTo`, carried by the field written in) |
 | hint: window closed | a window closed with its × (`window.closed {id: chat \| notes \| comments \| files \| pdf}`); desktop — the phone's tabs bring its panels back — and retired if the user brings one back first (`doneOn: window.shown`, from the View rows and the palette's toggles); opening View answers it (`answeredBy`), so it never covers the menu's Windows rows | the View button: closed windows wait there |
@@ -298,7 +298,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: conflict | a clone conflict's versions show (`conflict.shown`) | the versions: nothing was lost, both are kept; pick one, then Apply |
 | hint: folders | the library has 10+ pages and no folder or label (state) | the listing bar |
 | hint: install | iPhone/iPad Safari, not yet the home-screen app (state) | no anchor: a bottom-left card |
-| hint: approvals | the assistant asks before a change (`approval.shown`, from `ApprovalCard`), on the first card that offers all four answers | the card: allow once or for the whole chat, and that Don't allow can say what to do instead |
+| hint: approvals | the assistant asks before a change (`approval.shown` with `change: true`, from `ApprovalCard`), on the first change's card ever shown: one that says Keep and Undo (`chat/approvals.js` `isChangeCall`). A comment's, a resolve's or a reading tool's card (Allow once, Don't allow) shows none. Version 2, for the Keep and Undo words | the card: keep it once or for the whole chat, and that Undo can say what to do instead |
 | hint: export | the View menu opens (`popover.opened {name: "menu"}`) on a page with 5+ highlights (`annotatedPage`) — the Export row is on screen only while that menu is | Export…: the PDF with the highlights drawn on it, or Markdown |
 | hint: clone sync | the workspace has an offline copy or a publication (`clonedWorkspace`, state) | the sync pill: what is still to go, and its log |
 | hint: Gamma Connector | the first paper fetched from an address (`paper.fetched`, from App's `openPdf`) in a browser with no Connector (`connectorHere: false` — `shared/lib/connector.js` asks it through the extension's `bridge.js`; unknown in the desktop app, whose Connector would be in the system browser, and in the iPad and Android apps' web views, where no extension runs, so nothing is asked or suggested there) | Add: what the extension does for papers a publisher won't hand over, and where to get it |
@@ -992,7 +992,7 @@ where the thing happens:
 | `highlighter.armed`, `highlighter.menu` | `pdf/useTextHighlighter.js`: a text highlighter turned on (a strip button, its key, a command), and its `openMenu` (a strip button's right-click or hold) |
 | `review.opened` | `pdf/HighlightReview.jsx`'s card, as it comes up for a highlight (hover, a tap, the Document menu's Review, a step) |
 | `picture.placed` | `markup/usePictures.js`'s `create`, for a picture placed and selected |
-| `note.aiChange` | NoteReviewBar, when an AI's change that ran without asking is drawn in its note |
+| `note.aiChange` | BlockTree's row, when an agent's change is marked in its note: a kept change's mark (folded or unfolded), or a change waiting for review (Keep, Undo) |
 | `chat.sent` `{pdf}`, `chat.cited`, `chat.changed` | ChatDock's send (`pdf`: the whole file goes with it), and the end of a reply holding a citation (`gammaLinksIn`) or changes (`isChange`) |
 | `chat.archived` `{discard}` | ChatDock's New chat, once a conversation with messages was kept in History (or, Alt+click, thrown away) |
 | `citation.shown` | PdfCitationOverlay, once a quote is found and marked |
@@ -1004,7 +1004,7 @@ where the thing happens:
 | `table.shown` | MdTableWrap, when an editable table mounts |
 | `sheet.created` `{id}` | App's three ways to make a sheet of paper: `addSheetAfter` (**+**, Add page, writing low on the last sheet), `insertSheetAt` (`/note` in an empty block) and `createNotebook` |
 | `job.started` `{kind}` | the tasks store's `adopt` — the one place both `start()` and `upload()` hand this tab a server job, so every kind counts once ([tasks.md](tasks.md)) |
-| `approval.shown` `{tool}` | `chat/ApprovalCard`, while it is up ([ai.md](ai.md) "Asking before a call") |
+| `approval.shown` `{tool, change}` | `chat/ApprovalCard`, while it is up; `change` whether the card is a change's, which says Keep and Undo (`isChangeCall`) ([ai.md](ai.md) "Asking before a call") |
 | `paper.fetched` | App's `openPdf`, once a paper fetched from an address (a URL, a DOI, an arXiv id) is open — not for a page the library already had |
 | `table.created`, `table.edited` | MdTableWrap: the first render of a table made with /table or a paste, and a cell editor's commit. BlockTree notes the block and where in it the table went (`noteTableMade`); the table that renders there takes `data-guide-recent`, so the table anchors (`pick: "recent"`) point at it and not at an older table on the page |
 | `conflict.shown` | MergeResolver's versions |

@@ -739,8 +739,9 @@ class ApprovalGate:
                 if again and again.get("block_id") != preview.get("block_id"):
                     return CHANGED_WHILE_ASKING, {**settled_action(name, args, CHANGED_WHILE_ASKING),
                                                   "approval": decision}
+            # Allowed on its card, it waits for no review after it is made.
             result, action = run_agent_tool(self.ws, self.scope, name, args, allowed_tools=armed,
-                                            approved=str(preview.get("digest") or ""))
+                                            approved=str(preview.get("digest") or ""), asked=True)
             return result, {**action, "approval": decision}
         # The chip names the refused change by its page's title (and a note
         # edit's mode), but carries no page_id: nothing changed on that page.

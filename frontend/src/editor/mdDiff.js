@@ -8,7 +8,9 @@
 // source with marks around what changed, and BlockMarkdown renders it with
 // `rehypeDiffMarks`, which turns the marks into <del class="mdDiff"> and
 // <ins class="mdDiff">, and a code block or a display formula into a
-// <div class="mdDiffBlock del|ins"> around it. Pure: no DOM, no React.
+// <div class="mdDiffBlock del|ins"> around it, then `rehypePictureDiffs`,
+// which makes a picture replaced by another one compare frame. Pure: no
+// DOM, no React.
 //
 // The texts are compared line by line first, as git compares them, a code
 // fence, a formula across lines and a table each one unit. A changed line
@@ -511,3 +513,67 @@ export function rehypeDiffMarks() {
     walk(tree);
   };
 }
+
+// ---- a picture replaced ------------------------------------------------------
+
+// What a picture replaced by another where it stood becomes: one element
+// holding the two <img>s, the one that went first, which BlockMarkdown draws
+// as one compare frame (PictureDiff.jsx). The <img>s stay real ones, so
+// their URLs go through the note's own transform.
+export const PICTURE_DIFF = "picture-diff";
+
+const isMark = (node, kind) => node?.type === "element" && node.tagName === kind && classes(node).includes("mdDiff");
+const blank = (node) => node.type === "text" && !node.value.trim();
+
+// The marks of one kind from `at` on, blank text between them included
+// (rehypeDiffMarks marks a picture apart from the words beside it): where
+// they end, and the picture they hold when that is all they hold.
+function sideAt(children, at, kind) {
+  const held = [];
+  let end = at;
+  for (let k = at; k < children.length; k++) {
+    if (isMark(children[k], kind)) {
+      held.push(...children[k].children.filter((c) => !blank(c)));
+      end = k + 1;
+    } else if (!blank(children[k])) break;
+  }
+  const picture = held.length === 1 && held[0].type === "element" && held[0].tagName === "img" ? held[0] : null;
+  return { end, picture };
+}
+
+// A picture that went with one that came right after it, nothing else
+// marked with either, made one PICTURE_DIFF. The rest stays as
+// rehypeDiffMarks drew it: a picture only removed or only added, one in a
+// link (the link is what is marked), several changed together. Pure: it
+// rewrites the hast tree it is given and returns it.
+export function pairPictureDiffs(tree) {
+  const walk = (node) => {
+    const kids = node.children;
+    if (!kids) return;
+    const out = [];
+    for (let i = 0; i < kids.length;) {
+      if (!isMark(kids[i], "del")) {
+        walk(kids[i]);
+        out.push(kids[i++]);
+        continue;
+      }
+      const gone = sideAt(kids, i, "del");
+      let j = gone.end;
+      while (j < kids.length && blank(kids[j])) j++;
+      const came = isMark(kids[j], "ins") ? sideAt(kids, j, "ins") : null;
+      if (gone.picture && came?.picture) {
+        out.push({ type: "element", tagName: PICTURE_DIFF, properties: {}, children: [gone.picture, came.picture] });
+        i = came.end;
+      } else {
+        out.push(...kids.slice(i, gone.end));
+        i = gone.end;
+      }
+    }
+    node.children = out;
+  };
+  walk(tree);
+  return tree;
+}
+
+// The rehype step, right after rehypeDiffMarks.
+export const rehypePictureDiffs = () => pairPictureDiffs;

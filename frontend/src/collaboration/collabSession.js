@@ -68,6 +68,9 @@ import {
 import { t } from "../shared/i18n/i18n.js";
 import { refusalWords } from "./conflictKinds.js";
 
+// The nudges a socket passes on whichever page it is of.
+const ANY_PAGE = new Set(["hello", "inbox", "ai_changes", "computer", "ocr"]);
+
 export const TYPING_DEBOUNCE_MS = 350;
 export const STRUCTURAL_DEBOUNCE_MS = 80;
 export const CURSOR_THROTTLE_MS = 80;
@@ -288,13 +291,18 @@ function resealed(s, kept) {
 //   onQueued()                — a local edit was queued (the clone's sync pill shows it as pending)
 //   onInbox()                 — the account has something new in its inbox ({t: "inbox"},
 //                               content-free; the hook dispatches the window event gamma:inbox)
+//   onAiChanges(pageId)       — an agent's change of the account's moved on: made, kept or
+//                               undone, or an assistant asks about a page ({t: "ai_changes",
+//                               ws, page_id}, content-free, on any page: its page_id), and on
+//                               every hello for the socket's page; the hook dispatches the
+//                               window event gamma:ai-changes
 //   timers                — {set(fn, ms) → id, clear(id)}; default the globals
 //   fallback              — poll the op log while the socket can't connect (the
 //                           hook passes true; without it none of that is armed:
 //                           no hello deadline, no poll)
 //   hidden()              — whether the tab is hidden: a hidden tab polls nothing
 //                           (default: never)
-export function createCollabSession({ clientId, api, openSocket, keepalivePost, opts, onPeers, onMe, onQueued, onInbox, timers,
+export function createCollabSession({ clientId, api, openSocket, keepalivePost, opts, onPeers, onMe, onQueued, onInbox, onAiChanges, timers,
   fallback = false, hidden = () => false }) {
   const later = timers?.set || ((fn, ms) => globalThis.setTimeout(fn, ms));
   const cancel = timers?.clear || ((id) => globalThis.clearTimeout(id));
@@ -1317,9 +1325,10 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
         const session = st.session;
-        // (the inbox's and a computer's nudges are the account's, and a
-        // recognition's the workspace file's, whichever page carries them)
-        if (session.pageId !== pageId && msg.t !== "hello" && msg.t !== "inbox" && msg.t !== "computer" && msg.t !== "ocr") return;
+        // (the inbox's, an agent change's and a computer's nudges are the
+        // account's, and a recognition's the workspace file's, whichever page
+        // carries them)
+        if (session.pageId !== pageId && !ANY_PAGE.has(msg.t)) return;
         switch (msg.t) {
           case "hello": {
             greeted = true;
@@ -1346,11 +1355,15 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             retrySaves();
             // Comments written while the socket was away reach no nudge,
             // nor does a vault's round that touched the page meanwhile, nor
-            // a computer that came or went, nor, once a socket dropped, a
+            // a computer that came or went, nor an agent's change made,
+            // kept or undone, or an assistant's question asked about the
+            // page (the first hello too: the page's read of them may have
+            // gone before the socket joined), nor, once a socket dropped, a
             // recognition that ended meanwhile (the page's first load read
             // its PDF's).
             if (session.pageId === pageId) {
               o().onComments?.(null); o().onVault?.(); o().onComputer?.();
+              onAiChanges?.(pageId);
               if (again) o().onOcr?.(null);
             }
             break;
@@ -1395,6 +1408,9 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             break;
           case "inbox":
             onInbox?.();
+            break;
+          case "ai_changes":
+            onAiChanges?.(msg.page_id);
             break;
           default:
         }

@@ -1,6 +1,6 @@
 // README demo "Write into your notes" (agentic-notes): a lecture slide's
 // equation, pasted into the chat, lands in the note as display math under
-// the block the caret is on, after the user allows the edit.
+// the block the caret is on, after the user keeps the edit.
 //
 // The story, on a notes page "Rabi oscillations" seeded off camera (an intro
 // line, the Hamiltonian as display math, and the caption the caret is on, so
@@ -9,7 +9,7 @@
 //   1. the pointer goes into the chat box and a real Ctrl+V pastes the slide;
 //   2. the request types and Enter sends it;
 //   3. Gamma's agent asks before create_block (Edit note blocks: Ask) and the
-//      card shows the LaTeX; Allow once;
+//      card shows the LaTeX; Keep;
 //   4. the equation lands rendered under the caption and the one-line reply
 //      finishes; the result holds.
 // The slide is drawn here with the app's own KaTeX on a slide-like page and
@@ -250,7 +250,7 @@ try {
   await page.keyboard.press('Enter');
   await take.until('asked', 8000);
 
-  // 3. The card with the LaTeX; Allow once.
+  // 3. The card with the LaTeX; Keep.
   await take.until('card', 60000);
   const card = page.locator('.chatApproval:not(.sent)').first();
   await sleep(150);
@@ -259,7 +259,7 @@ try {
   await shot(page, '3-card');
   await sleep(1000);
   take.mark('toAllow');
-  await pointer.click(card.getByRole('button', { name: 'Allow once', exact: true }), 480, 0.45, 0.5);
+  await pointer.click(card.getByRole('button', { name: 'Keep', exact: true }), 480, 0.45, 0.5);
   take.mark('allowed');
   await sleep(120);
   const after = take.framing.approval;   // the card folds away once answered

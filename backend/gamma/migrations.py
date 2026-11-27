@@ -2420,6 +2420,30 @@ def _v69_far_answers(ws: str, pages: sqlite3.Connection, data) -> None:
         pages.execute("ALTER TABLE computer_chat_runs ADD COLUMN answers TEXT NOT NULL DEFAULT '{}'")
 
 
+def _v73_agent_changes(ws: str, pages: sqlite3.Connection, data) -> None:
+    """Every agent's changes are journaled, Gamma AI's in the chat as an
+    MCP connection's, and each waits for the person's review
+    (docs/dev/ai.md "Reviewing an agent's changes"): ``agent_changes``
+    gains ``account`` (the account a change was for), ``source`` (``chat``
+    or ``mcp``), ``kept_at`` (when the person kept it) and ``cleared_at``
+    (when they cleared a kept one's mark). Every row so far is an MCP
+    connection's, and none was made to be reviewed, so each one that stands
+    is kept and cleared as of when it was made: no note starts showing
+    changes made before the step. ``account`` stays '' on them, as the
+    connection's row in Settings finds them by their token. Re-runnable: a
+    column is added only where ``_columns()`` has the table and lacks it,
+    and only rows still '' are filled. The table never leaves a
+    workspace's own copy (``LOCAL_STEPS``)."""
+    columns = _columns(pages, "agent_changes")
+    if not columns:
+        return
+    for name in ("account", "source", "kept_at", "cleared_at"):
+        if name not in columns:
+            pages.execute(f"ALTER TABLE agent_changes ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+    pages.execute("UPDATE agent_changes SET source = 'mcp' WHERE source = ''")
+    pages.execute("UPDATE agent_changes SET kept_at = at, cleared_at = at WHERE kept_at = '' AND undone_at = ''")
+
+
 def _v71_entry_lists(conn: sqlite3.Connection) -> tuple[dict, dict]:
     """``(own, shared)``: every account's own AI provider entries as
     ``{account id: {entry id: entry}}`` (its ``ai-settings`` pref) and the
@@ -2753,6 +2777,7 @@ WORKSPACE_STEPS = [
     (68, "far_chats", _v68_far_chats),
     (69, "far_answers", _v69_far_answers),
     (72, "citations", _v72_citation_fields),
+    (73, "agent_changes", _v73_agent_changes),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows
@@ -2764,4 +2789,4 @@ DERIVED_STEPS = {47, 48, 53}
 # in step with another (comments, the Inbox's rows, the Sends of before step 65, a computer
 # agent's conversations): a mirror never sends them, so two copies on either
 # side of one still agree.
-LOCAL_STEPS = {54, 58, 59, 60, 62, 63, 64, 65, 66, 68, 69}
+LOCAL_STEPS = {54, 58, 59, 60, 62, 63, 64, 65, 66, 68, 69, 73}

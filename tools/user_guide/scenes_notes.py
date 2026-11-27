@@ -271,7 +271,7 @@ def chat():
 
 
 def agent():
-    """The assistant shows a rename and waits; allowed, the folder's titles change."""
+    """The assistant shows a rename and waits; kept, the folder's titles change."""
     loop = 12
     body = []
     papers = [('logical-processor.pdf', 'Lukin 2024'), ('gas-microscopy.pdf', 'Bloch 2023'),
@@ -306,20 +306,25 @@ def agent():
             + f'<path d="M780 {cy + 99} h{ow:.0f}" stroke="{MUTED}" stroke-width="1.6"/>'
             f'<rect x="{780 + ow + 12:.0f}" y="{cy + 84}" width="{width(new, 19) + 16:.0f}" height="30" rx="6" fill="{YELLOW}"/>'
             + label(new, 780 + ow + 20, cy + 106, 19, INK))
-    buttons = (button(780, cy + 134, 'Allow once', primary=True, size=17)
-               + button(924, cy + 134, 'Allow in this chat', size=17)
-               + button(1144, cy + 134, 'Don’t allow', size=17))
-    body.append('<g>' + card + f'<g>{buttons}{hide(loop, 6.75)}</g>'
-                + f'<g><text x="780" y="{cy + 160}" font-size="17" fill="{MUTED}">Allowed. The assistant goes on…</text>'
+    # A change's answers: Keep, the chevron of its two grants, and Undo at
+    # the row's end (chat/approvals.js toolAnswers, answerWords).
+    keep = button(780, cy + 134, 'Keep', primary=True, size=17)
+    kw = int(len('Keep') * 17 * 0.56 + 36)
+    more = (f'<rect x="{780 + kw + 8}" y="{cy + 134}" width="40" height="39" rx="10" fill="{CARD}" stroke="{EDGE}" stroke-width="1.5"/>'
+            f'<path d="M{780 + kw + 21} {cy + 150} l7 7 l7 -7" fill="none" stroke="{INK}" stroke-width="1.8" '
+            f'stroke-linecap="round" stroke-linejoin="round"/>')
+    undo = button(1210, cy + 134, 'Undo', size=17)
+    body.append('<g>' + card + f'<g>{keep}{more}{undo}{hide(loop, 6.75)}</g>'
+                + f'<g><text x="780" y="{cy + 160}" font-size="17" fill="{MUTED}">Kept. Gamma AI goes on…</text>'
                 + show(loop, 6.8) + '</g>' + show(loop, 4.0) + '</g>')
-    # What changed, with the way back.
+    # What changed, with the way back: the row's undo button.
     pill = (f'<rect x="756" y="422" width="548" height="36" rx="18" fill="{SOFT}"/>'
             f'<text x="778" y="446" font-size="17" fill="{MUTED}">Changed in your library · 4</text>'
-            f'<path d="M1184 436 a7 7 0 1 1 2 6 M1184 430 v6 h6" fill="none" stroke="{INK}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
-            f'<text x="1208" y="446" font-size="17" font-weight="600" fill="{INK}">Revert all</text>')
+            f'<path d="M1270 436 a7 7 0 1 1 2 6 M1270 430 v6 h6" fill="none" stroke="{INK}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>')
     body.append('<g>' + pill + show(loop, 8.6) + '</g>')
     rest = (1200, 450)
-    body.append(pointer([rest, rest, (1274, 506), (1274, 506), (1112, cy + 152), (1112, cy + 152), (700, 300)],
+    press = (780 + kw // 2, cy + 152)
+    body.append(pointer([rest, rest, (1274, 506), (1274, 506), press, press, (700, 300)],
                         loop, [0, 2.4, 2.9, 3.4, 5.9, 6.9, 7.5], press=(3.15, 6.65)))
     send = (f'<circle cx="1274" cy="506" r="18" fill="{AMBER}"/>'
             f'<path d="M1274 515 V497 M1267 503 L1274 496 L1281 503" fill="none" stroke="#ffffff" stroke-width="2.6" '
@@ -329,9 +334,10 @@ def agent():
              + ''.join(body))
     return frame('The assistant asks before changing anything',
                  'A folder of four papers. In its chat “rename these AuthorYear” is typed and sent. The reply shows a card '
-                 'with one rename, the old title struck through and the new one highlighted, and the answers Allow once, '
-                 'Allow in this chat and Don’t allow. Allow in this chat is clicked; the four titles change to Lukin 2024, '
-                 'Bloch 2023, Saffman 2022 and Browaeys 2021, and a line says “Changed in your library · 4” with Revert all.',
+                 'with one rename, the old title struck through and the new one highlighted, and the answers Keep, a menu '
+                 'of grants and Undo. Keep is pressed; the card says “Kept. Gamma AI goes on…”, the four titles change to '
+                 'Lukin 2024, Bloch 2023, Saffman 2022 and Browaeys 2021, and a line says “Changed in your library · 4” '
+                 'with its undo button.',
                  scene)
 
 

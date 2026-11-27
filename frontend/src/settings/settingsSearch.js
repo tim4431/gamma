@@ -162,6 +162,8 @@ const entries = [
   e("tools", t("Notes chat"), t("Tools"), t("Note pages"), "permissions tools read search edit access"),
   e("tools", t("Fetch blocked papers in the background"), t("Tools"), t("Gamma Connector tries in an unfocused tab and sends the PDF back"), "connector extension paywall sign-in captcha download"),
   e("tools", t("Read long papers with a helper"), t("Tools"), t("A second pass reads the document and hands back a cited answer"), "delegate subagent read_paper long document tokens"),
+  e("tools", t("Marks of kept changes"), t("Tools"), t("How long an AI change you kept stays marked in its note"),
+    "AI agent review diff mark marks kept changes undo clear marks time duration minutes hour day until forever MCP"),
   e("tools", t("Search the web with"), t("Online search"), t("Current facts, documentation, news, and pages the registries miss"), "web internet search engine Brave Tavily SearXNG ChatGPT OpenAI Anthropic Google"),
   e("tools", t("Online search services"), t("Online search"), t("Brave Search, Tavily, SearXNG and an OpenAlex key"), "API key Brave Tavily SearXNG OpenAlex budget"),
   e("tools", t("Tool rounds"), t("Tool limits"), t("AI ↔ tool round-trips per message"), "advanced tool requests limits"),

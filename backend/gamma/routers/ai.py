@@ -16,8 +16,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import (agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_steer, ai_usage,
-                chatgpt_oauth, fetch_handoff, net_proxy, pdf_ocr, search_services, skills, translate_engines)
+from .. import (agent_asks, agent_changes, agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_steer,
+                ai_usage, chatgpt_oauth, fetch_handoff, net_proxy, pdf_ocr, search_services, skills, translate_engines)
 from ..ai_client import (
     Alarm,
     CallRefused,
@@ -98,8 +98,8 @@ from ..ai_settings import (
     update_entry,
     update_provider_entries,
 )
-from ..auth import (actor_of, can_comment, can_write, is_token, link_ratelimit, require_personal_user_id,
-                    require_user_id, require_ws, require_ws_writer)
+from ..auth import (can_comment, can_write, is_token, link_ratelimit, require_personal_user_id, require_user_id,
+                    require_ws, require_ws_writer)
 from ..blocks_store import PATH_SEP, folder_path, page_root_id
 from ..db import connect_data_db, connect_pages_db, page_now
 from ..logbuf import log
@@ -1747,6 +1747,9 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
             # What a block or a comment the chat makes says of who made it
             # (agents.stamp): Gamma AI, or a token's connection that drives it.
             "agent": agents.stamp(agents.of_request(request) or agents.gamma(), request.state.user or ""),
+            # Where its changes are journaled for the person's review
+            # (gamma/agent_changes.py): the chat's, and the token that drives it.
+            "journal": {"source": "chat", "token": request.state.token_id if is_token(request) else ""},
             # The skills a message may run and load_skill may load
             # (gamma/skills.py): the account's own only in its own session,
             # the built-ins alone for a guest, a share link or an integration
@@ -1835,6 +1838,9 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     catalog = scope.get("skills") or []
     if payload.skill and not skills.find(catalog, payload.skill["id"]):
         raise skills.SkillGone(payload.skill)
+    # A change the person undid since, wherever they undid it, replays as
+    # undone (its journal row, not the mark the chat saved).
+    agent_changes.mark_history(ws, scope.get("actor") or "", payload.history)
     crops = []
     quote_budget = quote_budget or passage_budget(payload)
     quoted = {"budget": quote_budget}
@@ -1904,8 +1910,13 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
     the conversation, from now on, or not at all. Authenticated like the
     chat itself; only the account whose chat asked can answer. 404 when no
     approval of theirs waits under that id: answered already, timed out,
-    or its chat was stopped."""
+    or its chat was stopped. An assistant's question over MCP drawn in
+    Gamma (gamma/agent_asks.py) is answered here too, by a signed-in
+    session only: to an integration token, the connection's own among
+    them, it is no approval of theirs."""
     require_ws(request)
+    if is_token(request) and agent_asks.holds(approval_id):
+        raise HTTPException(404, "This approval is no longer waiting")
     if not ai_permissions.answer(approval_id, request.state.user_id or "", payload.decision, payload.note):
         raise HTTPException(404, "This approval is no longer waiting")
     return {"ok": True}
@@ -1931,34 +1942,6 @@ def ai_chat_steer(reply_id: str, payload: AISteer, request: Request):
     if not ai_steer.push(reply_id, request.state.user_id or "", payload.model_dump()):
         raise HTTPException(404, "This reply is no longer running")
     return {"ok": True}
-
-
-class AIRevert(BaseModel):
-    kind: Literal["edit", "create", "move", "delete", "pages", "trash", "made"]
-    block_id: str = Field(default="", max_length=64)  # "" for "pages": a page tool's record names its pages
-    revert: dict   # the action's `revert`, as the tool recorded it
-    force: bool = False
-    redo: bool = False  # put a reverted change back
-
-
-@router.post("/ai/revert")
-def ai_revert_change(payload: AIRevert, request: Request):
-    """Take back one change the agent made to the notes, the pages it
-    renamed, moved or labelled (``kind: "pages"``), or a folder or label it
-    deleted, or with ``redo`` put a reverted one back, from its row under
-    the reply (gamma/ai_revert.py): ``{page_id, noop, kept?}``. 409
-    ``{detail, conflict, preview?}`` when the note changed since —
-    ``preview`` is what ``force`` would do — or can't go there, and 409
-    ``conflict: "kept"`` (``preview.kept``) when every page of a page
-    tool's change changed since; 404 when it is gone. A workspace
-    editor's, like the chat's writes; the change is theirs to make by hand
-    anyway. Sync: it waits on the write lock."""
-    ws = require_ws(request, write=True)
-    try:
-        return ai_revert.revert_change(ws, payload.kind, payload.block_id, payload.revert,
-                                       force=payload.force, redo=payload.redo, actor=actor_of(request))
-    except ai_revert.RevertError as e:
-        return JSONResponse(status_code=e.status, content=e.body())
 
 
 class AIChatContextRequest(AIChatRequest):

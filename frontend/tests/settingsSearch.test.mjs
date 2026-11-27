@@ -99,6 +99,9 @@ test("labels that hold the query come first; hints and synonyms find the rest", 
   const ocr = searchSettings("ocr", all).map((r) => r.label);
   assert.deepEqual(ocr.slice(0, 3), ["Recognize text in scanned PDFs", "Recognize scans automatically", "Files recognized at once"]);
   assert.equal(searchSettings("text recognition", all)[0]?.section, "Text recognition");
+  // the agent's kept changes: by the row's own words and by what people call them
+  assert.equal(searchSettings("kept changes", all)[0]?.label, "Marks of kept changes");
+  assert.ok(searchSettings("review mark", all).some((r) => r.label === "Marks of kept changes"));
 });
 
 test("an admin-only section is found only by admins (the Server pane is theirs alone)", () => {

@@ -581,7 +581,10 @@ Messages:
   catching up. `inbox` (no fields): something new is in the account's Inbox;
   sent to every page socket of the recipient's account, whatever room it is
   in (`collab.publish_account`, below), and the tab refetches its Inbox
-  count. `vault` (no fields): a synced vault's round touched the page, so
+  count. `ai_changes {ws, page_id}`: one of the account's agent changes on
+  that page was made, kept, cleared or undone, or an assistant asks about
+  one there. It is sent the same way, and the tab reads the page's changes
+  again if it shows the page (below). `vault` (no fields): a synced vault's round touched the page, so
   the desktop app's page refetches its standing with this computer, as it
   does on every `hello` after a reconnect (`onVault`)
   (`GET /api/folder-links/page/{id}`,
@@ -660,7 +663,17 @@ peer whose send fails, as `Room.broadcast` does. It is safe from any
 thread and a no-op when the account has no socket open. The Inbox uses it
 for its content-free nudge, `{t: "inbox"}` ([comments.md](comments.md)
 "Live delivery"); the tab then asks `/api/inbox` itself, so a socket
-admitted to one page learns nothing about another. A tab with no page open
+admitted to one page learns nothing about another. The agents' change
+journal uses it the same way, `{t: "ai_changes", ws, page_id}` when one of
+the account's changes is made, kept, cleared or undone, or an assistant asks
+about one ([ai.md](ai.md#reviewing-an-agents-changes)).
+The session hands the hook the page id alone (`onAiChanges(pageId)`), and
+the hook fires the window event `gamma:ai-changes` with `{pageId}`. A tab
+that shows that page (its notes, its PDF, a view of it:
+`noteReview.watch`) then reads its changes again from `/api/ai/changes`.
+Every hello, the first one and each after a reconnect, fires the same
+event for the socket's own page, since a nudge sent while the socket was
+down is never sent again. A tab with no page open
 (the home library, Settings) has no socket and polls instead.
 
 **One file's tabs.** `collab.publish_file(ws, page_ids, message)` sends to

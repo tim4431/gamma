@@ -54,6 +54,8 @@ import {
 } from "../shared/ui/Widgets";
 import { OpenTabs } from "../workspace/OpenTabs.jsx";
 import { BlockTree, _dragState } from "../editor/BlockTree";
+import { PageReviewStrip } from "../editor/PageReviewStrip";
+import { noteReview, ReviewMarkLife } from "../chat/noteReview.js";
 import { MentionClock, MentionContext } from "../editor/MentionMenu";
 import { REF_RE, refIdsOf, refLabelOf, refLabelsByBlock } from "../editor/refLabels.js";
 import { BacklinksPanel } from "../editor/BacklinksPanel";
@@ -607,6 +609,10 @@ function captureViewerSnapshot(root) {
   if (covered < vr.width * capH * 0.4) return null;
   try { return out.toDataURL("image/jpeg", SNAP_QUALITY); } catch { return null; }
 }
+
+// The agents' changes waiting for review reach the server through the API
+// (chat/noteReview.js stays free of the browser, for its tests).
+noteReview.setRequest((path, init) => apiJson(`${API}${path}`, init));
 
 // Horizontal card strip. No arrow chrome: the wheel pans it sideways.
 function CardCarousel({ label, children, className, guide }) {
@@ -3449,7 +3455,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear, chatPictures, setChatPictures,
-    fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads,
+    fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads, aiMarkMinutes, setAiMarkMinutes,
   } = appPrefs;
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
@@ -9133,6 +9139,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [keybindings]);
   const pageTools = useMemo(() => ({
     readOnly,
+    // the page whose PDF and pages of paper the surfaces are (an agent's
+    // proposals are drawn on them by it: markup/ReviewLayer.jsx)
+    pageId: focusedBlockId,
+    // the account's own review of agents' changes: not on a read-only page
+    // nor through a share link, whose visitor has no journal to read
+    review: !readOnly && !shareMode,
     ink: { tool: inkTool, penTool: inkPenTool, penWritesPdf: inkPenWritesPdf, penOnly: inkPenOnly, pressure: inkPressure, eraserMode: inkEraserMode,
       eraserSize: inkEraserSize, eraserFilter: inkEraserFilter, drawHold: inkDrawHold,
       scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode, lassoPictures: inkLassoPictures, clip: inkClip,
@@ -9142,7 +9154,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     actions: pageActions,
   }), [readOnly, inkTool, inkPenTool, inkPenWritesPdf, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserFilter, inkClip, inkKeys,
     inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, inkLassoPictures, inkHoverPreview, textArmed, textBoxStyle, zoteroLinked,
-    pageActions, inkRuler, inkRulerUnits, inkZoom, inkAiWork, commentsOn, canComment]);
+    pageActions, inkRuler, inkRulerUnits, inkZoom, inkAiWork, commentsOn, canComment, focusedBlockId, shareMode]);
   // --- Recordings (docs/dev/recording.md) ---------------------------------------
   // The page's recording blocks and every block stamped with the moment it
   // was written, each list kept while its contents are the same, so the
@@ -10765,14 +10777,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // What the views of pages in the tab groups (PagePane) take from App:
   // the [[ref]] labels and their fetches, the library's labels, file chips,
   // the notes' text size and keys, the PDF's looks, and what this account
-  // may do. Stable while none of these change, so a view's rows render
-  // again only for its own page.
+  // may do (`review`: its agents' changes are read for the page shown, as
+  // the live page's are; none for a viewer or through a share link).
+  // Stable while none of these change, so a view's rows render again only
+  // for its own page.
   const paneFnsRef = useRef(null);
   paneFnsRef.current = { onFetchRefs, onCacheRef };
   const paneShared = useMemo(() => ({
     refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pages: pageBlocks,
     textScaleStyle: notesTextScale.style, darkPage: pdfDarkPage, hideEmbeddedAnnots: embAnnots === "hide", pageFlow: pdfFlow,
-    canWrite: !readOnly, labels: !shareMode, exportButton: pageExportButton,
+    canWrite: !readOnly, labels: !shareMode, review: !readOnly && !shareMode, exportButton: pageExportButton,
     onFetchRefs: (...a) => paneFnsRef.current.onFetchRefs(...a), onCacheRef: (...a) => paneFnsRef.current.onCacheRef(...a),
   }), [refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pageBlocks, notesTextScale.style, pdfDarkPage, embAnnots, pdfFlow, readOnly, shareMode, pageExportButton]);
 
@@ -12251,9 +12265,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   ) : null}
                 </>
             ) : (
-            treeBlocks.length === 0 ? (
-              <>{notesTail ? null : <div className="empty">{t("No blocks yet.")}</div>}{subPagesPanel}{backlinksPanel}{notesTail}</>
-            ) : (
+              // A page with no notes yet has the same tree (empty), which
+              // draws what an agent is adding at its top level: the note it
+              // is writing, the notes it asks to add.
               (() => {
                 // Indent and outdent re-parent the block, which remounts its
                 // row: an open editor stays open with its selection, as one
@@ -12686,6 +12700,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 return (
                   <>
                     {notesInkStrip}
+                    {blocks.length || notesTail ? null : <div className="empty">{t("No blocks yet.")}</div>}
                     {/* A block added, removed or moved here glides the rows
                         around it to their new places (docs/dev/ui-design.md,
                         "Lists that change"): not a page opening or reloading,
@@ -12706,12 +12721,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       {backlinksPanel}
                       {notesTail}
                     </ListMotion>
+                    {/* the agents' changes on this page that wait for review: the
+                        account's own, so none through a share link; a step to
+                        one lands on its note as a jump does */}
+                    <PageReviewStrip pageId={focusedBlockId} blocks={blocks} readOnly={readOnly || shareMode}
+                      onLand={scrollToBlock} onStatus={setStatus} />
                     {notesReplayDock}
                     <BlockDropIndicator target={dropTarget} />
                   </>
                 );
               })()
-            ))}
+            )}
           </div>
 
         </div>
@@ -13935,6 +13955,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     <MarkToolsContext.Provider value={textHighlighter.markTools}>
     <MentionContext.Provider value={mentionPeople}>
     <MentionClock.Provider value={reminders.now}>
+    {/* how long a kept agent change's mark stays, for every surface that
+        draws the page's changes (chat/noteReview.js), whatever shows;
+        first, so the pages are read with it */}
+    <ReviewMarkLife minutes={aiMarkMinutes} />
     <div
       ref={appRef}
       className={`app ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
@@ -15059,6 +15083,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setFetchInBackground,
           delegateReads,
           setDelegateReads,
+          aiMarkMinutes,
+          setAiMarkMinutes,
           reset: () => {
             setChatContextChars(60000);
             setMetaContextChars(6000);

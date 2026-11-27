@@ -511,13 +511,18 @@ All state is SQLite + files on disk under a data directory (env
     the block's return takes its row, and one deleted more than
     `ops.STAMP_KEEP_DAYS` (7) ago goes at the next such delete. Additive;
     no mirror or Gamma export carries it;
-  - `agent_changes` — each change an MCP connection made here, with what
-    taking it back needs ([mcp.md](mcp.md) "Undoing a change"): the
-    connection (`token_id`), its stamp then (`agent`), `at`, `tool`,
-    `kind`, `block_id`, `page_id`, `summary`, the tool's revert record
-    (`revert`) and `undone_at`. The newest 500 per connection, none older
-    than 30 days (`mcp_changes.KEEP_PER_CONNECTION`, `KEEP_DAYS`).
-    Additive; each account's own, like `workspace_prefs`: no zip carries
+  - `agent_changes` — each change an agent made here (Gamma AI in the
+    chat, an MCP connection), with what drawing it for review and taking
+    it back need ([ai.md](ai.md#reviewing-an-agents-changes), [mcp.md](mcp.md)
+    "Undoing a change"): the account it was for (`account`), `source`, the
+    connection (`token_id`, '' for a person's chat), its stamp then
+    (`agent`), `at`, `tool`, `kind`, `block_id`, `page_id`, `summary`, the
+    tool's revert record (`revert`), `kept_at`, `cleared_at` (a kept one's
+    mark cleared) and `undone_at`. The newest
+    500 per account and connection, none older than 30 days
+    (`agent_changes.KEEP_PER_CONNECTION`, `KEEP_DAYS`). `account`, `source`,
+    `kept_at` and `cleared_at` came with step 73 ([migrations.md](migrations.md)).
+    Each account's own, like `workspace_prefs`: no zip carries
     it, a restore keeps the live rows, and no mirror or Gamma export
     carries it;
   - `page_follows` — who hears of every comment on a page

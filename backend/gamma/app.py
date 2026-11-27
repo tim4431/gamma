@@ -27,6 +27,7 @@ from .mcp_lazy import LazyMCP
 from .mcp_oauth import router as mcp_oauth_router
 from .routers import (
     admin,
+    agent_changes as agent_changes_router,
     ai,
     ai_handoffs,
     annotations as annotations_router,
@@ -387,6 +388,7 @@ def create_app() -> FastAPI:
     app.include_router(backup_tasks.router)
     app.include_router(jobs_router.router)
     app.include_router(ai.router)
+    app.include_router(agent_changes_router.router)
     app.include_router(translate.router)
     app.include_router(ink_ai.router)
     app.include_router(ai_handoffs.router)

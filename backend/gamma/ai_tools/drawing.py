@@ -71,8 +71,44 @@ def _preview_placed(tool: str):
             out["diff"] = text_diff("", made.content)
         if tool == "place_picture":
             out["pictures"] = [made.props["picture"]["url"]]
+        if s.kind == "canvas":
+            out["sheet_id"] = s.sheet_id
+        out["shape"] = _shape_of(made)
         return out, None
     return preview
+
+
+# The most points a drawn stroke of a card's shape carries: enough to draw
+# the proposal on its page, a fraction of a long curve's samples.
+_SHAPE_POINTS = 240
+
+
+def _shape_of(made) -> dict:
+    """What a placing call would put on its surface, for the surface to draw
+    while the card waits (frontend markup/ReviewLayer.jsx), in the
+    surface's points (``frame``): a drawing's strokes as point lists, a text
+    box's or a picture's frame, with its text or its picture."""
+    from .. import ink as inkmod
+
+    frame = [made.surface.width, made.surface.height]
+    if made.ink_file:
+        strokes = []
+        for stroke in inkmod.parse_ink(made.ink_file).strokes:
+            points = [[round(p["x"], 1), round(p["y"], 1)] for p in inkmod.decode_stroke(stroke)]
+            step = max(1, len(points) // _SHAPE_POINTS)
+            points = points[::step] + ([points[-1]] if (len(points) - 1) % step else [])
+            strokes.append({"color": stroke.color, "size": stroke.size, "points": points,
+                            **({"dash": stroke.dash} if stroke.dash else {}),
+                            **({"fill": True} if stroke.fill else {})})
+        return {"kind": "ink", "frame": frame, "strokes": strokes}
+    placed = made.props.get("text_box") or made.props.get("picture")
+    if not placed:
+        return {}
+    box = {k: round(float(placed[k]), 1) for k in ("x", "y", "w", "h")}
+    if made.props.get("picture"):
+        return {"kind": "picture", "frame": frame, "box": box, "url": placed["url"]}
+    return {"kind": "box", "frame": frame, "box": box, "text": made.content,
+            **{k: placed[k] for k in ("size", "color", "bg") if placed.get(k)}}
 
 
 def _insert_made(conn, ws: str, scope: dict, writer, page_id: str, parent: str, made, props: dict,
@@ -133,7 +169,7 @@ def _placed_after(scope: dict, images) -> str:
     """What a placing call's answer says after it: to check the picture
     (when one is attached), and how the change is taken back — from the
     reply in Gamma's chat; over MCP (``link_base``), which has no reply, by
-    undo_change with the change id the adapter adds (gamma/mcp_changes.py)."""
+    undo_change with the change id the adapter adds (gamma/agent_changes.py)."""
     mcp = bool(scope.get("link_base"))
     check = (" A picture of the page as it is now is attached: check that it is where you meant"
              + ("; if not, undo_change takes it back to try again." if mcp

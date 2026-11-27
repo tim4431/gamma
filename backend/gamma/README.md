@@ -145,6 +145,7 @@ ai_agent.py        the agent tool loop, its two user-facing pauses, and the help
 ai_permissions.py  the chat tools' Allow / Ask / Off states and the approvals a reply waits on
 ai_steer.py        the messages a user steers into their chat reply while it runs
 ai_revert.py       taking back one change the agent made: a note change, pages it renamed, moved or labelled, or a folder or label it deleted; and putting it back
+agent_changes.py   the journal of every agent's changes, the chat's and MCP's, as the person reviews them: open, kept, marks cleared, undone
 ai_web.py          the agent's scholarly reach: search_papers, related_papers, fetch_paper (the paper resolver first, then the page) and the papers' cache
 openalex.py        OpenAlex: a registry search_papers asks, the citation graph behind related_papers
 search_services.py online search: the engines behind search_web (Brave, Tavily, SearXNG, the chat's AI connection), their adapters, and the account's settings
@@ -160,6 +161,7 @@ pdf_font_cmap.py   a Unicode cmap for a paper's composite font that has none, fr
 
 # Assistants (MCP)
 mcp_server.py      the MCP endpoint over the chat's tools, plus pasted links (mcp_links) and page files (mcp_export)
+agent_asks.py      an MCP client's question about a change, asked in Gamma too where the change lands
 mcp_oauth*.py      browser consent for MCP clients; mcp_lazy.py loads the optional SDK on first use
 
 # Import and export

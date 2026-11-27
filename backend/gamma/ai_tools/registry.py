@@ -14,6 +14,7 @@ so saved chats replay; every successful call is streamed to the UI as an
 import json
 import time
 
+from .. import agent_changes
 from ..ai_permissions import permission_state
 from ..ai_context import DEPRECATED_TOOLS, canonical_tool
 from ..db import connect_pages_db
@@ -217,7 +218,7 @@ def _deleting(ws: str) -> bool:
 
 
 def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
-                   *, allowed_tools=None, approved: str = "") -> tuple[str, dict]:
+                   *, allowed_tools=None, approved: str = "", asked: bool = False) -> tuple[str, dict]:
     """Execute one tool call against a trusted, caller-resolved workspace/scope.
 
     Chat and MCP share this dispatcher; each passes the tool names it armed
@@ -225,7 +226,13 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
     authenticates the workspace before invoking this layer. ``approved`` is
     the digest of the approval card the user allowed for this call
     (``ApprovalGate``): a call naming several pages runs only as that card
-    showed it.
+    showed it. ``asked``: the person allowed this very call before it ran
+    (a card, a client's question).
+
+    A change made where the scope names its ``journal`` (``{source,
+    token}``: the chat's, an MCP connection's) is journaled for the
+    person's review (gamma/agent_changes.py), kept already when ``asked``,
+    and its action carries the ``change_id``.
 
     Returns ``(result_text, action)`` — result_text goes back to the model;
     action is the ``{kind, summary, tool, args, result}`` UI event for EVERY
@@ -292,4 +299,15 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
                           if k not in ("kind", "summary", "error")}, **took)
     if images:
         chip["images"] = images
+    journal = scope.get("journal")
+    if journal and tool["mutating"] and not chip.get("error") and not chip.get("noop"):
+        try:
+            change_id = agent_changes.record(ws, account=scope.get("actor") or "", source=journal["source"],
+                                             token_id=journal.get("token") or "", agent=scope.get("agent"),
+                                             tool=name, action=chip, kept=asked)
+        except Exception as e:  # the change is made: a journal that fails only loses its review
+            log.warning(f"[ai_tools] {name}: the change could not be journaled: {e}")
+            change_id = ""
+        if change_id:
+            chip["change_id"] = change_id
     return result, chip

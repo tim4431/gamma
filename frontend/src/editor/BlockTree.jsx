@@ -46,9 +46,11 @@ import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidt
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, mathTex, parseTable, protectedSpans, scanMathSpans, scanTables, tableMathPipes } from "./mdScan";
-import { diffMarkdown, rehypeDiffMarks } from "./mdDiff.js";
-import { NoteReviewBar } from "./NoteReviewBar";
-import { useNoteAsk, useNoteChange } from "../chat/noteReview.js";
+import { PICTURE_DIFF, diffMarkdown, rehypeDiffMarks, rehypePictureDiffs } from "./mdDiff.js";
+import { PictureDiff } from "./PictureDiff";
+import { AskBar, NoteReviewBar, changedBy } from "./NoteReviewBar";
+import { CHANGE_STATES, isTextChange, noteReview, useAsksUnder, useExpanded, useGhostAsks, useNoteAsk,
+  useNoteChange } from "../chat/noteReview.js";
 import { ImageIcon, LinkIcon, LocateIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import { isRelativeHref } from "../explorer/workPaths.js";
@@ -455,9 +457,9 @@ function HighlightedCodePre({ children }) {
 // check. onBlockRefClick/onTaskToggle are deliberately excluded from the
 // comparison — the caller passes identity-stable wrappers. `diff`: the
 // content is an AI change merged with its marks (editor/mdDiff.js), drawn
-// as tracked changes.
+// as tracked changes, a picture replaced by another as one compare frame.
 const NOTE_REHYPE = [rehypeRaw, rehypeNoteSanitize, rehypeKatex];
-const DIFF_REHYPE = [rehypeRaw, rehypeNoteSanitize, rehypeDiffMarks, rehypeKatex];
+const DIFF_REHYPE = [rehypeRaw, rehypeNoteSanitize, rehypeDiffMarks, rehypePictureDiffs, rehypeKatex];
 // A note's link target as its <a> gets it. Upload URLs get the workspace /
 // share token here (assetUrl): the browser fetches <img> src and link
 // hrefs without the API header. The link card's edits find a rendered
@@ -623,6 +625,14 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
               <MdImage src={src} alt={alt} width={width} idx={imgIdx} onEdit={onImageEdit} />
             </MdObject>
           );
+        },
+        // A picture the change replaced (mdDiff.js pairPictureDiffs): its
+        // two <img>s, their URLs already through noteUrl. It stands for
+        // both pictures of the source.
+        [PICTURE_DIFF]: ({ node }) => {
+          imgIdx += 2;
+          const [before, after] = node.children.map((img) => img.properties);
+          return <PictureDiff before={before} after={after} />;
         },
         table: ({ node, children }) => {
           tableIdx += 1;
@@ -872,19 +882,55 @@ const BlockRow = React.memo(function BlockRow({
   // the read visibly sweeps down the outline. A row with its own mark keeps
   // that instead.
   const scanIdx = !aiMark && aiScan ? aiScan.order.get(block.id) : undefined;
-  // The AI's change to this block, drawn in it as tracked changes
-  // (chat/noteReview.js, editor/mdDiff.js): an edit waiting on its approval
-  // card, against what the block says now, or one that landed, while the
-  // block still says what the AI wrote. An open editor or the text being
-  // written shows instead, and a row that cannot be edited shows its text.
-  // A new block's text is all new: shown as it renders, marked whole. A
-  // preview tree draws it too, without the bar, as it edits nothing.
+  // An agent's change to this block (chat/noteReview.js), as a diff shows
+  // one. Asked for on a card, it is drawn before it is written, dashed at
+  // the row's edge, with the card's answers under it: an edit as tracked
+  // changes (editor/mdDiff.js) against what the block says now, a deletion
+  // struck out, a move with where it goes. Made without asking, it waits
+  // unfolded for review (Keep, Undo); a block typed in since shows its text
+  // with the bar alone (`changedSince`). Kept, it folds to a mark at the
+  // row's edge, green for what was added and the accent for what was edited
+  // or moved, until the mark is cleared or its time is up; the mark unfolds
+  // it (`unfolded`) to the change and its Undo, as the change's row in the
+  // chat does — a block typed in since with the bar alone, as above. A new block's text is all new:
+  // shown as it renders, marked whole; a drawing, a text box, a picture or a
+  // highlight is drawn as it is. An open editor or the text being written
+  // shows instead, and a row that cannot be edited shows its text; a
+  // preview tree draws nothing of it, as it edits nothing. The person's own
+  // typing in a block whose change waits for review keeps the change: the
+  // words are theirs now.
   const aiChange = useNoteChange(block.id);
   const aiAsk = useNoteAsk(block.id);
-  const review = readOnly || editing || aiText != null ? null
-    : aiAsk ? { ask: aiAsk, before: block.content || "", after: aiAsk.text }
-      : aiChange && aiChange.after === (block.content || "") ? { change: aiChange, before: aiChange.before, after: aiChange.after }
+  const unfolded = useExpanded(block.id);
+  const shown = !readOnly && !preview && !editing && aiText == null;
+  const content = block.content || "";
+  const textual = isTextChange(aiChange?.type);
+  const fits = !!aiChange && (!textual || aiChange.after === content);
+  const waiting = aiChange?.state === CHANGE_STATES.OPEN;
+  const showChange = shown && !aiAsk && !!aiChange && (waiting || unfolded);
+  const review = !shown ? null
+    : aiAsk?.tool === "edit_block" ? { before: content, after: aiAsk.preview.text }
+      : showChange && fits && textual ? { before: aiChange.before, after: aiChange.after }
         : null;
+  const changedSince = showChange && !fits;
+  // the kept change's mark: folded, or unfolded to the change
+  const marked = shown && !aiAsk && !!aiChange && !waiting;
+  const reviewKind = aiAsk ? ({ delete_block: "delete", move_block: "move" }[aiAsk.tool] || "edit") : aiChange?.type || "";
+  const reviewMark = !shown || (!aiAsk && !aiChange) ? ""
+    : ` aiReview aiReview-${aiAsk ? "ask" : waiting ? "open" : "kept"} aiReview-${reviewKind}${showChange ? " aiReview-unfolded" : ""}`;
+  useEffect(() => { if (marked || (showChange && waiting)) guideEvents.emit("note.aiChange"); }, [marked, showChange, waiting]);
+  const typedIn = useRef(false);
+  useEffect(() => {
+    if (readOnly) return;
+    if (editing && aiChange) typedIn.current = true;
+    else if (!editing && typedIn.current) {
+      typedIn.current = false;
+      // (a Keep that fails says so on the block's bar)
+      if (aiChange?.state === CHANGE_STATES.OPEN && isTextChange(aiChange.type) && aiChange.after !== (block.content || "")) {
+        noteReview.keepBlock(block.id);
+      }
+    }
+  }, [editing, aiChange, block.content, block.id, readOnly]);
   const reviewSource = useMemo(() => (review?.before ? diffMarkdown(review.before, review.after) : null),
     [review?.before, review?.after]);
   // Identity-stable wrapper so the memoized BlockMarkdown never sees a fresh
@@ -1582,7 +1628,7 @@ const BlockRow = React.memo(function BlockRow({
           open={mergeOpen === block.id} onOpenChange={(v) => onMergeOpen?.(v ? block.id : null)} />
       ) : null}
       <div
-        className={`blockRow ${focusedId === block.id ? "focused" : ""}${selected ? " selected" : ""}${flashingId === block.id ? " landed" : ""}${replayState ? (replayState === "pending" ? " replayPending" : " replayReached") : ""}${aiMark ? ` ai-${aiMark.kind} aiMark${aiMark.n % 2}` : ""}${scanIdx != null ? ` ai-scan aiMark${aiScan.n % 2}` : ""}${peerEditing ? ` peerOn peer-${personColor(peerEditing.name)}` : ""}`}
+        className={`blockRow ${focusedId === block.id ? "focused" : ""}${selected ? " selected" : ""}${flashingId === block.id ? " landed" : ""}${replayState ? (replayState === "pending" ? " replayPending" : " replayReached") : ""}${aiMark ? ` ai-${aiMark.kind} aiMark${aiMark.n % 2}` : ""}${scanIdx != null ? ` ai-scan aiMark${aiScan.n % 2}` : ""}${reviewMark}${peerEditing ? ` peerOn peer-${personColor(peerEditing.name)}` : ""}`}
         style={scanIdx != null ? { animationDelay: `${Math.min(scanIdx * 45, 1600)}ms` } : undefined}
         onMouseDown={(e) => {
           if (e.button !== 0) return; // right-click is the context menu's
@@ -1670,6 +1716,14 @@ const BlockRow = React.memo(function BlockRow({
           onAddToChat(block);
         }}
       >
+        {marked ? (
+          // A kept change's mark at the row's edge, as a diff's gutter; a
+          // press unfolds the change, and folds it again.
+          <button type="button" className={`aiChangeMark aiChangeMark-${aiChange.type}`} data-guide="notes.review"
+            aria-expanded={unfolded} onClick={(e) => { e.stopPropagation(); noteReview.toggle(block.id); }}
+            title={unfolded ? t("Fold the change back to its mark") : changedBy(aiChange, { show: true })}
+            aria-label={unfolded ? t("Fold the change back to its mark") : t("Show the AI's change")} />
+        ) : null}
         {hasChildren ? (
           <button
             className="collapseBtn"
@@ -2027,7 +2081,8 @@ const BlockRow = React.memo(function BlockRow({
               {remoteCursors ? <RenderedCarets peers={remoteCursors} source={block.content || ""} containerRef={renderedRef} /> : null}
             </div>
           )}
-          {review && !preview ? <NoteReviewBar change={review.change} ask={review.ask} onStatus={onStatus} /> : null}
+          {aiAsk && shown ? <AskBar key={aiAsk.id} ask={aiAsk} />
+            : showChange ? <NoteReviewBar change={aiChange} changedSince={changedSince} /> : null}
 
           {quote.trim() ? (
             <div className="blockQuote">
@@ -2372,6 +2427,25 @@ function joinBlockText(existing, addition, mode, find, at) {
   return head + sep + tail;
 }
 
+// A row in the outline that is no block yet, the agent's (below): its
+// handle column an inert stand-in (hidden in CSS), no fold and no dot, and
+// `children` as its body. An item of the outline's ListMotion by
+// `motionKey`.
+function GhostRow({ wrapClass, rowClass, motionKey, depth, children }) {
+  return (
+    <div className={`sortableBlockWrap ${wrapClass}`} data-depth={depth} data-motion-key={motionKey}>
+      <span className="rowHandles" aria-hidden="true"><span className="dragHandle" /></span>
+      <div className="blockRowWrap">
+        <div className={`blockRow ${rowClass}`}>
+          <span className="collapseSpacer" />
+          <span className="dotSlot dotSlotEmpty" />
+          <div className="blockBody">{children}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // A block the AI agent is creating right now (a create_block call still
 // streaming): a read-only row at the position the block will take, typing
 // in the markdown as it arrives. Replaced by the real block when the call
@@ -2381,21 +2455,26 @@ function joinBlockText(existing, addition, mode, find, at) {
 // call, which is no change of the tree's shape, so at once.
 function AiGhostRow({ content, depth }) {
   return (
-    <div className="sortableBlockWrap aiGhostWrap" data-depth={depth} data-motion-key="ai-ghost">
-      {/* Inert stand-in for the handle column (hidden in CSS). */}
-      <span className="rowHandles" aria-hidden="true"><span className="dragHandle" /></span>
-      <div className="blockRowWrap">
-        <div className="blockRow ai-create aiMark0">
-          <span className="collapseSpacer" />
-          <span className="dotSlot dotSlotEmpty" />
-          <div className="blockBody">
-            <div className="blockRendered aiStreaming">
-              {content.trim() ? <BlockMarkdown content={content} blockId="ai-ghost" refLabels={NO_LABELS} /> : null}
-            </div>
-          </div>
-        </div>
+    <GhostRow wrapClass="aiGhostWrap" rowClass="ai-create aiMark0" motionKey="ai-ghost" depth={depth}>
+      <div className="blockRendered aiStreaming">
+        {content.trim() ? <BlockMarkdown content={content} blockId="ai-ghost" refLabels={NO_LABELS} /> : null}
       </div>
-    </div>
+    </GhostRow>
+  );
+}
+
+// A new note an agent asks to add (a create_block call waiting on its
+// card, chat/noteReview.js): a ghost row where it would go, its text as
+// written on the inserted tint, dashed at its edge, with the card's answers
+// under it, which answer the card. A paste of several notes is one row.
+function AskGhostRow({ ask, depth }) {
+  return (
+    <GhostRow wrapClass="aiAskGhostWrap" rowClass="aiReview aiReview-ask aiReview-add" motionKey={`ask-${ask.id}`} depth={depth}>
+      <div className="blockRendered mdDiffView mdDiffNew">
+        <BlockMarkdown content={dollarMath(ask.preview.text || "")} blockId={`ask-${ask.id}`} refLabels={NO_LABELS} />
+      </div>
+      <AskBar ask={ask} />
+    </GhostRow>
   );
 }
 
@@ -2430,8 +2509,20 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
   const rowRest = { ...rest, view };
   const live = rowProps.aiLive;
   const ghost = live?.tool === "create_block" && live.parentId === (parentId ?? rowProps.rootId) ? live : null;
-  if ((!blocks || blocks.length === 0) && !ghost) return null;
+  // The new notes an agent asks to add here, each after the sibling its
+  // card names (first, or last when it names none); none in a tree that
+  // edits nothing.
+  const asking = useGhostAsks(parentId ?? rowProps.rootId);
+  const asksUnder = useAsksUnder();
+  const asks = readOnly || rowProps.preview ? [] : asking;
+  if ((!blocks || blocks.length === 0) && !ghost && !asks.length) return null;
   const list = blocks || [];
+  const askAt = new Map(); // index among the rows → the ghost rows before it
+  for (const ask of asks) {
+    const p = ask.preview;
+    const i = p.first ? 0 : p.after_id ? list.findIndex((b) => b.id === p.after_id) + 1 || list.length : list.length;
+    askAt.set(i, [...(askAt.get(i) || []), <AskGhostRow key={`ask-${ask.id}`} ask={ask} depth={depth} />]);
+  }
   let ghostAt = ghost ? list.length : -1;
   if (ghost && ghost.afterId === ghost.parentId) ghostAt = 0; // after its own parent: first
   else if (ghost && ghost.afterId) {
@@ -2447,6 +2538,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
   const rows = (
     <>
       {ghostAt === 0 ? ghostRow : null}
+      {askAt.get(0) || null}
       {list.map((block, idx) => {
         const refLabels = refLabelsById?.get(block.id); // undefined: the row's default, NO_LABELS
         const commentCount = commentCounts?.get(block.id) || 0;
@@ -2474,7 +2566,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
               moves (foldMoving), anything else that folds or opens them (a
               jump revealing a block, another viewer's default) does so at
               once, as does a subtree too large to move smoothly. */}
-          {block.children?.length > 0 || live?.parentId === block.id ? (
+          {block.children?.length > 0 || live?.parentId === block.id || (asksUnder.has(block.id) && !readOnly) ? (
             <Collapse className="blockFold" open={!isFolded(block, rowProps.view)}
               still={foldMoving !== block.id || countBlocks(block.children, FOLD_MOVES_MOST) > FOLD_MOVES_MOST}>
               <div className="blockChildren" data-motion-key={`under:${block.id}`}>
@@ -2485,6 +2577,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
             </Collapse>
           ) : null}
           {ghostAt === idx + 1 ? ghostRow : null}
+          {askAt.get(idx + 1) || null}
         </React.Fragment>
       );})}
     </>

@@ -37,6 +37,7 @@ import { WorkspaceBackups } from "./SettingsBackups";
 import { AccessSettings, ServerSettings } from "./SettingsServer";
 import { ProxySettings } from "./SettingsProxy";
 import { dotTone } from "../app/notices";
+import { MARK_MINUTES } from "../app/prefDefs.js";
 import { resolveSettingsPane, settingsSection } from "./settingsNavigation";
 import { hostCaps, searchSettings } from "./settingsSearch.js";
 import { SettingsReadsContext, createSettingsReads, useSettingsRead } from "./settingsReads.js";
@@ -86,6 +87,7 @@ import {
   ServerIcon,
   ShieldIcon,
   SlidersIcon,
+  HistoryIcon,
   SparklesIcon,
   TerminalIcon,
   TextSearchIcon,
@@ -1029,6 +1031,14 @@ function ContextSize({ value }) {
 
 // --- Tool usage: what the assistant may do, where it searches, its limits ---
 
+// How long a kept change's mark stays, in words (prefDefs.js MARK_MINUTES).
+function markLifeWords(minutes) {
+  if (!minutes) return t("Until I clear them");
+  if (minutes % 1440 === 0) return tn("{n} day", "{n} days", minutes / 1440);
+  if (minutes % 60 === 0) return tn("{n} hour", "{n} hours", minutes / 60);
+  return tn("{n} minute", "{n} minutes", minutes);
+}
+
 // The master switch and each chat kind's permissions, the two fetching and
 // reading helpers, the online search services and the tool limits.
 function ToolUsageSettings({ value, admin, setStatus }) {
@@ -1048,6 +1058,13 @@ function ToolUsageSettings({ value, admin, setStatus }) {
           hint={t("A second pass reads the document and hands back a cited answer")}
           title={t("When the answer could be anywhere in a long paper, or the same question is asked of several papers, the chat gives the job to a helper on the same connection: it reads as many pages as it needs and hands back a cited answer, so the conversation carries the answer instead of the whole document. It usually costs less than reading every page in the chat, and the reply's token line counts it. Off, the chat reads every document itself.")}
           checked={value.delegateReads} onChange={value.setDelegateReads} />
+        <Row icon={HistoryIcon} label={t("Marks of kept changes")}
+          hint={t("How long an AI change you kept stays marked in its note")}
+          title={t("A change you kept, on its card or in its note, leaves a mark at the note's edge; pressing the mark shows the change again, with Undo. The mark stays this long, or until you press Clear marks; the change itself stays either way, and its row in the chat can still undo it.")}>
+          <MenuSelect label={t("Marks of kept changes")} value={String(value.aiMarkMinutes)}
+            onChange={(v) => value.setAiMarkMinutes(Number(v))}
+            options={MARK_MINUTES.map((m) => [String(m), markLifeWords(m)])} />
+        </Row>
       </Section>
       {/* The account's search services live on the server, not in the profile. */}
       <Section title={t("Online search")}>

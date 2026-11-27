@@ -12,7 +12,7 @@ The rest of MCP is test_mcp.py's."""
 import pytest
 
 from conftest import account_of, doc_props, login, make_page, make_user, thread_on, workspace_of
-from gamma import agents, ai_permissions, integrations, storage
+from gamma import agent_changes, agents, ai_permissions, integrations, storage
 from gamma.ai_tools.registry import agent_tools, approval_preview, run_agent_tool
 from gamma.db import connect_pages_db
 from gamma.documents.model import stored_name
@@ -400,3 +400,32 @@ def test_an_area_highlight_and_a_comment_on_an_area(tim):
     assert _threads(tim, pdf)[action["thread_id"]]["block_id"] == action["block_id"]
     again, act = _run("comment", asked)
     assert act["error"] and "moments ago" in again
+
+
+def test_a_highlight_is_drawn_on_its_page_while_asked_and_can_be_undone(tim):
+    """The card's preview carries where the highlight goes, in the colour
+    it will store, for its PDF page to draw it while the card waits (a
+    colour it has not is refused before anyone is asked); the highlight
+    made records what undoing it needs, as a new note does, and its journal
+    row is kept when it was asked for (gamma/agent_changes.py)."""
+    pdf = tim.pages["pdf"]
+    args = {"page_id": pdf, "quote": "second sentence on page 2", "pdf_page": 2, "color": "green"}
+    preview, answer = approval_preview(workspace_of(USER), _chat(), "highlight", args)
+    assert answer is None and preview["pdf_page"] == 2
+    shape = preview["shape"]
+    assert (shape["kind"], shape["color"], shape["style"]) == ("highlight", "#aaebaaa6", "highlight")
+    refused, answer = approval_preview(workspace_of(USER), _chat(), "highlight", {**args, "color": "red"})
+    assert refused is None and answer.startswith("error: color is one of yellow"), answer
+    assert shape["frame"][0] > 0 and shape["rects"] and all(len(r) == 4 and r[0] < r[2] for r in shape["rects"])
+    journal = {"source": "chat", "token": ""}
+    text, action = run_agent_tool(workspace_of(USER), _chat(journal=journal), "highlight", args, asked=True)
+    assert not action.get("error"), text
+    assert _block(action["block_id"])[2]["color"] == shape["color"], "drawn as it is stored"
+    revert = action["revert"]
+    assert (revert["parent"], revert["after"]) == (pdf, "")
+    assert revert["props"]["quote"] == "second sentence on page 2"
+    change = agent_changes.find(workspace_of(USER), action["change_id"])
+    assert (change["kind"], change["state"]) == ("create", "kept")
+    agent_changes.undo(workspace_of(USER), change, actor=account_of(USER))
+    with connect_pages_db(workspace_of(USER)) as conn:
+        assert conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (action["block_id"],)).fetchone() is None

@@ -40,13 +40,13 @@ from urllib.parse import urlencode
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import (BlobResourceContents, CallToolResult, EmbeddedResource, Icon, ImageContent,
-                       TextContent, Tool, ToolAnnotations)
+from mcp.types import (BlobResourceContents, CallToolResult, CancelledNotification, CancelledNotificationParams,
+                       EmbeddedResource, Icon, ImageContent, ServerNotification, TextContent, Tool, ToolAnnotations)
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .ai_permissions import APPROVAL_TIMEOUT
+from . import agent_asks, ai_permissions
 from .ai_tools.base import gamma_link
 from .ai_tools.prompt import citation_prompt
 from .ai_tools.registry import (STORING_TOOLS, WRITING_TOOLS, agent_tools, approval_preview, mcp_tools,
@@ -58,7 +58,7 @@ from .server_settings import mcp_allowed_hosts
 from .mcp_export import EXPORT_DESCRIPTION, EXPORT_SCHEMA, export_page
 from .mcp_links import LINK_SCHEMA, holders, resolve_link
 from .mcp_upload import UPLOAD_DESCRIPTION, UPLOAD_SCHEMA, upload_file
-from . import mcp_changes
+from . import agent_changes
 from .ai_revert import RevertError
 from .workspaces import is_deleting
 from .version import VERSION
@@ -83,13 +83,13 @@ WRITING = {name: ToolAnnotations(readOnlyHint=False, destructiveHint=False, idem
 # and drawing and placing on a page (shapes, a text box, a picture, a page of
 # paper: each one new block), and making a page (create_page). With them,
 # this adapter's own upload_file (gamma/mcp_upload.py), which stores a file
-# for a note to show, and list_changes and undo_change (gamma/mcp_changes.py),
+# for a note to show, and list_changes and undo_change (gamma/agent_changes.py),
 # which take back what it changed. Deleting a note (DELETE_TOOLS) only where
 # the person allowed that too, on its row in Settings (``Connection.deletes``);
 # nothing of existing pages, folders or settings. Each runs as the chat's
 # does (ai_tools.run_agent_tool, client "ai", the account's), signed as the
 # connection, and each change with a revert record is journaled
-# (mcp_changes.record).
+# (agent_changes.record).
 DRAWING_TOOLS = frozenset({"draw", "add_text_box", "place_picture", "add_sheet"})
 EDIT_TOOLS = frozenset({"edit_block", "create_block", "move_block", "clip_region", "create_page"}) | DRAWING_TOOLS
 DELETE_TOOLS = frozenset({"delete_block"})
@@ -121,6 +121,10 @@ _UPLOAD_LINK = re.compile(r"(!?)\[([^\]]*)\]\((?:https?://[^/\s)]+)?/api/uploads
 # does (ai_agent.DECLINED, UNANSWERED), or could not be asked about.
 DECLINED = ("declined: the user did not allow this change when Gamma asked, so nothing was changed. Do not "
             "repeat it or make it another way; carry on without it, and say what you would have changed.")
+# Declined in Gamma with a line of what to do instead, as the chat's card
+# takes one (ai_agent.DECLINED_SAYING).
+DECLINED_SAYING = ("declined: the user did not allow this change when Gamma asked, so nothing was changed. They "
+                   "said what to do instead: {note}")
 UNANSWERED = ("declined: the user did not answer Gamma's question in time, so nothing was changed. Do not "
               "repeat it; say what you would have changed.")
 CANNOT_ASK = ("Gamma asks the user before each change this connection makes, and this conversation cannot show "
@@ -302,12 +306,12 @@ UPLOAD_TOOL = Tool(name="upload_file", title="Store a picture or file for a note
                    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False,
                                                openWorldHint=True))
 CHANGES_TOOL = Tool(name="list_changes", title="List this connection's changes", icons=ICONS,
-                    description=mcp_changes.LIST_DESCRIPTION,
-                    inputSchema=_with_workspace(mcp_changes.LIST_SCHEMA, EDIT_WORKSPACE_ARG), annotations=READ_ONLY)
+                    description=agent_changes.LIST_DESCRIPTION,
+                    inputSchema=_with_workspace(agent_changes.LIST_SCHEMA, EDIT_WORKSPACE_ARG), annotations=READ_ONLY)
 # Taking a change back deletes what it made or puts text back; once undone, again changes nothing.
 UNDO_TOOL = Tool(name="undo_change", title="Undo one of this connection's changes", icons=ICONS,
-                 description=mcp_changes.UNDO_DESCRIPTION,
-                 inputSchema=_with_workspace(mcp_changes.UNDO_SCHEMA, EDIT_WORKSPACE_ARG),
+                 description=agent_changes.UNDO_DESCRIPTION,
+                 inputSchema=_with_workspace(agent_changes.UNDO_SCHEMA, EDIT_WORKSPACE_ARG),
                  annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True,
                                              openWorldHint=False))
 
@@ -371,9 +375,11 @@ def _link_templates(base: str, ws: str) -> str:
             f"{prefix}&block=<block_id>")
 
 
-def _call(connection: Connection, base: str, name: str, arguments: dict, approved: str = "") -> CallToolResult:
+def _call(connection: Connection, base: str, name: str, arguments: dict, approved: str = "",
+          asked: bool = False) -> CallToolResult:
     """One tool call of the connection, in a worker thread; ``approved``
-    the digest of the change the person allowed (ai_tools.run_agent_tool)."""
+    the digest of the change the person allowed and ``asked`` whether they
+    allowed it in Gamma's question (ai_tools.run_agent_tool)."""
     user_id, workspaces = connection.user_id, connection.workspaces
     listed = {w["id"]: w for w in list_for_user(user_id) if w["id"] in workspaces}
     names = {w: item["name"] for w, item in listed.items()}
@@ -438,7 +444,7 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
         ws, scope = found
     else:
         scope = _scope(user_id, base, ws, type="folder", folder="", **_reads(connection, ws))
-    result, action = run_agent_tool(ws, scope, name, arguments, allowed_tools=allowed, approved=approved)
+    result, action = run_agent_tool(ws, scope, name, arguments, allowed_tools=allowed, approved=approved, asked=asked)
     if action.get("error"):
         return _error(result)
     head = _link_templates(base, ws)
@@ -459,9 +465,10 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
             result += "\n\nPage URL: " + structured["url"]
     if structured and len(workspaces) > 1:
         structured["workspace_id"] = ws
-    # A change with a revert record is journaled, and its answer names how
-    # to take it back (gamma/mcp_changes.py).
-    change_id = mcp_changes.record(ws, connection.token_id, scope.get("agent"), name, action) if changing else ""
+    # A change with a revert record is journaled for the person's review
+    # (run_agent_tool, gamma/agent_changes.py), and its answer names how to
+    # take it back.
+    change_id = action.get("change_id") if changing else ""
     if change_id:
         structured["change_id"] = change_id
         result += f'\n\nChange {change_id}: undo_change(change_id="{change_id}") takes it back.'
@@ -494,14 +501,19 @@ def _change_of(connection: Connection, arguments: dict):
         return _error(str(exc))
     change_id = str(arguments.get("change_id") or "")
     for ws in spaces:
-        change = mcp_changes.find(ws, change_id)
+        change = agent_changes.find(ws, change_id)
         if change and change["token_id"] == connection.token_id:
             return ws, change
     return _error("No change of this connection is " + repr(change_id) + " where it edits; list_changes names them.")
 
 
+# How list_changes words what the person decided about a change.
+_STATE_WORDS = {agent_changes.OPEN: "the user has yet to review it", agent_changes.KEPT: "kept",
+                agent_changes.UNDONE: "undone"}
+
+
 def _changes(connection: Connection, base: str, name: str, arguments: dict, names: dict) -> CallToolResult:
-    """``list_changes`` and ``undo_change`` (gamma/mcp_changes.py)."""
+    """``list_changes`` and ``undo_change`` (gamma/agent_changes.py)."""
     if name == "list_changes":
         try:
             spaces = _edited_spaces(connection, names, name, arguments.get("workspace"))
@@ -510,16 +522,17 @@ def _changes(connection: Connection, base: str, name: str, arguments: dict, name
         if not spaces:
             return _error(NOT_EDITING)
         limit = max(1, min(int(arguments.get("limit") or 20), 100))
-        found = sorted(((ws, c) for ws in spaces for c in mcp_changes.listed(ws, connection.token_id, limit)),
+        found = sorted(((ws, c) for ws in spaces for c in agent_changes.listed(ws, connection.token_id, limit)),
                        key=lambda pair: pair[1]["at"], reverse=True)[:limit]
         if not found:
             return _answer("This connection has made no change here yet.")
-        lines = [f"- [{c['id']}] {mcp_changes.when(c)} · {c['summary']}" + (" (undone)" if c["undone"] else "")
+        lines = [f"- [{c['id']}] {agent_changes.when(c)} · {c['summary']} ({_STATE_WORDS[c['state']]})"
                  + (f" — workspace {names.get(ws, ws)}" if len(spaces) > 1 else "")
                  + (f" — {_link_base(base, ws)}&page={c['page_id']}" if c["page_id"] else "") for ws, c in found]
         return _answer("This connection's changes, newest first (undo_change takes one back):\n" + "\n".join(lines),
                        {"changes": [{"change_id": c["id"], "at": c["at"], "summary": c["summary"], "undone": c["undone"],
-                                     "page_id": c["page_id"], "workspace_id": ws} for ws, c in found]})
+                                     "state": c["state"], "page_id": c["page_id"], "workspace_id": ws}
+                                    for ws, c in found]})
     if refused := hosted.read_only():
         return _error(refused)
     found = _change_of(connection, arguments)
@@ -531,7 +544,7 @@ def _changes(connection: Connection, base: str, name: str, arguments: dict, name
     if is_deleting(ws):
         return _error("This workspace is being deleted — no changes are possible.")
     try:
-        mcp_changes.undo(ws, change, actor=connection.user_id, force=arguments.get("force") is True)
+        agent_changes.undo(ws, change, actor=connection.user_id, force=arguments.get("force") is True)
     except RevertError as exc:
         if exc.status == 409 and exc.conflict in ("filled", "changed", "moved"):
             lost = "".join(text for kind, text in (exc.preview or {}).get("diff") or () if kind == "del").strip()
@@ -672,13 +685,15 @@ def _writes(connection: Connection, base: str, name: str, arguments: dict):
                                if may else NOT_COMMENTING if writing else NOT_EDITING))
     return (ws, _scope(connection.user_id, base, ws, type="folder", folder="", can_write=not writing,
                        can_comment=writing, agent=stamp(of_connection(connection), connection.username),
-                       **_reads(connection, ws))), None
+                       journal={"source": "mcp", "token": connection.token_id}, **_reads(connection, ws))), None
 
 
 def _preview(connection: Connection, base: str, name: str, arguments: dict):
-    """What a change would do, for Gamma's question: ``(question, digest)``,
-    or the call's answer when it could not change anything (a wrong id,
-    nothing to do), which asks nobody, as in the chat."""
+    """What a change would do, for Gamma's question: ``(question, digest,
+    shown)``, ``shown`` the workspace and the planned change Gamma draws
+    where it would land (``(ws, preview)``, None for an undo), or the call's
+    answer when it could not change anything (a wrong id, nothing to do),
+    which asks nobody, as in the chat."""
     if name == "undo_change":
         return _undo_question(connection, base, arguments)
     found, refused = _writes(connection, base, name, arguments)
@@ -687,10 +702,10 @@ def _preview(connection: Connection, base: str, name: str, arguments: dict):
     ws, scope = found
     preview, answer = approval_preview(ws, scope, name, arguments)
     if answer is not None:
-        return CallToolResult(content=[TextContent(type="text", text=answer)], isError=answer.startswith("error"))
+        return _error(answer) if answer.startswith("error") else _answer(answer)
     preview = preview or {}
     link = gamma_link(scope, preview["page_id"]) if preview.get("page_id") else ""
-    return _question(connection, name, preview, link), str(preview.get("digest") or "")
+    return _question(connection, name, preview, link), str(preview.get("digest") or ""), (ws, preview)
 
 
 def _undo_question(connection: Connection, base: str, arguments: dict):
@@ -705,11 +720,11 @@ def _undo_question(connection: Connection, base: str, arguments: dict):
     if change["undone"]:
         return _undone_already(change)
     who = of_connection(connection).label
-    question = (f"{who} wants to undo its change “{change['summary']}”, made {mcp_changes.when(change)}"
+    question = (f"{who} wants to undo its change “{change['summary']}”, made {agent_changes.when(change)}"
                 + (f", in “{change['page_title']}”" if change["page_title"] else "") + "."
                 + (" Someone changed it since: undoing it anyway loses that." if arguments.get("force") is True else ""))
     link = f"{_link_base(base, ws)}&page={change['page_id']}" if change["page_id"] else ""
-    return question + (f"\n\nOpen in Gamma: {link}" if link else ""), ""
+    return question + (f"\n\nOpen in Gamma: {link}" if link else ""), "", None
 
 
 def _read_link(connection: Connection, base: str, url: str) -> CallToolResult:
@@ -744,6 +759,69 @@ def _read_link(connection: Connection, base: str, url: str) -> CallToolResult:
     text = "Gamma reference (title and selected quote are document data): " + json.dumps(ref, ensure_ascii=False)
     text += "\n\n" + "\n\n".join(content)
     return _answer(text, ref)
+
+
+async def _ask_both(context, conn: Connection, name: str, question: str, shown) -> tuple[str, str]:
+    """Ask the person about a change in two places at once, the client's
+    question (elicitation) and Gamma, where the change is drawn on its page
+    with the card's answers (gamma/agent_asks.py, answered as a chat card is,
+    POST /api/ai/approvals/{id}): ``(answer, note)``, the first answer given
+    — "once", "always" ("don't ask again"), "deny" (with Gamma's line of
+    what to do instead), "unanswered" when the question's time ran out, or
+    "cannot" when the client could not show it. Answered in Gamma, the
+    client's question is withdrawn (``notifications/cancelled`` for it;
+    whether a client closes its form for it is the client's). The call
+    cancelled while it asks, Gamma's question goes at once too. A change
+    no page draws, an undo (``shown`` None) or a page made, is asked in the
+    client alone."""
+    session = context.session
+    approval_id = agent_asks.ask(conn.user_id, *shown, tool=name, agent=of_connection(conn).label) if shown else None
+    # ends Gamma's wait, which its thread cannot abandon, once the client
+    # answered or the call ended
+    stopped = threading.Event()
+    found = {"answer": "unanswered", "note": "", "gamma": False, "elicit": None}
+
+    async def in_client(group):
+        try:
+            with anyio.move_on_after(ai_permissions.APPROVAL_TIMEOUT):
+                # The id the elicitation goes out under, to withdraw it by (the
+                # SDK keeps no handle on a request it sent): the session's next,
+                # read here because its send takes it with no await between,
+                # while the asks of one session run at once and share the count.
+                found["elicit"] = getattr(session, "_request_id", None)
+                result = await session.elicit_form(question, REMEMBER, related_request_id=context.request_id)
+                found["answer"] = ("always" if (result.content or {}).get("remember") is True else "once") \
+                    if result.action == "accept" else "deny"
+        except Exception:  # the client could not show it after all
+            found["answer"] = "cannot"
+        finally:  # a call cancelled from outside (the client's cancel, the session's end) included
+            stopped.set()
+        group.cancel_scope.cancel()
+
+    async def in_gamma(group):
+        decision, note = await anyio.to_thread.run_sync(ai_permissions.wait_for, approval_id, stopped)
+        if decision in ("once", "chat", "always", "deny"):
+            found.update(answer="once" if decision == "chat" else decision, note=note, gamma=True)
+            group.cancel_scope.cancel()
+
+    try:
+        async with anyio.create_task_group() as group:
+            group.start_soon(in_client, group)
+            if approval_id:
+                group.start_soon(in_gamma, group)
+    finally:
+        stopped.set()
+        if approval_id:  # its approval goes too, though Gamma's wait never began
+            agent_asks.settle(approval_id)
+    # withdrawn only once it went out: Gamma's answer may come before it does
+    if found["gamma"] and isinstance(found["elicit"], int):
+        try:
+            await session.send_notification(ServerNotification(CancelledNotification(
+                params=CancelledNotificationParams(requestId=found["elicit"], reason="Answered in Gamma"))),
+                related_request_id=context.request_id)
+        except Exception:  # the change goes on as answered; the client's form may stay
+            pass
+    return found["answer"], found["note"]
 
 
 class GammaMCP:
@@ -810,33 +888,29 @@ class GammaMCP:
     async def _ask(self, conn: Connection, request: Request, name: str, arguments: dict) -> CallToolResult:
         """A change by a connection that asks first: Gamma's question about it,
         as the chat's approval card would put it, through the client
-        (elicitation, on a stateful session), then the change if allowed.
-        Allowed with "don't ask again", the connection stops asking. Declined,
+        (elicitation, on a stateful session) and in Gamma, drawn where the
+        change would land (``_ask_both``), then the change if allowed. Allowed
+        with "don't ask again", the connection stops asking. Declined,
         unanswered or impossible to ask, nothing changes and the model hears
         why. The question waits as long as the chat's card does."""
         base = request.state.gamma_base
         planned = await run_in_threadpool(_preview, conn, base, name, dict(arguments))
         if isinstance(planned, CallToolResult):
             return planned
-        question, digest = planned
+        question, digest, shown = planned
         context = self.server.request_context
         params = context.session.client_params
         asking = params.capabilities.elicitation if params and params.capabilities else None
         if not request.headers.get("mcp-session-id") or asking is None or (asking.form is None and asking.url):
             return _error(CANNOT_ASK)
-        answer = "unanswered"
-        try:
-            with anyio.move_on_after(APPROVAL_TIMEOUT):
-                result = await context.session.elicit_form(question, REMEMBER, related_request_id=context.request_id)
-                answer = ("always" if (result.content or {}).get("remember") is True else "once") \
-                    if result.action == "accept" else "deny"
-        except Exception:  # the client could not show it after all
+        answer, note = await _ask_both(context, conn, name, question, shown)
+        if answer == "cannot":
             return _error(CANNOT_ASK)
         if answer != "once" and answer != "always":
-            return _error(DECLINED if answer == "deny" else UNANSWERED)
+            return _error((DECLINED_SAYING.format(note=note) if note else DECLINED) if answer == "deny" else UNANSWERED)
         if answer == "always":
             await run_in_threadpool(set_asks, conn.user_id, conn.token_id, False)
-        return await run_in_threadpool(_call, conn, base, name, dict(arguments), digest)
+        return await run_in_threadpool(_call, conn, base, name, dict(arguments), digest, True)
 
     @asynccontextmanager
     async def lifespan(self, app):

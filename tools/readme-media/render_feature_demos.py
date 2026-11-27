@@ -99,7 +99,7 @@ def native_agentic():
 
 def agentic_notes():
     """record-agentic-notes.mjs: a slide pasted into the chat lands in the
-    note as display math under the caret's block, after Allow once."""
+    note as display math under the caret's block, after Keep."""
     take = Take(SCRATCH / 'agentic-notes')   # refuses a take whose checks failed
     m = take.marks
     segments = [
@@ -127,7 +127,7 @@ def agentic_notes():
         # about 0.7 s more at 1.25x (nothing moves on it).
         (m['card'], m['card'] + 0.35),
         (m['card'] + 0.35, m['toAllow'], 1.25),
-        # Onto Allow once and the click, then the equation lands rendered
+        # Onto Keep and the click, then the equation lands rendered
         # under the caption while the pointer moves off the card and the
         # status pill changes from "Waiting for your approval" towards
         # "Responding": pointer travel at 1.2x, which also hurries the
