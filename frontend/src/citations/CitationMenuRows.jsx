@@ -4,7 +4,7 @@
 // citation, in the text, in the default style (only while Quick Copy is the
 // style, as Zotero shows its Copy as … then; never for a folder), Copy
 // bibliography under the Quick Copy format's label, and Copy as ▸ with
-// every format and style in labelled groups (copyAsGroups): the file
+// every format and style in labelled groups (formats.js copyAsGroups): the file
 // formats, the key commands, your styles (the default, marked so, and the
 // added ones), then the other bundled styles. A folder's copy every paper
 // filed in it.
@@ -13,23 +13,12 @@
 // has a record (cite.hasRecord). Opening the menu fetches the engine and
 // the answer the rows copy from (a folder's waits for the click).
 import React, { useEffect } from "react";
-import { T, t } from "../shared/i18n/i18n.js";
+import { t } from "../shared/i18n/i18n.js";
 import { BookIcon, ClipboardIcon, QuoteMarkIcon } from "../shared/ui/Icons";
 import { MenuGroup, MenuItem, SubMenuItem } from "../shared/ui/Menus";
 import { copyAsRows } from "./citeRules.js";
-import { FILE_FORMATS, formatLabel, quickCopyLabel } from "./formats.js";
+import { copyAsGroups, formatLabel, quickCopyLabel } from "./formats.js";
 import { preloadCitations, preloadStyle } from "./render.js";
-
-// The formats a Copy as menu offers (`formats`, Quick Copy formats), in
-// their two groups: the files the export writes, and the key commands.
-// [{label (untranslated), formats}], an empty group left out. The share
-// popover's Copy as groups its formats so too.
-export function copyAsGroups(formats) {
-  return [
-    { label: T("Formats"), formats: formats.filter((format) => FILE_FORMATS.includes(format)) },
-    { label: T("Cite keys"), formats: formats.filter((format) => !FILE_FORMATS.includes(format)) },
-  ].filter((group) => group.formats.length);
-}
 
 // `cite` is useCitations' answer; `ids` the acted-on pages, or `folder` a
 // folder's id; `keyFolder` the folder the library shows, whose keys a copy
@@ -47,7 +36,7 @@ export function CitationMenuRows({ cite, ids = null, folder = "", keyFolder = ""
     if (folder) cite.copyFolder(folder, as);
     else cite.copyPages(ids, as, keyFolder);
   };
-  const { formats, mine, others } = copyAsRows({ style: cite.style, added: cite.added });
+  const { mine, others } = copyAsRows({ style: cite.style, added: cite.added });
   const styleRow = (style) => (
     <MenuItem key={style.id} title={style.title} onPointerEnter={() => preloadStyle(style.id)}
       trailing={style.id === cite.style ? <span className="ctxMenuHint">{t("default")}</span> : null}
@@ -64,7 +53,7 @@ export function CitationMenuRows({ cite, ids = null, folder = "", keyFolder = ""
         title={folder ? t("Every paper filed in this folder, in the format of Settings → Citations › Quick Copy") : undefined}
         onClick={() => copy("bibliography")}>{quickCopyLabel(cite.quickCopy)}</MenuItem>
       <SubMenuItem id="copyas" icon={ClipboardIcon} label={t("Copy as")}>
-        {copyAsGroups(formats).map((group) => (
+        {copyAsGroups().map((group) => (
           <MenuGroup key={group.label} label={t(group.label)}>
             {group.formats.map((format) => <MenuItem key={format} onClick={() => copy(format)}>{formatLabel(format)}</MenuItem>)}
           </MenuGroup>

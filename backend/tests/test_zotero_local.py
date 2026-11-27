@@ -344,7 +344,7 @@ def test_record_op_writes_the_changed_fields_and_rebuilds_the_entry(side):
 def test_a_pull_keeps_the_key_a_stored_comma_name_was_cited_by(side):
     """A Zotero pull builds the entry again: a record stored before 72 with
     "Den Hengst, Floris" first keeps its cached "floris2020"
-    (``bibtex.rebuilt_key``), as a hand edit does."""
+    (``bibtex_keys.rebuilt_key``), as a hand edit does."""
     meta = {"title": "Old", "authors": ["Den Hengst, Floris"], "year": "2020", "source": "doi"}
     page = _page(side.c, "Old", meta=meta, bibtex="@article{floris2020,\n  title = {Old},\n  year = {2020}\n}")
     op = zl.record_op(_block(side.ws, page), {"title": "New title"})

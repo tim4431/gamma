@@ -63,7 +63,7 @@ import time
 from contextlib import closing, contextmanager, nullcontext
 from pathlib import Path
 
-from . import backups, bibtex, config, meta_fields, names, version
+from . import backups, bibtex, bibtex_keys, bibtex_parse, config, meta_fields, names, version
 from .blocks_store import FOLDERS, folder_by_path
 from .colors import normalize_color
 from .db import (BUSY_TIMEOUT_S, SCHEMA_VERSION, USERS_SCHEMA, WORKSPACE_PREFS_SCHEMA, WS_VERSION_BASE,
@@ -2500,7 +2500,7 @@ def _v71_ai_models(conn: sqlite3.Connection) -> None:
 
 def _v72_promoted(props: dict) -> dict | None:
     """``props`` with the issue and the month its cached BibTeX entry holds
-    (``bibtex.record_from_entry``: an @article's ``number``, and its
+    (``bibtex_parse.record_from_entry``: an @article's ``number``, and its
     ``month`` while the entry's year is the record's: doi.org may date the
     print issue a year after the record's online year) given to the record
     as ``issue`` and ``date`` (``YYYY-MM``, gamma/meta_fields.py), each only
@@ -2510,7 +2510,7 @@ def _v72_promoted(props: dict) -> dict | None:
     if not isinstance(meta, dict) or not isinstance(entry, str) or (meta.get("issue") and meta.get("date")):
         return None
     year = str(meta.get("year") or "").strip()
-    found = bibtex.record_from_entry(entry, year)
+    found = bibtex_parse.record_from_entry(entry, year)
     added = {}
     if found.get("issue") and not meta.get("issue"):
         added["issue"] = meta_fields.clean_cited("issue", found["issue"])
@@ -2522,18 +2522,19 @@ def _v72_promoted(props: dict) -> dict | None:
 
 def _v72_keyed(props: dict) -> dict | None:
     """``props`` with the BibTeX entry its record was cited by until now
-    cached (``properties.bibtex``, keyed ``bibtex.last_word_key``) where it
-    keeps none and pins no key, and its first author is a name in
+    cached (``properties.bibtex``, keyed ``bibtex_keys.last_word_key``)
+    where it keeps none and pins no key, and its first author is a name in
     ``names.join_name``'s comma form ("Pereira Campos, Jorge Fernando",
-    typed, imported or given through the API), which ``bibtex.default_key``
-    reads by its surname from 72 ("campos2021" where it was
-    "fernando2021"): a .tex file citing the old key keeps working, and a
-    rebuild keeps it (``bibtex.rebuilt_key``). None otherwise."""
+    typed, imported or given through the API), which
+    ``bibtex_keys.default_key`` reads by its surname from 72 ("campos2021"
+    where it was "fernando2021"): a .tex file citing the old key keeps
+    working, and a rebuild keeps it (``bibtex_keys.rebuilt_key``). None
+    otherwise."""
     meta = props.get("meta")
-    if not isinstance(meta, dict) or props.get("bibtex") or bibtex.pinned_key(props):
+    if not isinstance(meta, dict) or props.get("bibtex") or bibtex_keys.pinned_key(props):
         return None
-    key = bibtex.last_word_key(meta)
-    return {**props, "bibtex": bibtex.build_entry(meta, key)} if key != bibtex.default_key(meta) else None
+    key = bibtex_keys.last_word_key(meta)
+    return {**props, "bibtex": bibtex.build_entry(meta, key)} if key != bibtex_keys.default_key(meta) else None
 
 
 def _v72_record(props) -> dict | None:

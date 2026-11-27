@@ -21,9 +21,7 @@
 //            (a note style's note) of all the items as one cluster.
 //   output   "html" (default; sanitized, with Zotero's inline layout),
 //            "text" or "rtf" (a whole RTF document).
-//   locators for a citation: [{id, locator, label}] or {id: "347" |
-//            {locator, label}}, by the item's id; the label defaults to
-//            "page".
+//   locators for a citation: {id: "347"}, each item's page by its id.
 //   output     the whole bibliography or the citation.
 //   entries    a bibliography's entry per item, in the items' order, each
 //              as a whole of its own in `output` (an HTML fragment with the
@@ -46,6 +44,9 @@
 //   A style's names and class: a bundled style's, or an added one's as the
 //   account's style list holds it (citationApi.js); an id
 //   known to neither has its id as title and kind "".
+// styleLabel(id) -> string
+//   A style's short name, as a trigger, a pill and the Quick Copy row name
+//   it: "APA 7th", "Chicago 18th (notes)", an added style's title.
 import { addedStyle } from "./citationApi.js";
 import { bundledStyle } from "./bundledStyles.js";
 
@@ -95,4 +96,37 @@ export function styleMeta(id) {
   const row = addedStyle(id);
   if (row) return { id, title: row.title || id, short: row.short_title || "", kind: row.kind || "", bundled: false };
   return { id, title: String(id || ""), short: "", kind: "", bundled: false };
+}
+
+// A bundled style as a trigger names it: the name and edition its title
+// leads with, and the variant that tells two of a family apart (Chicago's
+// notes from its author-date), where the full title would be cut off
+// before saying it. Names, not interface text. The menus' rows keep the
+// full titles.
+const SHORT_NAMES = {
+  apa: "APA 7th",
+  "american-chemical-society": "ACS",
+  "american-medical-association": "AMA 11th",
+  "american-physics-society": "APS",
+  "american-political-science-association": "APSA",
+  "american-sociological-association": "ASA",
+  "chicago-author-date": "Chicago 18th (author-date)",
+  "chicago-notes-bibliography": "Chicago 18th (notes)",
+  "chicago-shortened-notes-bibliography": "Chicago 18th (short notes)",
+  "elsevier-harvard": "Elsevier Harvard",
+  "harvard-cite-them-right": "Cite Them Right 12th",
+  ieee: "IEEE",
+  "mhra-notes": "MHRA 4th (notes)",
+  "modern-language-association": "MLA 9th",
+  nature: "Nature",
+  "nlm-citation-sequence": "NLM/Vancouver",
+};
+// The longest title shown whole; a longer added style goes by its CSL
+// title-short, when it has one.
+const TITLE_SHOWN = 28;
+
+export function styleLabel(id) {
+  if (SHORT_NAMES[id]) return SHORT_NAMES[id];
+  const meta = styleMeta(id);
+  return meta.title.length > TITLE_SHOWN && meta.short && meta.short.length < meta.title.length ? meta.short : meta.title;
 }

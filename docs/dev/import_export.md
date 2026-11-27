@@ -16,10 +16,13 @@ writer (its internals and the shared typesetting engine are in
 `gamma/goodnotes_write.py`, `gamma/rtf.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/notion_export.py`, `gamma/export_walk.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
-`gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/picture.py`, `gamma/bibtex.py`, `gamma/citations.py`,
-`gamma/routers/export.py`; frontend dialogs in
-[ImportExport.jsx](../../frontend/src/transfers/ImportExport.jsx), imported directly by
-[App.jsx](../../frontend/src/app/App.jsx). Exports and library imports run as
+`gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/picture.py`, `gamma/bibtex.py` and its parts
+`gamma/bibtex_*.py`, `gamma/citations.py`, `gamma/routers/export.py`. The frontend dialogs are in
+[ImportExport.jsx](../../frontend/src/transfers/ImportExport.jsx), which
+[App.jsx](../../frontend/src/app/App.jsx) loads on first use (`lazySurface`),
+and the Export dialog's Bibliography review is in
+[BibliographyReview.jsx](../../frontend/src/transfers/BibliographyReview.jsx).
+Exports and library imports run as
 background jobs, which the dialogs follow ([tasks.md](tasks.md)). The
 Export… row carries the `page.export` guide anchor: a hint beside it offers
 the export once a page has five highlights of the user's own
@@ -782,12 +785,13 @@ The rest of this section holds for every dialect unless it says otherwise:
   `[Sub](Parent%20<id>/Sub%20<id>.md)`, whose balanced `( )` stay unencoded
   as in `Tasks%20(grid%20view)%20<id>.csv`, Gamma's `[label](Page-id.md)` and
   `*(from [title](file.md))*`) and Obsidian wikilinks (`[[Note]]`,
-  `[[Note|alias]]`, `[[folder/Note]]`) alike. A wikilink's alias is the
+  `[[Note|alias]]`, `[[folder/Note]]`) alike. A wikilink's alias becomes the
   mention's words, `[[id|alias]]` ([mentions.md](mentions.md) "Page links
-  with words of their own"; `\|` in a table's cell, which resolves the note
-  too), and so is a Markdown link's label when it says more than the note's
-  file name or title, in any case and spacing, and holds no bracket
-  (`label_alias`; `[[One]](Two.md)` reads its wikilink first). A note of
+  with words of their own"). In a table's cell the alias's pipe may be
+  `\|`, which resolves the note too. A Markdown link's label becomes the
+  words when it says more than the note's file name or title, in any case
+  and spacing, and holds no bracket (`label_alias`). `[[One]](Two.md)`
+  reads its wikilink first. A note of
   Notion's keeps no label (`label_words`): Notion labels a link with the
   page's title, marks and all. An embed's alias is none. A target is resolved relative
   to the note, then as an exact vault path, then by basename anywhere in the
@@ -809,7 +813,7 @@ The rest of this section holds for every dialect unless it says otherwise:
   it is a warning and the link stays as typed) and points at
   `/api/uploads/…`; `![[img.png|300]]` / `|300x200` becomes the editor's
   `![|300](url)` size form, other pipe text the alt, and a Logseq graph's
-  `![alt](../assets/x.png){:width 300}` comes in as `![alt|300](url)`; on
+  `![alt](../assets/x.png){:width 300}` comes in as `![alt|300](url)`. On
   a table's row either is written `![\|300](url)`, as Obsidian escapes it
   there (`note_markup.table_pipe`: a bare pipe would split the cell). A CSV that is no table
   page is such a file; one no new note links is left out with a warning
@@ -2591,9 +2595,9 @@ The View menu's single "Export…" entry → `ExportDialog` in `transfers/Import
 The page header's Export button (`.pageExportBtn`, before the trash
 button, a share's visitors' too) opens the same dialog for the open page.
 It shows while the account preference `pageExportButton` is on, the
-default (Settings → Toolbars › Page header); the View menu keeps its row
-either way, and a pane beside it while pages are side by side draws the
-button too, a press making that page live.
+default (Settings → Toolbars › Page header). The View menu keeps its row
+either way. While pages are side by side, the pane beside it draws the
+button too, and a press makes that page live.
 Step one is a format card, in rows (`CATEGORIES`): This paper holds
 Annotated PDF and Bibliography (a folder's Papers row, its PDFs and its
 bibliography),
@@ -2747,10 +2751,10 @@ folder.
 The Export dialog's Bibliography card (`transferFormats.js` card id
 `bibliography`) writes one file, never a zip: a page's own entry (with
 `sub_pages`, the page and every page inside it), or every paper in a
-folder. Its review step picks the format (`BIBLIOGRAPHY_FORMATS`, built
-from `citations/formats.js` `FILE_FORMATS` and their names under File
-formats, plus Reference list under In a citation style; the payload's
-`bibFormat`, `formatted` for the list):
+folder. Its review step picks the format, the payload's `bibFormat`
+(`formatted` for the list). The choices are `BIBLIOGRAPHY_FORMATS`, built
+from `citations/formats.js` `FILE_FORMATS` (their names under File
+formats) plus Reference list (under In a citation style):
 
 | Format | Export mode | File | For |
 |---|---|---|---|
@@ -2760,14 +2764,14 @@ formats, plus Reference list under In a citation style; the payload's
 | CSL JSON | `csljson` | `.json`, `application/vnd.citationstyles.csl+json` | Pandoc and other tools that read CSL |
 | Reference list | none | `.html`, `.rtf` or `.txt` | a reference list in a citation style, made in the browser |
 
-The four server formats are modes of both export endpoints, one builder
-with a subclass each (`_CitationBuilder` in `routers/export.py`: the
-records, their keys and their order are shared, so the review cannot
-disagree with any file). Every format is keyed by the BibTeX entry's key,
-so a document cites one key from any of them. The BibLaTeX, RIS and CSL
-JSON mappings are Zotero's and live in `gamma/citations.py`
-([citations.md](citations.md#the-formats)); the BibTeX entry, below, is the
-one every surface prints. A reference list is rendered by the
+The four server formats are modes of both export endpoints. They share
+one builder with a subclass each (`_CitationBuilder` in
+`routers/export.py`). The records, their keys and their order are shared,
+so the review cannot disagree with any file. Every format is keyed by the
+BibTeX entry's key, so a document cites one key from any of them. The
+BibLaTeX, RIS and CSL JSON mappings are Zotero's and live in
+`gamma/citations.py` ([citations.md](citations.md#the-formats)). The
+BibTeX entry, below, is the one every surface prints. A reference list is rendered by the
 browser's citation engine ([citations.md](citations.md#rendering)) and
 needs no job ([below](#the-review-step)). This is what a document cites, so
 the export has no switches and no bundling. A page export of a note's id
@@ -2779,7 +2783,7 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
   metadata lookup cached (a registrar's own BibTeX when doi.org served one,
   else `bibtex.build_entry` over `properties.meta`). A page that has a record
   but no rendering — an older page, a hand-made one — is rendered on the
-  spot (here, in the Markdown and Obsidian exports, in a cached
+  spot (here, in the Markdown, Obsidian and Notion exports, in a cached
   `/metadata/fetch` answer and in the AI `cite` tool alike).
   A page with no metadata at all is skipped with "page has no paper
   metadata" and named in the finished export; a set where no page has any
@@ -2805,19 +2809,21 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
   has it. An article with neither a venue nor an arXiv id is `@misc` too (an
   `@article` without a journal is a BibTeX warning). An arXiv id always adds `eprint`/`archivePrefix`, so a published
   paper read from arXiv cites the journal and keeps the preprint. An
-  `@article` carries the record's issue as `number`, every entry the month
-  of an agreeing date as `month` (as Zotero writes it); `@misc`, `@phdthesis` and `@techreport` carry
+  `@article` carries the record's issue as `number`. Every entry carries
+  the month of an agreeing date as `month`, as Zotero writes it. `@misc`,
+  `@phdthesis` and `@techreport` carry
   the record's own address as `url` (not the page's `web_url`). A record
   without those fields gives the entry of before them, byte for byte
   ([paper_metadata.md](paper_metadata.md#metadata-fetch--edit--cite)).
 - **Every printed entry is valid BibTeX.** Every entry leaves through
-  `bibtex.format_entry`: `build_entry` writes through it, and `page_entry` reads
-  a stored entry back (`normalize_entry`, a small parser for any layout:
-  doi.org's one-line rendering, an entry an older Gamma cached, one restored
-  from a Markdown export) and writes it again. So the export, its review,
-  the share popover's Copy BibTeX, `cite` and the Markdown and Obsidian
-  exports all print the same text, whatever was stored. The rules:
-  - Text values are ASCII LaTeX (`bibtex.latex_text`). An accented letter
+  `bibtex_format.format_entry`. `build_entry` writes through it, and
+  `page_entry` reads a stored entry back and writes it again. It reads with
+  `normalize_entry` over `bibtex_parse.parse_entry`, a small parser for any
+  layout: doi.org's one-line rendering, an entry an older Gamma cached, one
+  restored from a Markdown export. So the export, its review,
+  the share popover's Copy BibTeX, `cite` and the Markdown, Obsidian and
+  Notion exports all print the same text, whatever was stored. The rules:
+  - Text values are ASCII LaTeX (`bibtex_latex.latex_text`). An accented letter
     becomes BibTeX's special character (`F{\"o}sel`, which classic BibTeX
     sorts and abbreviates right), a Greek letter or math symbol `$\alpha$`,
     registry markup a macro (`<i>` → `\emph{}`, `<sub>` →
@@ -2828,25 +2834,25 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
     a Unicode engine.
   - Braces balance in every value; an unmatched one is dropped, since
     BibTeX counts every brace and one stray brace breaks the file.
-  - An organisation author is braced whole (`{DES Collaboration}`, a
-    word of `names._ORG_RE` in it), in a built entry and in a cached one:
-    bare, BibTeX takes its last word for a surname ("D. Collaboration")
-    and splits it at an `and` of its own.
-  - A word of a title (`title`, `booktitle`, `shorttitle`, `series`) with a
-    capital after its first letter is braced, `{GI}-type`, `{KiDS}`
-    (`bibtex.protect_case`, Zotero's BibLaTeX rule), and one of letters and
-    digits with a capital (`{Y3}`, `{3D}`), so plainnat's sentence case
-    keeps it; what is braced already, math and command names stay as they
-    are.
+  - An organisation author, a name with a word of `names._ORG_RE` in it, is
+    braced whole (`{DES Collaboration}`, `gamma/bibtex_names.py`), in a
+    built entry and in a cached one. Bare, BibTeX takes its last word for a
+    surname ("D. Collaboration") and splits it at an `and` of its own.
+  - A word of a title (`title`, `booktitle`, `shorttitle`, `series`) is
+    braced when it has a capital after its first letter (`{GI}-type`,
+    `{KiDS}`, Zotero's BibLaTeX rule) or is letters and digits with a
+    capital (`{Y3}`, `{3D}`), so plainnat's sentence case keeps it
+    (`bibtex_case.protect_case`). What is braced already, math and command
+    names stay as they are.
   - The month is a standard macro (`month = sep`); doi.org writes `Sept`,
     `June` and `July`, which no style defines. A page range takes `--`,
-    whatever dash it was written with (`bibtex.PAGE_RANGE_RE`).
+    whatever dash it was written with (`bibtex_format.PAGE_RANGE_RE`).
   - The entry type is one every style defines, and a type whose venue
     field is missing (`@article` without `journal`, `@inproceedings`
     without `booktitle`, a thesis without `school`, a report without
     `institution`) is written as `@misc`: apsrev4-2 fails on an `@article`
     with no journal.
-  - The key is ASCII (`bibtex.clean_key` spells `Fösel` as `Fosel`):
+  - The key is ASCII (`bibtex_keys.clean_key` spells `Fösel` as `Fosel`):
     pdflatex cannot `\cite` a key holding a UTF-8 letter.
   - Identifiers and links (`doi`, `url`, `eprint`, `isbn`, `issn`) are
     written raw, since `\url` and `\doi` read their argument verbatim. A
@@ -2869,20 +2875,21 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
   pdflatex, and CJK needs XeLaTeX or LuaLaTeX. What the registries really
   return: [research/registry-records.md](../research/registry-records.md).
 - **Citation keys**: generated as first author's surname + year
-  (`bibtex.default_key`: the last word of the name, and of a name
-  `names.join_name` writes with a comma the last word of its surname
-  (`names.joined_family`), so "Pereira Campos, Jorge Fernando" keys
-  `campos` as "Jorge Fernando Pereira Campos" always did and "King, Jr.,
-  Martin Luther" keys `king` as Zotero's "Martin Luther, Jr. King" did;
-  any other name keys as before, a typed "Lovelace, Ada" `ada`). A key must
-  not move under a .tex file that cites it: a name stored in join_name's
-  comma form before release 72 ("Den Hengst, Floris", typed or imported)
-  keyed by its last word (`floris`), so an entry built again (a hand edit,
-  a refetch, a Zotero pull) keeps the key its cached entry carries while
-  the first author and the year stay (`bibtex.rebuilt_key`), and step 72
-  gave such a record with no cached entry the entry it was cited by
-  (`migrations._v72_keyed`). Two papers by one author in one year would collide in a
-  bibliography, so `bibtex.unique_keys` suffixes clashes `a`, `b`, … `z`,
+  (`bibtex_keys.default_key`). The key takes the name's last word, or for
+  a name `names.join_name` writes with a comma the last word of its surname
+  (`names.joined_family`). So "Pereira Campos, Jorge Fernando" keys
+  `campos`, as "Jorge Fernando Pereira Campos" does, and "King, Jr.,
+  Martin Luther" keys `king`, as Zotero's "Martin Luther, Jr. King" does.
+  Any other name keys by its last word: a typed "Lovelace, Ada" keys `ada`.
+  A key must not move under a .tex file that cites it. Before release 72, a
+  name stored in join_name's comma form ("Den Hengst, Floris", typed or
+  imported) keyed by its last word (`floris`). So an entry built again (a
+  hand edit, a refetch, a Zotero pull) keeps the key its cached entry
+  carries while the first author and the year stay
+  (`bibtex_keys.rebuilt_key`). Step 72 gave such a record with no cached
+  entry the entry it was cited by (`migrations._v72_keyed`). Two papers by
+  one author in one year would collide in a
+  bibliography, so `bibtex_keys.unique_keys` suffixes clashes `a`, `b`, … `z`,
   `aa` — Better BibTeX's convention. Clashes are found case-insensitively
   (classic BibTeX treats `Smith2020` and `smith2020` as one entry). Pinned
   keys are assigned first, so the key a user chose is never the one that
@@ -2896,11 +2903,11 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
   *beside* `meta`, not inside it, because a refetch replaces the record and
   must not take the key with it: the user's `.tex` files cite that key. It
   outranks both the generated key and a registrar's own, is cleaned of what
-  BibTeX breaks on (`bibtex.clean_key`: whitespace, `, { } ( ) = \ " # % ~`),
+  BibTeX breaks on (`bibtex_keys.clean_key`: whitespace, `, { } ( ) = \ " # % ~`),
   and clearing the record clears the pin too. The metadata lookup and a
   hand edit write it into the cached entry; every surface that prints the
-  entry — this export, the AI `cite` tool, the Markdown and Obsidian
-  exports — goes through `bibtex.page_entry`, which applies the pin to a
+  entry (this export, the AI `cite` tool, the Markdown, Obsidian and
+  Notion exports) goes through `bibtex.page_entry`, which applies the pin to a
   cached entry that predates it or carries a registrar's own key, so the
   chat and the `.bib` file never disagree on a key.
   A Zotero import brings one along when Better BibTeX left a
@@ -2921,42 +2928,47 @@ answers 404 (`_checked_page`), as one of a page in Recently deleted does.
 
 ### The review step
 
-`GET /api/bibliography?page_id=|folder=&format=` (a folder id; `sub_pages=1`
-with `page_id`, the pages inside it too; `format` one of the four modes,
-`bibtex` by default, 400 for another) answers what that export *would*
-write, as data: `format`, `entries` (per citable page: `page_id`, the page
-`title`, the `key` the file will use, `pinned`, the entry in that format as
-`text`, CSL JSON's a one-item array, and `csl`, its CSL JSON item),
-`skipped` (the pages left out, with the reason) and `text`, the file,
-byte-identical to that mode's download. It runs the same builder as the
-downloads — `keyed_records()` serves both — so the review cannot disagree
-with the file, and `preview()` returns an empty bibliography as data where
-`save` would refuse, so the dialog can show the pages it could not cite
-instead of an error. The review reads one format at a time, as it is
-picked, and keeps the last answer on screen while the next loads; the
-right pane shows the picked entry's `text`, "Copy all" the answer's. The
-share popover asks it too (`?page_id=`) when it opens, so the entry it
-copies is the one the file carries, not the stored text.
+`GET /api/bibliography?page_id=|folder=&format=` answers what that export
+*would* write, as data. `folder` is a folder id, and `sub_pages=1` with
+`page_id` takes the pages inside it too. `format` is one of the four
+modes, `bibtex` by default (400 for another). The answer holds `format`,
+`name` (the export's file name without its suffix), `entries`, `skipped`
+(the pages left out, with the reason) and `text`, the file,
+byte-identical to that mode's download. An entry is a citable
+page's: `page_id`, the page `title`, the `key` the file will use,
+`pinned`, the entry in that format as `text` (CSL JSON's a one-item array)
+and `csl`, its CSL JSON item. It runs the same builder as the downloads
+(`keyed_records()` serves both), so the review cannot disagree with the
+file. `preview()` returns an empty bibliography as data where `save` would
+refuse, so the dialog can show the pages it could not cite instead of an
+error. The review reads one format at a time, as it is picked, and keeps
+the last answer on screen while the next loads. The right pane shows the
+picked entry's `text`, "Copy all" the answer's. The share popover asks it
+too (`?page_id=`) when it opens, so the entry it copies is the one the
+file carries, not the stored text.
 
 `POST /api/bibliography` answers the same for a selection, `{page_ids,
-key_folder?, format?}`, in the order asked, its `text` those entries laid
-out as the format's file without a `.bib`'s head comment, with the keys of
-`key_folder`'s `.bib` when it is named: the page and selection menus copy
-from it ([citations.md](citations.md#the-bibliography-answer)).
+key_folder?, format?}`, in the order asked. Its `text` is those entries
+laid out as the format's file, without a `.bib`'s head comment. With
+`key_folder` named, they take the keys of that folder's `.bib`. The page
+and selection menus copy from it
+([citations.md](citations.md#the-bibliography-answer)).
 
 The dialog's review is the two panes the Zotero import review uses
 (`.bibColumns`, the same shape as `.importReviewColumns` with its own
-classes), under a **Format** row (`BibliographyReview` in
-`ImportExport.jsx`): the papers on the left, each with the citation key
-underneath and a pin mark when that key is pinned, the pages that cannot be
-cited listed under them with the reason. The right pane holds whichever
-paper is picked: its entry in the chosen format with a copy button, or for
-a reference list the whole list with that paper's entry tinted and
-scrolled to, the box's button copying that entry. The footer's "Copy all" takes the whole
+classes), under a **Format** row. It is `BibliographyReview` in
+`transfers/BibliographyReview.jsx`, whose `useBibliographyStep` holds the
+state the dialog's footer reads too. The papers are on the left, each with
+the citation key underneath and a pin mark when that key is pinned, and
+the pages that cannot be cited are listed under them with the reason. The
+right pane holds whichever paper is picked: its entry in the chosen format
+with a copy button. For a reference list it holds the whole list, with
+that paper's entry tinted and scrolled to, and the box's button copies
+that entry. The footer's "Copy all" takes the whole
 bibliography and appears only when there is more than one. The modal
 widens for this step only (`transferModalWide`). Export is held while the
 review loads, when it fails and when nothing is citable. When "Include
-pages inside" ([above](#the-export-dialog)), under the columns, is on, the
+pages inside" ([above](#the-export-dialog)), under the Format row, is on, the
 review asks for the page with the pages inside it
 (`bibliographyPreviewUrl`'s `subPages`) and asks again when the switch
 changes, so it holds what the file will. The summary is built from whole
@@ -2968,24 +2980,25 @@ then the bundled ones in sections by class, its class as the row's hint),
 Language (disabled with "Set
 by the style" when the style has its own locale) and File (HTML, RTF or
 Plain text, `FORMATTED_FILES`). They start from the account's style and
-language (Settings → Citations; `ExportDialog`'s `citationStyle` and
-`citationLocale`) and are kept with the dialog's other choices in
-`gamma-export-opts` (`bibFormat`, `citeStyle`, `citeLocale`, `citeFile`);
-a style no longer on this server is the default style (`citeRules.styleInUse`
-over citationApi's list, the rule every citation follows). The Style and
-Language rows are the ones Settings → Citations has
-(`citations/CitationChoices.jsx`). The preview is one
-render of the whole list in the review's order (`useFormatted`), so a
-numeric style numbers it so and 2020a/2020b hold across it; the right pane
-shows that list as the file will hold it (its order, numbering and
-spacing), the picked paper's entry marked in it (`CitationHtml`'s
-`mark`), or says above it that the style leaves the paper out of its
-bibliography. A reference list finishes in the
-review step, with no export job: **Download** renders the list in the
-file's format and saves it (`saveBlob`; `formattedFile` makes the HTML a
-UTF-8 page of its own, titled by the folder or the page; the file is named
-"Bibliography"), then reads "Download again"; **Copy all** puts the HTML and the
-text on the clipboard in the click (`copyPayload`). A refused copy or a
+language (Settings → Citations, `ExportDialog`'s `citationStyle` and
+`citationLocale`). They are kept with the dialog's other choices in
+`gamma-export-opts` (`bibFormat`, `citeStyle`, `citeLocale`, `citeFile`).
+A style this server does not have is the default style
+(`citeRules.styleInUse` over citationApi's list, the rule every citation
+follows). The Style and Language rows are the ones Settings → Citations
+has (`citations/CitationChoices.jsx`). The preview is one render of the
+whole list in the review's order (`useFormatted`), so a numeric style
+numbers it so and 2020a/2020b hold across it. The right pane shows that
+list as the file will hold it (its order, numbering and spacing), with the
+picked paper's entry marked in it (`CitationHtml`'s `mark`). When the
+style leaves the paper out of its bibliography, the pane says so above the
+list. A reference list finishes in the review step, with no export job.
+**Download** renders the list in the file's format and saves it under the
+export's file name (the answer's `name`, else "Bibliography"; `saveBlob`),
+then reads "Download again". `formattedFile`
+makes the HTML a UTF-8 page of its own, titled by the folder or the page.
+**Copy all** puts the HTML and the text on the clipboard in the click
+(`copyPayload`). A refused copy or a
 failed save shows a `FormNotice`, since the dialog has no status pill. The
 engine's chunk is fetched as the card is picked.
 
@@ -3005,13 +3018,13 @@ renders on demand. `mode=biblatex`, `ris` and `csljson` serve those files
 the same way (`bibliographyUrl`'s `mode`). The token names the workspace,
 so the URL carries neither a session nor a `ws=`. The review shows the link
 for the format chosen when the page or folder is already shared (a page's
-link with `&sub_pages=1` while "Include pages inside" is on), and otherwise
+link with `&sub_pages=1` while "Include pages inside" is on). Otherwise it
 points at Share: creating the link publishes the pages, and that choice
 (with its audience) belongs to the share popover, not to an export dialog.
 A `.bib` (BibTeX or BibLaTeX) gets it under "Keep this .bib up to date"
 with Overleaf's steps (the `transfer.bibLink` anchor, the `bibtex.shown`
-guide event); RIS and CSL JSON under "Keep this file up to date" with the
-link alone. A reference list has none.
+guide event). RIS and CSL JSON get it under "Keep this file up to date",
+with the link alone. A reference list has none.
 
 ## Obsidian vault export
 
@@ -3177,9 +3190,9 @@ changes a row and no block code:
   percent-encoded as Notion's own are; a mention of a block links its page;
   one outside the export is its label. A block's label is its first line less
   a list marker, or its page's title when that line has no words, as a code
-  block's or an image's has not; a `[[id|words]]`'s label is its words, and
-  on a line of its own it stays a link, not a page block, whose title would
-  be the page's.
+  block's or an image's has not. A `[[id|words]]`'s label is its words. On
+  a line of its own it stays a link, not a page block, whose title would be
+  the page's.
 - **Images and other files**: an uploaded image goes in the page's directory
   (`Paper/<sha>.png`), its `|300` size gone, and an image from the web stays at
   its address. Handwriting is rendered as an SVG beside it, untried in Notion.

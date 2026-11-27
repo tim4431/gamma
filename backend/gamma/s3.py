@@ -1,6 +1,6 @@
 """The S3-compatible bucket the backup tasks' snapshots and the off-site
 copies go to (gamma/snapshot_copies.py, gamma/offsite.py,
-docs/dev/debugging.md "Snapshots and copies in a bucket"): AWS S3,
+docs/dev/backups.md "Snapshots and copies in a bucket"): AWS S3,
 Cloudflare R2, MinIO, through boto3, which is imported only when a
 ``Client`` is made (``requirements-s3.txt``: the Docker image and the
 desktop app have it, a plain checkout does not).

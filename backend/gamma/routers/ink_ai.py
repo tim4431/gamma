@@ -22,7 +22,8 @@ from .. import ink as inkmod
 from .. import ink_ai
 from ..ai_client import call_ai as _call_ai, call_slot as _call_slot
 from ..ai_protocols.base import truncated_stop
-from ..ai_settings import require_ai_runtime, resolve_model as _resolve_model
+from ..ai_roles import resolve_model as _resolve_model
+from ..ai_settings import require_ai_runtime
 from ..auth import require_user_id
 from ..logbuf import log
 from ..pdf_text import image_part

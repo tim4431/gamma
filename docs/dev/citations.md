@@ -4,10 +4,11 @@ How a page's paper record becomes a citation: a formatted reference in a
 CSL style, a citation in the text, a BibLaTeX, RIS or CSL JSON entry beside
 the BibTeX one, and the copies and files the app makes of them. The server
 keeps the data side (`gamma/citations.py`, `gamma/meta_fields.py`,
-`gamma/names.py`, the bibliography builders in `gamma/routers/export.py`,
-the style store in `gamma/routers/citations.py`); the browser renders every
-style (`frontend/src/citations/`). What Zotero does and why Gamma took what
-it took: [research/citations.md](../research/citations.md). The record
+`gamma/names.py`, `gamma/bibtex_format.py`, the bibliography builders in
+`gamma/routers/export.py`, the style store in `gamma/routers/citations.py`);
+the browser renders every style (`frontend/src/citations/`). What Zotero
+does and why Gamma took what it took:
+[research/citations.md](../research/citations.md). The record
 itself and how it is looked up: [paper_metadata.md](paper_metadata.md);
 the BibTeX entry and the export dialog: [import_export.md](import_export.md#bibliography).
 
@@ -29,22 +30,24 @@ prints and the record lacked before migration step 72
   whitespace, at most 2,000 characters (`meta_fields.clean_url`; a
   `javascript:` address, a relative path or a bare word is "").
 
-A record holds each only when it has a value, so a record without them is
-the record of before them and its BibTeX entry is byte for byte the same.
-The writers: the lookups (doi.org and Crossref give `issue`,
-`container-title-short` as `journal_abbr` unless it is the journal's own
-title, and `date` from `issued` when it names a month, `_csl_cited`; arXiv
-gives a preprint's `date`, the day its first version went up, and none to
-a paper it marks as published, `journal_ref`), a Connector clip's page
-record (the Connector sends the date tag as the page wrote it;
-`web_record` reads it through `web_page.normalize_date` and
-`meta_fields.parse_date` and keeps `issue`, `journal_abbr` and a `date`
-that agrees with the year, [extension.md](extension.md#detection)), a hand edit
-(`metadata_update`, [paper_metadata.md](paper_metadata.md#metadata-fetch--edit--cite)),
-the Zotero link's pull, which drops a date its pulled year disagrees with
-([zotero_sync.md](zotero_sync.md)), and step 72, which gave every record
-the issue and month its cached BibTeX entry already held
-([migrations.md](migrations.md)).
+A record holds each key only when it has a value. A record without them
+is the record from before them, and its BibTeX entry is byte for byte the
+same. The writers:
+
+- the lookups: doi.org and Crossref give `issue`, `container-title-short`
+  as `journal_abbr` (unless it is the journal's own title), and `date`
+  from `issued` when it names a month (`_csl_cited`). arXiv dates a
+  preprint by the day its first version went up, and a paper it marks as
+  published (`journal_ref`) not at all;
+- a Connector clip's page record. The Connector sends the date tag as the
+  page wrote it, which `web_record` reads through `web_page.normalize_date`
+  and `meta_fields.parse_date`; it keeps `issue`, `journal_abbr` and a
+  `date` that agrees with the year ([extension.md](extension.md#detection));
+- a hand edit (`metadata_update`, [paper_metadata.md](paper_metadata.md#metadata-fetch--edit--cite));
+- the Zotero link's pull, which drops a date its pulled year disagrees
+  with ([zotero_sync.md](zotero_sync.md));
+- migration step 72, which gave every record the issue and month its
+  cached BibTeX entry already held ([migrations.md](migrations.md)).
 
 **Date and year agree.** The year stays the field every reader has: a
 BibTeX key, a Zotero item and the popover's Year were built from it. So
@@ -84,42 +87,8 @@ Zotero's own would. The code is the reference; in outline:
   publisher, `arXiv:<id>` its number, its abstract page its URL and
   `10.48550/arXiv.<id>` its DOI when it has none of its own. Another
   preprint's venue (bioRxiv, SSRN) is its publisher.
-- **Names** are split once for every format (`names.name_parts`: last,
-  given, suffix, with the suffix kept apart as Zotero keeps it, read in
-  Zotero's place for it too, the first name: "Martin Luther, Jr. King",
-  and in BibTeX's, "King, Jr., Martin Luther"); a name of one word or an
-  organisation (a word such as Collaboration, Office, Bureau, Survey or
-  Ministry in it, `names._ORG_RE`) stays whole, except that one such word
-  that is a surname too (Bureau, Office, Panel, Fund, Center, Centre)
-  alone before the comma of "Last, First" is a person's surname ("Bureau,
-  Jean", `names._SURNAME_ORG`), and so are Bureau, Office, Panel and Fund,
-  which made no organisation before release 72, after one given name
-  ("Jean Bureau", as every name stored then reads; "U.S. Census Bureau"
-  stays an organisation). A source that keeps two name fields (a
-  Zotero item, the RDF import, doi.org and Crossref, a page's Highwire
-  `citation_author` "Last, First", its comma with a space after it or
-  none) is stored "First Last" while that
-  splits back to its surname and "Last, First" where it would not
-  (`names.join_name`: "Pereira Campos, Jorge Fernando", "Den Hengst,
-  Floris", and "Bureau, Anna Maria", which "Anna Maria Bureau" would read
-  as an organisation's; a suffix in the first name as BibTeX reads it, "King,
-  Jr., Martin Luther"), so a surname of two words or with a capitalized
-  particle cites as Zotero cites it. A record keeps one string per author,
-  so Zotero's single-field flag is not kept: an organisation the word list
-  misses reads as a person. The popover's Authors row joins the names with
-  "; ", and its save sends the row split at each semicolon, a row of one
-  comma and no semicolon as one "Last, First" name (`libraryUtils.js`
-  `authorsFromRow`); any other row goes as typed and the server splits it
-  at commas and " and ", keeping a stored "Last, First" name whole
-  (`routers/metadata.py` `_split_authors`). Text that lists names puts
-  "; " between them (`names.author_list`, `libraryUtils.js` `authorList`:
-  the cite tool's and the AI context's records, an exported PDF's and a
-  Notion page's line, the page picker, the Properties panel), and a
-  Markdown export's front matter lists them as a block list. A citation
-  pill's label and the AI's page lines show the surname a reference prints
-  ("Pereira Campos", "van der Berg"; `names.family_name`, `libraryUtils.js`
-  `familyName`); the link dialog's match reads the last word before any
-  comma (`authorSurname`).
+- **Names** are split once for every format (`names.name_parts`,
+  [Names](#names) below).
 - **CSL JSON** (`csl_item`, CSL data schema 1.0.2): `id` and
   `citation-key` are the citation key; types `article-journal`,
   `paper-conference`, `article` (a preprint), `chapter`, `book`, `thesis`,
@@ -136,19 +105,23 @@ Zotero's own would. The code is the reference; in outline:
   record holds is kept, its URL too: whether a style prints it is the
   renderer's choice. `csl_json` writes an array, two-space indented, the
   characters as they are.
-- **RIS** (`ris_entry`): `TY` by Zotero's `exportTypeMap` (JOUR, CONF, CHAP,
-  BOOK, THES, RPRT, SLIDE, and GEN for a preprint and a document), the
-  venue as `T2` (a conference paper's as `C3`), `PY` the year and `DA` the
-  date as `YYYY/MM/DD/` (`2021///` for a year alone, a year that is no
-  number as `///in press`), pages
-  as `SP`/`EP` (a range split at `-`, `--` or any other dash,
-  `bibtex.PAGE_RANGE_RE`, which the CSL `page` and BibTeX's `--` read too), `J2` the abbreviation, `ID` the
-  citation key, in Zotero's tag order. A preprint's `arXiv:<id>` number
-  has no tag, as in Zotero's export (Zotero reads an `M1` back as a
-  journal article's issue); its `UR` and `DO` name it. Lines end in CR LF and a record in
-  `ER  - `; a file is the records a blank line apart.
-- **BibLaTeX** (`biblatex_entry`, written by `bibtex.format_entry` with the
-  `bibtex.BIBLATEX` dialect): `@article` with `journaltitle`,
+- **RIS** (`ris_entry`), in Zotero's tag order:
+  - `TY` by Zotero's `exportTypeMap`: JOUR, CONF, CHAP, BOOK, THES, RPRT,
+    SLIDE, and GEN for a preprint and a document;
+  - the venue as `T2`, a conference paper's as `C3`;
+  - `PY` the year, and `DA` the date as `YYYY/MM/DD/` (`2021///` for a
+    year alone, `///in press` for a year that is no number);
+  - pages as `SP`/`EP`, a range split at `-`, `--` or any other dash
+    (`bibtex_format.PAGE_RANGE_RE`, which the CSL `page` and BibTeX's `--` read
+    too);
+  - `J2` the abbreviation, `ID` the citation key.
+
+  A preprint's `arXiv:<id>` number has no tag, as in Zotero's export:
+  Zotero reads an `M1` back as a journal article's issue. Its `UR` and
+  `DO` name it. Lines end in CR LF and a record in `ER  - `; a file is the
+  records a blank line apart.
+- **BibLaTeX** (`biblatex_entry`, written by `bibtex_format.format_entry`
+  with the `bibtex_format.BIBLATEX` dialect): `@article` with `journaltitle`,
   `shortjournal` and the issue as `number`; an arXiv preprint `@online`
   with `eprinttype = arxiv`; `@thesis` and `@report` with their `type`
   and `institution`; a conference paper, a chapter and a book as in BibTeX,
@@ -167,7 +140,7 @@ Zotero's own would. The code is the reference; in outline:
   export braces a single-field name; bare, BibTeX takes "Collaboration"
   for a surname and splits a name at an `and` of its own); a cached entry
   gets the braces when it is printed.
-- **Case** (both dialects, `bibtex.protect_case`): a word of a `title`,
+- **Case** (both dialects, `bibtex_case.protect_case`): a word of a `title`,
   `booktitle`, `shorttitle` or `series` with a capital after its first
   letter is braced, `{GI}-type`, `{KiDS}`, `{eBOSS}`, `$\Lambda$ {CDM}`,
   Zotero's BibLaTeX rule, so plainnat or biblatex's sentence case keeps
@@ -180,6 +153,50 @@ Zotero's own would. The code is the reference; in outline:
 Every format is keyed by the BibTeX entry's key, so a document cites one
 key from any of the files: a `.bib` key is a BibLaTeX key, an RIS `ID` and
 a CSL JSON `id`.
+
+### Names
+
+`names.name_parts` reads a name as last name, given name and suffix:
+
+- The suffix is kept apart, as Zotero keeps it. It is also read in
+  Zotero's place for it, the first name ("Martin Luther, Jr. King"), and
+  in BibTeX's ("King, Jr., Martin Luther").
+- A name of one word stays whole, and so does an organisation's: one with
+  a word such as Collaboration, Office, Bureau, Survey or Ministry in it
+  (`names._ORG_RE`).
+- Six of those words are surnames too (Bureau, Office, Panel, Fund,
+  Center, Centre: `names._SURNAME_ORG`). One of them alone before the
+  comma of "Last, First" is a person's surname ("Bureau, Jean").
+- Bureau, Office, Panel and Fund made no organisation before release 72,
+  so after one given name they are a person's surname too ("Jean Bureau",
+  as every name stored then reads). "U.S. Census Bureau" stays an
+  organisation.
+
+A source that keeps a name in two fields (a Zotero item, the RDF import,
+doi.org and Crossref, a page's Highwire `citation_author` "Last, First")
+is stored as `names.join_name` joins it: "First Last" while that splits
+back to its surname, else "Last, First" ("Pereira Campos, Jorge
+Fernando", "Den Hengst, Floris"; "Bureau, Anna Maria", which "Anna Maria
+Bureau" would read as an organisation's). A suffix in the first name goes
+where BibTeX reads it, "King, Jr., Martin Luther". So a surname of two
+words, or one with a capitalized particle, cites as Zotero cites it. A
+record keeps one string per author, so Zotero's single-field flag is not
+kept: an organisation the word list misses reads as a person.
+
+The popover's Authors row joins the names with "; ". Its save sends the
+row split at each semicolon, and a row of one comma and no semicolon as
+one "Last, First" name (`libraryUtils.js` `authorsFromRow`). Any other row
+goes as typed, and the server splits it at commas and " and ", keeping a
+stored "Last, First" name whole (`routers/metadata.py` `_split_authors`).
+
+Text that lists names puts "; " between them (`names.author_list`,
+`libraryUtils.js` `authorList`): the cite tool's and the AI context's
+records, an exported PDF's and a Notion page's line, the page picker and
+the Properties panel. A Markdown export's front matter lists them as a
+block list. A citation pill's label and the AI's page lines show the
+surname a reference prints, "Pereira Campos" or "van der Berg"
+(`names.family_name`, `libraryUtils.js` `familyName`). The link dialog's
+match reads the last word before any comma (`authorSurname`).
 
 ## The bibliography answer
 
@@ -217,7 +234,7 @@ order asked**, which a numeric style numbers by, and `text` is those
 entries in that order laid out as the format's file (a `.bib` without its
 head comment, an `.ris`'s records, one CSL JSON array). The keys are made
 unique over the pages' key-sorted list; with `key_folder`, over that
-folder's papers first (`bibtex.unique_keys`), so a copy made inside a
+folder's papers first (`bibtex_keys.unique_keys`), so a copy made inside a
 folder carries the keys the folder's `.bib` has, and an asked page outside
 the folder is keyed after them and around them: a key pinned on it that
 one of the folder's papers holds takes the suffix.
@@ -288,26 +305,33 @@ Zotero's "Include URLs of paper articles in references", off by default.
 The CSL JSON file keeps it.
 
 **Sanitizing.** citeproc's escaper leaves quotes in attribute values
-alone, so a link's address, an item's URL or DOI, is the way an item could
-reach the markup: the renderer's copy writes their `"` as `%22`. Every HTML
-render goes through DOMPurify before anything shows, copies or saves it:
-the tags `div span i b sup sub br a`, the attributes `href class style`;
-an `a` keeps its `href` alone, and only an http(s) one; a `class` stays
-only when it is citeproc's own (`csl-…`, `nocase`); a `style` is dropped
-when it could load something (`url(`, `@import`, `image-set(`,
-`expression(`, `element(`, `src(`, a backslash: `svgSanitize.js`
-`CSS_LOADER`, the one definition of that rule). The places that show it
-(`citations/CitationHtml.jsx`, which the share popover, the metadata
-popover's Reference, the Settings preview and the Export dialog's
-reference list use) show a screen variant of it (`screenHtml`), never
-what is copied: the style's print spacing (APA's `line-height: 2`,
-Chicago's blank line between entries) is dropped for the app's line
-height (`--lh-ui` in the popovers, `--lh-read` elsewhere) and an entry
-gap, the hanging indent moves from the list onto each entry (so a marked
-entry's tint holds its first line), and a link's text may break after
-`//` and before a single `/`, as the Chicago Manual breaks
-an address. One rule styles it in both themes (`.citeHtml` in app.css:
-links in the accent, a label column such as IEEE's `[1]` never broken).
+alone, so a link's address (an item's URL or DOI) is the way an item could
+reach the markup. The renderer's copy writes their `"` as `%22`. Every
+HTML render goes through DOMPurify before anything shows, copies or saves
+it:
+
+- the tags `div span i b sup sub br a` and the attributes `href class style`;
+- an `a` keeps its `href` alone, and only an http(s) one;
+- a `class` stays only when it is citeproc's own (`csl-…`, `nocase`);
+- a `style` is dropped when it could load something: `url(`, `@import`,
+  `image-set(`, `expression(`, `element(`, `src(` or a backslash
+  (`svgSanitize.js` `CSS_LOADER`, the one definition of that rule).
+
+**On screen.** `citations/CitationHtml.jsx` shows the render in the share
+popover, the metadata popover's Reference, the Settings preview and the
+Export dialog's reference list. It shows a screen variant (`screenHtml`),
+never what is copied:
+
+- the style's print spacing (APA's `line-height: 2`, Chicago's blank line
+  between entries) gives way to the app's line height (`--lh-ui` in the
+  popovers, `--lh-read` elsewhere) and an entry gap;
+- the hanging indent moves from the list onto each entry, so a marked
+  entry's tint holds its first line;
+- a link's text may break after `//` and before a single `/`, as the
+  Chicago Manual breaks an address.
+
+One rule styles it in both themes (`.citeHtml` in app.css): links in the
+accent, and a label column such as IEEE's `[1]` never broken.
 
 ### Styles and locales
 
@@ -371,26 +395,31 @@ the Quick Copy format make) and reads the answer of that plan's format:
 The page menu (a page, the library's selection, a Pages inside row, a
 Files window row) has a citation group of its own where an acted-on page
 has a record (`CitationMenuRows`, [ui-design.md](ui-design.md#menus-and-submenus)):
-**Copy citation** (the citation in the text, only while Quick Copy is the
-style, as Zotero shows it), **Copy bibliography** under the Quick Copy
-format's label (`formats.quickCopyLabel`: "Copy as RIS", "Copy \cite{…}"),
-and **Copy as ▸** with every other format and style in labelled groups
-(`CitationMenuRows.copyAsGroups` and `citeRules.copyAsRows`): Formats
-(BibTeX, BibLaTeX, RIS, CSL JSON), Cite keys (`cite{…}`, Pandoc, Typst),
-Your styles (the default, marked *default*, and the added ones), then
-Other styles, the other bundled ones, each group named by its heading for
-a screen reader (`MenuGroup`). A folder's menu has the same group, without
-Copy citation, for every paper filed in it or below it, where one of them
-has a record (`useCitations` `hasRecordIn`). Opening the page menu prefetches the engine, the
-added styles and the answer its rows copy from; a folder's waits for the
-click. A selection is copied in the order the list shows it, not the order
-it was clicked in (`citeRules.inListOrder`), and with the folder the
-library shows as `key_folder`. The status pill says what was copied (the
-citation itself while it is 60 characters at most, "Copied (Smith & Doe,
-2023).", else "Citation copied (Chicago 18th (notes))."; "Bibliography of
-3 papers copied (APA 7th)."; "Copied as BibTeX.", `saidOfRender`) and how
-many pages had no record ("2 of 5 pages have no paper metadata.",
-`skippedNote`).
+
+- **Copy citation**, the citation in the text, only while Quick Copy is
+  the style, as Zotero shows it;
+- **Copy bibliography** under the Quick Copy format's label
+  (`formats.quickCopyLabel`: "Copy as RIS", "Copy \cite{…}");
+- **Copy as ▸** with every other format and style in labelled groups:
+  Formats (BibTeX, BibLaTeX, RIS, CSL JSON) and Cite keys (`cite{…}`,
+  Pandoc, Typst), `formats.copyAsGroups`; Your styles (the default, marked
+  *default*, and the added ones) and Other styles, the other bundled ones,
+  `citeRules.copyAsRows`. A screen reader names each row's group
+  (`MenuGroup`).
+
+A folder's menu has the same group, without Copy citation, for every
+paper filed in it or below it, where one of them has a record
+(`useCitations` `hasRecordIn`). Opening the page menu prefetches the
+engine, the added styles and the answer its rows copy from; a folder's
+waits for the click. A selection is copied in the order the list shows
+it, not the order it was clicked in (`citeRules.inListOrder`), with the
+folder the library shows as `key_folder`.
+
+The status pill says what was copied (`saidOfRender`): the citation itself
+while it is 60 characters at most ("Copied (Smith & Doe, 2023)."), else
+"Citation copied (Chicago 18th (notes)).", "Bibliography of 3 papers
+copied (APA 7th)." or "Copied as BibTeX.". It adds how many pages had no
+record ("2 of 5 pages have no paper metadata.", `skippedNote`).
 
 Two commands do the same from the keyboard (`app/appCommands.js`, the
 Library group, shown while `citePicks > 0`: a selection of which one page
@@ -409,27 +438,32 @@ commands act on (the library's selection).
 ### The share popover
 
 The page's Citation section (`CitationShareSection`,
-[ui-design.md](ui-design.md#the-share-popover)): the **Reference** in the
-default style, copied rich through `copyPage` as every copy is, with the
-record's provenance and a style picker (a `MenuSelect` with
-`CitationChoices.styleMenuProps`: the account's added styles first under
-Your styles, then the bundled ones in sections by class, ending, for an
-account, in More styles…, which opens Settings → Citations; its trigger
-names the style short, `styleLabel`: "APA 7th", "Chicago 18th (notes)",
-an added style's title or, past 28 characters, its title-short; picking a
-style there sets the account's default, so the status pill says "Citations
-now use IEEE." with Undo, `useCitations.setStyle`); **Copy citation** with the
-in-text citation beside it on two lines at most, except for a numeric
-style, whose `[1]` means nothing alone; the slide citation (with no AI
-service connected, a line saying one writes it and Set up AI…); the
-BibTeX entry the `.bib` export prints. The section's action, **Copy as
-▾**, copies the page in BibLaTeX, RIS, CSL JSON (Formats) and the key
-commands (Cite keys). The popover asks for the
-page's answer when it opens and again when the stored entry or the record
-changes, and also for a page with a stored entry and no record. An answer
-with no entry (a stored entry that is no valid BibTeX, and no record)
-shows the no-metadata hint in place of the Reference, without Copy as or
-the in-text row (`shareLoaded`).
+[ui-design.md](ui-design.md#the-share-popover)), from the top:
+
+- the **Reference** in the default style, copied rich through `copyPage`
+  as every copy is, with the record's provenance and a style picker;
+- **Copy citation**, with the in-text citation beside it on two lines at
+  most, except for a numeric style, whose `[1]` means nothing alone;
+- the slide citation; with no AI service connected, a line saying one
+  writes it, and Set up AI…;
+- the BibTeX entry the `.bib` export prints.
+
+The style picker is a `MenuSelect` with `CitationChoices.styleMenuProps`:
+the account's added styles first under Your styles, then the bundled ones
+in sections by class. For an account it ends in More styles…, which opens
+Settings → Citations. Its trigger names the style short (`render.js`
+`styleLabel`): "APA 7th", "Chicago 18th (notes)", an added style's title
+or, past 28 characters, its title-short. A style picked there becomes the
+account's default, and the status pill says "Citations now use IEEE."
+with Undo (`useCitations.setStyle`).
+
+The section's action, **Copy as ▾**, copies the page in BibLaTeX, RIS,
+CSL JSON (Formats) and the key commands (Cite keys). The popover asks for
+the page's answer when it opens, and again when the stored entry or the
+record changes; a page with a stored entry and no record is asked for
+too. An answer with no entry (a stored entry that is no valid BibTeX, and
+no record) shows the no-metadata hint in place of the Reference, without
+Copy as or the in-text row (`shareLoaded`).
 
 ### The metadata popover's Reference
 
@@ -485,26 +519,31 @@ render; it rejects with the payload's own failure.
 ## Settings → Citations and the style store
 
 The pane (`settings/SettingsCitations.jsx`, [settings.md](settings.md)):
-**Citations**, the account's tag, with Style (a preview of a fixed sample:
-a journal article by one author with a German title, one by two, a book),
-Language (disabled with "Set by the style" when the style has its own
-locale; its menu leads with the likely languages, the one chosen, English
-(US and UK) and the interface's, then All languages), and Quick Copy (its
-menu as Zotero's Item Format: "Citation style (APA 7th)", then Formats
-and Cite keys); then **Your styles**, the styles the account added, each
-with its class, Use (or the In use tag) and remove, **Add style…** and the
-CSL credit. A long menu opens scrolled to its checked row (`MenuSelect`). `citations/CitationChoices.jsx` holds what the pane, the share
-popover and the Export dialog's reference list share:
-`useAddedStyles` (citationApi's list; the pane reads it again on each
-visit with the held list on show, so only a first visit says Loading…),
-`styleMenuProps` (a Style `MenuSelect`'s props) and `CitationLanguageRow`.
-`settings/CitationStyles.jsx` is the Add style dialog: a search of the
-repository 250 ms after typing pauses, each result with its class
-(`citeRules.styleKindLabel`) and Add (or Included, Added), in a box of one
-height so the dialog stays put while typing, and **Add from file…** in its
-footer, the way in while downloads are off, when it is the main button;
-the other button is Close, Done once something was added. An add or a
-removal changes citationApi's list in place, so the app's copies and the
+
+- **Citations**, the account's tag: Style, with a preview of a fixed
+  sample (a journal article by one author with a German title, one by
+  two, a book); Language, disabled with "Set by the style" when the style
+  has its own locale; and Quick Copy, its menu as Zotero's Item Format
+  ("Citation style (APA 7th)", then Formats and Cite keys). The Language
+  menu leads with the likely languages (the one chosen, English as the US
+  and Britain write it, the interface's), then All languages.
+- **Your styles**, the styles the account added, each with its class, Use
+  (or the In use tag) and remove; **Add style…** and the CSL credit.
+
+A long menu opens scrolled to its checked row (`MenuSelect`).
+`citations/CitationChoices.jsx` holds what the pane, the share popover and
+the Export dialog's reference list share: `useAddedStyles`, `styleMenuProps`
+(a Style `MenuSelect`'s props) and `CitationLanguageRow`. `useAddedStyles`
+reads citationApi's list; the pane reads it again on each visit with the
+held list on show, so only a first visit says Loading….
+
+`settings/CitationStyles.jsx` is the Add style dialog. It searches the
+repository 250 ms after typing pauses and lists each result with its
+class (`citeRules.styleKindLabel`) and Add (or Included, Added). The
+results sit in a box of one height, so the dialog stays put while typing.
+**Add from file…** is in its footer, the main button while downloads are
+off; the other button is Close, Done once something was added. An add or
+a removal changes citationApi's list in place, so the app's copies and the
 Export dialog see it at once.
 
 **The store.** An account adds styles on its server, from the CSL

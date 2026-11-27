@@ -40,14 +40,10 @@ export function OnlineServicesSettings({ setStatus }) {
 }
 
 export function WorkFolderSettings({ setStatus }) {
-  const { options, error, save } = useServerOptions({ setStatus });
+  const { options, error, saveNumber } = useServerOptions({ setStatus });
   if (!options?.work_folders) return null;
-  const [lo, hi] = options.ranges.vault_keep_mb;
-  async function commit(raw) {
-    const n = Number.parseInt(String(raw).trim(), 10);
-    if (!Number.isFinite(n) || n < lo || n > hi || n === options.vault_keep_mb) return; // the box shows the stored value again
-    await save({ vault_keep_mb: n }, t("Work folders now keep files up to {n} MB.", { n }));
-  }
+  const [lo] = options.ranges.vault_keep_mb;
+  const commit = (raw) => saveNumber("vault_keep_mb", raw, (n) => t("Work folders now keep files up to {n} MB.", { n }));
   return (
     <Section title={t("Work folders")}>
       <Row icon={FolderIcon} label={t("Largest file a work folder keeps")}

@@ -26,9 +26,7 @@ connection, a 5xx) raises RefreshUnavailable and the tokens are kept.
 
 import base64
 import hashlib
-import http.server
 import json
-import os
 import secrets
 import threading
 import time
@@ -36,7 +34,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import html_page, net_proxy
+from . import net_proxy, oauth_callback
 from .logbuf import log
 
 AUTH_BASE = "https://auth.openai.com"
@@ -316,7 +314,7 @@ def begin(owner, *, local: bool = False, device: bool = False) -> dict:
         for k in [k for k, v in _PENDING.items() if not _live(v, now)]:
             del _PENDING[k]
         _PENDING[state] = rec
-    if local and not _listen():
+    if local and not _listener.open(CALLBACK_PORT):
         with _LOCK:
             rec["local"] = False
     if device and not rec["local"]:
@@ -387,9 +385,6 @@ def redeem(owner, state: str, callback: str = "") -> dict:
 
 # --- the redirect, caught on this machine --------------------------------------
 
-_server = None  # the running listener, under _LOCK
-
-
 def _capture(query: dict) -> tuple[bool, str]:
     """Take a redirect's code for the sign-in its state names: (ok, what the
     browser tab says)."""
@@ -419,58 +414,10 @@ def _capture(query: dict) -> tuple[bool, str]:
     return False, error
 
 
-class _CallbackHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        parts = urllib.parse.urlsplit(self.path)
-        if parts.path != "/auth/callback":
-            self.send_error(404)
-            return
-        ok, message = _capture({k: v[0] for k, v in urllib.parse.parse_qs(parts.query).items()})
-        body = html_page.page("Signed in to ChatGPT" if ok else "The ChatGPT sign-in did not finish",
-                              message or "Gamma is connected. You can close this tab.").encode()
-        self.send_response(200 if ok else 400)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        for name, value in html_page.headers().items():
-            self.send_header(name, value)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args):  # the server log is logbuf's
-        pass
-
-
-class _CallbackServer(http.server.HTTPServer):
-    # Windows' SO_REUSEADDR would let this bind a port another program
-    # (Codex CLI's own login) is listening on; elsewhere it only skips
-    # TIME_WAIT, which a second sign-in soon after the first needs.
-    allow_reuse_address = os.name != "nt"
-    timeout = 1
-
-
-def _listen() -> bool:
-    """Listen on localhost:1455 while a sign-in on this machine waits; False
-    when the port is taken (Codex CLI's own login, another Gamma server)."""
-    global _server
-    with _LOCK:
-        if _server is not None:
-            return True
-        try:
-            _server = _CallbackServer(("127.0.0.1", CALLBACK_PORT), _CallbackHandler)
-        except OSError as e:
-            log.info(f"[chatgpt-oauth] localhost:{CALLBACK_PORT} is taken ({e}); the address will be pasted")
-            return False
-        threading.Thread(target=_serve, args=(_server,), name="chatgpt-callback", daemon=True).start()
-    return True
-
-
-def _serve(server) -> None:
-    global _server
-    while True:
-        server.handle_request()
-        with _LOCK:
-            now = time.time()
-            if not any(r["local"] and not r["oauth"] and _live(r, now) for r in _PENDING.values()):
-                _server = None
-                server.server_close()
-                return
+# Codex CLI's registered redirect, localhost:1455 (CALLBACK_PORT): taken by
+# Codex CLI's own login or another Gamma server, the address is pasted.
+_listener = oauth_callback.Listener(
+    name="chatgpt-oauth", path="/auth/callback", lock=_LOCK,
+    waiting=lambda: any(r["local"] and not r["oauth"] and _live(r, time.time()) for r in _PENDING.values()),
+    capture=_capture, titles=("Signed in to ChatGPT", "The ChatGPT sign-in did not finish"),
+    done="Gamma is connected. You can close this tab.")

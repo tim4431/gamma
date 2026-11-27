@@ -16,7 +16,7 @@
 // settings, saved or not (POST /api/admin/offsite/browse).
 // docs/dev/settings.md.
 import React from "react";
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { DialogButtons, Field, FormNotice, PasswordInput, Row, SubDialog, TestResult } from "./SettingsKit";
 import { FolderBrowserDialog } from "../explorer/FolderBrowser.jsx";
 import { fmtWhen } from "./SettingsBackups";
@@ -29,7 +29,6 @@ import { t, tn } from "../shared/i18n/i18n.js";
 
 const BUCKET_READ = STORE.bucket.read;
 const ENDPOINT = `${API}${BUCKET_READ}`;
-const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
 
 // The dialog's copy of the saved settings. The secret starts empty: empty
 // keeps the stored one.
@@ -54,14 +53,14 @@ const prefixPath = (prefix) => prefix.trim().replace(/^\/+|\/+$/g, "");
 // dialog's settings (`fields`, payload's): its prefix left out, which is
 // what the browser chooses.
 function bucketSource({ prefix: _prefix, ...fields }) {
-  return { name: fields.bucket, icon: CloudIcon, list: (path) => apiJson(`${ENDPOINT}/browse`, json("POST", { ...fields, path })) };
+  return { name: fields.bucket, icon: CloudIcon, list: (path) => apiJson(`${ENDPOINT}/browse`, jsonInit("POST", { ...fields, path })) };
 }
 
 // One listing of the bucket: `body` the unsaved fields, null the settings in
 // force (the environment's). Never throws: {ok, message}.
 async function tryBucket(body) {
   try {
-    const value = await apiJson(`${ENDPOINT}/test`, json("POST", body));
+    const value = await apiJson(`${ENDPOINT}/test`, jsonInit("POST", body));
     return { ok: !!value.ok, message: value.message || (value.ok ? t("Connected") : t("Could not connect")) };
   } catch (err) { return { ok: false, message: err.message }; }
 }
@@ -103,7 +102,7 @@ function BucketDialog({ settings, onClose, onSaved }) {
     if (busy) return;
     setBusy(true); setError("");
     try {
-      onSaved(await apiJson(ENDPOINT, json("PUT", payload(draft))));
+      onSaved(await apiJson(ENDPOINT, jsonInit("PUT", payload(draft))));
     } catch (err) { setError(err.message); setBusy(false); }
   }
   async function runTest() {
@@ -182,7 +181,7 @@ export function BucketRow({ setStatus }) {
   async function copyNow() {
     setStarting(true); setError("");
     try {
-      const value = await apiJson(`${ENDPOINT}/run`, json("POST"));
+      const value = await apiJson(`${ENDPOINT}/run`, jsonInit("POST"));
       if (value.started) { setRound((r) => ({ ...r, running: true })); setStatus?.(t("Copying to the bucket now.")); }
       else setError(value.message || t("No round started."));
     } catch (err) { setError(err.message); }

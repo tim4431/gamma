@@ -469,9 +469,9 @@
 .setPickEmpty { padding: 6px 8px; font-size: var(--fs-2xs); color: var(--text-muted); }
 /* A dialog with a members list inside scrolls its body, not the overlay. */
 .subDialog .settingsForm { overflow-y: auto; min-height: 0; }
-/* Backups › Google Drive's Connect (BackupDrive.jsx): the link that copies
-   the code and opens Google's page, drawn as the dialog's button. */
-.driveOpenGoogle { align-self: flex-start; gap: var(--space-2); text-decoration: none; }
+/* Backups › a cloud's Connect (BackupCloud.jsx): the link that opens the
+   service's page (and copies the code), drawn as the dialog's button. */
+.cloudOpenPage { align-self: flex-start; gap: var(--space-2); text-decoration: none; }
 /* Backups › Cloud copies' dialogs (CloudCopies.jsx): wider, the list
    scrolling under its bar of filters. */
 .reportModal.cloudCopies { width: min(640px, calc(100vw - 32px)); }

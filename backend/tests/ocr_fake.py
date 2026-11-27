@@ -1,5 +1,5 @@
 """A fake text recognition engine for the tests of the ``ocr`` run, its
-API and the quotes it respells (gamma/pdf_ocr.py, routers/ocr.py,
+API and the quotes it respells (gamma/ocr_run.py, routers/ocr.py,
 highlight_relocate ``respell_quotes``): Tesseract's part played by MuPDF's
 reading of the printed page ``ocr_fixtures.PRINTED`` draws, so a run reads
 every scanned page of the fixtures in a blink and exactly.

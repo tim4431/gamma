@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 
 from .. import import_staging, jobs, snapshot_copies, upload_parts, workspace_copy, workspaces, ws_backup
 from ..auth import require_user_id, requested_ws
-from ..db import account_id, connect_pages_db, connect_users_db, page_now, ws_dir
+from ..db import account_id, connect_pages_db, connect_users_db, ws_dir
 from ..downloads import TempFileResponse, temp_file
 from ..storage import display_filename
 from .workspaces import _member

@@ -11,6 +11,8 @@
 // responses), so the second open is warm too. The /api/pdf proxy streams from
 // its upstream and cannot answer ranges: it always downloads whole.
 
+import { fileHash } from "../documents/pageDocument.js";
+
 // Above this an uncached upload is opened by range requests.
 export const WHOLE_MAX_BYTES = 12 * 1024 * 1024;
 // pdf.js range chunk. 256 KB: a page's objects usually sit within one or two.
@@ -25,6 +27,11 @@ export function docIdOf(url) {
   const m = /^\/api\/uploads\/([0-9a-f]+)\.pdf(?:[?#]|$)/.exec(url || "");
   return m ? m[1] : null;
 }
+
+// The id a page's document at `url` keeps its recognized text under, as the
+// viewer registers it (pdf/ocrState.js): the stored file's hash, else the
+// upload the URL names, else null.
+export const ocrDocId = (doc, url) => fileHash(doc) || docIdOf(url);
 
 // The address a proxy URL reads (`/api/pdf?source_url=<address>`, any other
 // query: save=1, share=, annots=), else null.

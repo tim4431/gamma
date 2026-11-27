@@ -63,18 +63,18 @@ from ..ai_context import (
 from ..ai_permissions import permission_state
 from ..ai_protocols import DEFAULT_MAX_TOKENS
 from ..ai_protocols.base import reasoning_text, truncated_stop
+from ..ai_roles import ModelUnavailable, import_roles, resolve_model as _resolve_model, set_roles
 from ..ai_settings import (
     MAX_MODELS_LEN,
     MAX_NAME_LEN,
     MAX_PROVIDERS,
     MAX_TOOL_REASON,
-    ModelUnavailable,
     ai_runtime,
     billing_of,
     clear_refresh_backoff,
+    entry_base_url,
     entry_models,
     forget_tool_check,
-    import_roles,
     is_oauth_protocol as _is_oauth_protocol,
     is_server_id,
     key_optional,
@@ -89,10 +89,8 @@ from ..ai_settings import (
     provider_label,
     renew_rejected,
     require_ai_runtime,
-    resolve_model as _resolve_model,
     save_tool_check,
     server_entries_for,
-    set_roles,
     shared_allowance,
     stored_tool_check,
     transcriber_for,
@@ -630,7 +628,7 @@ class ModelRolesRequest(BaseModel):
 @router.put("/ai/models/roles")
 def ai_model_roles(payload: ModelRolesRequest, request: Request):
     """Set the model some tasks use, and add or remove favorites, in one
-    write of the account's ``ai-models`` pref (ai_settings.set_roles): 400
+    write of the account's ``ai-models`` pref (ai_roles.set_roles): 400
     for a pick not offered or past 50 favorites; a chat pick clears
     ``chat_migrated``. Any account, a guest's too (among the models it may
     use); never a link visitor or an integration token."""
@@ -651,7 +649,7 @@ class ModelImportRequest(BaseModel):
 @router.post("/ai/models/import")
 def ai_model_import(payload: ModelImportRequest, request: Request):
     """The client's one-time move of a browser's own picks into the
-    account (ai_settings.import_roles): each taken only while the account's
+    account (ai_roles.import_roles): each taken only while the account's
     is unset (chat also while it holds step 71's pick), atomically; a pick
     not offered is skipped. {taken, roles, favorites, chat_migrated}."""
     user_id = require_user_id(request)
@@ -1077,14 +1075,6 @@ def ai_provider_test(provider_id: str, request: Request, payload: AIProviderTest
     return _probe_entry(user_id, entry, payload.model if payload else "", tools_model=tools_model)
 
 
-def _entry_conf(entry: dict) -> dict:
-    """A saved entry's protocol and effective base URL: what tells its
-    service preset (and so its quota reader) apart."""
-    proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
-    base = ((entry.get("base_url") or "").strip() or (proto.base_url if proto else "")).rstrip("/")
-    return {"protocol": entry.get("protocol"), "base_url": base}
-
-
 # Sync def: this read-only account call runs in FastAPI's threadpool.
 @router.post("/ai/providers/{provider_id}/usage")
 def ai_provider_usage(provider_id: str, request: Request):
@@ -1101,7 +1091,8 @@ def ai_provider_usage(provider_id: str, request: Request):
     entry = _saved_entry(request, user_id, provider_id)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
-    reader = ai_protocols.quota_reader(_entry_conf(entry))
+    # The protocol and the endpoint tell its service preset, and so its reader, apart.
+    reader = ai_protocols.quota_reader({"protocol": entry.get("protocol"), "base_url": entry_base_url(entry)})
     if reader is None:
         return {"available": False,
                 "reason": "This API-key provider does not expose a standard remaining-usage percentage."}
@@ -1967,9 +1958,7 @@ def ai_revert_change(payload: AIRevert, request: Request):
         return ai_revert.revert_change(ws, payload.kind, payload.block_id, payload.revert,
                                        force=payload.force, redo=payload.redo, actor=actor_of(request))
     except ai_revert.RevertError as e:
-        return JSONResponse(status_code=e.status, content={
-            "detail": e.detail, **({"conflict": e.conflict} if e.conflict else {}),
-            **({"preview": e.preview} if e.preview else {})})
+        return JSONResponse(status_code=e.status, content=e.body())
 
 
 class AIChatContextRequest(AIChatRequest):

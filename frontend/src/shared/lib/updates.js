@@ -13,8 +13,8 @@ import { t } from "../i18n/i18n.js";
 // Store (desktop/main.js keeps the same address); the Mac App Store's
 // listing of Gamma; TestFlight, which the iPad shell hands to the system.
 export const STORE_UPDATES_URL = "ms-windows-store://downloadsandupdates";
-export const MAS_URL = "https://apps.apple.com/app/id6814705181";
-export const TESTFLIGHT_URL = "itms-beta://";
+const MAS_URL = "https://apps.apple.com/app/id6814705181";
+const TESTFLIGHT_URL = "itms-beta://";
 
 const code = (text) => React.createElement("code", null, text);
 

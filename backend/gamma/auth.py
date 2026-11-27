@@ -83,15 +83,20 @@ def _hsts(request: Request) -> bool:
     return _is_https(request) and host_scope.literal(request.url.hostname or "") == host_scope.NAME
 
 
+# The baseline hardening headers of every response (``_apply_security_headers``;
+# gamma/standby.py's too). Deliberately conservative: a resource-restricting
+# CSP would break the SPA, so only frame-ancestors (clickjacking), nosniff
+# and the referrer policy.
+SECURITY_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "SAMEORIGIN",
+                    "Referrer-Policy": "no-referrer", "Content-Security-Policy": "frame-ancestors 'self'"}
+
+
 def _apply_security_headers(request: Request, response) -> None:
-    """Baseline hardening headers on every response. Deliberately conservative:
-    a resource-restricting CSP would break the SPA, so we only set
-    frame-ancestors (clickjacking) plus nosniff / referrer / (conditional) HSTS."""
+    """``SECURITY_HEADERS`` on every response, HSTS where it applies, and a
+    share read's CORS."""
     h = response.headers
-    h.setdefault("X-Content-Type-Options", "nosniff")
-    h.setdefault("X-Frame-Options", "SAMEORIGIN")
-    h.setdefault("Referrer-Policy", "no-referrer")
-    h.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
+    for name, value in SECURITY_HEADERS.items():
+        h.setdefault(name, value)
     if _hsts(request):
         h.setdefault("Strict-Transport-Security", "max-age=31536000")
     _apply_share_cors(request, response)

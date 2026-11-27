@@ -16,12 +16,12 @@ import { scopeOf, snapshot as translateSnapshot, span as translateSpan } from ".
 import { exportFile, exportLayout, exportPages } from "../pdf/translateExport.js";
 import { folderPapers, paperLayout } from "../pdf/folderTranslation.js";
 import { useFolderTranslations } from "../pdf/useFolderTranslations.js";
-import { docIdOf } from "../pdf/pdfSource";
+import { docIdOf, ocrDocId } from "../pdf/pdfSource";
 import * as ocrState from "../pdf/ocrState.js";
 import * as ocrRuns from "../pdf/ocrRuns.js";
 import { discardApplied, discardOutcome, discardStep, discardUndone, noteSummary, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { canJoin, joinHighlights, takesParts, withPart } from "../shared/model/highlightParts.js";
-import { waitingFor } from "../pdf/highlightWait.js";
+import { WAIT_BANNERS, waitingFor } from "../pdf/highlightWait.js";
 import { useHighlightWait } from "../pdf/useHighlightWait.js";
 import { basePixels } from "../pdf/pageRaster";
 import { DEFAULT_HIGHLIGHT, LINK_COLOR, highlightColor, normalizeColor } from "../shared/model/palette.js";
@@ -48,11 +48,11 @@ import {
   DockBar,
   DockWindow,
   GammaNavContext,
-  OpenTabs,
   PopoverAnchor,
   useCopied,
   useTextScale,
 } from "../shared/ui/Widgets";
+import { OpenTabs } from "../workspace/OpenTabs.jsx";
 import { BlockTree, _dragState } from "../editor/BlockTree";
 import { MentionClock, MentionContext } from "../editor/MentionMenu";
 import { REF_RE, refIdsOf, refLabelOf, refLabelsByBlock } from "../editor/refLabels.js";
@@ -4013,7 +4013,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     if (openPopover !== "meta" || !docId || shareMode) { setPdfTextInfo(null); return; }
     checkPdfText();
-  }, [openPopover, docId, ocrState.revision(fileHash(doc) || docIdOf(pdfUrl))]);
+  }, [openPopover, docId, ocrState.revision(ocrDocId(doc, pdfUrl))]);
 
   // Modal preview of what the AI actually gets to read.
   const [pdfTextPreview, setPdfTextPreview] = useState(null); // null | {loading} | {text}
@@ -5171,7 +5171,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // translation, the menu rows and the metadata popover follow; and the jobs, whose
     // end (the server's own run of an upload, done between two listings) is said
     onOcr: (msg) => {
-      ocrState.refresh(msg?.doc_id || fileHash(doc) || docIdOf(pdfUrl));
+      ocrState.refresh(msg?.doc_id || ocrDocId(doc, pdfUrl));
       if (msg?.doc_id) tasks.expectEnd(ocrState.fileJobs(msg.doc_id));
     },
   });
@@ -8565,7 +8565,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Another page, or another file on this one, ends a move or an extension.
   // The commands are stable, so BlockRow's memo holds.
   const hlWait = useHighlightWait(`${focusedBlockId || ""}\n${docId || ""}\n${doc?.url || ""}`);
-  const attachModeBlockId = waitingFor(hlWait.wait, "attach");
   const moveHighlightId = waitingFor(hlWait.wait, "move");
   const extendHighlightId = waitingFor(hlWait.wait, "extend");
   const { startAttach: startAttachMode, startMove: startHighlightMove, startExtend: startHighlightExtend, startReviewMove } = hlWait;
@@ -8739,7 +8738,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const { recognize: ocrRow, forget: ocrDrop } = ocrState.useOcrMenu({ docId: fileHash(doc),
     offered: isPdf(doc) && !readOnly && !shareMode && !authUser?.is_guest, capability: serverConfig?.ocr || null,
     jobs: tasks.jobs, translated: pdfTransState.translated && pdfTransState.url === pdfUrl });
-  const ocrNonce = ocrState.useOcrNonce(fileHash(doc) || docIdOf(pdfUrl) || "");
+  const ocrNonce = ocrState.useOcrNonce(ocrDocId(doc, pdfUrl) || "");
   // A PDF read where it lies on this computer (gamma/linked_files.py), or a
   // work folder's file, whose PDF is its file's wherever the server keeps
   // the bytes: no other file replaces it from the Document menu.
@@ -14184,24 +14183,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onRemove={lib.organize && openRules.trash ? deleteOpenPage : null}
           onDismiss={vault.dismissBanner} />
       ) : null}
-      {attachModeBlockId && (
-        <div className="attachModeBanner">
-          {t("Click a PDF highlight to link it")}
+      {hlWait.wait ? (
+        <div className="attachModeBanner" data-move-highlight={moveHighlightId || undefined} data-extend-highlight={extendHighlightId || undefined}>
+          {t(WAIT_BANNERS[hlWait.wait.kind])}
           <button onClick={hlWait.end}>{t("Cancel")}</button>
         </div>
-      )}
-      {moveHighlightId && (
-        <div className="attachModeBanner" data-move-highlight={moveHighlightId}>
-          {t("Select the text where this highlight belongs")}
-          <button onClick={hlWait.end}>{t("Cancel")}</button>
-        </div>
-      )}
-      {extendHighlightId && (
-        <div className="attachModeBanner" data-extend-highlight={extendHighlightId}>
-          {t("Select text to add to this highlight, or press another highlight on its page to join them")}
-          <button onClick={hlWait.end}>{t("Cancel")}</button>
-        </div>
-      )}
+      ) : null}
       {transMenu && (
         <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)} aria-label={t("Translate")}>
           {translateRows(() => setTransMenu(null))}

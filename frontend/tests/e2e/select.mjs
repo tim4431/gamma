@@ -315,6 +315,7 @@ export const RULES = [
   // (citations: the Bibliography card's formats, its downloads and its Formatted list)
   ["frontend/src/transfers/transferFormats.js", [...EXPORTS, "sub-pages", "citations"]],
   ["frontend/src/transfers/ImportExport.jsx", [...EXPORTS, "sub-pages", "citations"]],
+  ["frontend/src/transfers/BibliographyReview.jsx", [...EXPORTS, "citations"]],
   ["frontend/src/transfers/importReview.js", [...EXPORTS, "sub-pages"]],
   ["frontend/src/transfers/ImportTree.jsx", [...EXPORTS, "sub-pages"]],
   // the bibliography answers (the GET preview, the POST of a selection) that every citation copy

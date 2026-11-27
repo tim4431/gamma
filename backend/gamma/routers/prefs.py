@@ -53,7 +53,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import cloud_sync
-from ..ai_settings import AI_MODELS_PREF_KEY, AI_SETTINGS_PREF_KEY
+from ..ai_roles import AI_MODELS_PREF_KEY
+from ..ai_settings import AI_SETTINGS_PREF_KEY
 from ..search_services import PREF_KEY as SEARCH_PREF_KEY
 from ..skills import PREF_KEY as SKILLS_PREF_KEY
 from ..translate_engines import ENGINES_PREF_KEY

@@ -138,7 +138,7 @@ export async function citationScenarios({ server, browser, makePdf, step, until,
   const setPrefs = (set) => user.api("/api/prefs/profile", { method: "PATCH", body: { set } });
   const prefs = async () => (await user.api("/api/prefs/profile")).value || {};
 
-  // The Bibliography card (transfers/ImportExport.jsx BibliographyReview): the
+  // The Bibliography card (transfers/BibliographyReview.jsx): the
   // review's Format row switches the right pane between the formats' entries
   // of the paper picked; a server format exports as a job whose file is the
   // one the review read (and Copy all copied), with that format's next step;

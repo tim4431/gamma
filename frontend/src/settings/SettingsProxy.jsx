@@ -12,7 +12,7 @@
 // pane is read-only there. The desktop app's own windows are not the
 // server's traffic and keep following the OS. docs/dev/network_proxy.md.
 import React from "react";
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { composing } from "../shared/lib/hotkeys.js";
 import { Empty, FormNotice, PaneHead, PasswordInput, Row, Section, Segmented, TestResult, Toggle, useDraftOf, useSettingsDraft } from "./SettingsKit";
@@ -22,7 +22,6 @@ import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t } from "../shared/i18n/i18n.js";
 
 const ENDPOINT = `${API}/admin/proxy`;
-const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const MODES = [["system", T("Use system settings")], ["none", T("No proxy")], ["manual", T("Manual")]];
 
 // The draft of the saved settings. The password starts empty: empty keeps
@@ -64,7 +63,7 @@ function modeHint(mode, system) {
 // One Test. Never throws: a refusal (an address the server cannot read)
 // is one failed line.
 async function tryRoutes(body) {
-  try { return (await apiJson(`${ENDPOINT}/test`, json("POST", body))).results || []; }
+  try { return (await apiJson(`${ENDPOINT}/test`, jsonInit("POST", body))).results || []; }
   catch (err) { return [{ ok: false, error: err.message }]; }
 }
 
@@ -123,7 +122,7 @@ export function ProxySettings({ setStatus }) {
     if (!dirty || busy) return;
     setBusy(true); setError("");
     try {
-      const value = await apiJson(ENDPOINT, json("PUT", payload(draft, lookups)));
+      const value = await apiJson(ENDPOINT, jsonInit("PUT", payload(draft, lookups)));
       proxy.set(value); setDraft(fromSaved(value));
       setStatus?.(t("Proxy settings saved."));
     } catch (err) { setError(err.message); }

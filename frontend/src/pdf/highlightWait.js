@@ -12,7 +12,17 @@
 //
 // Starting one ends the one before, so one banner shows and the next press
 // or selection means one thing. Escape ends it.
+import { T } from "../shared/i18n/i18n.js";
+
 export const WAIT_KINDS = Object.freeze(["attach", "move", "extend"]);
+
+// What the banner over the page says while each waits (translated where
+// it shows).
+export const WAIT_BANNERS = Object.freeze({
+  attach: T("Click a PDF highlight to link it"),
+  move: T("Select the text where this highlight belongs"),
+  extend: T("Select text to add to this highlight, or press another highlight on its page to join them"),
+});
 
 // The wait for `kind` on block `id`; null (none) for no id or an unknown kind.
 export const startWait = (kind, id) => (id && WAIT_KINDS.includes(kind) ? { kind, id } : null);

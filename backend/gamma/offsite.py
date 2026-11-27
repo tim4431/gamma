@@ -1,7 +1,7 @@
 """The bucket, and the off-site rounds that copy the databases and the
-uploaded files to it (docs/dev/debugging.md "Snapshots and copies in a
-bucket"). The app always works on its local files; the bucket is a backup
-target only.
+uploaded files to it (docs/dev/backups.md "Snapshots and copies in a
+bucket", docs/dev/debugging.md "The off-site rounds"). The app always works
+on its local files; the bucket is a backup target only.
 
 The bucket (``settings``, the one place that merges its two sources): an
 admin sets it up in Settings → Backups (``save``: users.db ``settings`` key
@@ -950,7 +950,7 @@ def litestream_config() -> tuple[str, int]:
     lines = ["# Litestream's configuration for Gamma's databases, written by `manage.py litestream-config`",
              f"# at {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())} with an entry for each database there was.",
              "# Litestream does not watch this file: write it again and restart Litestream whenever a",
-             "# workspace is added or deleted. docs/dev/debugging.md \"Snapshots and copies in a bucket\"."]
+             "# workspace is added or deleted. docs/dev/debugging.md \"Litestream\"."]
     if conf["access_key"]:
         lines += ["access-key-id: '${GAMMA_S3_ACCESS_KEY}'", "secret-access-key: '${GAMMA_S3_SECRET_KEY}'"]
     lines.append("dbs:")

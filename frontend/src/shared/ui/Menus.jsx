@@ -186,8 +186,9 @@ function MenuLabel({ id, children }) {
 }
 
 // A MenuLabel over the rows it heads, which a group named by it holds, so a
-// screen reader says the heading with each of them: an ActionMenu's
-// `{heading}`, the Copy as ▸ flyout's formats and styles.
+// screen reader says the heading with each of them: a MenuSelect's heading
+// and sections, an ActionMenu's `{heading}`, the Copy as ▸ flyout's
+// formats and styles.
 function MenuGroup({ label, children }) {
   const id = useId();
   return (
@@ -417,8 +418,9 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
     </button>
   );
   // A menu holding more than one choice keeps each one's radios in a group
-  // named by its heading, so each has its own checked row.
-  const choices = (headingId, rows) => (headingId ? <div role="group" aria-labelledby={headingId}>{rows}</div> : rows);
+  // named by its heading (MenuGroup), so each has its own checked row.
+  const mainRows = () => options.map((option) => choice(option, option[0] === value, onChange,
+    locked ? { title: locked } : null, say));
   // A menu longer than it can show opens on the choice: the first checked
   // row in its middle (a style far down its class).
   const opened = !!menu && !listbox;
@@ -453,14 +455,11 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
         : menu ? (
         <ContextMenu x={menu.x} y={menu.y} anchorRight={!start} anchorBottom={up} onClose={close} ignoreRef={triggerRef}
           className="uiSelectMenu" aria-labelledby={id}>
-          {heading ? <MenuLabel id={`${id}-0`}>{heading}</MenuLabel> : null}
-          {choices(heading ? `${id}-0` : null, options.map((option) => choice(option, option[0] === value, onChange,
-            locked ? { title: locked } : null, say)))}
-          {sections.map((section, i) => (
-            <React.Fragment key={section.label}>
-              <MenuLabel id={`${id}-${i + 1}`}>{section.label}</MenuLabel>
-              {choices(`${id}-${i + 1}`, section.options.map((option) => choice(option, option[0] === section.value, section.onChange, null, say)))}
-            </React.Fragment>
+          {heading ? <MenuGroup label={heading}>{mainRows()}</MenuGroup> : mainRows()}
+          {sections.map((section) => (
+            <MenuGroup key={section.label} label={section.label}>
+              {section.options.map((option) => choice(option, option[0] === section.value, section.onChange, null, say))}
+            </MenuGroup>
           ))}
           {actions.length ? <MenuDivider /> : null}
           {actionRows(actions, close)}

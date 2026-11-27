@@ -155,114 +155,130 @@ which the widget and the rendered chip share.
 ## Page links with words of their own
 
 `[[id|words]]` is a `[[id]]` link that shows `words` in place of its
-target's title or first line, the way Obsidian and MediaWiki write a link's
-display text (Dendron reverses the two, Roam and Logseq write
-`[words]([[page]])`). It still links by id, so a renamed page keeps it, and
-it counts in backlinks. The rules:
+target's title or first line. The order is Obsidian's and MediaWiki's
+(Dendron reverses the two, Roam and Logseq write `[words]([[page]])`). It
+links by id, so a renamed page keeps it, and it counts in backlinks. The
+rules:
 
-- The id comes first; the words run to the `]]`, with no bracket or line
-  break in them. In a table's row the pipe is `\|`, as Obsidian writes it,
-  since the table tools split cells on a bare `|` (`mdScan.js`
-  `splitCells`); both spellings read the same.
+- The id comes first. The words run to the `]]`, with no bracket or line
+  break in them.
+- In a table's row the pipe is `\|`, as Obsidian writes it, since the table
+  tools split cells on a bare `|` (`mdScan.js` `splitCells`). Both
+  spellings read the same.
 - Blank words (`[[id| ]]`) are none: the chip shows its target's label.
 - An embed's words are none: `![[id|x]]` embeds the block as `![[id]]` does.
 - A hand-typed `[[title|words]]` that no page answers is a dashed unlinked
   chip showing its words.
 
 The words are set in the link's card ("The link card" below): its ✎, then
-Text. By hand: pick the page in the `[[` picker, then type `|words` before
-the `]]`; or type `[[Exact title|words]]`, which links when one page has
-that title. A `|` typed in the picker's query closes it, since what follows
-is the link's words. The chip shows the words; the editor's chip has what
-it names as its hover title (`refTargetTitle`), the rendered one its card.
-The caret touching a link in the editor shows its source.
-
-## The link card
-
-Every link in a note's text has one card, the citation pill's preview made
-general (`shared/ui/LinkCard.jsx`): a page or note link, a web link (with a
-label or bare), a link into this library and a citation. An uploaded file
-keeps its chip's own menu (Add to library, Download), and a work folder's
-path link its own.
-
-- **What it says** (`describeLink`): a bold title (the page's title, the
-  page a note is on, the site's title from `/api/link-preview`, the cited
-  paper), a muted line (what and where: "Page · Physics", "Note", the
-  author and the address shortened, "PDF page 3"), the note's text or the
-  citation's quote, and "Open page ↵", "Open note ↵", "Open link ↗" or
-  "Open in PDF ↵".
-- **Where the note may be edited**, three quiet buttons follow it: Edit
-  (✎), Copy link and Remove link. Copy link copies the page's own link for a
-  page or note link, the address otherwise.
-- **Edit** turns the card into its form. Text is the link's words, the
-  target's own as its placeholder: empty words show the title, and a page
-  link then follows a rename. Link is the target's token; typing into it,
-  or clearing it, searches as the `[[` picker does (`useRefRows`: pages,
-  then notes), and an address, a DOI or an arXiv id offers "Link to …"
-  first (`isLinkInput`). Enter picks a row, then saves; Escape steps back.
-  Saving writes the Markdown (`linkEdit.js` `linkMarkdown`): a page or a
-  note as `[[id]]` or `[[id|words]]` (`\|` in a table's row), an address as
-  `[words](url)` or, with no words, the address alone (`<url>` when a bare
-  one would lose a character); a web link given a page becomes a page link
-  and back. Remove link leaves the words as text, a page link of none its
-  title; a bare address has no Remove.
-- **How it opens.** In a rendered note, the chat and comments, a hover
-  after a moment or the focus previews it, and a right-click or a held
-  finger pins it (`LinkHover`, `menuPress`, as Gamma opens a menu); a
-  click still opens the link, and the pointer can cross into the card
-  (`menuAim`). A pinned card closes on a press elsewhere or Escape. In the
-  note editor the card shows, pinned, under the link the caret stands
-  strictly inside (a press, the arrow keys); typing hides it, and Escape
-  closes it before it closes the editor. Ctrl+K and the Link buttons of
-  the selection toolbar and the editing bar open its form on the link the
-  caret is on, or on the selected words for a new link, the cursor in Link
-  (`linkCardHost.js`). The form's fields take the focus without ending the
-  editing session; a press outside both ends both.
-- **A web link's chip.** In the rendered view and the note editor alike, a
-  web link is a chip (BlockTree.jsx `LinkChip`, BlockCmEditor.jsx
-  `LinkChipWidget`): the site's icon and `webLinkLabel`'s words, a
-  Markdown link's own, else GitHub's readable name, the site's title or
-  the host. The editor shows a link's source only while an end of the
-  selection stands inside it (the arrow keys step in) or while it is being
-  typed: typed or deleted in, it stays source until the caret leaves it
-  (`typedLink`). One the note opened with, the card wrote or a paste put
-  there is a chip from the start, and a caret at its edge keeps it. A press
-  on the editor's chip puts the caret after it and shows its card, pinned;
-  with Ctrl or Cmd it opens the link. The address is its hover title.
-- **The site's title** (`/api/link-preview`, backend
-  `gamma/link_preview.py`, asked once per address by `loadSitePreview`):
-  YouTube, X, Reddit, TikTok, Vimeo and Spotify answer through their
-  oEmbed endpoints (an X post's text is its title); any other page is
-  fetched with a browser's headers in the reader's language, and its head
-  read: `og:title`, else `twitter:title`, else `<title>`, with the site's
-  name cut from either end ("…_哔哩哔哩_bilibili", "GitHub - …"), and its
-  `author`. A page that is not the one asked for (an HTTP error, a
-  redirect to a sign-in, visitor, check or 404 page or to the home page)
-  and a title that is only the site's name or an error's give none, and
-  the chip shows the host. What each platform answers a server:
-  [research/link-previews.md](../research/link-previews.md).
-- **Which link a rendered card edits.** The rendered view knows a link by
-  its target only, so BlockMarkdown counts its links per target as it
-  renders them, and the nth link of a target is the nth of the source's
-  (`linkEdit.js` `linkSpans`, `linkKey`, `nthLinkSpan`: the same targets,
-  outside code and math, a bare address ending where GFM ends it). One the
-  scan cannot find offers no edit.
-
-An address pasted over selected words links them (`pastedLink`), in every
-note editor: `[words](url)`, a copied link to a page or a note of this
-library `[[id|words]]`. Not inside code or math, nor for words over more
-than one line or holding a link, nor with files on the clipboard; one
-undo takes the paste back whole. With nothing selected an address pastes
-as before, the note row's "Paste as" menu after it.
+Text. By hand, pick the page in the `[[` picker and type `|words` before
+the `]]`, or type `[[Exact title|words]]`, which links when one page has
+that title. A `|` typed in the picker's query closes the picker, since what
+follows is the link's words. The chip shows the words. In the editor its
+hover title names the target (`refTargetTitle`), and in the rendered view
+its card does. The caret touching a link in the editor shows its source.
 
 `frontend/src/editor/refLabels.js` (`REF_RE`, `EMBED_RE`, `CHIP_RE`,
 `refWords`) and `backend/gamma/note_markup.py` (`BLOCK_REF_RE`,
-`ref_alias`, `ref_token`) hold the one syntax for every reader. A link's
-words reach every reader that writes a link as text: the readable Markdown,
-Obsidian (`[[Title|words]]`), Notion (a link with those words, never a page
-block, whose title would be the page's), PDF and Zotero exports, the Inbox's
-snippets ([import_export.md](import_export.md)). Folder sync carries them
-both ways ([synced_vaults.md](synced_vaults.md) "Links and highlights").
+`ref_alias`, `ref_token`) hold the one syntax for every reader. Every
+reader that writes a link as text keeps its words: the readable Markdown,
+Obsidian (`[[Title|words]]`), PDF and Zotero exports and the Inbox's
+snippets ([import_export.md](import_export.md)). Notion gets a link with
+those words, never a page block, whose title would be the page's. Folder
+sync carries them both ways ([synced_vaults.md](synced_vaults.md) "Links
+and highlights").
+
+## The link card
+
+Every link in a note's text has one card (`shared/ui/LinkCard.jsx`), the
+citation pill's preview made general. That covers a page or note link, a
+web link (with a label or bare), a link into this library and a citation.
+An uploaded file keeps its chip's own menu (Add to library, Download), and
+a work folder's path link its own.
+
+- **What it says** (`describeLink`), from the top:
+  - A bold title: the page's title, the page a note is on, the site's title
+    from `/api/link-preview`, or the cited paper.
+  - A muted line of what and where: "Page · Physics", "Note", the author
+    and the address shortened, "PDF page 3".
+  - The note's text or the citation's quote.
+  - "Open page ↵", "Open note ↵", "Open link ↗" or "Open in PDF ↵".
+- **Where the note may be edited**, three quiet buttons follow it: Edit
+  (✎), Copy link and Remove link. Copy link copies the page's own link for a
+  page or note link, the address otherwise.
+- **Edit** turns the card into its form.
+  - Text is the link's words, with the target's own as its placeholder.
+    Empty words show the title, so a page link follows a rename.
+  - Link is the target's token. Typing into it, or clearing it, searches as
+    the `[[` picker does (`useRefRows`: pages, then notes), and an address,
+    a DOI or an arXiv id offers "Link to …" first (`isLinkInput`).
+  - Enter picks a row, then saves. Escape steps back.
+  - Saving writes the Markdown (`linkEdit.js` `linkMarkdown`): `[[id]]` or
+    `[[id|words]]` for a page or a note (`\|` in a table's row), and
+    `[words](url)` or the address alone for an address. A bare address that
+    would lose a character is written `<url>`.
+  - A web link given a page becomes a page link, and a page link given an
+    address a web link.
+  - Remove link leaves the words as text, or the title for a page link
+    without words. A bare address has no Remove.
+- **How it opens.**
+  - In a rendered note, the chat and comments, a hover after a moment or
+    the focus previews it. A right-click or a held finger pins it
+    (`LinkHover`, `menuPress`, as Gamma opens a menu).
+  - A click opens the link, and the pointer can cross into the card
+    (`menuAim`). A pinned card closes on a press elsewhere or Escape.
+  - In the note editor the card shows, pinned, under the link the caret
+    stands strictly inside (after a press or the arrow keys). Typing hides
+    it, and Escape closes it before it closes the editor.
+  - Ctrl+K and the Link buttons of the selection toolbar and the editing
+    bar open its form (`linkCardHost.js`). The form edits the link the caret
+    is on, or links the selected words, with the cursor in Link.
+  - The form's fields take the focus without ending the editing session,
+    and a press outside both ends both. The editor's side is
+    `editor/editorLinks.jsx` (`useEditorLinkCard`).
+- **A web link's chip.** The rendered view and the note editor both draw a
+  web link as a chip (BlockTree.jsx `LinkChip`, editorLinks.jsx
+  `LinkChipWidget`).
+  - It shows the site's icon and `webLinkLabel`'s words
+    (`shared/lib/webLinks.js`): a Markdown link's own, else GitHub's
+    readable name, the site's title or the host. The address is its hover
+    title.
+  - The editor shows a link's source only while an end of the selection
+    stands inside it (the arrow keys step in) or while it is being typed.
+    A link typed or deleted into stays source until the caret leaves it
+    (`typedLink`).
+  - A link the note opened with, the card wrote or a paste put there is a
+    chip from the start, and a caret at its edge keeps it one.
+  - A press on the editor's chip puts the caret after it and shows its
+    card, pinned. With Ctrl or Cmd it opens the link.
+- **The site's title** comes from `/api/link-preview` (backend
+  `gamma/link_preview.py`), which `loadSitePreview` asks once per address.
+  - YouTube, X, Reddit, TikTok, Vimeo and Spotify answer through their
+    oEmbed endpoints. An X post's text is its title.
+  - Any other page is fetched with a browser's headers in the reader's
+    language, and its head read: `og:title`, else `twitter:title`, else
+    `<title>`, and its `author`. The site's name is cut from either end of
+    the title ("…_哔哩哔哩_bilibili", "GitHub - …").
+  - A page that is not the one asked for gives none: an HTTP error, or a
+    redirect to a sign-in, visitor, check or 404 page or to the home page.
+    Nor does a title that is only the site's name or an error's, and the
+    chip then shows the host.
+  - What each platform answers a server:
+    [research/link-previews.md](../research/link-previews.md).
+- **Which link a rendered card edits.** The rendered view knows a link by
+  its target only, so BlockMarkdown counts its links per target as it
+  renders them. The nth link of a target is the nth in the source
+  (`linkEdit.js` `linkSpans`, `linkKey`, `nthLinkSpan`).
+  - The scan reads the targets as the renderer does: outside code and math,
+    a bare address ending where GFM ends it. A link it cannot find offers
+    no edit.
+
+An address pasted over selected words links them, in every note editor
+(`pastedLink`). It makes `[words](url)`, or `[[id|words]]` for a copied
+link to a page or a note of this library. It leaves alone a selection in
+code or math, over more than one line or holding a link, and a clipboard
+with files. One undo takes the paste back whole. With nothing selected an
+address pastes as text, followed by the note row's "Paste as" chooser.
 
 ## People
 

@@ -17,7 +17,7 @@ import pytest
 
 from ai_fixtures import org  # noqa: F401  (fixture)
 from conftest import doc_props, login, make_page, make_user
-from gamma import ai_settings
+from gamma import ai_roles, ai_settings
 from gamma.db import connect_users_db
 
 SHARED = json.loads((Path(__file__).resolve().parents[2] / "tests" / "shared" / "ai_models.json")
@@ -27,11 +27,11 @@ SHARED = json.loads((Path(__file__).resolve().parents[2] / "tests" / "shared" / 
 @pytest.mark.parametrize("case", SHARED["roles"]["cases"], ids=[c["note"] for c in SHARED["roles"]["cases"]])
 def test_each_task_resolves_as_the_shared_cases_say(case):
     engines = [{"id": e} for e in case["engines"]]
-    picks = ai_settings.model_prefs(case["picks"])
-    assert ai_settings.resolve_roles(case["models"], picks, engines) == case["roles"]
+    picks = ai_roles.model_prefs(case["picks"])
+    assert ai_roles.resolve_roles(case["models"], picks, engines) == case["roles"]
     if "without" in case:
         left = [m for m in case["models"] if m["provider"] != case["without"]["provider"]]
-        assert ai_settings.resolve_roles(left, picks, engines) == case["without"]["roles"]
+        assert ai_roles.resolve_roles(left, picks, engines) == case["without"]["roles"]
 
 
 def test_the_keyless_cases_use_the_server_s_own_choices():
@@ -81,7 +81,7 @@ def two(org):
         c.delete(f"/api/ai/providers/{pid}")
     with connect_users_db() as conn:
         conn.execute("DELETE FROM user_prefs WHERE user_id = ? AND key = ?",
-                     (ids["user_id"], ai_settings.AI_MODELS_PREF_KEY))
+                     (ids["user_id"], ai_roles.AI_MODELS_PREF_KEY))
 
 
 def _roles(c):
@@ -147,16 +147,16 @@ def test_a_request_that_names_a_model_gets_it_or_model_unavailable(two):
     c, ids, a, b = two
     extra = _add(c, "b1")  # a second b1, on another connection
     rt = ai_settings.ai_runtime(ids["user_id"])
-    assert ai_settings.resolve_model(rt, f"{b}:b1", "metadata")["id"] == f"{b}:b1"
-    assert ai_settings.resolve_model(rt, "a2", "chat")["id"] == f"{a}:a2"  # a bare name one model has
+    assert ai_roles.resolve_model(rt, f"{b}:b1", "metadata")["id"] == f"{b}:b1"
+    assert ai_roles.resolve_model(rt, "a2", "chat")["id"] == f"{a}:a2"  # a bare name one model has
     for gone in ("b1", f"{b}:gone", "nowhere"):  # two have b1; the others are offered by none
-        with pytest.raises(ai_settings.ModelUnavailable):
-            ai_settings.resolve_model(rt, gone, "metadata")
+        with pytest.raises(ai_roles.ModelUnavailable):
+            ai_roles.resolve_model(rt, gone, "metadata")
     # No model named: the task's model.
     c.put("/api/ai/models/roles", json={"ink": f"{a}:a2"})
     rt = ai_settings.ai_runtime(ids["user_id"])
-    assert ai_settings.resolve_model(rt, "", "ink")["id"] == f"{a}:a2"
-    assert ai_settings.resolve_model(rt, "", "metadata")["id"] == f"{a}:a1"
+    assert ai_roles.resolve_model(rt, "", "ink")["id"] == f"{a}:a2"
+    assert ai_roles.resolve_model(rt, "", "metadata")["id"] == f"{a}:a1"
     # The chat refuses a model no longer offered with its error card's kind.
     r = c.post("/api/ai/chat", json={"prompt": "hi", "model": f"{b}:gone", "stream": True})
     assert r.status_code == 400 and r.json() == {"detail": "gone is no longer offered", "kind": "model_unavailable"}
@@ -270,7 +270,7 @@ def test_the_import_takes_only_unset_picks_in_one_write(two):
 
     def one(pick):
         start.wait()
-        taken.append((pick, ai_settings.import_roles(ids["user_id"], rt, {"metadata": pick})["taken"]))
+        taken.append((pick, ai_roles.import_roles(ids["user_id"], rt, {"metadata": pick})["taken"]))
     threads = [threading.Thread(target=one, args=(p,)) for p in (f"{a}:a1", f"{b}:b1")]
     for t in threads:
         t.start()

@@ -24,7 +24,8 @@ import json
 
 from . import zotero_fields, zotero_local, zotero_merge
 from . import zotero_remote as zr
-from .bibtex import build_entry, pinned_key
+from .bibtex import build_entry
+from .bibtex_keys import pinned_key
 from .blocks_store import BLOCK_COLUMNS, FOLDERS, LABELS, block_to_dict, label_names, new_block_id, write_lock
 from .db import connect_pages_db, page_now
 from .zotero_import import note_page

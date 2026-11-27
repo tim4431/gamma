@@ -25,7 +25,8 @@ import { CheckIcon, EyeIcon, SearchIcon, StarIcon, XIcon } from "../shared/ui/Ic
 import { composing } from "../shared/lib/hotkeys.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { t } from "../shared/i18n/i18n.js";
-import { billingLabel, followed, modelName } from "./aiModels.js";
+import { billingLabel } from "../chat/tokenUsage.js";
+import { followed, modelName } from "./aiModels.js";
 import { menuGroups, modelFacts, pickableRows } from "./modelMenu.js";
 import { ProviderLogo } from "./ProviderLogo.jsx";
 import "./modelMenu.css";

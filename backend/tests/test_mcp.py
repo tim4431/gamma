@@ -148,7 +148,7 @@ def test_results_carry_links_and_structured_content(client, connection, monkeypa
     with connect_data_db(ws) as db:
         store_doc(db, "l" * 24, [(2, normalize_text(pages[1]))])
     monkeypatch.setattr("gamma.pdf_text.iter_page_texts",
-                        lambda src, max_pages=None, start_page=1: iter(pages[start_page - 1:]))
+                        lambda src, max_pages=None, start_page=1, **_: iter(pages[start_page - 1:]))
     monkeypatch.setattr("gamma.ai_context.extract_text", extract_text)
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
     prefix = f"http://localhost/?ws={ws}"

@@ -1,4 +1,4 @@
-"""A run in a window (routers/ocr.py, gamma/pdf_ocr.py ``window_run``), on a
+"""A run in a window (routers/ocr.py, gamma/ocr_run.py ``window_run``), on a
 server that reads no text itself (``GAMMA_OCR_ENGINE=window``, as the
 mobile apps' server is): the ``ocr-tab`` job's start (who may, where, with
 what), one OCR job of a file at a time whatever its kind, what a start
@@ -26,7 +26,7 @@ from test_ocr_api import _in, scan_page
 from test_pdf_ocr_run import born_digital
 from test_pdf_ocr_store import LINES
 
-from gamma import jobs, ocr_engine, pdf_ocr, pdf_text
+from gamma import jobs, ocr_engine, ocr_run, pdf_ocr, pdf_text
 from gamma.db import connect_data_db
 from gamma.routers import ocr as ocr_router
 from gamma.routers.ocr import (APPLIED, ELSEWHERE, FORGETTING, GUESTS, ITSELF, NOT_SCANNED, OTHER_WINDOW,
@@ -62,7 +62,7 @@ def _in_window(monkeypatch):
     """Recognition on, read in the window; the run's job reports often."""
     monkeypatch.setenv("GAMMA_OCR", "on")
     monkeypatch.setenv("GAMMA_OCR_ENGINE", "window")
-    monkeypatch.setattr(pdf_ocr, "WINDOW_WAIT_S", 0.05)
+    monkeypatch.setattr(ocr_run, "WINDOW_WAIT_S", 0.05)
     pdf_text.text_cache_clear()
     yield
     pdf_text.text_cache_clear()
@@ -180,7 +180,7 @@ def test_one_ocr_job_of_a_file_at_a_time_whatever_its_kind(wendy, team):
                                 ("ocr", wendy_id, RECOGNIZING), ("ocr", victor_id, ELSEWHERE),
                                 ("ocr", jobs.WORKSPACE, RECOGNIZING)):
         gate = Gate()
-        held = jobs.start(kind, owner=owner, ws=ws, key=key, run=gate, exclusive=pdf_ocr.OCR_KINDS)
+        held = jobs.start(kind, owner=owner, ws=ws, key=key, run=gate, exclusive=ocr_run.OCR_KINDS)
         assert gate.started.wait(10)
         try:
             r = start(wendy, page_id, doc, _in(ws))
@@ -207,7 +207,7 @@ def _hold_the_job(monkeypatch):
     """The run's job held at its next look at the plan, until ``release``:
     ``(holding, release)``, two events. The windows' requests go on."""
     holding, release = threading.Event(), threading.Event()
-    real = pdf_ocr.plan_of
+    real = ocr_run.plan_of
 
     def plan_of(*args, **kwargs):
         if threading.current_thread().name.startswith("job-ocr-tab"):
@@ -215,7 +215,7 @@ def _hold_the_job(monkeypatch):
             assert release.wait(10), "the test never let the job go on"
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(pdf_ocr, "plan_of", plan_of)
+    monkeypatch.setattr(ocr_run, "plan_of", plan_of)
     return holding, release
 
 
@@ -243,7 +243,7 @@ def test_a_manual_start_joins_the_automatic_run_of_its_file(wendy, monkeypatch):
     ws = workspace_of("ow_wendy")
     gate = Gate()
     auto = jobs.start("ocr", owner=jobs.WORKSPACE, ws=ws, key=f"{ws}:{doc}", run=gate, yields=True,
-                      exclusive=pdf_ocr.OCR_KINDS, params={"page_id": page_id, "doc_id": doc, "auto": True})
+                      exclusive=ocr_run.OCR_KINDS, params={"page_id": page_id, "doc_id": doc, "auto": True})
     assert gate.started.wait(10)
     try:
         r = wendy.post("/api/jobs/ocr", json={"page_id": page_id})
@@ -276,7 +276,7 @@ def test_a_manual_start_beside_an_automatic_run_that_gave_way_is_a_run_of_its_ow
             assert hold.wait(10), "the test never let the run end"
 
     auto = jobs.start("ocr", owner=jobs.WORKSPACE, ws=ws, key=f"{ws}:{doc}", run=auto_run, yields=True,
-                      exclusive=pdf_ocr.OCR_KINDS, ended=told.append,
+                      exclusive=ocr_run.OCR_KINDS, ended=told.append,
                       params={"page_id": page_id, "doc_id": doc, "auto": True})
     waiting = []
 
@@ -327,14 +327,14 @@ def test_the_window_saying_it_is_done_applies_what_it_sent(wendy):
 
 def test_a_run_no_page_came_to_for_too_long_ends_and_keeps_what_was_sent(wendy, monkeypatch):
     page_id, doc = scan_page(wendy, joined(printed_scan_pdf(dpi=72), printed_scan_pdf(dpi=72)))
-    monkeypatch.setattr(pdf_ocr, "WINDOW_IDLE_S", 0.5)
+    monkeypatch.setattr(ocr_run, "WINDOW_IDLE_S", 0.5)
     job = started(wendy, page_id, doc)
     assert put(wendy, doc, 1, words()).status_code == 200
     ended = jobs.wait(job["id"])
     assert ended["state"] == "cancelled" and ended["progress"]["idle"] == 0.5, "nobody stopped it; nothing applied"
     found = wendy.get(f"/api/ocr/{doc}").json()
     assert (found["recognized"], found["staged"], found["todo"]) == ([], 1, 1), "page 1 waits for the next run"
-    monkeypatch.setattr(pdf_ocr, "WINDOW_IDLE_S", 600)
+    monkeypatch.setattr(ocr_run, "WINDOW_IDLE_S", 600)
     again = started(wendy, page_id, doc)
     assert wendy.get(f"/api/ocr/{doc}/plan").json()["todo"] == [2], "the next run goes on from there"
     assert put(wendy, doc, 2, words()).json()["todo"] == []
@@ -343,14 +343,14 @@ def test_a_run_no_page_came_to_for_too_long_ends_and_keeps_what_was_sent(wendy, 
 
 def test_the_idle_time_is_the_windows_not_the_servers_own_steps(wendy, monkeypatch):
     page_id, doc = scan_page(wendy)
-    monkeypatch.setattr(pdf_ocr, "WINDOW_IDLE_S", 1.0)
-    real = pdf_ocr.classify
+    monkeypatch.setattr(ocr_run, "WINDOW_IDLE_S", 1.0)
+    real = ocr_run.classify
 
     def slow(*args, **kwargs):  # a long scan read on a slow server: longer than the window may idle
         time.sleep(1.3)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(pdf_ocr, "classify", slow)
+    monkeypatch.setattr(ocr_run, "classify", slow)
     job = started(wendy, page_id, doc)
     answer = put(wendy, doc, 1, words())
     assert answer.status_code == 200, answer.text
@@ -378,13 +378,13 @@ def test_a_stop_by_its_owner_ends_the_run_and_keeps_what_was_sent(wendy):
 
 def test_a_window_takes_over_a_run_whose_job_just_started(wendy, monkeypatch):
     page_id, doc = scan_page(wendy)
-    real, go = pdf_ocr.window_run, threading.Event()
+    real, go = ocr_run.window_run, threading.Event()
 
     def late(*args, **kwargs):  # the job's thread not yet at the run's registration
         assert go.wait(10), "the test never let the run begin"
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(pdf_ocr, "window_run", late)
+    monkeypatch.setattr(ocr_run, "window_run", late)
     first = start(wendy, page_id, doc)
     assert first.status_code == 200, first.text
     try:
@@ -494,8 +494,8 @@ def test_a_page_applied_staged_before_or_sent_again(wendy, monkeypatch):
     assert put(wendy, doc, 2, words()).json() == {"outcome": "skipped", "shared": None, "todo": [3], "done": 2,
                                                   "total": 3}
     staged = []
-    real = pdf_ocr.stage_words
-    monkeypatch.setattr(pdf_ocr, "stage_words", lambda *a, **k: staged.append(a[2]) or real(*a, **k))
+    real = ocr_run.stage_words
+    monkeypatch.setattr(ocr_run, "stage_words", lambda *a, **k: staged.append(a[2]) or real(*a, **k))
     holding, release = _hold_the_job(monkeypatch)  # so it does not apply between the two sends
     assert holding.wait(10)
     try:

@@ -6,7 +6,7 @@
 // no public URL is confirmed); the secret is write-only (gamma/zotero_oauth.py
 // `app`). docs/dev/zotero_sync.md.
 import React from "react";
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { CopyField, DialogButtons, Field, FormNotice, PasswordInput, Row, Section, SubDialog } from "./SettingsKit";
 import { useSettingsRead } from "./settingsReads.js";
 import { ExternalLinkIcon, KeyIcon } from "../shared/ui/Icons";
@@ -16,7 +16,6 @@ import { T, t } from "../shared/i18n/i18n.js";
 export const ZOTERO_APP_READ = "/admin/zotero-app";
 const ENDPOINT = `${API}${ZOTERO_APP_READ}`;
 const APPS = "https://www.zotero.org/oauth/apps";
-const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
 
 // Where to register the app, the callback URL to give it, its key and its
 // secret (empty keeps the saved one, for the same key), and Remove….
@@ -30,7 +29,7 @@ function AppDialog({ app, confirm, onSaved, onRemoved, onClose }) {
     event.preventDefault();
     if (busy) return;
     setBusy(true); setError("");
-    try { onSaved(await apiJson(ENDPOINT, json("PUT", { client_key: draft.key.trim(), client_secret: draft.secret.trim() }))); }
+    try { onSaved(await apiJson(ENDPOINT, jsonInit("PUT", { client_key: draft.key.trim(), client_secret: draft.secret.trim() }))); }
     catch (err) { setError(err.message); setBusy(false); }
   }
   function remove() {
@@ -39,7 +38,7 @@ function AppDialog({ app, confirm, onSaved, onRemoved, onClose }) {
       message: t("Remove this server's Zotero app? Accounts already connected stay connected; new ones sign in through Gamma Cloud, if this server uses it, or paste a key."),
       confirmLabel: t("Remove"), danger: true,
       onConfirm: async () => {
-        try { onRemoved(await apiJson(ENDPOINT, json("DELETE"))); }
+        try { onRemoved(await apiJson(ENDPOINT, jsonInit("DELETE"))); }
         catch (err) { setError(err.message); }
       },
     });

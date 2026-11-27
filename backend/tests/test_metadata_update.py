@@ -371,7 +371,7 @@ def test_an_edit_keeps_the_key_a_stored_comma_name_was_cited_by(guest):
     """A record stored before release 72 with "Den Hengst, Floris" first,
     whose cached entry was keyed "floris2020" by the name's last word: a
     title edit builds the entry again with that key, which a .tex file
-    cites (``bibtex.rebuilt_key``); a new first author is keyed anew."""
+    cites (``bibtex_keys.rebuilt_key``); a new first author is keyed anew."""
     meta = {**PRL, "authors": ["Den Hengst, Floris"], "year": "2020"}
     old = "@article{floris2020,\n  title = {Old},\n  author = {Den Hengst, Floris},\n  year = {2020}\n}"
     page = make_page(guest, "Stored", properties={"meta": meta, "bibtex": old})

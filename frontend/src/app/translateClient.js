@@ -5,7 +5,7 @@
 // runs (app/translateFollow.js says what of them: a row per job, the
 // reading pill, how a job ended, the model hint).
 import { useEffect, useRef, useState } from "react";
-import { API, apiJson, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, jsonInit, readNdjson } from "../shared/lib/utils";
 import { t } from "../shared/i18n/i18n.js";
 import { requestFields } from "../pdf/translatePlan.js";
 import * as translateState from "../pdf/translateState.js";
@@ -157,11 +157,10 @@ export async function clearTranslations() {
 // a refusal (`termRefusal`). A changed term reaches no paragraph on screen:
 // those that use it are asked for again by Translate again, or once the
 // paper is read again.
-const termWrite = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const refused = (source) => (err) => { throw Object.assign(new Error(termRefusal(err, source)), { status: err?.status }); };
-export const addTerm = (lang, source, target) => apiJson(`${API}/translate/terms`, termWrite("POST", { lang, source, target }))
+export const addTerm = (lang, source, target) => apiJson(`${API}/translate/terms`, jsonInit("POST", { lang, source, target }))
   .catch(refused(source));
-export const editTerm = (lang, was, source, target) => apiJson(`${API}/translate/terms`, termWrite("PUT", { lang, was, source, target }))
+export const editTerm = (lang, was, source, target) => apiJson(`${API}/translate/terms`, jsonInit("PUT", { lang, was, source, target }))
   .catch(refused(source));
 
 // What a glossary write the server refused says, in the reader's language

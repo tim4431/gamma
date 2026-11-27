@@ -9,16 +9,14 @@
 // `PUT /pages/{id}/attachment {file}` for the open page. App owns the words,
 // the tasks rows and the opening of the page; this module is the routing (the
 // pure rules in fileRouting.js, node-tested) and the requests.
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { uploadAnyFile } from "../shared/lib/uploadParts.js";
 import { formatOf } from "../documents/formats.js";
 import { parseUploadUrl, storedName, uploadUrl } from "../documents/pageDocument.js";
 
 export { dropFilter, hiddenName, itemPath, routeFile, uploadName } from "./fileRouting.js";
 
-const post = (path, body, method = "POST") => apiJson(`${API}${path}`, {
-  method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-});
+const post = (path, body, method = "POST") => apiJson(`${API}${path}`, jsonInit(method, body));
 
 // The stored name of an upload-file answer ({url}).
 function storedOf(up) {

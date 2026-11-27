@@ -13,8 +13,11 @@ from conftest import make_page
 from test_metadata_verify import _paper_page
 
 from gamma import mathml
-from gamma.bibtex import (build_entry, clean_key, default_key, latex_text, normalize_entry, page_entry,
-                          rebuilt_key, record_from_entry, unique_keys)
+from gamma.bibtex import build_entry, normalize_entry, page_entry
+from gamma.bibtex_format import BIBTEX
+from gamma.bibtex_keys import clean_key, default_key, rebuilt_key, unique_keys
+from gamma.bibtex_latex import latex_text
+from gamma.bibtex_parse import parse_entry, record_from_entry
 from gamma.routers import metadata
 from gamma.routers.metadata import _title_in_text
 from gamma.textnorm import plain_text
@@ -603,14 +606,13 @@ AWKWARD_STORED = [
 
 
 def _assert_valid_bibtex(entry):
-    from gamma.bibtex import _TYPES, _VENUE, _parse
-    parsed = _parse(entry)
+    parsed = parse_entry(entry)
     assert parsed, entry
     entry_type, key, fields = parsed
-    assert entry_type in _TYPES, entry
+    assert entry_type in BIBTEX.types, entry
     assert key and key.isascii() and clean_key(key) == key, key
     names = dict(fields)
-    assert entry_type not in _VENUE or names.get(_VENUE[entry_type]), entry
+    assert entry_type not in BIBTEX.venue or names.get(BIBTEX.venue[entry_type]), entry
     for name, value in fields:
         depth = 0
         for c in value:

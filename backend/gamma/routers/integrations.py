@@ -162,7 +162,7 @@ def _token_workspaces(user_id: str, token_id: str) -> list[str]:
         raise HTTPException(404, "This connection is gone.")
     found = granted(row[0], row[1])
     mine = {w["id"] for w in list_for_user(user_id) if not w["deleting"]}
-    return [w for w in mine] if found == ALL else [w for w in found if w in mine]
+    return list(mine) if found == ALL else [w for w in found if w in mine]
 
 
 @router.get("/tokens/{token_id}/changes")
@@ -205,9 +205,7 @@ def undo_token_change(token_id: str, change_id: str, payload: ChangeUndo, reques
     try:
         return mcp_changes.undo(ws, change, actor=actor_of(request), force=payload.force)
     except RevertError as e:
-        return JSONResponse(status_code=e.status, content={
-            "detail": e.detail, **({"conflict": e.conflict} if e.conflict else {}),
-            **({"preview": e.preview} if e.preview else {})})
+        return JSONResponse(status_code=e.status, content=e.body())
 
 
 @router.delete("/tokens/{token_id}")

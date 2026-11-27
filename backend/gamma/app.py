@@ -11,8 +11,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
-from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, ocr_engine, offsite
-from . import ai_settings, reports
+from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, ocr_auto, ocr_engine, offsite
+from . import ai_roles, reports
 from . import spa, standby, sync_engine, trash, upload_gc, version, workspaces, ws_backup, zotero_stream
 from .annotations import listeners as annotation_listeners
 from .computers import channel as computer_channel
@@ -237,6 +237,16 @@ def sweep_temp() -> None:
             log.exception(failed)
 
 
+def sweep_jobs() -> None:
+    """The jobs' sweep (gamma/jobs.py ``sweep``), then the automatic text
+    recognitions left waiting started (gamma/ocr_auto.py ``resume``, which
+    never raises): at startup, after ``jobs.recover`` failed the runs a
+    restart cut short, then every ``jobs.SWEEP_INTERVAL_S``. One timer for
+    the two, as ``sweep_temp`` says why."""
+    jobs.sweep()
+    ocr_auto.resume()
+
+
 @asynccontextmanager
 async def every(seconds, fn, failed: str):
     """While the app runs: ``fn`` in a worker thread at startup, then every
@@ -315,7 +325,7 @@ def create_app() -> FastAPI:
                 every(reports.SWEEP_INTERVAL_S, reports.tick, "[reports] round failed"), \
                 every(inbox.SWEEP_INTERVAL_S, inbox.sweep, "[inbox] sweep failed"), \
                 every(ws_backup.STALE_TEMP_S, sweep_temp, "[temp] sweep failed"), \
-                every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
+                every(jobs.SWEEP_INTERVAL_S, sweep_jobs, "[jobs] sweep failed"), \
                 every(db_maintenance.EVERY_S, db_maintenance.tick, "[db] maintenance failed"), \
                 every(offsite.wait_s, offsite.tick, "[offsite] round failed"), \
                 every(folder_links.TICK_S, folder_links.tick, "[folders] round failed"), \
@@ -343,9 +353,9 @@ def create_app() -> FastAPI:
         # answers the inviter with the status the failure carries.
         return JSONResponse({"detail": str(exc)}, status_code=exc.status)
 
-    @app.exception_handler(ai_settings.ModelUnavailable)
-    async def model_unavailable(request: Request, exc: ai_settings.ModelUnavailable):
-        # A request naming a model no longer offered (ai_settings.resolve_model),
+    @app.exception_handler(ai_roles.ModelUnavailable)
+    async def model_unavailable(request: Request, exc: ai_roles.ModelUnavailable):
+        # A request naming a model no longer offered (ai_roles.resolve_model),
         # from whichever route: the 400 with its kind beside the sentence, the
         # shape the chat's error card and the translator read.
         return JSONResponse({"detail": exc.detail, "kind": exc.kind}, status_code=exc.status_code)

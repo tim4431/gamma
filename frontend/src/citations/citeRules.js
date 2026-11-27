@@ -8,7 +8,6 @@
 import { t, tn } from "../shared/i18n/i18n.js";
 import { escapeHtml } from "../shared/lib/format.js";
 import { BUNDLED_STYLES, DEFAULT_STYLE, STYLE_KINDS, isBundledStyle } from "./bundledStyles.js";
-import { QUICK_COPY_FORMATS } from "./formats.js";
 
 // --- The style in use -------------------------------------------------------------
 
@@ -103,18 +102,15 @@ export function styleSections({ added = [], current = "" } = {}) {
   return groups.filter((group) => group.options.length);
 }
 
-// The rows of a Copy as ▸ flyout, in Zotero's order: the formats (every
-// Quick Copy format but the style), then the default style and the added
-// ones, then the other bundled styles under a "Styles" label.
-// {formats: [format], mine: [{id, title}], others: [{id, title}]}.
+// The style rows of a Copy as ▸ flyout, after its formats (formats.js
+// copyAsGroups), in Zotero's order: the default style and the added ones,
+// then the other bundled styles. {mine: [{id, title}], others: [{id, title}]}.
 export function copyAsRows({ style = DEFAULT_STYLE, added = [] } = {}) {
   const styles = knownStyles(added, style);
   const mine = styles.filter((s) => s.id === style || !s.bundled);
-  const others = styles.filter((s) => s.bundled && s.id !== style).sort(byTitle);
   return {
-    formats: QUICK_COPY_FORMATS.filter((format) => format !== "style"),
     mine: [...mine.filter((s) => s.id === style), ...mine.filter((s) => s.id !== style).sort(byTitle)],
-    others,
+    others: styles.filter((s) => s.bundled && s.id !== style).sort(byTitle),
   };
 }
 

@@ -33,7 +33,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 
-from . import (ai_settings, backup_schedule, cloud_auth, cloud_sync, hosted, integrity, join_requests, logbuf,
+from . import (ai_roles, ai_settings, backup_schedule, cloud_auth, cloud_sync, hosted, integrity, join_requests, logbuf,
                reports, server_settings, sync_engine, translate_engines, version, zotero_sync)
 from .db import NOTICES_SEEN_PREF_KEY, connect_users_db, get_pref, update_pref
 from .server_settings import MB
@@ -293,15 +293,15 @@ def hosted_plan(user_id):
 
 @source()
 def ai_model_missing(user_id):
-    """Each task whose model is no longer offered (gamma/ai_settings.py, the
+    """Each task whose model is no longer offered (gamma/ai_roles.py, the
     ``ai-models`` pref: its connection removed, its model unpicked, a shared
     entry that no longer admits the account), a notice per task seen once
     per missing pick: the chat uses the first model offered meanwhile, the
     other tasks the chat model. The pref is read first, and the registry
     (built without renewing a sign-in) only when a task has a pick at
     all."""
-    prefs = ai_settings.load_model_prefs(user_id)
-    if not any(prefs[role] for role in ai_settings.ROLES):
+    prefs = ai_roles.load_model_prefs(user_id)
+    if not any(prefs[role] for role in ai_roles.ROLES):
         return []
     roles = ai_settings.model_roles(user_id)
     # The sentences are written in the call: the frontend's catalog test
@@ -311,8 +311,8 @@ def ai_model_missing(user_id):
         "metadata": "The metadata model {model} is no longer available; the chat model is used instead.",
         "translate": "The translation model {model} is no longer available; the chat model is used instead.",
         "ink": "The handwriting model {model} is no longer available; the chat model is used instead.",
-    }[role], model=ai_settings.pick_label(roles[role]["pick"]))
-        for role in ai_settings.ROLES if roles[role]["state"] == "missing"]
+    }[role], model=ai_roles.pick_label(roles[role]["pick"]))
+        for role in ai_roles.ROLES if roles[role]["state"] == "missing"]
 
 
 @source()

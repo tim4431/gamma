@@ -1,7 +1,7 @@
 """The text recognition engine: Tesseract 5.5 through tesserocr, whose wheels
 carry libtesseract and Leptonica, with the fast models for English, French
 and German (``LANGS``) in backend/tessdata (``config.tessdata_dir``; the
-folder's README names their source and hashes). gamma/pdf_ocr.py runs it on
+folder's README names their source and hashes). gamma/ocr_run.py runs it on
 the pictures of a stored PDF's scanned pages; docs/research/ocr.md, "Stage
 2", measured it against the other engines.
 

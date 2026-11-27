@@ -14,16 +14,15 @@ import React from "react";
 import { addStyle, loadStyles, removeStyle } from "../citations/citationApi.js";
 import { DEFAULT_STYLE } from "../citations/bundledStyles.js";
 import { styleInUse, styleKindLabel } from "../citations/citeRules.js";
-import { QUICK_COPY_FORMATS, formatLabel } from "../citations/formats.js";
-import { render, styleMeta } from "../citations/render.js";
-import { copyAsGroups } from "../citations/CitationMenuRows";
+import { copyAsGroups, formatLabel } from "../citations/formats.js";
+import { render, styleLabel, styleMeta } from "../citations/render.js";
 import { MenuSelect } from "../shared/ui/Menus";
 import { ClipboardIcon, PlusIcon, QuoteMarkIcon, TrashIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { Empty, FormNotice, Row, Section } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { CitationHtml } from "../citations/CitationHtml";
-import { CitationLanguageRow, styleLabel, styleMenuProps, useAddedStyles } from "../citations/CitationChoices";
+import { CitationLanguageRow, styleMenuProps, useAddedStyles } from "../citations/CitationChoices";
 import { AddStyleDialog } from "./CitationStyles";
 import { T, t } from "../shared/i18n/i18n.js";
 
@@ -79,10 +78,10 @@ const CSL_LICENSE = "CC BY-SA 3.0"; // i18n-ignore: a name
 // The Quick Copy MenuSelect's props, its menu as Zotero's Item Format is:
 // the style in use under Citation style, by its short name (`style`),
 // apart from the file formats and the key commands, each under its label
-// (CitationMenuRows copyAsGroups). Translated here: the menu shows names.
+// (formats.js copyAsGroups). Translated here: the menu shows names.
 function quickCopyProps(style, value, onChange) {
   const label = (format) => (format === "style" ? styleLabel(style) : formatLabel(format));
-  const groups = copyAsGroups(QUICK_COPY_FORMATS.filter((format) => format !== "style"));
+  const groups = copyAsGroups();
   return {
     value, onChange, names: true, display: label(value),
     heading: t("Citation style"), options: [["style", label("style")]],

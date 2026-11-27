@@ -49,7 +49,7 @@ def _bundle_env():
 
 def check_ocr() -> int:
     """``--check-ocr``: 0 when the bundled engine reads ``CHECK_WORDS``
-    back from a page drawn as a run draws one (gamma/pdf_ocr.py), else 1
+    back from a page drawn as a run draws one (gamma/ocr_run.py), else 1
     with the reason on stderr."""
     import tempfile
 

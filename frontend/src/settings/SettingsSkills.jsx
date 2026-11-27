@@ -13,7 +13,7 @@
 // read-only: the server answers a guest's writes with 403, and a guest has
 // no skills of its own.
 import React from "react";
-import { API, apiJson, fmtBytes } from "../shared/lib/utils";
+import { API, apiJson, jsonInit, fmtBytes } from "../shared/lib/utils";
 import { pickFiles } from "../shared/lib/pickFiles.js";
 import { DialogButtons, Empty, Field, FormNotice, Row, Section, SubDialog, Toggle, useDraftOf } from "./SettingsKit";
 import { refreshSkills, useSkills } from "../chat/useSkills.js";
@@ -24,7 +24,6 @@ import { BanIcon, CheckIcon, CopyIcon, EyeIcon, ImportIcon, PencilIcon, PlusIcon
 import { T, t } from "../shared/i18n/i18n.js";
 
 const ENDPOINT = `${API}/ai/skills`;
-const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const skillUrl = (id) => `${ENDPOINT}/${encodeURIComponent(id)}`;
 // One skill with its instructions (GET /api/ai/skills/{id}).
 const readSkill = (id) => apiJson(skillUrl(id));
@@ -102,8 +101,8 @@ function SkillEditor({ skill, taken, limits, onClose, onSaved, onNewer }) {
       body: draft.body, model: draft.model };
     try {
       const row = skill.id
-        ? await apiJson(skillUrl(skill.id), json("PUT", { ...fields, updated_at: skill.updated_at }))
-        : await apiJson(ENDPOINT, json("POST", fields));
+        ? await apiJson(skillUrl(skill.id), jsonInit("PUT", { ...fields, updated_at: skill.updated_at }))
+        : await apiJson(ENDPOINT, jsonInit("POST", fields));
       onSaved(row);
     } catch (err) {
       setError(err.status === 409 && err.data?.kind === "changed"
@@ -233,7 +232,7 @@ export function SkillsSettings({ canEdit, confirm, setStatus }) {
     setClash(null);
     await run("import", async () => {
       try {
-        const row = await apiJson(`${ENDPOINT}/import`, json("POST", replace ? { text, replace: true } : { text }));
+        const row = await apiJson(`${ENDPOINT}/import`, jsonInit("POST", replace ? { text, replace: true } : { text }));
         written(t("Imported /{name}.", { name: row.name }));
       } catch (err) {
         if (err.status !== 409 || err.data?.kind !== "name") throw err;
@@ -259,7 +258,7 @@ export function SkillsSettings({ canEdit, confirm, setStatus }) {
   // keeps the "on its own" choice made for it.
   function setBuiltinState(row, next) {
     run(row.id, async () => {
-      await apiJson(`${skillUrl(row.id)}/state`, json("PUT", BUILTIN_WRITES[next]));
+      await apiJson(`${skillUrl(row.id)}/state`, jsonInit("PUT", BUILTIN_WRITES[next]));
       written(builtinSaid(next, row.name));
     });
   }

@@ -22,7 +22,7 @@ import { t } from "../shared/i18n/i18n.js";
 const envHint = (name) => t("Set by {name} in the server's environment", { name });
 
 export function TextRecognitionSettings({ setStatus }) {
-  const { options, error, save } = useServerOptions({ setStatus });
+  const { options, error, save, saveNumber } = useServerOptions({ setStatus });
   // Until it is read (or when the read failed: the pane's other sections
   // over the same settings say so), nothing: the section may not be there.
   const rows = options?.text_recognition;
@@ -30,11 +30,7 @@ export function TextRecognitionSettings({ setStatus }) {
   const managed = !!options.ocr_env;
   const on = !!options.ocr;
   const [lo, hi] = options.ranges.ocr_workers;
-  async function commitWorkers(raw) {
-    const n = Number.parseInt(String(raw).trim(), 10);
-    if (!Number.isFinite(n) || n < lo || n > hi || n === options.ocr_workers) return; // the box shows the stored value again
-    await save({ ocr_workers: n }, t("Up to {n} files are recognized at once.", { n }));
-  }
+  const commitWorkers = (raw) => saveNumber("ocr_workers", raw, (n) => t("Up to {n} files are recognized at once.", { n }));
   return <Section title={t("Text recognition")}>
     {rows.switch ? (
       <Toggle icon={ScanTextIcon} label={t("Recognize text in scanned PDFs")} checked={on} disabled={managed}

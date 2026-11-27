@@ -253,7 +253,7 @@ def test_read_page_pdf_page_jumps_to_a_search_hit(org, monkeypatch):
     pages = [f"(page {i}) " + f"p{i}-body " * 10 for i in range(1, 6)]
     monkeypatch.setattr(
         "gamma.pdf_text.iter_page_texts",
-        lambda src, max_pages=None, start_page=1: iter(pages[start_page - 1:]))
+        lambda src, max_pages=None, start_page=1, **_: iter(pages[start_page - 1:]))
     monkeypatch.setattr("gamma.ai_context.extract_text", extract_text)
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
     scope = folder(ids["readout"])
@@ -290,7 +290,7 @@ def test_read_page_never_repeats_what_the_context_holds(org, monkeypatch):
     c.post("/api/blocks", json={"parent_id": ids["a"], "content": "margin remark"})
     pages = [f"(page {i}) " + f"p{i}-body " * 10 for i in range(1, 6)]
     monkeypatch.setattr("gamma.pdf_text.iter_page_texts",
-                        lambda src, max_pages=None, start_page=1: iter(pages[start_page - 1:]))
+                        lambda src, max_pages=None, start_page=1, **_: iter(pages[start_page - 1:]))
     monkeypatch.setattr("gamma.ai_context.extract_text_pages", extract_text_pages)
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
     cover = {"page_id": ids["a"], "doc_id": "d" * 24, "title": "cavity paper", "native": False,

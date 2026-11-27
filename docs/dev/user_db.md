@@ -134,7 +134,7 @@ All state is SQLite + files on disk under a data directory (env
     `{bucket, endpoint, region, access_key, secret_key, prefix}` as JSON,
     the secret key encrypted like the AI keys; an older value's `enabled`,
     `interval_s` and `keep` are read as nothing;
-    [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)), the
+    [backups.md](backups.md#snapshots-and-copies-in-a-bucket)), the
     cloud connections (`gdrive` for Google Drive, `onedrive` for
     OneDrive: `{refresh_token, email, name, folder, connected_at,
     client_id}` as JSON, the token encrypted the same way and replaced as
@@ -143,7 +143,7 @@ All state is SQLite + files on disk under a data directory (env
     `gdrive_desktop_client`, the page's, and `onedrive_client`, OneDrive's
     for both: `{client_id, client_secret}`, set by `manage.py cloud-client
     <store> [--desktop]`, a secret encrypted the same way, "" once
-    removed; both in [debugging.md](debugging.md#cloud-destinations)),
+    removed; both in [backups.md](backups.md#cloud-destinations)),
     this server's Zotero app
     (`zotero_app`: `{client_key, client_secret}`, the secret encrypted the
     same way, "" once removed; [zotero_sync.md](zotero_sync.md)) and the
@@ -684,7 +684,7 @@ All state is SQLite + files on disk under a data directory (env
   database again and lists every workspace's files in the bucket.
   `backups/.offsite/` holds a round's database copies on their way up. The
   copies live in the bucket, under `<prefix>offsite/` and
-  `<prefix>uploads/` ([debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)).
+  `<prefix>uploads/` ([debugging.md](debugging.md#the-off-site-rounds)).
 
 **The notes index.** `block_fts` in pages.db is an FTS5 table with
 external content: its content is the view `block_fts_src(rowid, block_id,
@@ -862,7 +862,7 @@ track of the ones nothing uses.
   store directly; only what works on the directory whole (a server backup,
   the off-site copy, a migration) goes past it. A bucket only ever holds
   the files' off-site copies
-  ([debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)).
+  ([backups.md](backups.md#snapshots-and-copies-in-a-bucket)).
 - **Linked files.** On the desktop app's own server a name may instead be
   a PDF read where it is on this computer: a page's document at `path`
   ([documents.md](documents.md)), whose stored name a `vaults.db`
@@ -1152,7 +1152,7 @@ each workspace's own to the server), `backups` (list, naming automatic and damag
 ones; `--create [--uploads]`, `--delete`, `--restore`, `--prune` — the
 automatic pre-upgrade snapshots only), `offsite` (`--list [ws|users]`,
 `--restore <ws|users|all> [--at <stamp>] [--uploads]`: the off-site copies
-in the bucket, [debugging.md](debugging.md) "Snapshots and copies in a bucket")
+in the bucket, [debugging.md](debugging.md) "The off-site rounds")
 and `litestream-config [--out <path>]`. Every command but `migrate`,
 `backups`, `offsite` and `litestream-config` refuses an outdated data
 directory.
@@ -1277,7 +1277,7 @@ button that leads to this pane — [settings.md](settings.md) "Notices".
 
 The bucket is set up, and the environment's off-site rounds followed, in
 Settings → Backups, not here (`/api/admin/offsite`,
-[debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)). The rounds'
+[backups.md](backups.md#snapshots-and-copies-in-a-bucket)). The rounds'
 status (`offsite.status`) reads no database: the last round is kept in
 memory and in the state file, so a restart still shows it.
 

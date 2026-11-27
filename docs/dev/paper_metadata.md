@@ -428,10 +428,10 @@ also gets a read-only Source file row (the attachment's path, with a copy
 button); replacing the PDF goes through the paperclip (detach, attach).
 
 **Citation key.** The BibTeX key is generated from the first author's surname
-and the year (`bibtex.default_key`: the name's last word as it always was,
+and the year (`bibtex_keys.default_key`: the name's last word as it always was,
 the surname's of a name `names.join_name` writes "Family, Given"; an entry
 built again keeps the key its cached entry carries while the first author
-and the year stay, `bibtex.rebuilt_key`). The popover's Cite key row pins one as
+and the year stay, `bibtex_keys.rebuilt_key`). The popover's Cite key row pins one as
 `properties.cite_key`, beside `meta` so a refetch keeps it. Empty means
 generated, and the placeholder shows the key in use. A cached fetch answers
 `bibtex.page_entry`, the entry every other surface prints, so the popover's

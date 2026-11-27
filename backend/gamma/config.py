@@ -218,7 +218,7 @@ def google_api_base() -> str:
 # desktop applications" (Microsoft's page, on the server's own computer;
 # the port is not matched), asking for Files.ReadWrite, User.Read and
 # offline_access. A public client has no secret. Registered as "Gamma PDF"
-# in the xwtim directory (docs/dev/debugging.md "OneDrive"). A server may
+# in the xwtim directory (docs/dev/backups.md "OneDrive"). A server may
 # use its own instead (manage.py cloud-client onedrive <id>); a build with
 # none reads "Not available".
 ONEDRIVE_CLIENT_ID = "180e2624-e809-4621-b4c9-6271859dc18e"

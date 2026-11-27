@@ -31,8 +31,8 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from .. import bibtex as bibtex_mod
 from .. import ink as inkmod
-from .. import (citations, comments, goodnotes_export, jobs, notability_export, notebook, notion_export, pdf_text,
-                pdf_translated, storage)
+from .. import (bibtex_keys, citations, comments, goodnotes_export, jobs, notability_export, notebook, notion_export,
+                pdf_text, pdf_translated, storage)
 from ..auth import (link_ratelimit, require_user, require_ws, resolve_ws, share_job_owner, share_lookup,
                     share_scope)
 from ..blocks_store import (
@@ -862,7 +862,7 @@ class _ZoteroBuilder(_Builder):
             "key": self._item_key(page, props),
             "title": title,
             "meta": meta or {},
-            "cite_key": bibtex_mod.pinned_key(props),
+            "cite_key": bibtex_keys.pinned_key(props),
             "tags": self.filing.tags(props),
             "folders": self.filing.folders(page["id"], props),
             "pdf_path": pdf_arc,
@@ -1317,7 +1317,7 @@ class _CitationBuilder(_Builder):
     cited by its title). Clashing citation keys are suffixed a, b, … and a
     key pinned on a page (``properties.cite_key``) keeps its exact
     spelling, so the .tex files already citing it go on working
-    (``gamma/bibtex.py``). Entries are sorted by key: an unchanged library
+    (``gamma/bibtex_keys.py``). Entries are sorted by key: an unchanged library
     re-exports byte-identically, so a bibliography kept in a repository —
     or refreshed from a share link — only shows a diff when the metadata
     changed. A page without metadata is left out and the finished export
@@ -1341,8 +1341,8 @@ class _CitationBuilder(_Builder):
             self.skip(page, "page has no paper metadata")
             return
         title = (page.get("content") or "").strip()
-        self.records.append({"text": text, "key": bibtex_mod.entry_key(text), "pinned": bool(bibtex_mod.pinned_key(props)),
-                             "page_id": page["id"], "title": title,
+        self.records.append({"text": text, "key": bibtex_keys.entry_key(text),
+                             "pinned": bool(bibtex_keys.pinned_key(props)), "page_id": page["id"], "title": title,
                              "record": citations.record(props) or {"title": title}})
 
     def keyed_records(self) -> list[dict]:
@@ -1353,9 +1353,9 @@ class _CitationBuilder(_Builder):
         the review cannot disagree with the file. (Not ``entries`` — that is
         the base class's list of zip parts.)"""
         ordered = sorted(self.records, key=lambda r: (r["key"], r["title"]))
-        first = bibtex_mod.unique_keys([r for r in ordered if r["page_id"] not in self.later])
+        first = bibtex_keys.unique_keys([r for r in ordered if r["page_id"] not in self.later])
         rest = [r for r in ordered if r["page_id"] in self.later]
-        return first + bibtex_mod.unique_keys(rest, {r["key"].lower() for r in first})
+        return first + bibtex_keys.unique_keys(rest, {r["key"].lower() for r in first})
 
     def preview(self, records: list[dict] | None = None) -> dict:
         """What the export dialog reviews and a copy takes (/api/bibliography),
@@ -1367,7 +1367,7 @@ class _CitationBuilder(_Builder):
         selection's keyed ``records``, those in their order, the file
         without a .bib's head comment; and ``name``, the export's file name
         without its suffix, which a Formatted bibliography's download takes
-        (ImportExport.jsx). An empty bibliography is data here
+        (transfers/BibliographyReview.jsx). An empty bibliography is data here
         rather than the refusal ``save`` raises, so the dialog can show the
         pages it could not cite instead of an error."""
         whole = records is None

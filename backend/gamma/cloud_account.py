@@ -1,4 +1,4 @@
-"""The server's cloud connections (docs/dev/debugging.md "Cloud
+"""The server's cloud connections (docs/dev/backups.md "Cloud
 destinations"): an admin signs in to Google Drive or OneDrive in Settings →
 Backups, and the backup tasks that copy there send it their snapshots
 (gamma/snapshot_copies.py). Like the bucket, each is the server's, not an

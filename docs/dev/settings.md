@@ -1090,7 +1090,8 @@ Library:
   [offsiteRound.js](../../frontend/src/settings/offsiteRound.js)), read
   every 3 s while it runs. `GET/PUT /api/admin/offsite`, `POST
   /api/admin/offsite/test` and `…/run`; the copies and the rounds
-  themselves: [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket).
+  themselves: [backups.md](backups.md#snapshots-and-copies-in-a-bucket),
+  [debugging.md](debugging.md#the-off-site-rounds).
   What the stores hold shows with the snapshots (`GET
   /api/admin/offsite/snapshots`, `?store=<store>` for all but the bucket,
   read again after a task's run; `useStores` in BackupDestinations.jsx
@@ -1115,7 +1116,7 @@ Library:
   alone. `GET/PUT/DELETE /api/admin/clouds/<store>`, `POST …/authorize`,
   `…/connect`, `…/poll`, `…/test`, `…/folders`, `DELETE …/connect`, `GET
   …/browse`, `…/callback`; how they work:
-  [debugging.md](debugging.md#cloud-destinations).
+  [backups.md](backups.md#cloud-destinations).
 - **Maintenance** (the pane's head says Library maintenance): workspace
   storage, rebuilding the search indexes (the notes index and the
   document text index of every PDF and text file) and the per-paper

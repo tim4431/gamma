@@ -43,7 +43,8 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 from . import storage, upload_gc
 from .auth import ZOTERO_ACTOR, ZOTERO_CLIENT
 from . import ink as inkmod
-from .bibtex import build_entry, clean_key, rebuilt_key
+from .bibtex import build_entry
+from .bibtex_keys import clean_key, rebuilt_key
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, TRASH, TREES, batch_page, block_to_dict, existing_in,
                            fetch_subtree, filing, insert_page_tree, label_names, load_props, new_block_id,
                            page_root_id, valid_block_id, write_lock)

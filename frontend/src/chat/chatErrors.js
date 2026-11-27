@@ -6,7 +6,7 @@
 // gamma/routers/ai.py, whose message goes back in the composer); a
 // connection probe adds "no_model" (an
 // entry with no model picked); "model_unavailable" is a request naming a
-// model no connection offers any more (gamma/ai_settings.py resolve_model:
+// model no connection offers any more (gamma/ai_roles.py resolve_model:
 // its connection was removed or the model unpicked since the chat read the
 // list); "network" is the browser losing Gamma
 // itself; "agent" is a computer agent's turn that failed, whose computer
