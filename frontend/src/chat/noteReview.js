@@ -43,6 +43,10 @@ const OPEN = "open";
 const KEPT = "kept";
 const UNDONE = "undone";
 export const CHANGE_STATES = { OPEN, KEPT, UNDONE };
+// Whether an action's change was taken back: the journal's word (`state`,
+// "" while unknown or no longer held), else the mark its conversation
+// saved.
+export const isUndone = (action, state) => (state ? state === UNDONE : !!action?.reverted);
 const EMPTY = [];
 
 // pages: page id → its journal rows, oldest first (each with `change_id`
@@ -59,11 +63,12 @@ let snapshot = {
 };
 // The clock marks time out by; a test hands its own. Its timer holds no
 // process open where there is one (node).
-let clock = {
+const SYSTEM_CLOCK = {
   now: () => Date.now(),
   set: (fn, ms) => { const id = setTimeout(fn, ms); id?.unref?.(); return id; },
   clear: (id) => clearTimeout(id),
 };
+let clock = SYSTEM_CLOCK;
 let expiry = null; // the timer of the next mark whose time is up
 const listeners = new Set();
 // The requests: `(path, init)` → the answer, throwing the API's error (its
@@ -191,8 +196,7 @@ function rebuilt(next) {
   const revealed = unchanged(next.revealed, new Map([...next.revealed].filter(([blockId]) => next.expanded.has(blockId))));
   const { changes, next: ends } = chains(next.pages, revealed, next.expanded, next.markLife);
   const expanded = unchanged(next.expanded, new Set([...next.expanded].filter((blockId) => changes.has(blockId))));
-  const refusals = new Map(next.refusals);
-  for (const blockId of refusals.keys()) if (!changes.has(blockId)) refusals.delete(blockId);
+  const refusals = unchanged(next.refusals, new Map([...next.refusals].filter(([blockId]) => changes.has(blockId))));
   if (expiry) clock.clear(expiry);
   expiry = Number.isFinite(ends) ? clock.set(() => { expiry = null; set(rebuilt(snapshot)); }, ends - clock.now() + 20) : null;
   return { ...next, revealed, expanded, changes, refusals };
@@ -332,8 +336,9 @@ export const noteReview = {
   getSnapshot: () => snapshot,
   // How the store reaches the server: `fn(path, init)` (app/App.jsx; tests).
   setRequest(fn) { request = fn; },
-  // The clock marks time out by: {now, set(fn, ms), clear(id)} (tests).
-  setClock(next) { clock = next; },
+  // The clock marks time out by: {now, set(fn, ms), clear(id)} (tests);
+  // none, the system's again.
+  setClock(next = SYSTEM_CLOCK) { clock = next; },
   // How long a kept change's mark stays, in ms; 0 keeps it till cleared
   // (the account's choice: ReviewMarkLife, below, which app/App.jsx
   // mounts). The pages on screen are read again: a longer time than they
@@ -473,11 +478,10 @@ export const noteReview = {
   // A reply's row was pressed: unfold the change it names in its note. One
   // the journal does not draw (gone from it, or saved before it) is drawn
   // from the reply's own record, `undo({force})` taking it back as the row
-  // does. One undone (the journal's word when it is known, else the
-  // conversation's) no longer stands: there is nothing to unfold.
+  // does. One undone (`isUndone`) no longer stands: there is nothing to
+  // unfold.
   reveal(action, { undo } = {}) {
-    const state = action?.change_id ? snapshot.states.get(action.change_id) : "";
-    if (state ? state === UNDONE : action?.reverted) return;
+    if (isUndone(action, action?.change_id ? snapshot.states.get(action.change_id) : "")) return;
     const parts = noteChanges({ ...action, reverted: false });
     if (!parts.length) return;
     const blockId = parts[0].blockId;
@@ -500,8 +504,7 @@ export const noteReview = {
     const list = [...new Set(ids)].filter(Boolean);
     if (!list.length) return;
     if (list.length === 1) {
-      const answer = await post(`/ai/changes/${encodeURIComponent(list[0])}`, { decision: "keep" });
-      settle(list, answer?.state || KEPT);
+      await noteReview.decide(list[0], "keep");
       return;
     }
     const done = new Set((await post("/ai/changes/keep", { ids: list }))?.kept || []);
@@ -522,16 +525,17 @@ export const noteReview = {
     for (const [page, rows] of snapshot.pages) pages.set(page, rows.filter((r) => !gone.has(r.change_id)));
     set(rebuilt({ ...snapshot, pages }));
   },
-  // Undo or redo one change (`decision` "undo" or "redo"): resolves once
-  // done, throws the API's refusal (chat/aiRevert.js revertRefusal reads it).
+  // Keep, undo or redo one change (`decision` "keep", "undo" or "redo"):
+  // settles by the answer's state, resolves once done, throws the API's
+  // refusal (chat/aiRevert.js revertRefusal reads it).
   async decide(id, decision, { force = false } = {}) {
     const answer = await post(`/ai/changes/${encodeURIComponent(id)}`, { decision, force });
-    settle([id], answer?.state || (decision === "redo" ? KEPT : UNDONE));
+    settle([id], answer?.state || (decision === "undo" ? UNDONE : KEPT));
     return answer;
   },
   // Keep a block's change that waits for review. Resolves to null, or to
-  // why it could not ({text, force: "", diff: null}), which every surface
-  // drawing the block then shows on its bar, as an Undo's refusal.
+  // why it could not (`failure`), which every surface drawing the block
+  // then shows on its bar, as an Undo's refusal.
   async keepBlock(blockId) {
     const change = snapshot.changes.get(blockId);
     if (!change || change.state !== OPEN) return null;
@@ -540,15 +544,13 @@ export const noteReview = {
       await noteReview.keep(waitingIds(change));
       return null;
     } catch (err) {
-      const why = { text: err?.message || String(err), force: "", diff: null };
-      set({ ...snapshot, refusals: new Map(snapshot.refusals).set(blockId, why) });
-      return why;
+      return refuse(blockId, failure(err));
     }
   },
   // Take a block's change back, its steps newest first. Resolves to null, or
   // to the refusal of the step that stopped (`refused(err)` words it: {text,
-  // force, diff}), which the block's bar then shows.
-  async undoBlock(blockId, { force = false, refused } = {}) {
+  // force, diff}; else `failure`), which the block's bar then shows.
+  async undoBlock(blockId, { force = false, refused = failure } = {}) {
     const change = snapshot.changes.get(blockId);
     if (!change) return null;
     noteReview.clearRefusal(blockId);
@@ -558,9 +560,7 @@ export const noteReview = {
       try {
         await run();
       } catch (err) {
-        const why = refused ? refused(err) : { text: err?.message || String(err), force: "" };
-        set({ ...snapshot, refusals: new Map(snapshot.refusals).set(blockId, why) });
-        return why;
+        return refuse(blockId, refused(err));
       }
     }
     if (change.undo) {
@@ -612,6 +612,13 @@ const last = (change) => change.steps[change.steps.length - 1]?.at || "";
 // it did not keep would be read again as if its state were unknown.
 const waitingIds = (change) => change.steps.filter((s) => s.state === OPEN).map((s) => s.change_id);
 const pageChanges = (pageId) => [...snapshot.changes.values()].filter((c) => c.pageId === pageId);
+// Why a block's Keep or Undo stopped, as its bar shows it: the error's
+// words, nothing to force; held for the block, and returned.
+const failure = (err) => ({ text: err?.message || String(err), force: "", diff: null });
+function refuse(blockId, why) {
+  set({ ...snapshot, refusals: new Map(snapshot.refusals).set(blockId, why) });
+  return why;
+}
 
 // Watch the page's changes while the component shows it and `enabled` (the
 // account's own: none for a viewer or through a share link): `watch`.
@@ -621,7 +628,7 @@ export function useWatchPage(pageId, enabled = true) {
 // The account's time for a kept change's mark, in minutes (aiMarkMinutes;
 // 0: till cleared), handed to the store: mounted once by app/App.jsx, it
 // draws nothing.
-export function ReviewMarkLife({ minutes = 1 }) {
+export function ReviewMarkLife({ minutes }) {
   useEffect(() => { noteReview.setMarkLife(minutes * 60000); }, [minutes]);
   return null;
 }
@@ -629,8 +636,6 @@ export function ReviewMarkLife({ minutes = 1 }) {
 // What each row reads: its own entry only, so a change elsewhere renders
 // nothing here.
 const useSelect = (fn) => useSyncExternalStore(noteReview.subscribe, fn);
-// How long a kept change's mark stays (ms; 0: till cleared).
-export const useMarkLife = () => useSelect(() => snapshot.markLife);
 // The change a block draws, whether its mark is unfolded, the refusal its
 // Undo met.
 export const useNoteChange = (blockId) => useSelect(() => snapshot.changes.get(blockId) || null);

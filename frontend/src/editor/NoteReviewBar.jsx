@@ -32,8 +32,8 @@ import { revertRefusal } from "../chat/aiRevert.js";
 
 // The bar's own presses are not the row's or the page's, which would open
 // an editor or start a drag.
-const bar = (label, children, { guide, className = "" } = {}) => (
-  <div className={`noteReviewBar${className ? ` ${className}` : ""}`} role="group" aria-label={label} data-guide={guide}
+const bar = (label, children, { guide } = {}) => (
+  <div className="noteReviewBar" role="group" aria-label={label} data-guide={guide}
     onMouseDown={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
     {children}
   </div>
@@ -51,9 +51,9 @@ export const refusedOnBar = (err) => {
 // for its bar and, with `show`, the title of its mark (a note's row, a
 // placed block on its page).
 export function changedBy(change, { show = false } = {}) {
-  const agent = change?.agent || t("Gamma AI");
-  if (change?.type === "edit") return show ? t("Edited by {agent}: show the change", { agent }) : t("Edited by {agent}", { agent });
-  if (change?.type === "move") return show ? t("Moved by {agent}: show the change", { agent }) : t("Moved by {agent}", { agent });
+  const agent = change.agent || t("Gamma AI");
+  if (change.type === "edit") return show ? t("Edited by {agent}: show the change", { agent }) : t("Edited by {agent}", { agent });
+  if (change.type === "move") return show ? t("Moved by {agent}: show the change", { agent }) : t("Moved by {agent}", { agent });
   return show ? t("Added by {agent}: show the change", { agent }) : t("Added by {agent}", { agent });
 }
 
@@ -88,7 +88,7 @@ function askWords(ask) {
 
 // The answers of the card `ask` (noteReview.ask), its own for each card;
 // an assistant's over MCP its own (chat/approvals.js remoteAnswers).
-export function AskBar({ ask, className = "" }) {
+export function AskBar({ ask }) {
   const answer = useApprovalAnswer(async (decision, note) => {
     await ask.decide(decision, note);
     noteReview.settle(ask.id);
@@ -96,17 +96,18 @@ export function AskBar({ ask, className = "" }) {
   const call = { tool: ask.tool, perm: ask.perm };
   return bar(t("Approval needed"), <>
     <span className="noteReviewLabel"><ShieldIcon size={14} />{askWords(ask)}</span>
-    <ApprovalAnswers answer={answer} call={call} agent={ask.agent || ""}
+    <ApprovalAnswers answer={answer} call={call} agent={ask.agent}
       answers={ask.remote ? remoteAnswers({ tool: ask.tool, agent: ask.agent })
         : toolAnswers({ ...call, permission: ask.permission, kind: ask.kind })} />
-  </>, { className });
+  </>);
 }
 
-export function NoteReviewBar({ change, ask, changedSince = false }) {
+// The bar of a change made (`change`, chat/noteReview.js withChange):
+// waiting for review, or kept and unfolded from its mark.
+export function NoteReviewBar({ change, changedSince = false }) {
   const [busy, setBusy] = useState(false);
-  const refusal = useRefusal(change?.blockId || "");
-  const waiting = !ask && change?.state === CHANGE_STATES.OPEN;
-  if (ask) return <AskBar key={ask.id} ask={ask} />;
+  const refusal = useRefusal(change.blockId);
+  const waiting = change.state === CHANGE_STATES.OPEN;
   const agent = change.agent || t("Gamma AI");
   // Keep and Undo resolve with why they stopped, which the store holds and
   // the bar then shows (`refusal`); neither throws.

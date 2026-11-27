@@ -51,26 +51,19 @@ test("the card's headline says what the call would do", () => {
     "Not answered in time: Move “A” to ML");
 });
 
-test("a tool call's card and its note's bar allow it with the same answers", () => {
-  const answers = toolAnswers({ tool: "edit_block", permission: "Edit note blocks", kind: "page chats" });
-  assert.deepEqual(answers.map((a) => a.decision), ["once", "chat", "always"]);
-  assert.deepEqual(answers.map((a) => a.label), ["Allow once", "Allow in this chat", "Always allow"]);
-  assert.equal(answers[0].primary, true);
-  assert.equal(answers[0].danger, false);
-  assert.equal(answers[1].title, "Don't ask again for “Edit note blocks” in this conversation");
-  assert.match(answers[2].title, /^Set “Edit note blocks” to Allow for all chats of this kind \(page chats\)\./);
-  // A deletion's Allow once is the red one.
-  assert.equal(toolAnswers({ tool: "delete_page" })[0].danger, true);
-});
-
-test("a change's card says Keep and Undo, as its note's review does; a comment's and a read's say Allow", () => {
+test("a change's card and its note's bar say Keep, its grants in the menu, and Undo; a comment's and a read's say Allow", () => {
   const change = toolAnswers({ tool: "edit_block", perm: "block_edit", permission: "Edit note blocks", kind: "page chats" });
   assert.deepEqual(change.map((a) => [a.decision, a.label, !!a.menu]),
     [["once", "Keep", false], ["chat", "Keep, and allow in this chat", true], ["always", "Keep, and always allow", true]]);
+  assert.deepEqual([change[0].primary, change[0].danger], [true, false]);
+  assert.equal(change[1].title, "Don't ask again for “Edit note blocks” in this conversation");
+  assert.match(change[2].title, /^Set “Edit note blocks” to Allow for all chats of this kind \(page chats\)\./);
   assert.deepEqual(answerWords({ tool: "edit_block", perm: "block_edit" }, "Codex"),
     { deny: "Undo", allowed: "Kept. Codex goes on…", denied: "Undone. Codex goes on without it…" });
   assert.equal(toolAnswers({ tool: "delete_block", perm: "block_edit" })[0].danger, true, "a deletion's Keep is the red one");
   assert.ok(isChangeCall("draw", "draw") && isChangeCall("highlight", "comment") && isChangeCall("rename_page", "rename"));
+  assert.deepEqual(toolAnswers({ tool: "read_page", perm: "read" }).map((a) => [a.decision, a.label, !!a.menu]),
+    [["once", "Allow once", false], ["chat", "Allow in this chat", false], ["always", "Always allow", false]]);
   for (const [tool, perm] of [["comment", "comment"], ["resolve", "comment"], ["fetch_url", "web_read"], ["read_page", "read"]]) {
     assert.equal(isChangeCall(tool, perm), false, tool);
     assert.equal(toolAnswers({ tool, perm })[0].label, "Allow once", tool);

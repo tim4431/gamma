@@ -10,7 +10,7 @@
 // land; and the states the reply's rows read.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isTextChange, noteChanges, noteReview, objectFrame, surfaceKey, withChange } from "../src/chat/noteReview.js";
+import { noteChanges, noteReview, objectFrame, surfaceKey, withChange } from "../src/chat/noteReview.js";
 
 const edit = (id, before, after, extra = {}) => ({ kind: "edit", tool: "edit_block", block_id: id, page_id: "p",
   summary: "Edited a note", revert: { before, after }, ...extra });
@@ -19,7 +19,7 @@ const create = (id, after, extra = {}) => ({ kind: "create", tool: "create_block
 const move = (id) => ({ kind: "move", tool: "move_block", block_id: id, page_id: "p", summary: "Moved a note", revert: { parent: "q" } });
 const row = (changeId, action, { at = "2026-11-25T10:00:00.000000Z", state = "open" } = {}) => ({
   ...action, id: changeId, change_id: changeId, at, state, agent: { name: "Codex" } });
-// The route's rows name their change by `id` alone (routers/ai.py ai_changes).
+// The route's rows name their change by `id` alone (GET /api/ai/changes).
 const served = (answer) => (answer?.changes ? { ...answer, changes: answer.changes.map(({ change_id, ...r }) => r) } : answer);
 
 // A fake server: answers each request with `answer(path, body)` and keeps them.
@@ -37,7 +37,8 @@ const onPage = (rows) => server((path) => (path.startsWith("/ai/changes?page_id=
 const pageReads = (asked) => asked.filter(([path]) => path.startsWith("/ai/changes?page_id=")).map(([path]) => path);
 // Every promise on its way settled (a timer comes after them).
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
-// A clock the test moves by hand (`tick`), and the store's own back.
+// A clock the test moves by hand (`tick`); noteReview.setClock() puts the
+// store's own back.
 function handClock() {
   const clock = { now: 1_000_000, timer: null };
   noteReview.setClock({ now: () => clock.now, set: (fn, ms) => { clock.timer = { fn, at: clock.now + ms }; return clock.timer; },
@@ -48,8 +49,6 @@ function handClock() {
   };
   return clock;
 }
-const realClock = () => noteReview.setClock({ now: () => Date.now(),
-  set: (fn, ms) => { const id = setTimeout(fn, ms); id.unref?.(); return id; }, clear: (id) => clearTimeout(id) });
 
 test("each change draws in its notes by its kind", () => {
   assert.deepEqual(noteChanges(edit("b", "old", "new")), [{ pageId: "p", blockId: "b", type: "edit", before: "old", after: "new" }]);
@@ -69,7 +68,6 @@ test("each change draws in its notes by its kind", () => {
     { kind: "delete", tool: "delete_block", block_id: "b", revert: { blocks: [] } },
     { kind: "read", tool: "read_block", block_id: "b" },
   ]) assert.deepEqual(noteChanges(a), [], JSON.stringify(a));
-  assert.deepEqual(["edit", "add", "move", "object"].map(isTextChange), [true, true, false, false], "a text: an edit, a new note");
 });
 
 test("edits of one block in a row are one change; it waits while one step does", () => {
@@ -144,7 +142,7 @@ test("Keep folds a waiting change to its mark; Clear takes the marks away", asyn
   await noteReview.load("p");
   noteReview.focus("a"); // the strip stepped to it
   await noteReview.keepBlock("a");
-  assert.deepEqual(asked.at(-1), ["/ai/changes/k1", { decision: "keep" }]);
+  assert.deepEqual(asked.at(-1), ["/ai/changes/k1", { decision: "keep", force: false }]);
   assert.equal(snap().changes.get("a").state, "kept", "kept: still marked, folded");
   assert.equal(snap().expanded.has("a"), false, "folded to its mark, though it was stepped to");
   assert.equal(snap().states.get("k1"), "kept");
@@ -152,7 +150,7 @@ test("Keep folds a waiting change to its mark; Clear takes the marks away", asyn
   await noteReview.keepBlock("c");
   assert.equal(asked.length, before, "a kept one is not kept again");
   await noteReview.keepPage("p");
-  assert.deepEqual(asked.at(-1), ["/ai/changes/k2", { decision: "keep" }], "Keep All keeps what waits");
+  assert.deepEqual(asked.at(-1), ["/ai/changes/k2", { decision: "keep", force: false }], "Keep All keeps what waits");
   await noteReview.clearPage("p");
   assert.deepEqual(asked.at(-1)[0], "/ai/changes/clear");
   assert.deepEqual(asked.at(-1)[1].ids.sort(), ["k1", "k2", "k3"]);
@@ -237,11 +235,11 @@ test("the states a reply's rows ask for are read together", async () => {
   noteReview.want("s2");
   noteReview.want("s3");
   noteReview.want("s1");
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await flush();
   assert.deepEqual(asked.map(([path]) => path), ["/ai/changes?ids=s1%2Cs2%2Cs3"]);
   assert.deepEqual([snap().states.get("s1"), snap().states.get("s2"), snap().states.get("s3")], ["kept", "undone", ""]);
   noteReview.want("s1");
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await flush();
   assert.equal(asked.length, 1, "a known state is not read again");
 });
 
@@ -263,8 +261,6 @@ test("a call waiting on its card is drawn where it would land, and answers throu
   assert.deepEqual([e1.tool, e1.preview.text, e1.permission, e1.kind], ["edit_block", "Draft\nThe key result.", "Edit note blocks", "notes"]);
   await e1.decide("chat");
   assert.deepEqual(answers, ["chat"]);
-  assert.equal(surfaceKey("p", 3), "p:3");
-  assert.equal(surfaceKey("p", "sheet"), "sheet");
   // Nothing to draw it by: a card with no place, an edit without its whole text.
   noteReview.ask(card("x1", "rename_page", { title: "A" }), decide);
   noteReview.ask(card("x2", "edit_block", { block_id: "b" }), decide);
@@ -303,7 +299,7 @@ test("a kept change's mark stays as long as the account lets it, or while it is 
     tick(10 * 60_000);
     assert.equal(snap().changes.has("a"), true);
   } finally {
-    realClock();
+    noteReview.setClock();
     noteReview.setMarkLife(60_000);
     noteReview.drop("p");
   }
@@ -342,14 +338,17 @@ test("a placed block an agent made is marked where it sits on its surface", () =
   const made = (tool, props, extra = {}) => ({ tool, kind: "create", block_id: "o", page_id: "pg", change_id: "x",
     revert: { after: "", parent: "pg", position: "a0", props }, ...extra });
   const pos = { pageNumber: 2, width: 600, height: 800, boundingRect: { x1: 10, y1: 20, x2: 110, y2: 40 }, rects: [] };
-  assert.deepEqual(noteChanges(made("highlight", { pdf_position: pos }))[0].type, "object");
   assert.deepEqual(objectFrame(made("highlight", { pdf_position: pos })), { surface: "pg:2", frame: [600, 800], box: [10, 20, 110, 40] });
   assert.deepEqual(objectFrame(made("draw", { ink_url: "/api/uploads/i.ink", pdf_position: pos })).surface, "pg:2");
   assert.deepEqual(objectFrame(made("add_text_box", { text_box: { x: 60, y: 720, w: 180, h: 20 }, pdf_page: 2 })),
     { surface: "pg:2", frame: null, box: [60, 720, 240, 740] });
   // on a page of paper: the sheet it was made under
-  assert.equal(objectFrame(made("place_picture", { picture: { x: 1, y: 2, w: 3, h: 4 } }, { revert: {
-    after: "", parent: "sheet-1", position: "a0", props: { picture: { x: 1, y: 2, w: 3, h: 4 } } } })).surface, "sheet-1");
+  const onSheet = objectFrame(made("place_picture", { picture: { x: 1, y: 2, w: 3, h: 4 } }, { revert: {
+    after: "", parent: "sheet-1", position: "a0", props: { picture: { x: 1, y: 2, w: 3, h: 4 } } } }));
+  assert.equal(onSheet.surface, "sheet-1");
+  // and a sheet's layer reads it by the key the store files it under (markup/ReviewLayer.jsx)
+  assert.equal(surfaceKey("pg", "sheet-1"), onSheet.surface);
+  assert.equal(surfaceKey("pg", 2), objectFrame(made("highlight", { pdf_position: pos })).surface);
   // a drawing on a page of paper keeps its strokes in its file: its row marks it alone
   assert.equal(objectFrame(made("draw", { ink_url: "/api/uploads/i.ink" })), null);
   assert.equal(objectFrame(edit("b", "a", "b")), null);
@@ -430,7 +429,7 @@ test("a block unfolded when its change goes starts the next one folded, and that
     clock.tick(61_000);
     assert.equal(snap().changes.has("a"), false, "its time is up");
   } finally {
-    realClock();
+    noteReview.setClock();
     noteReview.drop("p");
   }
 });
@@ -466,7 +465,7 @@ test("a change unfolded from a reply's row goes as it folds, the journal's once 
     clock.tick(6_000);
     assert.equal(snap().changes.has("b"), false, "folded, its time ran out");
   } finally {
-    realClock();
+    noteReview.setClock();
     noteReview.drop("p");
   }
 });
@@ -568,6 +567,6 @@ test("a state is not read again while its read is on its way, nor straight after
     await flush();
     assert.equal(snap().states.get("fail1"), "open");
   } finally {
-    realClock();
+    noteReview.setClock();
   }
 });

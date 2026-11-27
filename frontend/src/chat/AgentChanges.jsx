@@ -20,7 +20,7 @@
 // that takes back several changes at once, this reply's or any of the
 // conversation's (chat/RevertChanges.jsx).
 import React, { useContext, useState, useSyncExternalStore } from "react";
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { GammaNavContext } from "../shared/ui/Widgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { ActivityIcon, BookIcon, BotIcon, CheckIcon, CloudDownloadIcon, ExportIcon, EyeIcon, FilePlusIcon, FileTextIcon,
@@ -31,7 +31,7 @@ import { PathLink } from "../editor/PathLink.jsx";
 import { changeCount, changePlace, isChange, noteChangeText } from "./agentSteps";
 import { canRedo, canRevert, revertKind, revertRefusal } from "./aiRevert.js";
 import { WordDiff } from "./ApprovalCard";
-import { CHANGE_STATES, noteReview, useChangeState } from "./noteReview.js";
+import { CHANGE_STATES, isUndone, noteReview, useChangeState } from "./noteReview.js";
 
 // The icon of each action kind, in this list and on the tool chips under the
 // pill (chat/ChatTranscript.jsx), each chip expanding to the raw call the
@@ -54,10 +54,8 @@ export async function sendRevert(a, { force = false, redo = false } = {}) {
       if (err?.status !== 404) throw err;
     }
   }
-  return apiJson(`${API}/ai/revert`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind: revertKind(a), block_id: a.block_id || "", revert: a.revert, force, redo }),
-  });
+  return apiJson(`${API}/ai/revert`,
+    jsonInit("POST", { kind: revertKind(a), block_id: a.block_id || "", revert: a.revert, force, redo }));
 }
 
 // What a row that stopped says, and the button that reverts (or redoes)
@@ -230,10 +228,9 @@ export function ThreadsOpened({ threads }) {
 }
 
 // Keep All in a reply's head: keeps those of `ids` that wait for review,
-// shown while one does.
+// shown while one does. Each id's row asks for its state (ChangeRow).
 function KeepAll({ ids, disabled }) {
   const states = useSyncExternalStore(noteReview.subscribe, () => noteReview.getSnapshot().states);
-  for (const id of ids) if (!states.has(id)) noteReview.want(id);
   const open = ids.filter((id) => states.get(id) === CHANGE_STATES.OPEN);
   if (!open.length) return null;
   return (
@@ -246,12 +243,11 @@ function KeepAll({ ids, disabled }) {
 
 // One change's row: its sentence, what was decided, and its buttons. A
 // change the journal holds (`change_id`, its state known) goes by that
-// state; another by the mark its conversation saved.
+// state; another by the mark its conversation saved (`isUndone`).
 function ChangeRow({ a, text, row, working, busy, canAct, onUndo, onKeep, children }) {
   const state = useChangeState(a.change_id);
-  const journaled = !!a.change_id && !!state;
-  const undone = journaled ? state === CHANGE_STATES.UNDONE : !!a.reverted;
-  const open = journaled && state === CHANGE_STATES.OPEN;
+  const undone = isUndone(a, state);
+  const open = state === CHANGE_STATES.OPEN;
   const Icon = ACTION_ICONS[a.kind] || PencilIcon;
   const label = undone ? t("Redo this change") : t("Undo this change");
   const ButtonIcon = undone ? RedoIcon : UndoIcon;
@@ -262,7 +258,7 @@ function ChangeRow({ a, text, row, working, busy, canAct, onUndo, onKeep, childr
         <Icon size={14} />
         <span className="chatChangeText">{text}</span>
         {undone ? <span className="chatChangeTag">{t("Undone")}</span>
-          : journaled && state === CHANGE_STATES.KEPT ? <span className="chatChangeTag">{t("Kept")}</span> : null}
+          : state === CHANGE_STATES.KEPT ? <span className="chatChangeTag">{t("Kept")}</span> : null}
         {canAct && open ? (
           <button type="button" className="ctlBtn chatChangeRevert" disabled={held} title={t("Keep this change")}
             aria-label={t("Keep this change")} onClick={onKeep}>

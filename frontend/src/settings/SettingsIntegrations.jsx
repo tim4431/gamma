@@ -95,13 +95,12 @@ function ConnectionChanges({ item }) {
       await load();
     } catch (err) { setFailed({ id: change.id, ...failure(err) }); } finally { setDoing(null); }
   };
-  const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const undo = (change, force = false) => act(change, "undo",
-    () => apiJson(`${url}/${change.id}/undo`, json({ workspace_id: change.workspace_id, force })),
+    () => apiJson(`${url}/${change.id}/undo`, jsonInit("POST", { workspace_id: change.workspace_id, force })),
     (err) => refusalCopy(revertRefusal(err), false));
   const keep = (change) => act(change, "keep",
     () => apiJson(`${API}/ai/changes/${encodeURIComponent(change.id)}?ws=${encodeURIComponent(change.workspace_id)}`,
-      json({ decision: "keep" })),
+      jsonInit("POST", { decision: "keep" })),
     (err) => ({ text: err?.message || String(err) }));
   const busy = (change, action) => doing?.id === change.id && doing.action === action;
   if (!changes) return failed ? <FormNotice>{failed.text}</FormNotice> : <p className="setNotice loadingHint">{t("Loading…")}</p>;
@@ -109,7 +108,7 @@ function ConnectionChanges({ item }) {
   return changes.map((change) => {
     const copy = failed?.id === change.id ? failed : null;
     const when = new Date(change.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-    const state = change.state || (change.undone ? CHANGE_STATES.UNDONE : "");
+    const { state } = change;
     return <React.Fragment key={change.id}>
       <Row icon={change.tool === "delete_block" ? TrashIcon : UndoIcon} label={change.summary}
         hint={[when, change.workspace, change.page_title].filter(Boolean).join(" · ")}>

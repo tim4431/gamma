@@ -909,8 +909,8 @@ const BlockRow = React.memo(function BlockRow({
   const waiting = aiChange?.state === CHANGE_STATES.OPEN;
   const showChange = shown && !aiAsk && !!aiChange && (waiting || unfolded);
   const review = !shown ? null
-    : aiAsk?.tool === "edit_block" ? { ask: aiAsk, before: content, after: aiAsk.preview.text }
-      : showChange && fits && textual ? { change: aiChange, before: aiChange.before, after: aiChange.after }
+    : aiAsk?.tool === "edit_block" ? { before: content, after: aiAsk.preview.text }
+      : showChange && fits && textual ? { before: aiChange.before, after: aiChange.after }
         : null;
   const changedSince = showChange && !fits;
   // the kept change's mark: folded, or unfolded to the change
@@ -1636,7 +1636,6 @@ const BlockRow = React.memo(function BlockRow({
         style={scanIdx != null ? { animationDelay: `${Math.min(scanIdx * 45, 1600)}ms` } : undefined}
         onMouseDown={(e) => {
           if (e.button !== 0) return; // right-click is the context menu's
-          if (e.target.closest(".aiChangeMark")) return; // the mark unfolds the change
           // (a page drawn in the notes is written on, not a place for the caret)
           if (e.target.closest("button, textarea, input, a, .noteSheet")) return;
           setFocusedId(block.id);
@@ -2086,7 +2085,7 @@ const BlockRow = React.memo(function BlockRow({
               {remoteCursors ? <RenderedCarets peers={remoteCursors} source={block.content || ""} containerRef={renderedRef} /> : null}
             </div>
           )}
-          {aiAsk && shown ? <NoteReviewBar ask={aiAsk} />
+          {aiAsk && shown ? <AskBar key={aiAsk.id} ask={aiAsk} />
             : showChange ? <NoteReviewBar change={aiChange} changedSince={changedSince} /> : null}
 
           {quote.trim() ? (
@@ -2432,6 +2431,25 @@ function joinBlockText(existing, addition, mode, find, at) {
   return head + sep + tail;
 }
 
+// A row in the outline that is no block yet, the agent's (below): its
+// handle column an inert stand-in (hidden in CSS), no fold and no dot, and
+// `children` as its body. An item of the outline's ListMotion by
+// `motionKey`.
+function GhostRow({ wrapClass, rowClass, motionKey, depth, children }) {
+  return (
+    <div className={`sortableBlockWrap ${wrapClass}`} data-depth={depth} data-motion-key={motionKey}>
+      <span className="rowHandles" aria-hidden="true"><span className="dragHandle" /></span>
+      <div className="blockRowWrap">
+        <div className={`blockRow ${rowClass}`}>
+          <span className="collapseSpacer" />
+          <span className="dotSlot dotSlotEmpty" />
+          <div className="blockBody">{children}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // A block the AI agent is creating right now (a create_block call still
 // streaming): a read-only row at the position the block will take, typing
 // in the markdown as it arrives. Replaced by the real block when the call
@@ -2441,21 +2459,11 @@ function joinBlockText(existing, addition, mode, find, at) {
 // call, which is no change of the tree's shape, so at once.
 function AiGhostRow({ content, depth }) {
   return (
-    <div className="sortableBlockWrap aiGhostWrap" data-depth={depth} data-motion-key="ai-ghost">
-      {/* Inert stand-in for the handle column (hidden in CSS). */}
-      <span className="rowHandles" aria-hidden="true"><span className="dragHandle" /></span>
-      <div className="blockRowWrap">
-        <div className="blockRow ai-create aiMark0">
-          <span className="collapseSpacer" />
-          <span className="dotSlot dotSlotEmpty" />
-          <div className="blockBody">
-            <div className="blockRendered aiStreaming">
-              {content.trim() ? <BlockMarkdown content={content} blockId="ai-ghost" refLabels={NO_LABELS} /> : null}
-            </div>
-          </div>
-        </div>
+    <GhostRow wrapClass="aiGhostWrap" rowClass="ai-create aiMark0" motionKey="ai-ghost" depth={depth}>
+      <div className="blockRendered aiStreaming">
+        {content.trim() ? <BlockMarkdown content={content} blockId="ai-ghost" refLabels={NO_LABELS} /> : null}
       </div>
-    </div>
+    </GhostRow>
   );
 }
 
@@ -2465,22 +2473,12 @@ function AiGhostRow({ content, depth }) {
 // under it, which answer the card. A paste of several notes is one row.
 function AskGhostRow({ ask, depth }) {
   return (
-    <div className="sortableBlockWrap aiAskGhostWrap" data-depth={depth} data-motion-key={`ask-${ask.id}`}>
-      {/* Inert stand-in for the handle column (hidden in CSS). */}
-      <span className="rowHandles" aria-hidden="true"><span className="dragHandle" /></span>
-      <div className="blockRowWrap">
-        <div className="blockRow aiReview aiReview-ask aiReview-add">
-          <span className="collapseSpacer" />
-          <span className="dotSlot dotSlotEmpty" />
-          <div className="blockBody">
-            <div className="blockRendered mdDiffView mdDiffNew">
-              <BlockMarkdown content={dollarMath(ask.preview.text || "")} blockId={`ask-${ask.id}`} refLabels={NO_LABELS} />
-            </div>
-            <AskBar ask={ask} />
-          </div>
-        </div>
+    <GhostRow wrapClass="aiAskGhostWrap" rowClass="aiReview aiReview-ask aiReview-add" motionKey={`ask-${ask.id}`} depth={depth}>
+      <div className="blockRendered mdDiffView mdDiffNew">
+        <BlockMarkdown content={dollarMath(ask.preview.text || "")} blockId={`ask-${ask.id}`} refLabels={NO_LABELS} />
       </div>
-    </div>
+      <AskBar ask={ask} />
+    </GhostRow>
   );
 }
 

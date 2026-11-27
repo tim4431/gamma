@@ -1,16 +1,17 @@
 // Taking back the agent's note changes from the reply that made them. Each
-// edit, new note, move, deletion or highlight the agent made carries `revert` (what
-// undoing it needs, recorded by its tool — gamma/ai_tools/), and so do a
-// folder or label it deleted and a page tool's rename, move or label change
-// (`revert.pages`, one page or many). A change the server journaled for
-// review (`change_id`) is undone by its id (POST /api/ai/changes/<id>,
-// chat/noteReview.js), another by its record (POST /api/ai/revert); either
-// is a merge into the notes or the library as they are now
-// (gamma/ai_revert.py), and the action is marked `reverted` in the saved
-// conversation. The next turn's replay tells the model, from the journal's
-// state where it holds the change (agent_changes.mark_history). A revert or redo that left pages as they were saves how many
-// (`kept`), which the replay tells the model. The request's history leaves
-// out `revert` and a batch's `items`. The rows that do it are
+// edit, new note, move, deletion or highlight the agent made carries
+// `revert` (what undoing it needs, recorded by its tool — gamma/ai_tools/),
+// and so do a folder or label it deleted and a page tool's rename, move or
+// label change (`revert.pages`, one page or many). A change the server
+// journaled for review (`change_id`) is undone by its id (POST
+// /api/ai/changes/<id>, chat/noteReview.js), another by its record (POST
+// /api/ai/revert); either is a merge into the notes or the library as they
+// are now (gamma/ai_revert.py), and the action is marked `reverted` in the
+// saved conversation. The next turn's replay tells the model, from the
+// journal's state where it holds the change (agent_changes.mark_history). A
+// revert or redo that left pages as they were saves how many (`kept`),
+// which the replay tells the model. The request's history leaves out
+// `revert` and a batch's `items`. The rows that do it are
 // chat/AgentChanges.jsx, and the dialog that takes back several at once,
 // any of the conversation's, chat/RevertChanges.jsx.
 import { changePlace, isChange } from "./agentSteps.js";

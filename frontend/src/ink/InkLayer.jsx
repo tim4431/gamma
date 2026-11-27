@@ -86,13 +86,13 @@ export const ERASER_SIZES = [5, 9, 16];
 // move band and its open editor (markup/TextBoxLayer.jsx), a selected
 // picture, its handles and its crop (markup/PictureLayer.jsx: a picture
 // placed while a pen is armed moves before the pen writes over it), and the
-// page's own controls (PAGE_CONTROLS): the comment cards beside a PDF page
+// page's own controls (PAGE_CONTROLS, which the Text tool leaves alone too:
+// markup/TextBoxLayer.jsx): the comment cards beside a PDF page
 // (comments/CommentMargin.jsx), and the bars and marks of an agent's
-// changes on it (markup/ReviewLayer.jsx). The ruler's band is the pointer's
-// kind's: a pen about to write writes along it, any other pointer moves it
-// (writesOnBand).
+// changes on it (markup/ReviewLayer.jsx). The ruler's band is the pointer's kind's: a pen
+// about to write writes along it, any other pointer moves it (writesOnBand).
 const BESIDE_PAGE = ".commentMargin";
-const PAGE_CONTROLS = `${BESIDE_PAGE}, .reviewTag, .reviewObjectMark`;
+export const PAGE_CONTROLS = `${BESIDE_PAGE}, .reviewTag, .reviewObjectMark`;
 const NOT_INK = `.inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing, .pagePicture.selected, .pictureCrop, ${PAGE_CONTROLS}`;
 // What a pen's press decides by (the rule in one place): a tool armed is
 // what it uses. With none, its eraser end (buttons 32) or barrel (2) erases

@@ -478,7 +478,7 @@ export default function ChatDock({
   const chatToolPerms = agentPerms?.[chatKind] || {};
   const toolsEnabled = !!agentEnabled;
   const perm = (key) => permState(chatToolPerms, key) !== "off";
-  // "Allow in this chat" (chat/approvals.js): the permissions this
+  // An approval's "chat" grant (chat/approvals.js): the permissions this
   // conversation stopped asking for, kept per account and conversation in
   // this browser; another tab's change arrives as a storage event.
   const [grantStore, setGrantStore] = useState(readGrants);
@@ -534,9 +534,9 @@ export default function ChatDock({
   const neverWaitHere = () =>
     updateGrants((store) => withoutPaperWait(store, activeUser(), conversationId(chatMessages)));
   // The user's answer on an approval card, or on the bar of the note the
-  // card's edit is drawn in (chat/noteReview.js): the server runs the call or
-  // leaves it; "Allow in this chat" is kept for the conversation and
-  // "Always allow" sets the permission in Settings — once the server took it.
+  // card's change is drawn in (chat/noteReview.js): the server runs the call
+  // or leaves it; a "chat" grant is kept for the conversation and an
+  // "always" one sets the permission in Settings — once the server took it.
   async function decideApproval(approval, decision, note = "") {
     await apiJson(`${API}/ai/approvals/${encodeURIComponent(approval.id)}`, {
       method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ decision, ...(note ? { note } : {}) }),

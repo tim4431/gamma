@@ -280,8 +280,9 @@ export function declinedSummary(action, titleOf = () => "") {
 // its requests. A new chat, or another conversation opened from history,
 // decides afresh. Two decisions live here:
 //
-// - "Allow in this chat" on an approval card: those permissions ride as
-//   `granted` and run without asking again.
+// - An approval card's "chat" grant (Allow in this chat; Keep, and allow in
+//   this chat): those permissions ride as `granted` and run without asking
+//   again.
 // - "Don't wait in this chat" when skipping a blocked paper: `paper_wait`
 //   goes false, so a later blocked fetch leaves its card under the reply
 //   instead of holding the reply open (chat/FetchHandoffCards.jsx).

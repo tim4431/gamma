@@ -20,7 +20,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_HIGHLIGHT, lineColor } from "../shared/model/palette.js";
 import { assetUrl } from "../shared/lib/utils.js";
 import { t } from "../shared/i18n/i18n.js";
-import { dashArray } from "../ink/ink.js";
+import { FILL_OPACITY, clamp, dashArray } from "../ink/ink.js";
 import { textStyle } from "./textBox.js";
 import { CHANGE_STATES, noteReview, surfaceKey, useExpanded, useSurfaceAsks, useSurfaceChanges,
   useWatchPage } from "../chat/noteReview.js";
@@ -28,8 +28,12 @@ import { AskBar, NoteReviewBar, changedBy } from "../editor/NoteReviewBar";
 import { usePageTools } from "./PageTools";
 
 const PAD = 4; // the frame's room around what it holds, in points
+const padded = ([x0, y0, x1, y1]) => [x0 - PAD, y0 - PAD, x1 + PAD, y1 + PAD];
+// The layer's units per point of a shape measured in `frame` ([width,
+// height]; none: the surface's own points).
+const scaleOf = (frame, width) => (frame?.[0] ? width / frame[0] : 1);
 
-// A shape's own frame in the surface's points: [x0, y0, x1, y1].
+// A shape's own frame in the surface's points, with its room: [x0, y0, x1, y1].
 function boundsOf(shape, k) {
   const xs = [], ys = [];
   if (shape.kind === "highlight") {
@@ -41,7 +45,7 @@ function boundsOf(shape, k) {
     ys.push(shape.box.y * k, (shape.box.y + shape.box.h) * k);
   }
   if (!xs.length) return null;
-  return [Math.min(...xs) - PAD, Math.min(...ys) - PAD, Math.max(...xs) + PAD, Math.max(...ys) + PAD];
+  return padded([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]);
 }
 
 // A highlight in the colour it will store (its alpha in it), a line style in
@@ -64,7 +68,7 @@ function Highlight({ shape, k }) {
 function Strokes({ shape, k }) {
   return shape.strokes.map((s, i) => (
     <polyline key={i} points={s.points.map(([x, y]) => `${x * k},${y * k}`).join(" ")} fill={s.fill ? s.color : "none"}
-      fillOpacity={s.fill ? 0.25 : undefined} stroke={s.color} strokeWidth={s.size * k} strokeLinecap="round" strokeLinejoin="round"
+      fillOpacity={s.fill ? FILL_OPACITY : undefined} stroke={s.color} strokeWidth={s.size * k} strokeLinecap="round" strokeLinejoin="round"
       strokeDasharray={dashArray({ dash: s.dash, size: s.size * k }) ?? undefined} />
   ));
 }
@@ -85,8 +89,6 @@ function Placed({ shape, k }) {
     </foreignObject>
   );
 }
-
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // A bar under its frame (`frame`: [x0, y0, x1, y1] in the layer's units,
 // of `width` × `height`), kept inside its page, which the next page would
@@ -127,33 +129,36 @@ function ReviewTag({ frame: [x0, y0, , y1], width, height, children }) {
 // A placed block an agent made, on its surface: framed with its bar while
 // it waits for review or is unfolded, else its mark. `box` is in the
 // surface's points.
-function MadeObject({ change, box: [x0, y0, x1, y1], width, height }) {
+function MadeObject({ change, box, width, height }) {
   const unfolded = useExpanded(change.blockId);
-  const waiting = change.state === CHANGE_STATES.OPEN;
   const pct = (v, of) => `${(v / of) * 100}%`;
-  const kind = change.steps[0]?.tool === "highlight" ? "highlight" : "object";
-  if (!waiting && !unfolded) {
+  const frame = padded(box);
+  if (change.state !== CHANGE_STATES.OPEN && !unfolded) {
+    const [, y0, , y1] = box;
     return (
       <button type="button" className="aiChangeMark aiChangeMark-object reviewObjectMark" aria-expanded="false"
-        style={{ left: pct(x0 - PAD, width), top: pct(y0, height), height: pct(y1 - y0, height) }}
+        style={{ left: pct(frame[0], width), top: pct(y0, height), height: pct(y1 - y0, height) }}
         title={changedBy(change, { show: true })} aria-label={t("Show the AI's change")}
         onPointerDown={(e) => e.stopPropagation()} onClick={() => noteReview.toggle(change.blockId, true)} />
     );
   }
+  const [x0, y0, x1, y1] = frame;
   return (
     <>
-      <div className={`reviewObjectFrame ${kind}`} style={{ left: pct(x0 - PAD, width), top: pct(y0 - PAD, height),
-        width: pct(x1 - x0 + 2 * PAD, width), height: pct(y1 - y0 + 2 * PAD, height) }} />
-      <ReviewTag frame={[x0 - PAD, y0 - PAD, x1 + PAD, y1 + PAD]} width={width} height={height}>
+      <div className="reviewObjectFrame" style={{ left: pct(x0, width), top: pct(y0, height),
+        width: pct(x1 - x0, width), height: pct(y1 - y0, height) }} />
+      <ReviewTag frame={frame} width={width} height={height}>
         <NoteReviewBar change={change} />
       </ReviewTag>
     </>
   );
 }
 
+// `review` (PageTools): the account's own page, which App's tools alone
+// carry; a tab group's view of another page (workspace/PagePane.jsx) has none.
 export function ReviewLayer({ surface, width, height }) {
-  const { pageId, preview, review } = usePageTools();
-  const shown = !!review && !preview;
+  const { pageId, review } = usePageTools();
+  const shown = !!review;
   useWatchPage(pageId, shown);
   const key = surfaceKey(pageId, surface);
   const asks = useSurfaceAsks(key);
@@ -161,7 +166,7 @@ export function ReviewLayer({ surface, width, height }) {
   if (!shown || !width || !height || (!asks.length && !made.length)) return null;
   const drawn = asks.map((ask) => {
     const shape = ask.preview.shape;
-    const k = shape.frame?.[0] ? width / shape.frame[0] : 1;
+    const k = scaleOf(shape.frame, width);
     return { ask, shape, k, bounds: boundsOf(shape, k) };
   }).filter((d) => d.bounds);
   const inked = drawn.filter((d) => d.shape.kind === "ink");
@@ -192,7 +197,7 @@ export function ReviewLayer({ surface, width, height }) {
         </ReviewTag>
       ))}
       {made.map(({ change, frame, box }) => {
-        const k = frame?.[0] ? width / frame[0] : 1;
+        const k = scaleOf(frame, width);
         return <MadeObject key={change.blockId} change={change} box={box.map((v) => v * k)} width={width} height={height} />;
       })}
     </div>

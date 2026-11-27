@@ -48,7 +48,7 @@ function setup(t, api, { canWrite = true, connect = true } = {}) {
     onPeers: (p) => { h.peers = p; },
     onMe: (m) => { h.me = m; },
     onInbox: () => { h.inbox += 1; },
-    onAiChanges: (msg) => h.aiChanges.push(msg.page_id),
+    onAiChanges: (pageId) => h.aiChanges.push(pageId),
     timers: { set: (fn, ms) => { h.timers.set(++timerId, { fn, ms }); return timerId; }, clear: (id) => h.timers.delete(id) },
   });
   h.options = options;

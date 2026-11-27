@@ -16,21 +16,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, EyeOffIcon, SparklesIcon, UndoIcon } from "../shared/ui/Icons";
 import { noteReview, usePageChanges, useWatchPage } from "../chat/noteReview.js";
+import { flattenBlocks } from "../shared/model/blockModel.js";
 import { refusedOnBar } from "./NoteReviewBar";
-
-// The changed notes in the order the page holds them: its tree, depth first.
-function inPageOrder(blocks, ids) {
-  const wanted = new Set(ids);
-  const out = [];
-  const walk = (list) => {
-    for (const b of list || []) {
-      if (wanted.has(b.id)) out.push(b.id);
-      walk(b.children);
-    }
-  };
-  walk(blocks);
-  return out;
-}
 
 // A changed note's row flashes once it is drawn: a folded parent unfolds
 // for it a render or two after the press.
@@ -51,7 +38,11 @@ function flash(blockId, frames = 10) {
 export function PageReviewStrip({ pageId, blocks, readOnly = false, onLand, onStatus }) {
   useWatchPage(pageId, !readOnly);
   const { ids, open } = usePageChanges(pageId);
-  const order = useMemo(() => inPageOrder(blocks, ids), [blocks, ids]);
+  // the changed notes in the order the page holds them: its tree, depth first
+  const order = useMemo(() => {
+    const wanted = new Set(ids);
+    return wanted.size ? flattenBlocks(blocks).filter((b) => wanted.has(b.id)).map((b) => b.id) : ids;
+  }, [blocks, ids]);
   const [at, setAt] = useState(""); // the change last stepped to (its block)
   const [busy, setBusy] = useState(false);
   useEffect(() => { setAt(""); }, [pageId]);

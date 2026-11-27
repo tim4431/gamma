@@ -2,17 +2,19 @@
 // has the rules, gamma/ai_permissions.py the server's side), on the shell
 // every such card shares (ApprovalShell.jsx). It says what the call would
 // do, shows the change as a word diff (or the folder a page moves to), and
-// offers four answers. A call naming several pages shows one line per page
-// in the same box (it scrolls), and notes the pages it leaves out. Allow
-// once runs it. Allow in this chat also stops asking for this permission in
-// this conversation. Always allow also sets the permission to Allow for
-// this kind of chat in Settings. Don't allow opens a line for what to do
-// instead (optional) and leaves the call unmade; Gamma AI gets that line
-// with the decline, and the card names it ("Allowed. Gamma AI goes on…").
-// A change's card (chat/approvals.js isChangeCall) says them as the note's
-// review does: Keep, its two grants in the menu beside it, and Undo. A
-// deletion's first answer is the red one. What a computer's agent asks is
-// a card on the same shell (AskCard, below).
+// offers its answers (chat/approvals.js toolAnswers). A call naming several
+// pages shows one line per page in the same box (it scrolls), and notes the
+// pages it leaves out. A change's card (isChangeCall) says them as the
+// note's review does: Keep, its two grants in the menu beside it, and
+// Undo; another call's says Allow once, Allow in this chat, Always allow
+// and Don't allow. The first runs the call. The chat grant also stops
+// asking for this permission in this conversation; the always one also
+// sets the permission to Allow for this kind of chat in Settings. The
+// declining one opens a line for what to do instead (optional) and leaves
+// the call unmade; Gamma AI gets that line with the decline, and the card
+// names it ("Kept. Gamma AI goes on…"). A deletion's first answer is the
+// red one. What a computer's agent asks is a card on the same shell
+// (AskCard, below).
 import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { ActivityIcon, LocateIcon, PencilIcon, TerminalIcon } from "../shared/ui/Icons";

@@ -291,10 +291,10 @@ function resealed(s, kept) {
 //   onQueued()                — a local edit was queued (the clone's sync pill shows it as pending)
 //   onInbox()                 — the account has something new in its inbox ({t: "inbox"},
 //                               content-free; the hook dispatches the window event gamma:inbox)
-//   onAiChanges(msg)          — an agent's change of the account's moved on: made, kept or
+//   onAiChanges(pageId)       — an agent's change of the account's moved on: made, kept or
 //                               undone, or an assistant asks about a page ({t: "ai_changes",
-//                               ws, page_id}, content-free, on any page), and on every hello
-//                               for the socket's page ({t, page_id}); the hook dispatches the
+//                               ws, page_id}, content-free, on any page: its page_id), and on
+//                               every hello for the socket's page; the hook dispatches the
 //                               window event gamma:ai-changes
 //   timers                — {set(fn, ms) → id, clear(id)}; default the globals
 //   fallback              — poll the op log while the socket can't connect (the
@@ -1363,7 +1363,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             // its PDF's).
             if (session.pageId === pageId) {
               o().onComments?.(null); o().onVault?.(); o().onComputer?.();
-              onAiChanges?.({ t: "ai_changes", page_id: pageId });
+              onAiChanges?.(pageId);
               if (again) o().onOcr?.(null);
             }
             break;
@@ -1410,7 +1410,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             onInbox?.();
             break;
           case "ai_changes":
-            onAiChanges?.(msg);
+            onAiChanges?.(msg.page_id);
             break;
           default:
         }

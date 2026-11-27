@@ -100,7 +100,7 @@ export function usePageCollab(opts) {
       // the page's agent changes and an assistant's questions about it
       // are read again, when something on screen draws it
       // (chat/noteReview.js watch)
-      onAiChanges: (msg) => window.dispatchEvent(new CustomEvent("gamma:ai-changes", { detail: { ws: msg.ws, pageId: msg.page_id } })),
+      onAiChanges: (pageId) => window.dispatchEvent(new CustomEvent("gamma:ai-changes", { detail: { pageId } })),
     });
   }
   const session = ref.current;
