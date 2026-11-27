@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { generateKeyBetween } from "fractional-indexing";
 import {
-  LANGUAGE_LABELS, NO_LABEL, NO_LABEL_TITLE, addToFolder, authorList, authorSurname, authorsFromRow, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
+  LANGUAGE_LABELS, NO_LABEL, NO_LABEL_TITLE, addToFolder, authorList, authorsFromRow, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
   firstFolderPath, folderAtPath, folderChain, folderCompletion, folderEntries, folderInside, folderMatches,
   folderNeighbour, folderPath, folderPathHolds, folderPathNames, folderPosition, folderPositions, folderSubtree, folderTargets,
   familyName, formatFullDate, formatLabel, formatRelativeTime, formatShortDate,
@@ -350,13 +350,17 @@ test("defaultPageTitle: the document's name, else its address's tail, else Untit
   assert.equal(defaultPageTitle({ name: "", url: "/api/uploads/d1.pdf" }), "d1.pdf", "a stored file without a name");
 });
 
-test("authorSurname: the last word before any comma, as a match against a reference's text reads it", () => {
-  assert.deepEqual(["Ada Lovelace", "Lovelace, Ada", "Pereira Campos, Jorge Fernando", "King, Jr., Martin", "Plato", ""].map(authorSurname),
-    ["Lovelace", "Lovelace", "Campos", "King", "Plato", ""]);
-  // the link dialog's match counts a "Last, First" author by the surname, not the given name
-  const page = { properties: { meta: { authors: ["Pereira Campos, Jorge Fernando"] } } };
-  assert.equal(scorePaperMatch("J. F. Pereira Campos et al.", page), 4);
-  assert.equal(scorePaperMatch("Fernando Alonso", page), 0);
+test("scorePaperMatch counts an author by the surname: not the given name of a \"Last, First\" one, not a suffix", () => {
+  const by = (author) => ({ properties: { meta: { authors: [author] } } });
+  assert.equal(scorePaperMatch("J. F. Pereira Campos et al.", by("Pereira Campos, Jorge Fernando")), 4);
+  assert.equal(scorePaperMatch("Fernando Alonso", by("Pereira Campos, Jorge Fernando")), 0);
+  assert.equal(scorePaperMatch("A. Lovelace, Sketch of the Engine", by("Lovelace, Ada")), 4);
+  assert.equal(scorePaperMatch("M. L. King, Letter from Birmingham Jail", by("Martin Luther King Jr.")), 4);
+  assert.equal(scorePaperMatch("H. Ford, My Life and Work", by("Henry Ford II")), 4);
+  // the suffix inside a "Last Suffix, First" name, as BibTeX and the record write it
+  assert.equal(scorePaperMatch("M. L. King, Letter from Birmingham Jail", by("King Jr., Martin Luther")), 4);
+  assert.equal(scorePaperMatch("J. F. Pereira Campos et al.", by("Pereira Campos III, Jorge Fernando")), 4);
+  assert.equal(scorePaperMatch("Part III of the review", by("Pereira Campos III, Jorge Fernando")), 0);
 });
 
 test("a name's label is the surname a reference prints; a list of names puts semicolons between them", () => {

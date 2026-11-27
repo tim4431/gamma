@@ -55,9 +55,7 @@ export function ProviderUsage({ usage }) {
         const used = Number(window.used_percent) || 0;
         const left = Number(window.remaining_percent) || 0;
         const reset = window.reset_at
-          ? `resets ${new Date(window.reset_at * 1000).toLocaleString([], {
-              month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-            })}`
+          ? t("resets {time}", { time: fmtDate(window.reset_at * 1000, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) })
           : "";
         const label = [usage.plan_type ? `${usage.plan_type}` : "", window.name]
           .filter(Boolean).join(" · ");

@@ -32,14 +32,15 @@ import { CloudUploadIcon, DatabaseIcon, DownloadIcon, HardDriveIcon, ImportIcon,
 import { TaskBlock } from "../tasks/TasksTray";
 import { isActive } from "../tasks/taskModel.js";
 import { useJobEnd } from "../tasks/useTasks";
-import { T, t, tn } from "../shared/i18n/i18n.js";
+import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 
-// The one date format of this pane: "Sep 23, 3:00 AM PDT", in the browser's
-// time zone and naming it, since task schedules are stored in UTC.
+// The one date format of this pane: "Sep 23, 3:00 AM PDT", in the interface
+// language and the browser's time zone, naming it, since task schedules are
+// stored in UTC.
 // `fallback` when there is no date yet (a snapshot named but undated, a
 // task that has not run).
 export function fmtWhen(iso, fallback = "") {
-  return iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }) : fallback;
+  return iso ? fmtDate(iso, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }) : fallback;
 }
 
 // What a Restore all brought back ({restored, failed}, the job's result).

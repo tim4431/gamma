@@ -13,9 +13,9 @@ import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, d
 import { WorkspacePicker } from "./WorkspacePicker";
 import { accessBody, accessOf, edits as editsIn } from "./workspaceAccess.js";
 import { useSettingsRead } from "./settingsReads.js";
-import { t } from "../shared/i18n/i18n.js";
+import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 
-const dateOf = (value) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+const dateOf = (value) => fmtDate(value, { year: "numeric", month: "short", day: "numeric" });
 const ASSISTANTS = [["claude", t("Claude Code")], ["codex", t("Codex")], ["dsh", t("DeepSeek Harness")], ["other", t("Other")]];
 const PLATFORMS = [["windows", t("Windows PowerShell")], ["unix", t("macOS / Linux")]];
 
@@ -35,7 +35,7 @@ function ConnectionRow({ item, names, busy, onEdit, onChanges, onRevoke }) {
     : oauth ? item.name.replace(/\s\(OAuth\)$/, "") : item.name;
   const daysLeft = Math.ceil((item.expires_at * 1000 - Date.now()) / 86400000);
   const expiry = daysLeft <= 0 ? t("Expired {date}", { date: dateOf(item.expires_at * 1000) })
-    : t("Expires {expires_at} ({days} left)", { expires_at: dateOf(item.expires_at * 1000), days: daysLeft === 1 ? "1 day" : `${daysLeft} days` });
+    : t("Expires {expires_at} ({days} left)", { expires_at: dateOf(item.expires_at * 1000), days: tn("{n} day", "{n} days", daysLeft) });
   const spaces = item.workspaces.map((id) => names.get(id)).filter(Boolean);
   const reads = item.all_workspaces ? t("Reads all workspaces")
     : spaces.length ? t("Reads {workspaces}", { workspaces: spaces.join(", ") }) : t("Reads no workspace");
@@ -107,7 +107,7 @@ function ConnectionChanges({ item }) {
   if (!changes.length) return <Empty icon={HistoryIcon}>{t("It has changed nothing yet.")}</Empty>;
   return changes.map((change) => {
     const copy = failed?.id === change.id ? failed : null;
-    const when = new Date(change.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    const when = fmtDate(change.at, { dateStyle: "medium", timeStyle: "short" });
     const { state } = change;
     return <React.Fragment key={change.id}>
       <Row icon={change.tool === "delete_block" ? TrashIcon : UndoIcon} label={change.summary}

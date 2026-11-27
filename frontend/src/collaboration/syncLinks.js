@@ -15,7 +15,7 @@
 // in Zotero mean. Pure, so node tests it (tests/syncLinks.test.mjs);
 // MirrorPopover.jsx puts the icons on.
 import { fmtBytes } from "../shared/lib/format.js";
-import { T, t, tn } from "../shared/i18n/i18n.js";
+import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 
 export const LINK_BASES = { mirror: "/mirrors", zotero: "/zotero/links" };
 
@@ -467,7 +467,7 @@ function waitingParts(w) {
   if (w.quota) {
     parts.push({ warn: true, text: tn("Zotero storage is full · {n} PDF waits", "Zotero storage is full · {n} PDFs wait", w.quota, { n: count(w.quota) }),
       sentence: w.quotaUntil
-        ? t("Zotero's storage is full, so the PDFs it lacks are not sent. Gamma tries again after {time}, on Sync now, or when the link's settings change; more room is at zotero.org/storage.", { time: new Date(w.quotaUntil).toLocaleString() })
+        ? t("Zotero's storage is full, so the PDFs it lacks are not sent. Gamma tries again after {time}, on Sync now, or when the link's settings change; more room is at zotero.org/storage.", { time: fmtDate(w.quotaUntil, { dateStyle: "medium", timeStyle: "short" }) })
         : t("Zotero's storage is full, so the PDFs it lacks are not sent; Gamma tries again at the next round. More room is at zotero.org/storage.") });
   }
   if (w.storage) {

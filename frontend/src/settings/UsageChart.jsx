@@ -3,7 +3,7 @@
 // tokens, calls or estimated cost (pay-per-token calls alone). Arrow keys
 // walk the bars; the detail under the plot spells the selected one out.
 import React from "react";
-import { getLocale, t, tn } from "../shared/i18n/i18n.js";
+import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { billingLabel, fmtCost, fmtTokens } from "../chat/tokenUsage";
 import { MenuSelect } from "../shared/ui/Menus";
 import { Segmented } from "./SettingsKit";
@@ -21,7 +21,7 @@ export function UsageChart({ daily = [], interval = "daily", onInterval, firstAt
   const current = bars.find((bar) => bar.date === selected) || bars.at(-1);
   // The kinds the bars shown hold, for the legend (one kind needs none).
   const kinds = [...new Set(bars.flatMap((bar) => bar.segments.map((segment) => segment.kind)))];
-  const dateLabel = (date, options) => new Date(`${date.slice(0, 10)}T00:00:00Z`).toLocaleDateString(getLocale(), { timeZone: "UTC", ...options });
+  const dateLabel = (date, options) => fmtDate(`${date.slice(0, 10)}T00:00:00Z`, { timeZone: "UTC", ...options });
   const label = (date) => dateLabel(date, interval === "monthly" ? { month: "long", year: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
   const detail = (bar) => [
     tn("{n} call", "{n} calls", bar.calls),

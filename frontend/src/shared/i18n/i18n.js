@@ -56,7 +56,9 @@ export function setLocale(code, loaded) {
 }
 
 export const getLocale = () => locale;
-const localeTag = () => TAGS[locale] || locale;
+// The interface language's BCP 47 tag ("zh-CN"), for an Intl formatter
+// fmtDate does not make (BackupTasks.jsx reads a zone's name from its parts).
+export const localeTag = () => TAGS[locale] || locale;
 
 // Fills `{name}` placeholders. With an element among the values the result
 // is an array of strings and elements (React renders it as children).
@@ -95,5 +97,19 @@ export function tn(one, other, n, args) {
   return fill(n === 1 ? one : other, values);
 }
 
-// Dates in the interface language, not the browser's.
-export const fmtDate = (value, options) => new Intl.DateTimeFormat(localeTag(), options).format(value instanceof Date ? value : new Date(value));
+// Dates in the interface language, not the browser's; "" for a value that
+// does not read as a date, which Intl would throw on.
+export function fmtDate(value, options) {
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? "" : new Intl.DateTimeFormat(localeTag(), options).format(d);
+}
+
+// A moment as a status line reads it (a mirror's last round, the settings'
+// sync): the time today ("02:37 PM", "14:37" in Chinese), else the day as
+// well ("Sep 3, 02:37 PM"); "" for no time.
+export function fmtMoment(at, now = new Date()) {
+  if (!at) return "";
+  const d = new Date(at);
+  const time = { hour: "2-digit", minute: "2-digit" };
+  return fmtDate(d, d.toDateString() === now.toDateString() ? time : { month: "short", day: "numeric", ...time });
+}

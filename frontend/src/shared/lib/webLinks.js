@@ -13,7 +13,9 @@ import { t } from "../i18n/i18n.js";
 // The page's {title, author}: a bare link's chip label, its card's title
 // and the author on its card's muted line. `sitePreview` is what is known
 // now (null before the answer), `loadSitePreview` the answer ({} for
-// none), `useSitePreview` both for a component.
+// none), `useSitePreview` both for a component. The server's answer is
+// kept for the session; a request that failed is not, so the next ask
+// tries again.
 export const NO_PREVIEW = Object.freeze({});
 const sitePreviews = new Map();   // href → {title, author} | Promise
 const isWeb = (href) => /^https?:\/\//i.test(href || "");
@@ -26,10 +28,10 @@ export function loadSitePreview(href) {
   const known = sitePreviews.get(href);
   if (known) return known instanceof Promise ? known : Promise.resolve(known);
   const asked = fetch(`/api/link-preview?url=${encodeURIComponent(href)}`)
-    .then((r) => (r.ok ? r.json() : null))
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
     .then((d) => (d?.title ? { title: d.title, author: d.author || "" } : NO_PREVIEW))
-    .catch(() => NO_PREVIEW)
-    .then((p) => { sitePreviews.set(href, p); return p; });
+    .then((p) => { sitePreviews.set(href, p); return p; },
+      () => { sitePreviews.delete(href); return NO_PREVIEW; });
   sitePreviews.set(href, asked);
   return asked;
 }

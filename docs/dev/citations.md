@@ -196,7 +196,9 @@ the Properties panel. A Markdown export's front matter lists them as a
 block list. A citation pill's label and the AI's page lines show the
 surname a reference prints, "Pereira Campos" or "van der Berg"
 (`names.family_name`, `libraryUtils.js` `familyName`). The link dialog's
-match reads the last word before any comma (`authorSurname`).
+match reads the last word of that surname but a suffix
+(`scorePaperMatch`): "Martin Luther King Jr." and "King Jr., Martin
+Luther" are both matched by "King".
 
 ## The bibliography answer
 

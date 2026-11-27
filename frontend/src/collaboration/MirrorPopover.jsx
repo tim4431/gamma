@@ -50,7 +50,7 @@ import {
 } from "./syncLinks.js";
 import { needsZoteroConnect } from "../transfers/zoteroApi";
 import { MenuItem } from "../shared/ui/Menus";
-import { T, t } from "../shared/i18n/i18n.js";
+import { T, fmtMoment, t } from "../shared/i18n/i18n.js";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, CheckIcon,
   ClockIcon, CloudDownloadIcon, CloudOffIcon, DownloadIcon, ExternalLinkIcon, FileIcon, FolderIcon, HandIcon, HistoryIcon, KeyIcon,
@@ -81,15 +81,6 @@ const ACTION_ICON = {
   "pushed": ArrowUpIcon, "created there": ArrowUpIcon, "restored there": ArrowUpIcon, "replaced there": ArrowUpIcon,
   "deleted here": TrashIcon, "deleted there": TrashIcon, "kept here": FolderIcon,
 };
-
-export function clock(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d)) return "";
-  const today = new Date();
-  const sameDay = d.toDateString() === today.toDateString();
-  return sameDay ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
 
 // The nouns n() is called with, so the catalog carries them.
 export const COUNT_NOUNS = [T("page"), T("file"), T("conflict"), T("published page"), T("annotation"), T("note")];
@@ -193,7 +184,7 @@ export function mirrorState(info, { busy = false, pending = false, kind = linkKi
   const s = info?.status || {};
   const p = s.progress;
   if (info?.detached || info?.mode === "off") {
-    return { state: "detached", tone: "", Icon: UnlinkIcon, text: `${t("Detached")}${s.detached_at ? ` · ${clock(s.detached_at)}` : ""}`,
+    return { state: "detached", tone: "", Icon: UnlinkIcon, text: `${t("Detached")}${s.detached_at ? ` · ${fmtMoment(s.detached_at)}` : ""}`,
       title: T("Detached: nothing is pulled or pushed until you reattach. Nothing is lost.") };
   }
   const following = zotero && zoteroFollowing(s);
@@ -216,7 +207,7 @@ export function mirrorState(info, { busy = false, pending = false, kind = linkKi
       title: t("The remote runs an older version of Gamma. Sync is paused until it is updated; your edits stay here and go out then.") };
   }
   const failed = () => {
-    const e = zoteroError(info, clock(s.last_attempt || s.last_sync));
+    const e = zoteroError(info, fmtMoment(s.last_attempt || s.last_sync));
     return { state: "error", tone: e.tone, Icon: ZOTERO_ERROR_ICON[e.icon] || AlertCircleIcon, dot: true, text: e.text, title: e.title, action: e.action };
   };
   // (a refused key fails every round: Resolve would hide it)
@@ -229,7 +220,7 @@ export function mirrorState(info, { busy = false, pending = false, kind = linkKi
   if (s.last_error) {
     const unreachable = /cannot reach|timed out|refused|unreachable/i.test(s.last_error);
     return { state: "error", tone: "error", Icon: AlertCircleIcon, dot: true,
-      text: `${unreachable ? t("Remote unreachable") : t("Sync problem")}${s.last_attempt || s.last_sync ? ` · ${clock(s.last_attempt || s.last_sync)}` : ""}`,
+      text: `${unreachable ? t("Remote unreachable") : t("Sync problem")}${s.last_attempt || s.last_sync ? ` · ${fmtMoment(s.last_attempt || s.last_sync)}` : ""}`,
       title: `${s.last_error}${unreachable ? t(" — your edits stay here and are pushed once the remote is reachable again.") : ""}` };
   }
   if (!s.last_sync) {
@@ -252,7 +243,7 @@ export function mirrorState(info, { busy = false, pending = false, kind = linkKi
   }
   const moved = roundSummary(s);
   if (zotero) {
-    const last = clock(s.last_sync);
+    const last = fmtMoment(s.last_sync);
     const queued = zoteroQueued(info, last);
     const since = queued ? t("Last round {last_sync}.", { last_sync: last }) : t("Up to date since {last_sync}.", { last_sync: last });
     // (the waiting and queued readings' titles show under the state, beside the key's limits' own line)
@@ -271,8 +262,8 @@ export function mirrorState(info, { busy = false, pending = false, kind = linkKi
     return { state: "ok", tone: "ok", Icon: RefreshIcon, dot: true, text: t("Up to date · {last_sync}", { last_sync: last }), stats: roundBlocks(s),
       title: `${t("Up to date since {last_sync}. Last round: {side}.", { last_sync: last, side })}${note ? ` ${note}` : ""}${limits}${zoteroCadence(info?.poll_s, { onChange: info?.on_change !== false })}` };
   }
-  return { state: "ok", tone: "ok", Icon: RefreshIcon, dot: true, text: t("Up to date · {last_sync}", { last_sync: clock(s.last_sync) }), stats: roundBlocks(s),
-    title: t("Up to date since {last_sync}. Last round: {side}.{sync}", { last_sync: clock(s.last_sync), side: moved || "nothing had changed on either side", sync: info?.poll_s ? t(" The remote is checked every {poll_s} s.", { poll_s: info.poll_s }) : t(" The remote is checked only when you sync.") }) };
+  return { state: "ok", tone: "ok", Icon: RefreshIcon, dot: true, text: t("Up to date · {last_sync}", { last_sync: fmtMoment(s.last_sync) }), stats: roundBlocks(s),
+    title: t("Up to date since {last_sync}. Last round: {side}.{sync}", { last_sync: fmtMoment(s.last_sync), side: moved || "nothing had changed on either side", sync: info?.poll_s ? t(" The remote is checked every {poll_s} s.", { poll_s: info.poll_s }) : t(" The remote is checked only when you sync.") }) };
 }
 
 // The choices the sync settings offer, shared with Settings' clone dialog.
@@ -603,7 +594,7 @@ function LogList({ log, kind, jumpTo }) {
               <button className="popoverItem mirrorPopItem" aria-expanded={open} onClick={() => setOpenId(open ? null : c.id)}
                 title={t("{action} — click for the changes", { action: actionText(c.action) })}>
                 <span className="mirrorPopItemTitle"><Icon size={14} /> {c.title || c.page_id}</span>
-                <span className="mirrorPopItemMeta">{clock(c.at)}<DiffStat stats={c.stats} /></span>
+                <span className="mirrorPopItemMeta">{fmtMoment(c.at)}<DiffStat stats={c.stats} /></span>
               </button>
               <button className="ctlBtn mirrorPopOpen" disabled={!c.exists} onClick={() => jumpTo(c.page_id)}
                 aria-label={t("Open the page")} title={c.exists ? t("Open the page") : t("The page is gone")}>

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BROWSER_TAG, cloudSyncHint, profileSyncState, syncClock } from "../src/settings/syncState.js";
+import { BROWSER_TAG, cloudSyncHint, profileSyncState } from "../src/settings/syncState.js";
+import { fmtMoment } from "../src/shared/i18n/i18n.js";
 
 const clock = (at) => (at ? `T(${at})` : "");
 const cloud = (profile, linked = true) => ({ profile: { at: "", error: "", ...profile }, identity: linked ? { linked: true, username: "ann" } : { linked: false } });
@@ -109,12 +110,12 @@ test("the Account pane's Settings sync row hint", () => {
   assert.equal(cloudSyncHint(cloud({ state: "choose" }), clock), "");
 });
 
-test("the clock: the time today, the date as well on another day, nothing for no time", () => {
+test("fmtMoment: the time today, the date as well on another day, nothing for no time", () => {
   const now = new Date(2026, 8, 24, 16, 0);
-  const today = syncClock(new Date(2026, 8, 24, 14, 37).toISOString(), now);
+  const today = fmtMoment(new Date(2026, 8, 24, 14, 37).toISOString(), now);
   assert.match(today, /^\D*14\D37|2:37/);
   assert.ok(!today.includes(","));
-  assert.ok(syncClock(new Date(2026, 8, 3, 14, 37).toISOString(), now).includes(","));
-  assert.equal(syncClock("", now), "");
-  assert.equal(syncClock("not a time", now), "");
+  assert.ok(fmtMoment(new Date(2026, 8, 3, 14, 37).toISOString(), now).includes(","));
+  assert.equal(fmtMoment("", now), "");
+  assert.equal(fmtMoment("not a time", now), "");
 });
