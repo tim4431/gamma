@@ -14,6 +14,7 @@ Codex does not invoke Gamma's AI provider.
 |---|---|
 | `gamma/mcp_server.py`, `gamma/mcp_lazy.py` | the `/mcp` transport (official Python MCP SDK): the chat registry's read tools (`READ_TOOLS`), link reading, page export, the writing tools at the Comment level (`WRITING_TOOLS`), the note tools at Edit (`EDIT_TOOLS`); `mcp_lazy.py` authenticates the request and loads the SDK adapter on first use |
 | `gamma/annotations/hand.py`, `gamma/annotations/places.py` | what the writing tools write as the connection's agent, and the places they find ([annotations.md](annotations.md) "The writing tools") |
+| `gamma/agent_changes.py`, `gamma/agent_asks.py` | the journal of a connection's changes, one with the chat's ("Undoing a change"), and its question about a change asked in Gamma too, where the change lands ("Asking first") |
 | `gamma/mcp_oauth.py`, `gamma/mcp_oauth_provider.py` | discovery, dynamic registration, PKCE authorization and token exchange, the consent API (`/api/integrations/oauth/*`), `public_base`; the provider issues the 90-day token through `integrations.create_token` |
 | `gamma/mcp_links.py` | local page/block/share link resolution within the connected workspaces; which of them holds an id (`holders`: a block, a comment thread) |
 | `gamma/mcp_export.py` | `export_page`: a page as Markdown text or an embedded PDF, over `routers/export.py` |
@@ -749,11 +750,13 @@ way and not the client's own prompt or a step-up sign-in:
   `DECLINED` or `UNANSWERED`, worded as the chat's.
 - **And in Gamma, where the change would land** (`mcp_server._ask_both`,
   `gamma/agent_asks.py`). The same question is asked in Gamma at once.
-  - It opens a waiting approval (`ai_permissions.open_approval`, the
-    account's, as a chat card's) and lists it in `agent_asks` with the
-    workspace, the tool, its permission, the planned change and the
-    connection's name. The account's open tabs hear of it
+  - `agent_asks.ask` opens a waiting approval
+    (`ai_permissions.open_approval`, the account's, as a chat card's) and
+    lists it with the workspace, the tool, its permission, the planned
+    change and the connection's name. The account's open tabs hear of it
     (`{t: "ai_changes"}`).
+  - A question no page draws, an undo's or a page made's, opens none and is
+    the client's alone.
   - A page's read (`GET /api/ai/changes?page_id=`) returns the questions
     whose change is drawn on it (`asks`). A move's is the page the note is
     on now (`src_page_id`), though it goes to another.
@@ -761,7 +764,8 @@ way and not the client's own prompt or a step-up sign-in:
     ([ai.md](ai.md#reviewing-an-agents-changes)), by the connection's name
     ("Codex wants to add this note"): an edit as tracked changes, a new note
     as a ghost row, a deletion struck out, a move with where it goes, a
-    highlight or a drawing on its PDF page.
+    highlight, a drawing, a text box or a picture on its PDF page or page
+    of paper.
   - Its answers are **Keep**, **Keep, and don't ask again** (the question's
     `remember`) and **Undo**, which takes a line of what to do instead (the
     model then hears `DECLINED_SAYING`). They go through
@@ -781,9 +785,8 @@ way and not the client's own prompt or a step-up sign-in:
     session share its counter. Whether a client closes its form for it is
     the client's.
   - Either way the question leaves `agent_asks` and its approval is taken
-    off. An undo's question has nothing to draw and is the client's alone.
-    A question lives in this process's memory, as the approvals do: a
-    restart drops it with the call.
+    off (`agent_asks.settle`). A question lives in this process's memory,
+    as the approvals do: a restart drops it with the call.
 - **Storing asks nobody.** `clip_region` (the registry's `"stores": True`,
   gathered in `ai_tools.registry.STORING_TOOLS`) and `upload_file` only
   store a file for a note to show, so they run without a question. The note
@@ -839,16 +842,16 @@ then the primary Allow and Cancel.
 #### Undoing a change
 
 A connection's changes are journaled with the chat's, in one journal
-(`gamma/agent_changes.py`, SDK-free like `mcp_export.py`; [ai.md](ai.md#reviewing-an-agents-changes)),
-and each waits for the person's review in Gamma as the chat's do: the note
+(`gamma/agent_changes.py`, SDK-free like `mcp_export.py`; [ai.md](ai.md#reviewing-an-agents-changes)).
+Each waits for the person's review in Gamma, as the chat's do. The note
 draws it under the connection's name ("Edited by Codex") with Keep and Undo,
-the page's strip counts it, and the person's open tabs hear of it as it is
-made. A deletion and a page made have nothing in a note to draw on: they
+and the page's strip counts it. The person's open tabs hear of it as it is
+made. A deletion and a page made have nothing in a note to draw on. They
 wait in the connection's Changes in Settings, where Keep and Undo decide
 them (below).
 
 - **The journal.** After a change tool succeeds, `run_agent_tool` journals
-  it in the scope `_writes` gives the call, which names the journal
+  it in the scope `_writes` gives the call. That scope names the journal
   `{source: "mcp", token}`, for the Comment level's writing tools as for the
   edit tools. It keeps the change when the action carries a revert record
   of a kind `ai_revert.revert_change` takes back (`agent_changes.KINDS`).
@@ -904,16 +907,16 @@ them (below).
     once the user agrees.
   - A hosted server its plan made read-only refuses it, as it does every
     change, and so does a workspace being deleted.
-- **The person's side.** In the note itself, as above. And each editing
-  connection's row in Settings → AI → Integrations has a **Changes** button
-  (`SettingsIntegrations.jsx` `ConnectionChanges`). It lists what the
-  connection changed, with the summary, time, workspace and page, each by
-  its `state`.
+- **The person's side** is the note, as above, and the connection's row in
+  Settings → AI → Integrations. Each editing connection's row has a
+  **Changes** button (`SettingsIntegrations.jsx` `ConnectionChanges`). It
+  lists what the connection changed, with the summary, time, workspace and
+  page, each by its `state`.
   - A change waiting for review has **Keep** beside **Undo**. Keep is the
-    note's own decision, `POST /api/ai/changes/{id}`, posted with `?ws=` the
-    change's workspace, since the list spans every workspace the connection
-    reads. A kept one has a "Kept" tag and **Undo**, an undone one
-    "Undone".
+    note's own decision, `POST /api/ai/changes/{id}`. It is posted with
+    `?ws=` the change's workspace, since the list spans every workspace the
+    connection reads.
+  - A kept one has a "Kept" tag and **Undo**, an undone one "Undone".
   - It is where a deletion or a page made is reviewed.
   - A conflict is worded as the chat's revert words it
     (`chat/AgentChanges.jsx` `refusalCopy`), with the button that undoes
@@ -1023,7 +1026,7 @@ manual tokens in **Integrations**, where users can revoke them.
 
 ## Permissions and credentials
 
-- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads; a viewer may make one) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers); a third, `computer`, is a computer's channel to the server ([computers.md](computers.md)), which opens nothing else and no MCP connection; a fourth, `turn`, is the token of one turn of an agent on this computer ("The token of an agent's turn" below), which opens MCP alone. A read token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first; and of those, the ones it may also comment in, its `comments` (`integrations.comment_grant`, "The Comment level"), and the ones whose notes it may also edit, its `edits` (`integrations.edit_grant`, "Editing notes"), each `''`, `'*'` or a list, edits only where the account edits. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included), but for its comments in its own workspace when it comments there (`auth.token_comments`), whatever else its MCP connection reads. No token reviews an agent's change either, whatever its scope: keeping one, Keep All and Clear marks answer 403 (`auth.TOKEN_REFUSAL`), the page's read lists no question waiting (`asks: []`), and an answer to a question an assistant asks in Gamma is 404 ("Asking first"), so a connection cannot pass its own changes or questions through the person's review. `POST /api/ai/chat` through it arms the reading tools only (`auth.can_write`), and the writing tools where it comments (`auth.can_comment`), so its agent cannot rename, move or edit. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
+- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads; a viewer may make one) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers); a third, `computer`, is a computer's channel to the server ([computers.md](computers.md)), which opens nothing else and no MCP connection; a fourth, `turn`, is the token of one turn of an agent on this computer ("The token of an agent's turn" below), which opens MCP alone. A read token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first; and of those, the ones it may also comment in, its `comments` (`integrations.comment_grant`, "The Comment level"), and the ones whose notes it may also edit, its `edits` (`integrations.edit_grant`, "Editing notes"), each `''`, `'*'` or a list, edits only where the account edits. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included), but for its comments in its own workspace when it comments there (`auth.token_comments`), whatever else its MCP connection reads. No token reviews an agent's change either, whatever its scope. Keeping one, Keep All and Clear marks answer 403 (`auth.TOKEN_REFUSAL`). The page's read lists no question waiting (`asks: []`), and an answer to a question an assistant asks in Gamma is 404 ("Asking first"). So a connection cannot pass its own changes or questions through the person's review. `POST /api/ai/chat` through it arms the reading tools only (`auth.can_write`), and the writing tools where it comments (`auth.can_comment`), so its agent cannot rename, move or edit. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
   `?ws=` and `X-Gamma-Workspace` cannot select another workspace.
 - Only token SHA-256 hashes are stored in `users.db`. Tokens contain 256 random bits.
 - HTTP share URLs also stay within the integration token's workspace and

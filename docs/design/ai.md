@@ -136,8 +136,8 @@ sequenceDiagram
 The change is drawn where it would land too, dashed in the note or on the
 PDF page, with the same *Keep* and *Undo*: answering either one answers
 both. A card for a call that is no change (a reading tool set to Ask, a
-comment, a resolve) still asks *Allow once*, *Allow in this chat*, *Always
-allow* or *Don't allow*. The card's diff is built by the same code that
+comment, a resolve) asks *Allow once*, *Allow in this chat*, *Always allow*
+or *Don't allow*. The card's diff is built by the same code that
 will make the change, so the card and the change cannot differ. After
 *Undo* (or *Don't allow*) the agent is told not to retry or work around
 it. No answer in ten minutes counts as no, and a call that would change
@@ -165,7 +165,7 @@ No setting allows:
 Every call shows in the reply, reads included, with lists of what changed.
 A change to a note, and a page renamed, moved, labelled, deleted or
 restored, has *Undo* and *Redo*, in any order, and *Keep* while it waits
-for review; undoing keeps later edits by others. If someone changed the
+for review. Undoing keeps later edits by others. If someone changed the
 agent's text since, undoing stops and shows what would be lost. A kept
 change to a note or a PDF page leaves a mark there for a while (Settings →
 AI → Tool usage → Marks of kept changes), which unfolds it again.
@@ -221,10 +221,10 @@ you give it each workspace at one of three levels:
 | Edit | also edit, create and move notes; asks you before each change, through the assistant and in Gamma on the page where the change would land, whichever is answered first, with a diff (you can turn asking off for a connection) |
 
 Edit is offered only where your account edits. An assistant deletes a note
-only where its connection may delete notes, can make a page but never
+only where its connection may delete notes. It can make a page, but never
 changes an existing page's title or place, and never touches folders,
 labels or settings. Its changes wait for your review in Gamma as the chat's
-do, and only you, signed in, keep them or answer its questions there. Gamma's own
+do. Only you, signed in, keep them or answer its questions there. Gamma's own
 AI connections are never used for it. A link pasted to an assistant grants
 nothing: its access is its token's.
 
@@ -256,6 +256,7 @@ written for them imports as it is.
   [Chat history](../dev/chat_history.md), [Skills](../dev/skills.md).
 - [Local agents](../dev/local_agents.md), [MCP](../dev/mcp.md).
 - [AI permissions](../research/ai-permissions.md),
+  [Reviewing AI changes](../research/ai-change-review.md),
   [Agents as participants](../research/agents-as-participants.md),
   [Skills in the chat](../research/chat-skills.md),
   [Models per task, providers and cost](../research/ai-model-settings.md).

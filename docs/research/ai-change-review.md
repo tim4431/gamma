@@ -62,7 +62,9 @@ gaps, and the steps to build it.
   compared by swipe. Comments are not reviewed: they are messages from the
   agent, not edits to the person's content.
 
-## What Gamma does today
+## What Gamma did on 2026-11-25
+
+Before the steps below were built.
 
 | Change | Under Ask, before it is written | Under Allow, after it is written | Taken back from |
 |---|---|---|---|
@@ -84,7 +86,7 @@ Five gaps follow from this.
    and redo icons. The person is deciding one thing every time: keep the
    change or not.
 2. **What the note keeps depends on the gate.** An edit allowed on its
-   card is never drawn after it lands (`noteReview.js:101`, "allowed on its
+   card is never drawn after it lands (`noteReview.js`, "allowed on its
    card, seen there"), but an edit that ran without asking is. So the trail
    in the note depends on which permission the edit went through, not on
    whether the person looked at it.
@@ -96,8 +98,9 @@ Five gaps follow from this.
    changes in memory and saves none. A reload, a second window or the iPad
    draws nothing; only a press on the chat row draws a change again. The
    note's bar answers a card through the dock's function in that same tab
-   (`ChatDock.jsx:1641`), so a note open in another window cannot answer.
-5. **MCP is a second implementation.** `gamma/mcp_changes.py` journals what
+   (`ChatDock.jsx`), so a note open in another window cannot answer.
+5. **MCP is a second implementation.** `gamma/mcp_changes.py` (since
+   renamed `agent_changes.py`, the shared journal) journals what
    a connection changed so it can be undone, beside the chat's actions that
    carry the same revert records. Nothing in the note reads either one.
 
@@ -261,14 +264,15 @@ back changes across the whole conversation.
 
 ## 2. MCP
 
-Not today. The client asks in its own terminal (elicitation, plain text
-diff lines), the change lands in the note without a mark, and the person's
-only review is the connection's Changes list in Settings.
+Not on 2026-11-25. The client asked in its own terminal (elicitation, plain
+text diff lines), the change landed in the note without a mark, and the
+person's only review was the connection's Changes list in Settings.
 
 With the shared record:
 
-- **Drawn like the chat's.** `mcp_changes.record` writes into the shared
-  journal, so the note draws the change with the agent's name on the bar
+- **Drawn like the chat's.** The connection's changes go into the shared
+  journal (built: `run_agent_tool` journals them, `gamma/agent_changes.py`),
+  so the note draws the change with the agent's name on the bar
   ("Claude Code"). `undo_change` is Undo, and `list_changes` reads the
   same rows, with their states. So an agent can learn that the person
   undone its change, as the chat's replay tells Gamma AI.
@@ -300,9 +304,9 @@ folders and labels. Speech does not: comments, replies and resolves are
 signed messages from the agent. They sit in their thread, the Inbox tells
 the person about them, and the person deletes a comment or reopens a
 thread. A highlight made by `highlight` is content, a block in the notes,
-so it gets reviewed. Today it cannot be taken back. Under this design its
-revert is a created block's: Undo deletes it, and stops when a thread
-has been opened on it since. The highlight that a comment on a quote makes
+so it gets reviewed. On 2026-11-25 it could not be taken back. Under this
+design (built) its revert is a created block's: Undo deletes it, and stops
+when a thread has been opened on it since. The highlight that a comment on a quote makes
 is the comment's anchor, so it goes with the comment.
 
 **One renderer per kind.** Each kind's record already holds before and
@@ -341,9 +345,10 @@ properties, with the ink's strokes inline rather than as a stored file.
 The chat card keeps the server's picture of the page as well.
 
 **Pictures inside a note.** `mdDiff` treats a picture as one word, so a
-picture replaced in a block's text draws as the old one struck out above
+picture replaced in a block's text drew as the old one struck out above
 the new one. When two pictures pair up in one place (one removed, one added
-there), they should draw as one compare frame, the swipe above. The same
+there), they should draw as one compare frame, the swipe above (built:
+`editor/PictureDiff.jsx`). The same
 component serves a replaced picture on a page.
 
 Handwriting the person converts themselves (Redraw as shapes, Convert to
@@ -351,6 +356,15 @@ text) is not an agent change. If an agent ever redraws handwriting, that is
 a changed object.
 
 ## Data and routes
+
+The plan below was built with other names
+([dev/ai.md](../dev/ai.md#reviewing-an-agents-changes)). The table gained
+`account`, `source`, `kept_at` and `cleared_at` (step 73), and the state is
+read from those times. The routes are `GET /api/ai/changes?page_id=` or
+`?ids=`, `POST /api/ai/changes/{id}` with a decision, and `POST
+/api/ai/changes/keep` and `/clear`. The tabs hear `{t: "ai_changes"}`
+through the account's sockets. The journal keeps the newest 500 changes per
+account and connection, none older than 30 days.
 
 - **One table.** Extend `agent_changes` (each workspace's `pages.db`,
   already private: no backup or mirror carries it) to every agent. Add

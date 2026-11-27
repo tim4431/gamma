@@ -2151,14 +2151,18 @@ thread in …", "Highlighted a passage in …" (`chat/agentSteps.js`); a
 highlight reloads the open page's tree as a block tool does (`BLOCK_TOOLS`).
 A comment and a resolve have no revert row: they are the person's to delete
 or reopen. A highlight records a new block's revert (`after`, `parent`,
-`position`, `props`), journaled as kind `create`, so it is drawn on its page
-while its card asks (its preview's `pdf_page` and `shape`: the rectangles in
-its position's frame, its style, and its colour as the block will store it,
-`hand.stored_color`'s `#rrggbbaa`, which `hand.highlight` writes in
-`props.color` too; a colour name the tool does not know is refused before
-anyone is asked) and undone from its note, its mark or its row as a note
-the agent made (`chat/aiRevert.js` takes a highlight back as a new block);
-one commented on since stops (`filled`).
+`position`, `props`), journaled as kind `create`.
+- While its card asks, it is drawn on its page from its preview's
+  `pdf_page` and `shape` ([ai.md](ai.md#reviewing-an-agents-changes)). The
+  shape holds the rectangles in its position's frame, its style, and its
+  colour as the block will store it.
+- That colour is `hand.stored_color`'s `#rrggbbaa`, which `hand.highlight`
+  writes in `props.color` too. A colour name the tool does not know is
+  refused before anyone is asked.
+- It is undone from its note, its mark or its row as a note the agent made
+  (`chat/aiRevert.js` takes a highlight back as a new block). One commented
+  on since stops (`filled`).
+
 The same words on the same place by the same agent within `hand.REPEAT_S`
 are refused with what the first call wrote, so a call made again never
 doubles a comment. The prompt names them once any is armed: reply where a
@@ -2368,15 +2372,14 @@ Each row under "Changed in your notes" has an undo button. The user takes
 back one change at a time, in any order, and whatever anyone wrote since
 stays. An undone row has a redo button that puts the change back. A change
 the server journaled for review (`change_id` on the action) also has Keep
-while it waits, and its row goes by what was decided wherever it was decided
+while it waits. Its row goes by what was decided, wherever it was decided
 ([ai.md](ai.md#reviewing-an-agents-changes)). Pages
-renamed, moved, labelled, deleted or restored by the agent — one or many in
-one call — and a deleted folder or label have one under "Changed in your
+renamed, moved, labelled, deleted or restored by the agent (one or many in
+one call) and a deleted folder or label have one under "Changed in your
 library". To take back several at once, "Undo…" opens a dialog (below).
-A note that shows an edit or a new note made without asking as tracked
-changes has Keep and Undo of its own on the bar under it, the same decision
-as the row's, by the change's id in the journal, its steps newest first
-([ai.md](ai.md#reviewing-an-agents-changes)).
+A note that draws a change made without asking has Keep and Undo of its own
+on the bar under it. They make the row's decision, by the change's id in the
+journal, its steps newest first ([ai.md](ai.md#reviewing-an-agents-changes)).
 
 The note tools record what undoing and redoing their change needs, as
 `revert` on the action:
@@ -2394,9 +2397,9 @@ The note tools record what undoing and redoing their change needs, as
 | `delete_page` / `restore_page` | `trash` / `restore`: the page ids the call moved into Recently deleted, or out of it |
 
 The chat saves the action with the reply. An undo of a change the journal
-holds goes by its id (`POST /api/ai/changes/{id}`, `gamma/agent_changes.py`,
-which marks it undone or, for a redo, kept); one it no longer holds, or
-saved before it, sends the action's record to `POST /api/ai/revert`. Both run
+holds goes by its id (`POST /api/ai/changes/{id}`, `gamma/agent_changes.py`),
+which marks it undone, or kept for a redo. One it no longer holds, or saved
+before it, sends the action's record to `POST /api/ai/revert`. Both run
 `ai_revert.revert_change` (`gamma/ai_revert.py`), which plans and writes under
 one write lock:
 
