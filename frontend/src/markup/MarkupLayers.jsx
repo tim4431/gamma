@@ -7,6 +7,7 @@ import { InkLayer, Strokes, useHasWet } from "../ink/InkLayer";
 import { penToolOn } from "../ink/pencilActions.js";
 import { usePageTools } from "./PageTools";
 import { PictureLayer, StillPictures } from "./PictureLayer";
+import { ReviewLayer } from "./ReviewLayer";
 import { TextBoxLayer } from "./TextBoxLayer";
 
 const EMPTY = [];
@@ -134,6 +135,9 @@ export function MarkupLayers({ surface, wrapRef, width, height, marks, active = 
           chrome={chrome} onZoomStroke={onZoomStroke} zoom={chrome && ink.zoom?.page === surface ? ink.zoom : null}
           onZoom={chrome && ink.zoom && !readOnly ? actions.onZoom : undefined} view={!!preview} />
       )}
+      {/* over them all, an agent's changes here: what it asks to put here while its card waits,
+          and what it put here that waits for review or is marked */}
+      {chrome ? <ReviewLayer surface={surface} width={width} height={height} /> : null}
     </>
   );
 }

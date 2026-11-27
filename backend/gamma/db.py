@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 71
+SCHEMA_VERSION = 73
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -1436,16 +1436,22 @@ PAGES_SCHEMA = [
         deleted_at TEXT NOT NULL
     ) WITHOUT ROWID""",
     "CREATE INDEX IF NOT EXISTS idx_agent_stamps_at ON agent_stamps(deleted_at)",
-    # agent_changes (gamma/mcp_changes.py, docs/dev/mcp.md "Undoing a
-    # change"): each change an MCP connection made here, with what taking it
-    # back needs: `token_id` the connection (integration_tokens.id), `agent`
-    # its stamp then (agents.stamp, JSON), `tool` and `summary` what it did,
-    # `kind` the revert's (ai_revert._PLANS), `block_id` and `page_id` what it
-    # changed, `revert` the tool's revert record (JSON), `undone_at` when it
-    # was taken back ('' while it stands). The newest per connection only,
-    # and none older than mcp_changes.KEEP_DAYS. Each account's own: a
-    # backup carries none (ws_backup.PRIVATE_TABLES), and no mirror or Gamma
-    # export does. Additive: no step (docs/dev/migrations.md rule 2).
+    # agent_changes (gamma/agent_changes.py, docs/dev/ai.md "Reviewing an
+    # agent's changes"): each change an agent made here, Gamma AI's in the
+    # chat and an MCP connection's, with what drawing it and taking it back
+    # need: `account` the account it was made for (users.id), `source`
+    # `chat` or `mcp`, `token_id` the connection (integration_tokens.id; ''
+    # for a person's own chat), `agent` its stamp then (agents.stamp, JSON),
+    # `tool` and `summary` what it did, `kind` the revert's
+    # (ai_revert._PLANS), `block_id` and `page_id` what it changed, `revert`
+    # the tool's revert record (JSON: before and after), `kept_at` when the
+    # person kept it, `undone_at` when it was taken back (both '' while it
+    # waits for review), `cleared_at` when the person cleared a kept one's
+    # mark from its note. The newest per account and connection only, and
+    # none older than agent_changes.KEEP_DAYS. Each account's own: a backup
+    # carries none (ws_backup.PRIVATE_TABLES), and no mirror or Gamma export
+    # does. `account`, `source`, `kept_at` and `cleared_at` came with step 73
+    # (step 72 is citations').
     """CREATE TABLE IF NOT EXISTS agent_changes (
         id TEXT PRIMARY KEY,
         token_id TEXT NOT NULL,
@@ -1457,9 +1463,14 @@ PAGES_SCHEMA = [
         page_id TEXT NOT NULL,
         summary TEXT NOT NULL,
         revert TEXT NOT NULL,
-        undone_at TEXT NOT NULL DEFAULT ''
+        undone_at TEXT NOT NULL DEFAULT '',
+        account TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT '',
+        kept_at TEXT NOT NULL DEFAULT '',
+        cleared_at TEXT NOT NULL DEFAULT ''
     ) WITHOUT ROWID""",
     "CREATE INDEX IF NOT EXISTS idx_agent_changes_token ON agent_changes(token_id, at)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_changes_page ON agent_changes(account, page_id)",
     WORKSPACE_PREFS_SCHEMA,
     *CHATS_SCHEMA,
     *COMPUTER_CHATS_SCHEMA,

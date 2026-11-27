@@ -1,13 +1,13 @@
 // Taking back several of the AI's changes at once: every change of the
-// conversation that can still be reverted (chat/aiRevert.js `revertible`),
+// conversation that can still be undone (chat/aiRevert.js `revertible`),
 // grouped under the message that asked for it, the latest first, each with a
 // checkbox — the reply it was opened from ticked, "Select all" for every
-// one. Revert takes the ticked ones back newest first, each as its row under
-// the reply does (`sendRevert`, POST /api/ai/revert), and stops at the
-// first that asks: it says why and offers to revert it anyway where that
-// can be forced, or to skip it. The list is the one the dialog opened with,
-// so a row reverted here stays, marked, and nothing moves under the
-// pointer. AgentChanges' "Revert…" opens it; ChatDock holds it.
+// one. Undo takes the ticked ones back newest first, each as its row under
+// the reply does (`sendRevert`), and stops at the first that asks: it says
+// why and offers to undo it anyway where that can be forced, or to skip
+// it. The list is the one the dialog opened with, so a row undone here
+// stays, marked, and nothing moves under the pointer. AgentChanges'
+// "Undo…" opens it; ChatDock holds it.
 import React, { useMemo, useState } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay } from "../shared/ui/Surfaces";
@@ -27,8 +27,8 @@ function Mixed({ on, some, ...rest }) {
 }
 
 // `onReverted(id, indexes, answer)`: the actions at `indexes` of reply `id`
-// were reverted — the dock marks them in the saved conversation. `busy` (a
-// reply streaming here) holds the Revert button.
+// were undone — the dock marks them in the saved conversation. `busy` (a
+// reply streaming here) holds the Undo button.
 export default function RevertChanges({ messages, fromId, busy = false, onReverted, onClose }) {
   const [items] = useState(() => revertible(messages));
   const [picked, setPicked] = useState(() => new Set(items.filter((item) => item.id === fromId).map(keyOf)));
@@ -118,7 +118,7 @@ export default function RevertChanges({ messages, fromId, busy = false, onRevert
           <Icon size={14} />
           <span className="chatChangeText">{changeText(item.action, PLAIN)}</span>
           {state.working ? <span className="transferSpin inline" aria-hidden="true" />
-            : state.done ? <span className="chatChangeTag"><CheckIcon size={14} />{t("Reverted")}</span> : null}
+            : state.done ? <span className="chatChangeTag"><CheckIcon size={14} />{t("Undone")}</span> : null}
         </label>
         {state.done && state.kept ? (
           <div className="chatRevertAsk revertDialogAsk" role="status">
@@ -135,12 +135,12 @@ export default function RevertChanges({ messages, fromId, busy = false, onRevert
   return (
     <DialogOverlay {...backdropPress(close)}>
       <div className="reportModal docPickerModal revertDialog" role="dialog" aria-modal="true"
-        aria-label={t("Revert the AI's changes")} onClick={(e) => e.stopPropagation()}
+        aria-label={t("Undo the AI's changes")} onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } }}>
         <div className="confirmHead">
           <span className="confirmIcon"><UndoIcon size={16} /></span>
           <span className="settingText">
-            <span className="reportModalTitle">{t("Revert the AI's changes")}</span>
+            <span className="reportModalTitle">{t("Undo the AI's changes")}</span>
             <span className="confirmMessage">
               {t("Tick the changes to take back. They go back newest first, and whatever anyone wrote since stays.")}
             </span>
@@ -170,13 +170,13 @@ export default function RevertChanges({ messages, fromId, busy = false, onRevert
           })}
         </div>
         <div className="reportModalBtns">
-          {reverted ? <span className="revertDialogDone">{tn("{n} change reverted", "{n} changes reverted", reverted)}</span> : null}
+          {reverted ? <span className="revertDialogDone">{tn("{n} change undone", "{n} changes undone", reverted)}</span> : null}
           <button type="button" className="uiBtn" disabled={running} onClick={close} autoFocus>
             {reverted && !ticked.length ? t("Done") : t("Cancel")}
           </button>
           <button type="button" className="uiBtn primary" disabled={running || busy || !ticked.length || !!stopped}
             onClick={() => run()}>
-            {ticked.length ? tn("Revert {n} change", "Revert {n} changes", ticked.length) : t("Revert")}
+            {ticked.length ? tn("Undo {n} change", "Undo {n} changes", ticked.length) : t("Undo")}
           </button>
         </div>
       </div>

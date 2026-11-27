@@ -1858,8 +1858,8 @@ chat" lets a list run without a card, as many one-page calls would.
 
 Their permission is **Delete folders and labels** (`organize_delete`, Ask
 by default). It takes all three states like any other: every deletion can
-be reverted, the folders' chats included (below). The card's Allow once is
-the red one. Its preview carries the folder's or label's `block_id`. Once
+be reverted, the folders' chats included (below). The card's Keep is the
+red one. Its preview carries the folder's or label's `block_id`. Once
 allowed, the gate plans the call again (`TREE_DELETES`), and when its path
 or name names another block by then (a rename or a move while the card
 waited), nothing is deleted and the model is told so
@@ -2144,7 +2144,16 @@ thread; absolute on MCP), and its action (kind `comment`, `resolve` or
 "Commented in …", "Replied in a comment thread in …", "Resolved a comment
 thread in …", "Highlighted a passage in …" (`chat/agentSteps.js`); a
 highlight reloads the open page's tree as a block tool does (`BLOCK_TOOLS`).
-None has a revert row: a comment and a highlight are the person's to delete.
+A comment and a resolve have no revert row: they are the person's to delete
+or reopen. A highlight records a new block's revert (`after`, `parent`,
+`position`, `props`), journaled as kind `create`, so it is drawn on its page
+while its card asks (its preview's `pdf_page` and `shape`: the rectangles in
+its position's frame, its style, and its colour as the block will store it,
+`hand.stored_color`'s `#rrggbbaa`, which `hand.highlight` writes in
+`props.color` too; a colour name the tool does not know is refused before
+anyone is asked) and undone from its note, its mark or its row as a note
+the agent made (`chat/aiRevert.js` takes a highlight back as a new block);
+one commented on since stops (`filled`).
 The same words on the same place by the same agent within `hand.REPEAT_S`
 are refused with what the first call wrote, so a call made again never
 doubles a comment. The prompt names them once any is armed: reply where a
@@ -2347,16 +2356,19 @@ change tool that changed nothing is marked `noop` and not listed.
 
 ### Reverting a note change
 
-Each row under "Changed in your notes" has a revert button. The user takes
+Each row under "Changed in your notes" has an undo button. The user takes
 back one change at a time, in any order, and whatever anyone wrote since
-stays. A reverted row has a redo button that puts the change back. Pages
+stays. An undone row has a redo button that puts the change back. A change
+the server journaled for review (`change_id` on the action) also has Keep
+while it waits, and its row goes by what was decided wherever it was decided
+([ai.md](ai.md#reviewing-an-agents-changes)). Pages
 renamed, moved, labelled, deleted or restored by the agent — one or many in
 one call — and a deleted folder or label have one under "Changed in your
-library". To take back several at once, "Revert…" opens a dialog (below).
+library". To take back several at once, "Undo…" opens a dialog (below).
 A note that shows an edit or a new note made without asking as tracked
-changes has a Revert of its own on the bar under it, the same revert as the row's (`sendRevert`,
-marked in the conversation the same way), its steps newest first
-([ai.md](ai.md#watching-the-agent-work-live-footprint)).
+changes has Keep and Undo of its own on the bar under it, the same decision
+as the row's, by the change's id in the journal, its steps newest first
+([ai.md](ai.md#reviewing-an-agents-changes)).
 
 The note tools record what undoing and redoing their change needs, as
 `revert` on the action:
@@ -2373,8 +2385,11 @@ The note tools record what undoing and redoing their change needs, as
 | `rename_page` / `move_page` / `label_page` | `pages`: `[page id, field, before, after]` per page — `title` (text, as stored: `""` for an untitled page), `folders` or `labels` (id lists, as read and as written) |
 | `delete_page` / `restore_page` | `trash` / `restore`: the page ids the call moved into Recently deleted, or out of it |
 
-The chat saves the action with the reply. A revert sends it to
-`POST /api/ai/revert` (`gamma/ai_revert.py`), which plans and writes under
+The chat saves the action with the reply. An undo of a change the journal
+holds goes by its id (`POST /api/ai/changes/{id}`, `gamma/agent_changes.py`,
+which marks it undone or, for a redo, kept); one it no longer holds, or
+saved before it, sends the action's record to `POST /api/ai/revert`. Both run
+`ai_revert.revert_change` (`gamma/ai_revert.py`), which plans and writes under
 one write lock:
 
 | Change | Reverted by | Stops (409) when |
@@ -2437,24 +2452,24 @@ pages as they were), saves the conversation
 (`chatSession.edit`), and reloads the touched pages when no socket brought
 the ops.
 
-In the list, a reverted row shows "Reverted" and its redo button. A stopped
-row says why, shows the diff, and offers "Revert anyway", "Delete anyway"
+In the list, an undone row shows "Undone" and its redo button, and a kept
+one "Kept". A stopped row says why, shows the diff, and offers "Undo anyway", "Delete anyway"
 or "Move back anyway" (for a redo, "Redo anyway" or "Move anyway") beside
 "Keep it". The buttons wait while a reply streams. A viewer and the share
 view get none. A page tool's row whose every page changed since says so,
 with Dismiss; one that left some says how many under the row.
 
 **Several at once.** While the conversation holds two changes or more that
-can still be reverted, each reply with one has "Revert…" in its first
+can still be undone, each reply with one has "Undo…" in its first
 list's head. It opens `chat/RevertChanges.jsx` over the dock: every such
 change of the conversation (`aiRevert.revertible`), grouped under the
 message that asked for it, the latest first, each with a checkbox, the
-reply it was opened from ticked, and "Select all". Revert takes the ticked
+reply it was opened from ticked, and "Select all". Undo takes the ticked
 ones back newest first, each as its row does (`sendRevert`), and marks each
 in the saved conversation as it goes. It stops at the first that asks: the
-row says why, with "Revert anyway" where it can be forced and "Skip it",
-which unticks it so the next Revert goes on. The list is the one the
-dialog opened with, so a reverted row stays, marked "Reverted". It closes
+row says why, with "Undo anyway" where it can be forced and "Skip it",
+which unticks it so the next Undo goes on. The list is the one the
+dialog opened with, so an undone row stays, marked "Undone". It closes
 when the dock shows another conversation.
 
 A folder or label a page tool's call made stays after a revert, maybe

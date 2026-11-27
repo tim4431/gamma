@@ -52,7 +52,10 @@ function socketUrl(pageId) {
 //                               or the poll came round (null): refetch that file's
 //                               recognition, or the one on screen (pdf/ocrState.js)
 // A `{t: "inbox"}` nudge (the account's inbox has news) becomes the window
-// event gamma:inbox, whatever page it arrived on.
+// event gamma:inbox, and an `{t: "ai_changes"}` one (an agent's change was
+// made, kept or undone, or an assistant asks about a page) gamma:ai-changes,
+// whatever page it arrived on, as does every hello for the socket's page
+// (one the socket missed while it was away).
 // Returns the session's commit/flush/hasPending/sendCursor/sendInkLive/overlay/
 // reloadFailed/tooLong/gone, `peers`, `me`, and `reconnect` (reopen the
 // socket — after a display-name change, since the name travels in the
@@ -94,6 +97,10 @@ export function usePageCollab(opts) {
       // a clone's sync pill (MirrorPopover) marks local edits as not pushed yet
       onQueued: () => window.dispatchEvent(new CustomEvent("gamma:local-edit")),
       onInbox: () => window.dispatchEvent(new CustomEvent("gamma:inbox")),
+      // the page's agent changes and an assistant's questions about it
+      // are read again, when something on screen draws it
+      // (chat/noteReview.js watch)
+      onAiChanges: (msg) => window.dispatchEvent(new CustomEvent("gamma:ai-changes", { detail: { ws: msg.ws, pageId: msg.page_id } })),
     });
   }
   const session = ref.current;

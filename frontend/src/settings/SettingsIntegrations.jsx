@@ -7,6 +7,7 @@ import { LinkIcon, KeyIcon, MonitorIcon, RefreshIcon, UnlinkIcon, ShieldIcon, Fo
   UndoIcon } from "../shared/ui/Icons";
 import { refusalCopy } from "../chat/AgentChanges.jsx";
 import { revertRefusal } from "../chat/aiRevert.js";
+import { CHANGE_STATES } from "../chat/noteReview.js";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
   claudeRemoveCommands, codexRemoveCommands, dshRemoveCommand } from "./assistantSetup";
 import { WorkspacePicker } from "./WorkspacePicker";
@@ -70,38 +71,59 @@ function ConnectionRow({ item, names, busy, onEdit, onChanges, onRevoke }) {
   </Row>;
 }
 
-// What a connection changed in the notes through MCP (gamma/mcp_changes.py),
-// newest first, each with Undo: the chat's revert (gamma/ai_revert.py), as
-// the person. Someone's work since stops it, worded as the chat's row words
-// it (chat/AgentChanges.jsx refusalCopy), with the button that undoes anyway.
+// What a connection changed in the notes through MCP (gamma/agent_changes.py),
+// newest first, by its journal state. One that waits for review (made
+// without asking) has Keep, the person's review as its note's bar gives it;
+// a deletion or a page made has no note to draw it in, so this is where it
+// is kept. Each not undone has Undo: the chat's revert (gamma/ai_revert.py),
+// as the person. Someone's work since stops it, worded as the chat's row
+// words it (chat/AgentChanges.jsx refusalCopy), with the button that undoes
+// anyway. Both act in the change's own workspace, which need not be the one
+// open (Keep's ?ws=, Undo's workspace_id).
 function ConnectionChanges({ item }) {
   const url = `${API}/integrations/tokens/${item.id}/changes`;
   const [changes, setChanges] = React.useState(null);
-  const [failed, setFailed] = React.useState(null);  // {id, refusal}: the last undo's refusal; id "" for the list's
-  const [doing, setDoing] = React.useState("");
+  const [failed, setFailed] = React.useState(null);  // {id, text, force?}: the last action's failure; id "" for the list's
+  const [doing, setDoing] = React.useState(null);  // {id, action}: "keep" or "undo"
   const load = React.useCallback(() => apiJson(url).then((d) => setChanges(d.changes || []))
-    .catch((err) => setFailed({ id: "", refusal: revertRefusal(err) })), [url]);
+    .catch((err) => setFailed({ id: "", text: err?.message || String(err) })), [url]);
   React.useEffect(() => { load(); }, [load]);
-  const undo = async (change, force = false) => {
-    setDoing(change.id); setFailed(null);
+  const act = async (change, action, run, failure) => {
+    setDoing({ id: change.id, action }); setFailed(null);
     try {
-      await apiJson(`${url}/${change.id}/undo`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: change.workspace_id, force }) });
+      await run();
       await load();
-    } catch (err) { setFailed({ id: change.id, refusal: revertRefusal(err) }); } finally { setDoing(""); }
+    } catch (err) { setFailed({ id: change.id, ...failure(err) }); } finally { setDoing(null); }
   };
-  if (!changes) return failed ? <FormNotice>{failed.refusal.detail}</FormNotice> : <p className="setNotice loadingHint">{t("Loading…")}</p>;
+  const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const undo = (change, force = false) => act(change, "undo",
+    () => apiJson(`${url}/${change.id}/undo`, json({ workspace_id: change.workspace_id, force })),
+    (err) => refusalCopy(revertRefusal(err), false));
+  const keep = (change) => act(change, "keep",
+    () => apiJson(`${API}/ai/changes/${encodeURIComponent(change.id)}?ws=${encodeURIComponent(change.workspace_id)}`,
+      json({ decision: "keep" })),
+    (err) => ({ text: err?.message || String(err) }));
+  const busy = (change, action) => doing?.id === change.id && doing.action === action;
+  if (!changes) return failed ? <FormNotice>{failed.text}</FormNotice> : <p className="setNotice loadingHint">{t("Loading…")}</p>;
   if (!changes.length) return <Empty icon={HistoryIcon}>{t("It has changed nothing yet.")}</Empty>;
   return changes.map((change) => {
-    const copy = failed?.id === change.id ? refusalCopy(failed.refusal, false) : null;
+    const copy = failed?.id === change.id ? failed : null;
     const when = new Date(change.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    const state = change.state || (change.undone ? CHANGE_STATES.UNDONE : "");
     return <React.Fragment key={change.id}>
       <Row icon={change.tool === "delete_block" ? TrashIcon : UndoIcon} label={change.summary}
         hint={[when, change.workspace, change.page_title].filter(Boolean).join(" · ")}>
-        {change.undone ? <span className="uiTag">{t("Undone")}</span>
-          : <button type="button" className="uiBtn sm" disabled={!!doing} onClick={() => undo(change)}>
-            <MorphText>{doing === change.id ? t("Undoing…") : t("Undo")}</MorphText>
-          </button>}
+        {state === CHANGE_STATES.UNDONE ? <span className="uiTag">{t("Undone")}</span> : <div className="integrationActions">
+          {state === CHANGE_STATES.KEPT ? <span className="uiTag">{t("Kept")}</span> : null}
+          {state === CHANGE_STATES.OPEN ? (
+            <button type="button" className="uiBtn sm" disabled={!!doing} title={t("Keep this change")} onClick={() => keep(change)}>
+              <MorphText>{busy(change, "keep") ? t("Keeping…") : t("Keep")}</MorphText>
+            </button>
+          ) : null}
+          <button type="button" className="uiBtn sm" disabled={!!doing} onClick={() => undo(change)}>
+            <MorphText>{busy(change, "undo") ? t("Undoing…") : t("Undo")}</MorphText>
+          </button>
+        </div>}
       </Row>
       {copy ? <FormNotice>{copy.text}{copy.force ? <>{" "}
         <button type="button" className="uiBtn sm" disabled={!!doing} onClick={() => undo(change, true)}>{copy.force}</button>

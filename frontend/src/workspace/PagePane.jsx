@@ -37,6 +37,7 @@ import { picturesBySurface } from "../markup/picture.js";
 import { groupsBySurface } from "../ink/inkSurfaces.js";
 import { inkBySheet, sheetsOf } from "../notebook/notebook.js";
 import { BlockTree } from "../editor/BlockTree";
+import { useWatchPage } from "../chat/noteReview.js";
 import { refLabelsByBlock } from "../editor/refLabels.js";
 import { FileChipContext } from "../transfers/FileChip";
 import { blocksToHighlights, flattenBlocks, isFolded, isInkGroup, positionKeyOf } from "../shared/model/blockModel.js";
@@ -91,9 +92,13 @@ export function notesPlaceOf(list) {
 
 // `shared`: what App lends every view, {refCache, onFetchRefs, onCacheRef,
 // libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pages,
-// textScaleStyle, darkPage, hideEmbeddedAnnots, canWrite, labels, exportButton}.
+// textScaleStyle, darkPage, hideEmbeddedAnnots, canWrite, labels, review,
+// exportButton}.
 export default function PagePane({ pageId, title, dock = false, overlay, scroll, startPage = 0, zoom: zoomIn = "page-width",
   pdfHidden = false, notebookView = false, notesPlace = null, shared, onScroll, onZoom, onNotesPlace, onActivate }) {
+  // The agents' changes on the page shown are read while it shows
+  // (chat/noteReview.js), so a press that makes it live finds them drawn.
+  useWatchPage(pageId, !!shared?.review);
   const [page, setPage] = useState(() => {
     const kept = TREES.get(pageId);
     return kept ? { id: pageId, ...kept, error: "" } : { id: null, block: null, children: EMPTY, error: "" };

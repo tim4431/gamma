@@ -33,6 +33,9 @@ import { TOPBAR } from "./topbarItems.js";
 import { VIEWER_TOOLS } from "./viewerToolItems.js";
 
 export const ACCOUNT = "account";
+// How long an agent's kept change stays marked in its note, in minutes, as
+// Settings offers it (0: till the person clears it).
+export const MARK_MINUTES = [1, 5, 15, 60, 1440, 0];
 export const BROWSER = "browser";
 
 const FLAG = { parse: (raw) => raw === "1", serialize: (v) => (v ? "1" : "0") };
@@ -372,6 +375,11 @@ export const PREFS = {
   // conversation carries the answer and not the paper. Off makes the chat
   // read every document itself.
   delegateReads: flag("gamma-ai-delegate-reads", ACCOUNT, true),
+  // How long an agent's change the person kept stays marked at its note's
+  // edge (chat/noteReview.js setMarkLife), in minutes; 0 keeps the mark
+  // until Clear marks. A minute by default: long enough to look back.
+  aiMarkMinutes: pref("gamma-ai-mark-minutes", ACCOUNT, 1,
+    { parse: (raw) => (MARK_MINUTES.includes(Number(raw)) && raw !== "" ? Number(raw) : undefined) }),
   // Organizer tool-round budget (home/folder chat agent loop), 1–100.
   toolRounds: pref("gamma-ai-tool-rounds", ACCOUNT, 32, intIn(1, 100)),
   // Unlimited rounds: no round limit and no 200-change limit per message

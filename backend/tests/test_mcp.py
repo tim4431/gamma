@@ -834,6 +834,11 @@ def test_a_connection_undoes_its_own_changes(client, connection):
         second = edited["structuredContent"]["change_id"]
         listed = call(client, token, "list_changes", {})["structuredContent"]["changes"]
         assert [x["change_id"] for x in listed] == [second, first] and not any(x["undone"] for x in listed)
+        assert {x["state"] for x in listed} == {"open"}
+        # the person's note draws them, by the connection's name, as the chat's
+        drawn = c.get("/api/ai/changes", params={"page_id": page["id"]}).json()["changes"]
+        assert [x["id"] for x in drawn] == [first, second] and {x["source"] for x in drawn} == {"mcp"}
+        assert drawn[1]["agent"]["name"] == "Codex" and drawn[1]["revert"]["after"].endswith("McpAppended")
         theirs = call(client, other["token"], "undo_change", {"change_id": second})
         assert theirs["isError"] and "No change of this connection" in theirs["content"][0]["text"]
         undone = call(client, token, "undo_change", {"change_id": second})

@@ -18,9 +18,8 @@ import ChatComposerInput from "./ChatComposerInput";
 import ChatTranscript, { UsageLine, knobsLabel } from "./ChatTranscript";
 import ChatHistoryPop, { deleteQuestion, matchRows } from "./ChatHistoryPop";
 import GrantChip from "./GrantChip";
-import { refusalCopy, sendRevert } from "./AgentChanges";
 import RevertChanges from "./RevertChanges";
-import { forReplay, markReverted, revertRefusal, revertible } from "./aiRevert.js";
+import { forReplay, markReverted, revertible } from "./aiRevert.js";
 import * as chatQueue from "./chatQueue.js";
 import { canSteer, messageText, quotedText, quotesOf, sentText, steerBody, steeredMessage, useChatQueue } from "./chatQueue.js";
 import { skillText, skillTitle, splitSkill } from "./skills.js";
@@ -703,7 +702,7 @@ export default function ChatDock({
   // on while the revert dialog's run went on.
   const loadedRef = useRef(loadedHere);
   loadedRef.current = loadedHere;
-  // The reply whose "Revert…" opened the dialog that reverts several of the
+  // The reply whose "Undo…" opened the dialog that reverts several of the
   // conversation's changes at once (chat/RevertChanges.jsx); it closes when
   // the dock shows another conversation. A reply offers it while the
   // conversation has two changes or more to take back.
@@ -724,37 +723,7 @@ export default function ChatDock({
     const pages = [...new Set([answer?.page_id, ...touched].filter(Boolean))];
     if (pages.length) onNotesChange?.(pages);
     if (indexes.some((i) => message?.actions?.[i] && changePlace(message.actions[i]) === "library")) onLibraryChange?.();
-    // A note showing the change as tracked changes stops: the row says it now.
-    for (const i of indexes) if (message?.actions?.[i]?.block_id) noteReview.forget(message.actions[i].block_id);
   };
-  // The bar under a note that shows the AI's change (chat/noteReview.js)
-  // reverts one step of it as a row of its reply does, and marks it in the
-  // conversation the reply belongs to, whichever the dock shows now. A
-  // refusal comes back as the row would say it; one whose row would show
-  // what reverting anyway writes sends the user there.
-  const notesChangeRef = useRef(onNotesChange);
-  notesChangeRef.current = onNotesChange;
-  useEffect(() => noteReview.connect(async (step, { force }) => {
-    let answer;
-    try {
-      answer = await sendRevert(step.action, { force });
-    } catch (err) {
-      const refusal = revertRefusal(err);
-      if (refusal.preview?.diff?.length) {
-        return { text: t("The note changed since. Its row in the chat shows what reverting anyway would do."), force: "" };
-      }
-      const copy = refusalCopy(refusal, false);
-      return { text: copy.text, force: copy.force || "" };
-    }
-    const messages = session.getSnapshot().replies.get(step.key)?.messages
-      || (chatKeyRef.current === step.key ? loadedRef.current : null);
-    const next = messages && markReverted(messages, step.reply, [step.index], true);
-    if (next && next !== messages) {
-      session.edit(step.key, next)?.catch((err) => setStatus(t("Couldn't save the conversation: {message}", { message: err.message })));
-    }
-    notesChangeRef.current?.([answer?.page_id || step.action.page_id].filter(Boolean));
-    return null;
-  }), [session]); // eslint-disable-line react-hooks/exhaustive-deps -- the latest state is read through refs
 
   // Show a conversation that came from the server (bucket switch, or a
   // history entry opened). PDF button: on for a conversation without
@@ -1535,7 +1504,6 @@ export default function ChatDock({
     const ctrl = new AbortController();
     if (!session.start(sendKey, [...prevMessages, userMsg], chatTitle, ctrl)) return;
     chatQueue.started(sendKey);
-    noteReview.replying(sendKey, true);
     // Under Unlimited a reply runs until it is done or stopped. A row in
     // Background tasks shows it, and its Stop reaches it from any folder or
     // page (stopChat only stops the conversation on screen). The row follows
@@ -1635,8 +1603,10 @@ export default function ChatDock({
             helpers = withHelper(helpers, ev.helper);
           } else if (ev.approval) {
             approval = ev.approval;
-            // A note edit's card: the note draws the edit too, and its bar
-            // answers the card with the card's four answers.
+            // A change's card: where the change would land draws it too (a
+            // note, a new note's place, a PDF page or a page of paper), and
+            // answering there answers the card, with the card's answers
+            // (Keep, its grants, Undo).
             const asked = ev.approval;
             noteReview.ask(asked, (decision, note) => decideRef.current(asked, decision, note),
               { permission: permissionLabel(asked.perm), kind: chatKindLabel });
@@ -1654,9 +1624,9 @@ export default function ChatDock({
             // Live: the notes panel lights up the block the agent just
             // read/edited (and reloads the tree for an applied edit), and the
             // note shows what an edit changed until the user keeps or
-            // reverts it (chat/noteReview.js).
+            // undoes it (chat/noteReview.js).
             onAgentEvent?.({ type: "action", action: ev.action, key: sendKey });
-            noteReview.landed({ action: ev.action, key: sendKey, reply: replyId, index: actions.length - 1 });
+            noteReview.landed(ev.action);
           } else if (ev.progress) {
             // The agent is still writing a note edit — the block types it in.
             onAgentEvent?.({ type: "progress", ...ev.progress });
@@ -1758,7 +1728,6 @@ export default function ChatDock({
       onAgentEvent?.({ type: "done", key: sendKey, ended });
       // A card the reply left waiting (stopped, or the stream failed) goes from its note too.
       if (approval) noteReview.settle(approval.id);
-      noteReview.replying(sendKey, false);
       // Agent tools changed the library — reload the home feed. Read-only
       // tool calls (list/read/search) render as chips but change nothing.
       if (allActions.some(isChange)) onLibraryChange?.();
@@ -2541,8 +2510,7 @@ export default function ChatDock({
             approvals={{ answered: answeredApprovals, kindLabel: chatKindLabel, onDecide: decideApproval }}
             onAnswer={(m, ask, decision, note) => side.chat.answer(m.turnId, ask.id, decision, note)}
             errorActions={errorActions}
-            changes={{ onReverted: readOnly ? null : changesReverted, onRevertMany: setRevertFrom, many: revertibleCount > 1,
-              messages: chatMessages, key: chatKey }}
+            changes={{ onReverted: readOnly ? null : changesReverted, onRevertMany: setRevertFrom, many: revertibleCount > 1 }}
             handoffs={{ readOnly: readOnly || aiOff, autoOpen: fetchInBackground, onNeverWait: neverWaitHere,
               onContinue: (text) => sendChat(text), draft: composerHasDraft }}
             papers={!readOnly && canSave ? { folder: paperFolder, folderName: libraryTree.folders.get(paperFolder)?.name || "",

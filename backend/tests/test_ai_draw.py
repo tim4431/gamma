@@ -210,6 +210,38 @@ def test_a_picture_is_fitted_with_its_shape_kept(tim):
     assert action["error"] and "names no picture this workspace holds" in text
 
 
+def test_a_card_carries_what_its_surface_draws_while_it_waits(tim):
+    """A placing call's preview names its surface and the shape it would
+    put there, in the surface's points: a drawing's strokes as point lists,
+    a text box's frame and text, a picture's frame and file; on a page of
+    paper, the sheet."""
+    from gamma.ai_pictures import store_picture
+    from gamma.ai_tools.registry import approval_preview
+
+    pdf, sheet = tim.pages["pdf"], tim.pages["sheet"]
+    ws = workspace_of(USER)
+    preview, answer = approval_preview(ws, _chat(), "draw", {"page_id": pdf, "pdf_page": 1, "shapes": [
+        {"kind": "rect", "around": QUOTE}, {"kind": "line", "from": [0.1, 0.9], "to": [0.5, 0.9], "dash": "dashed"}]})
+    assert answer is None and preview["pdf_page"] == 1 and "sheet_id" not in preview
+    shape = preview["shape"]
+    assert (shape["kind"], shape["frame"]) == ("ink", [600, 800]) and len(shape["strokes"]) == 2
+    rect, line = shape["strokes"]
+    assert rect["color"] == "#dc2626" and len(rect["points"]) > 4 and "dash" not in rect
+    assert line["dash"] == "dashed" and line["points"][0] == [60, 720] and line["points"][-1] == [300, 720]
+    preview, _ = approval_preview(ws, _chat(), "add_text_box", {"page_id": pdf, "pdf_page": 2, "text": "A margin note",
+                                                                "at": [0.1, 0.9], "width": 0.3})
+    assert preview["shape"]["kind"] == "box" and preview["shape"]["text"] == "A margin note"
+    assert (preview["shape"]["box"]["x"], preview["shape"]["box"]["y"], preview["shape"]["box"]["w"]) == (60, 720, 180)
+    url = store_picture(ws, _png(200, 100))["url"]
+    preview, _ = approval_preview(ws, _chat(), "place_picture", {"page_id": pdf, "pdf_page": 1, "url": url,
+                                                                 "box": [0.1, 0.1, 0.5, 0.5]})
+    assert preview["shape"] == {"kind": "picture", "frame": [600, 800], "url": url,
+                                "box": {"x": 60, "y": 180, "w": 240, "h": 120}}
+    preview, _ = approval_preview(ws, _chat(), "draw", {"sheet_id": sheet, "shapes": [
+        {"kind": "ellipse", "box": [0.2, 0.2, 0.4, 0.3]}]})
+    assert preview["sheet_id"] == sheet and preview["shape"]["frame"] == [400, 600]
+
+
 def test_a_page_of_paper_after_another(tim):
     notes, sheet = tim.pages["notes"], tim.pages["sheet"]
     later = tim.post("/api/blocks", json={"parent_id": notes, "content": "after the sheet"}).json()["id"]

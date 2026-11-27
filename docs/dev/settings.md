@@ -833,7 +833,10 @@ AI:
   **Fetch blocked papers in the background** (`fetchInBackground`, the
   handoff card hands a stopped fetch to Gamma Connector by itself) and
   **Read long papers with a helper** (`delegateReads`, the `read_paper`
-  tool, [ai_tools.md](ai_tools.md)). Then
+  tool, [ai_tools.md](ai_tools.md)), and the row **Marks of kept changes**
+  (`aiMarkMinutes`, a `MenuSelect` of 1, 5 and 15 minutes, 1 hour, 1 day and
+  Until I clear them; 1 minute by default): how long an agent's change you
+  kept stays marked in its note ([ai.md](ai.md#reviewing-an-agents-changes)). Then
   **Online search** (`OnlineSearch.jsx`): which service general web search
   goes through (Automatic, your AI connection, Brave Search, Tavily, SearXNG
   or Off) and the Brave, Tavily, SearXNG and optional OpenAlex settings,

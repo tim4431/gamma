@@ -394,17 +394,18 @@ export async function inkAiScenarios({ server, browser, alice, bob, makePdf, ste
       await card.getByText("Draw on page 1 of “Drawn paper”").waitFor();
       await card.getByText("Page 1: “a passage to box”").waitFor();
       await card.getByText("a rectangle around “a passage to box”").waitFor();
-      await card.getByRole("button", { name: "Allow once", exact: true }).click();
+      await card.getByRole("button", { name: "Keep", exact: true }).click();
       await dock.locator(".chatBubble.ai", { hasText: "I boxed the passage." }).waitFor({ timeout: 15000 });
       assert(model.results[0]?.startsWith("ok — drew a rectangle around “a passage to box” on PDF page 1"),
         `the drawing's answer reached the model: ${JSON.stringify(model.results)}`);
       // the box lands on the page while the reply runs on, and show_page took the PDF to page 2
       await until(async () => (await strokes()) === 1, { what: "the agent's box on page 1" });
       await until(async () => (await secondTop()) < before - 200, { what: "the PDF moved to page 2" });
-      // the change's row reverts it, and the box goes from the page
+      // kept on its card, the change's row says so, undoes it, and the box goes from the page
       const row = dock.locator(".chatChange", { hasText: "Drew on" });
-      await row.getByRole("button", { name: "Revert this change" }).click();
-      await row.locator(".chatChangeTag", { hasText: "Reverted" }).waitFor();
+      await row.locator(".chatChangeTag", { hasText: "Kept" }).waitFor();
+      await row.getByRole("button", { name: "Undo this change" }).click();
+      await row.locator(".chatChangeTag", { hasText: "Undone" }).waitFor();
       await until(async () => (await strokes()) === 0, { what: "the box taken back" });
       assertNoProblems(P);
     } finally {
