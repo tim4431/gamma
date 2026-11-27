@@ -9,7 +9,7 @@ import { useSettingsRead } from "./settingsReads.js";
 import { fromUtcCron, localOffset, observesDst, parseCron, shiftTime, toUtcCron } from "./backupSchedule.js";
 import { STORE, STORES, storeText } from "./backupStores.js";
 import "./backupTasks.css";
-import { T, t, tn } from "../shared/i18n/i18n.js";
+import { T, localeTag, t, tn } from "../shared/i18n/i18n.js";
 
 const endpoint = `${API}/backup-tasks`;
 const date = (value) => fmtWhen(value, t("Not yet"));
@@ -23,11 +23,12 @@ const UNITS = [["days", t("Days")], ["weeks", t("Weeks")], ["months", t("Months 
 const MAX_RETENTION = 90;
 const MAX_TASKS = 5;
 
-// This browser's offset from UTC and its zone's short name ("PDT"): what a
+// This browser's offset from UTC and its zone's short name ("PDT"), named
+// in the interface language as SettingsBackups' fmtWhen names it: what a
 // daily, weekly or hourly schedule is entered and shown in (backupSchedule.js).
 const OFFSET = localOffset();
 const ZONE = (() => {
-  try { return new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value || "UTC"; } catch { return "UTC"; }
+  try { return new Intl.DateTimeFormat(localeTag(), { timeZoneName: "short" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value || "UTC"; } catch { return "UTC"; }
 })();
 const clock = (p) => `${pad(p.hour)}:${pad(p.minute)}`;
 const dayNames = (list) => days.filter(([n]) => list.includes(n)).map(([, name]) => name).join(", ");

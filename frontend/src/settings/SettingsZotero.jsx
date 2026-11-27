@@ -21,7 +21,7 @@ import { ZOTERO_ACCOUNT, connectZoteroKey, disconnectZotero, startZoteroOAuth, z
   zoteroOAuthStatus } from "../transfers/zoteroApi";
 import { composing } from "../shared/lib/hotkeys.js";
 import { BookIcon, ExternalLinkIcon } from "../shared/ui/Icons";
-import { T, t } from "../shared/i18n/i18n.js";
+import { T, fmtDate, t } from "../shared/i18n/i18n.js";
 
 const NEW_KEY_URL = "https://www.zotero.org/settings/keys/new";
 const POLL_MS = 2500;
@@ -150,7 +150,7 @@ export function ZoteroAccountRow({ setStatus, confirm }) {
   }
 
   const oauth = Boolean(account.oauth?.available);
-  const since = account.connected_at ? account.connected_at.slice(0, 10) : "";
+  const since = account.connected_at ? fmtDate(account.connected_at, { dateStyle: "medium" }) : "";
   const keyButton = (primary) => <button className={`uiBtn sm${primary ? " primary" : ""}`}
     onClick={() => { setError(""); setKeyOpen(true); }}>{t("Use an API key…")}</button>;
   return <>

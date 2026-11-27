@@ -30,7 +30,7 @@ import {
   KeyIcon, LinkIcon, MoreIcon, PlusIcon, RefreshIcon, SettingsIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
-import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, publishedPages, roundSummary, versionGap } from "../collaboration/MirrorPopover";
+import { hostOf, isPublication, isPullOnly, mirrorState, n, publishedPages, roundSummary, versionGap } from "../collaboration/MirrorPopover";
 import { ConflictCard, useConflicts } from "../collaboration/MergeResolver";
 import {
   LINK_ACTIONS, LINK_BASES, followSync, linkCandidates, linkKind, linkPath, pullByKey, reconnectOnly, roundAhead, unsentEdits,
@@ -39,7 +39,7 @@ import {
 import { createZoteroLink } from "../transfers/zoteroApi";
 import { ZoteroLinkDialog, ZoteroLinkSettingsDialog } from "./ZoteroLinkDialog";
 import { useSettingsRead } from "./settingsReads.js";
-import { T, t } from "../shared/i18n/i18n.js";
+import { T, fmtMoment, t } from "../shared/i18n/i18n.js";
 
 // A list the pane reads (null while loading; [] when not read, or failed
 // with nothing read yet), and while one of its rounds is asked for or runs
@@ -87,7 +87,7 @@ export function mirrorStatusLine(m) {
   const p = s.progress;
   const st = mirrorState(m);
   const zotero = linkKind(m) === "zotero";
-  if (m.detached || m.mode === "off") return t("detached{detached_at} · reattach to merge what both sides did meanwhile", { detached_at: s.detached_at ? ` ${clock(s.detached_at)}` : "" });
+  if (m.detached || m.mode === "off") return t("detached{detached_at} · reattach to merge what both sides did meanwhile", { detached_at: s.detached_at ? ` ${fmtMoment(s.detached_at)}` : "" });
   if (st.tone === "busy") {
     const way = p?.file ? (p.file.dir === "up" ? (zotero ? t("sending") : t("pushing")) : zotero ? t("downloading") : t("pulling")) : "";
     const file = p?.file ? ` · ${way} ${p.file.name} ${fmtBytes(p.file.done)}${p.file.total ? ` / ${fmtBytes(p.file.total)}` : ""}` : "";
@@ -103,14 +103,14 @@ export function mirrorStatusLine(m) {
   if (gap) return gap === "here" ? t("paused · update this Gamma to sync again") : t("paused · sync resumes once the remote is updated");
   if (s.last_error) return t("problem: {error}", { error: s.last_error });
   if (!s.last_sync) return s.interrupted ? t("interrupted · continues at the next round") : zotero ? t("not synced yet") : t("not cloned yet");
-  if (unsentEdits(m)) return zotero ? t("local edits not sent yet · up to date {last_sync}", { last_sync: clock(s.last_sync) })
-    : t("local edits not pushed yet · up to date {last_sync}", { last_sync: clock(s.last_sync) });
+  if (unsentEdits(m)) return zotero ? t("local edits not sent yet · up to date {last_sync}", { last_sync: fmtMoment(s.last_sync) })
+    : t("local edits not pushed yet · up to date {last_sync}", { last_sync: fmtMoment(s.last_sync) });
   const changed = roundSummary(s) || t("nothing had changed");
-  if (!zotero) return t("up to date {last_sync} · {changed}", { last_sync: clock(s.last_sync), changed });
+  if (!zotero) return t("up to date {last_sync} · {changed}", { last_sync: fmtMoment(s.last_sync), changed });
   const waiting = zoteroWaitingState(m);
   const queued = zoteroQueued(m) ? t(" · {n} changes queued", { n: Number(s.backlog).toLocaleString() }) : "";
-  const line = queued ? t("last round {last_sync} · {changed}", { last_sync: clock(s.last_sync), changed })
-    : t("up to date {last_sync} · {changed}", { last_sync: clock(s.last_sync), changed });
+  const line = queued ? t("last round {last_sync} · {changed}", { last_sync: fmtMoment(s.last_sync), changed })
+    : t("up to date {last_sync} · {changed}", { last_sync: fmtMoment(s.last_sync), changed });
   return `${waiting ? `${waiting.text} · ` : ""}${line}${queued}`;
 }
 

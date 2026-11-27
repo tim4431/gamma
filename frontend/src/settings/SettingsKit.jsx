@@ -16,7 +16,7 @@ import { UsageRing } from "../shared/ui/UsageRing.jsx";
 import { useInMenu } from "../shared/ui/Menus";
 import { backdropPress } from "../shared/ui/press.js";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
-import { t, tn } from "../shared/i18n/i18n.js";
+import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { fmtTokens } from "../chat/tokenUsage";
 import { DialogOverlay } from "../shared/ui/Surfaces";
 import { IconSwap, useSlidingPill } from "../shared/ui/MotionWidgets";
@@ -629,6 +629,9 @@ export function StatText({ icon: Icon, label, value, hint, tone = "", title, chi
   );
 }
 
+// A log line's time, 24-hour with seconds ("09:05:03"), shown and copied.
+const logTime = (ms) => fmtDate(ms, { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+
 // Newest-first log list with a Copy button — one rendering for the session
 // log (Advanced) and the admin server log (Server). Entries are normalized
 // to {key, timeMs, text, tone?} — tone "warn" / "error" adds a badge.
@@ -639,7 +642,7 @@ export function LogBox({ icon, label, description, entries, emptyText, loading =
   const prefix = (entry) => (entry.tone ? `[${entry.tone === "error" ? "ERROR" : "WARNING"}] ` : "");
   function copy() {
     const text = entries
-      .map((entry) => `${new Date(entry.timeMs).toLocaleTimeString([], { hour12: false })} ${prefix(entry)}${entry.text}`)
+      .map((entry) => `${logTime(entry.timeMs)} ${prefix(entry)}${entry.text}`)
       .join("\n");
     copyText(text).then((ok) => setStatus(ok ? copyStatus : t("Copy failed—copy manually.")));
   }
@@ -654,7 +657,7 @@ export function LogBox({ icon, label, description, entries, emptyText, loading =
       <div className="sysLogBox">
         {entries.length ? [...entries].reverse().map((entry) => (
           <div key={entry.key} className="sysLogRow">
-            <span className="sysLogTime">{new Date(entry.timeMs).toLocaleTimeString([], { hour12: false })}</span>
+            <span className="sysLogTime">{logTime(entry.timeMs)}</span>
             {entry.tone ? <span className={`sysLogLevel ${entry.tone}`}>{entry.tone === "error" ? "ERR" : "WARN"}</span> : null}
             <span className="sysLogMsg">{entry.text}</span>
           </div>
