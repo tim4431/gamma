@@ -6,7 +6,7 @@ rounds, trashes, backup restores and forces; and a link stored before
 release 72 (upgraded by ``migrations._v72_zotero_names``) reads its names
 and a classed arXiv line as unchanged, yet takes each change made since on
 either side. Against the fake Zotero (zotero_fake.py), rounds through
-``POST …/sync?wait=1``. Accounts are ``zn_…``."""
+``POST …/sync?wait=1``. Accounts are ``znames_…``."""
 
 import json
 
@@ -20,7 +20,7 @@ from gamma.blocks_store import TRASH
 from gamma.db import connect_pages_db
 from gamma.zotero_web import item_uri
 
-USER, PASSWORD = "zn_owner", "pw-zn_owner-123"
+USER, PASSWORD = "znames_owner", "pw-znames_owner-123"
 
 WRONG = {"creatorType": "author", "firstName": "Jorge Fernando Pereira", "lastName": "Campos"}
 RIGHT = {"creatorType": "author", "firstName": "Jorge Fernando", "lastName": "Pereira Campos"}
