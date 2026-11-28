@@ -153,8 +153,11 @@ def create_app() -> FastAPI:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
-        if request.url.path.startswith("/api/"):
+        is_api = request.url.path.startswith("/api/")
+        if is_api:
             response.headers.setdefault("Cache-Control", "no-store")
+        if is_api or request.url.path == "/login":
+            response.headers.setdefault("X-Robots-Tag", "noindex")
         if config.PUBLIC_URL.startswith("https://"):
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
         return response

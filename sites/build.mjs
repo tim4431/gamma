@@ -179,7 +179,7 @@ const resolver = page => {
     }
     if (fs.statSync(abs).isDirectory()) return `${REPO}/tree/${BRANCH}/${target}`;
     if (IMAGE.test(target)) return asset(target);
-    if (target.startsWith(`${DEMOS}/`)) return `/docs/demos/${path.posix.basename(target)}${hash}`;
+    if (target.startsWith(`${DEMOS}/`)) return `/docs/demos/${path.posix.basename(target, '.html')}${hash}`;
     return `${REPO}/blob/${BRANCH}/${target}${hash}`;
   };
 };

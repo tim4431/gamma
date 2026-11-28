@@ -15,6 +15,8 @@
 /github              https://github.com/tim4431/Gamma 302
 /guide               /docs/ 302
 /design              /docs/design/ 302
+/docs/demos/audio-replay.html /docs/demos/audio-replay 301
+/docs/demos/audio-replay/     /docs/demos/audio-replay 301
 /releases            https://github.com/tim4431/Gamma/releases 302
 /docker              https://github.com/tim4431/Gamma/pkgs/container/gamma 302
 /store               https://apps.microsoft.com/detail/9N8WGWR2J2MV 302
