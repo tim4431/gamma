@@ -402,30 +402,21 @@ def test_an_area_highlight_and_a_comment_on_an_area(tim):
     assert act["error"] and "moments ago" in again
 
 
-def test_a_highlight_is_drawn_on_its_page_while_asked_and_can_be_undone(tim):
-    """The card's preview carries where the highlight goes, in the colour
-    it will store, for its PDF page to draw it while the card waits (a
-    colour it has not is refused before anyone is asked); the highlight
-    made records what undoing it needs, as a new note does, and its journal
-    row is kept when it was asked for (gamma/agent_changes.py)."""
+def test_a_highlight_can_be_undone_and_is_a_suggestion_in_reviewing(tim):
+    """The highlight made records what undoing it needs, as a new note does
+    (gamma/agent_changes.py): in Reviewing its journal row is a suggestion,
+    and rejecting it takes the highlight away."""
     pdf = tim.pages["pdf"]
     args = {"page_id": pdf, "quote": "second sentence on page 2", "pdf_page": 2, "color": "green"}
-    preview, answer = approval_preview(workspace_of(USER), _chat(), "highlight", args)
-    assert answer is None and preview["pdf_page"] == 2
-    shape = preview["shape"]
-    assert (shape["kind"], shape["color"], shape["style"]) == ("highlight", "#aaebaaa6", "highlight")
-    refused, answer = approval_preview(workspace_of(USER), _chat(), "highlight", {**args, "color": "red"})
-    assert refused is None and answer.startswith("error: color is one of yellow"), answer
-    assert shape["frame"][0] > 0 and shape["rects"] and all(len(r) == 4 and r[0] < r[2] for r in shape["rects"])
-    journal = {"source": "chat", "token": ""}
-    text, action = run_agent_tool(workspace_of(USER), _chat(journal=journal), "highlight", args, asked=True)
+    scope = _chat(journal={"source": "chat", "token": ""}, reviewing=True)
+    text, action = run_agent_tool(workspace_of(USER), scope, "highlight", args)
     assert not action.get("error"), text
-    assert _block(action["block_id"])[2]["color"] == shape["color"], "drawn as it is stored"
+    assert action["change_state"] == "open"
     revert = action["revert"]
     assert (revert["parent"], revert["after"]) == (pdf, "")
     assert revert["props"]["quote"] == "second sentence on page 2"
     change = agent_changes.find(workspace_of(USER), action["change_id"])
-    assert (change["kind"], change["state"]) == ("create", "kept")
+    assert (change["kind"], change["state"]) == ("create", "open")
     agent_changes.undo(workspace_of(USER), change, actor=account_of(USER))
     with connect_pages_db(workspace_of(USER)) as conn:
         assert conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (action["block_id"],)).fetchone() is None

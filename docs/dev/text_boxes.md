@@ -218,8 +218,8 @@ ink are in [handwriting.md](handwriting.md#client).
   - The claim leaves alone a press on a box, the ruler, a selected picture
     and its controls (`.pagePicture.selected`, `.pictureHandle`,
     `.pictureCrop`) and the page's own controls (`PAGE_CONTROLS`,
-    `ink/InkLayer.jsx`): a comment card, and an agent's change's bar or
-    mark (`.reviewTag`, `.reviewObjectMark`, `markup/ReviewLayer.jsx`).
+    `ink/InkLayer.jsx`): a comment card (`.commentMargin`), and the buttons
+    of an agent's change (`.reviewTag`, `markup/ReviewLayer.jsx`).
   - A press on a box (`begin`) takes the pointer at once on the band and the
     handle. On the text it waits for a move, so Ctrl+click reaches a link.
   - Another contact marks the press `dead`, a pinch, until its pointer lifts.

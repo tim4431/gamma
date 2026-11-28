@@ -6,7 +6,6 @@
 // call, "chat" also stops asking in this conversation, "always" also stops
 // asking in Settings (this kind of chat), "deny" leaves it unmade.
 import { t, tn } from "../shared/i18n/i18n.js";
-import { permGroup } from "./chatSettings.js";
 
 // Up to the names a preview carries, then how many more there are.
 const listOf = (items = [], total = 0) => items.join(", ")
@@ -17,63 +16,21 @@ const listOf = (items = [], total = 0) => items.join(", ")
 const BATCH_TOOLS = new Set(["rename_page", "move_page", "label_page", "restore_page", "delete_page"]);
 export const isBatchPreview = (tool, preview) => BATCH_TOOLS.has(tool) && typeof preview?.count === "number";
 
-// A call that deletes something: its card's Keep is the red button.
+// A call that deletes something: its card's Allow once is the red button.
 export const isDeletion = (tool) => /^delete_/.test(tool || "");
 
-// A call the person reviews as a change: one that writes to their notes or
-// library (a permission of the "Make changes" group), which its card shows
-// as a diff and the note draws (chat/noteReview.js). Its card and its
-// note's bar say Keep and Undo, as the note's review does once a change is
-// made. A comment or a resolve speaks rather than changes, and a reading
-// tool set to Ask changes nothing: their cards say Allow and Don't allow.
-const SPEECH = new Set(["comment", "resolve"]);
-export const isChangeCall = (tool, perm) => permGroup(perm) === "edit" && !SPEECH.has(tool);
-
-// The one-time answer, first in every list: Keep for a change, Allow once
-// for another call, red for a deletion.
-const onceAnswer = (tool, change) => ({ decision: "once", label: change ? t("Keep") : t("Allow once"), primary: true,
-  danger: isDeletion(tool) });
-
-// The answers that allow a tool call (chat/ApprovalShell.jsx adds the one
-// that declines, `answerWords(…).deny`), on its card and on the bar of the
-// note its edit is drawn in (editor/NoteReviewBar.jsx): the one-time answer
-// first, then the two that also allow the permission's later calls, in
-// this chat and always, titled with the permission's label and the kind of
-// chat. A change's are Keep, with the grants in the menu beside it
-// (`menu`); another call's are three buttons.
-export function toolAnswers({ tool = "", perm = "", permission = "", kind = "" } = {}) {
-  const change = isChangeCall(tool, perm);
+// The answers that allow a tool call on its card (chat/ApprovalShell.jsx
+// adds Don't allow): Allow once, red for a deletion, then Allow in this
+// chat and Always allow, titled with the permission's label and the kind of
+// chat.
+export function toolAnswers({ tool = "", permission = "", kind = "" } = {}) {
   return [
-    onceAnswer(tool, change),
-    { decision: "chat", label: change ? t("Keep, and allow in this chat") : t("Allow in this chat"), menu: change,
+    { decision: "once", label: t("Allow once"), primary: true, danger: isDeletion(tool) },
+    { decision: "chat", label: t("Allow in this chat"),
       title: t("Don't ask again for “{permission}” in this conversation", { permission }) },
-    { decision: "always", label: change ? t("Keep, and always allow") : t("Always allow"), menu: change,
+    { decision: "always", label: t("Always allow"),
       title: t("Set “{permission}” to Allow for all chats of this kind ({kind}). You can change it in Settings → AI → Tool usage.", { permission, kind }) },
   ];
-}
-
-// The answers an assistant over MCP is asked with where its change is drawn
-// (gamma/agent_asks.py; it asks only before changes): Keep, or keep and stop
-// asking before this connection's changes (its connection's switch, as its
-// client's own question offers), named by `agent`; Undo is the shell's.
-export function remoteAnswers({ tool = "", agent = "" } = {}) {
-  return [
-    onceAnswer(tool, true),
-    { decision: "always", label: t("Keep, and don't ask again"), menu: true,
-      title: t("Stop asking before {agent}'s changes; turn asking back on in Settings → AI → Integrations",
-        { agent: agent || t("the assistant") }) },
-  ];
-}
-
-// What the card's other words say, for a change or another call: the
-// answer that declines, and the line once answered, naming `agent` (who
-// goes on: "Gamma AI", "Codex").
-export function answerWords({ tool = "", perm = "" } = {}, agent = "") {
-  return isChangeCall(tool, perm)
-    ? { deny: t("Undo"), allowed: t("Kept. {agent} goes on…", { agent }),
-      denied: t("Undone. {agent} goes on without it…", { agent }) }
-    : { deny: t("Don't allow"), allowed: t("Allowed. {agent} goes on…", { agent }),
-      denied: t("Not allowed. {agent} goes on without it…", { agent }) };
 }
 
 function batchTitle(tool, preview) {
@@ -280,9 +237,8 @@ export function declinedSummary(action, titleOf = () => "") {
 // its requests. A new chat, or another conversation opened from history,
 // decides afresh. Two decisions live here:
 //
-// - An approval card's "chat" grant (Allow in this chat; Keep, and allow in
-//   this chat): those permissions ride as `granted` and run without asking
-//   again.
+// - "Allow in this chat" on an approval card: those permissions ride as
+//   `granted` and run without asking again.
 // - "Don't wait in this chat" when skipping a blocked paper: `paper_wait`
 //   goes false, so a later blocked fetch leaves its card under the reply
 //   instead of holding the reply open (chat/FetchHandoffCards.jsx).

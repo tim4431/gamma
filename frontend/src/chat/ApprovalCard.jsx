@@ -2,24 +2,18 @@
 // has the rules, gamma/ai_permissions.py the server's side), on the shell
 // every such card shares (ApprovalShell.jsx). It says what the call would
 // do, shows the change as a word diff (or the folder a page moves to), and
-// offers its answers (chat/approvals.js toolAnswers). A call naming several
-// pages shows one line per page in the same box (it scrolls), and notes the
-// pages it leaves out. A change's card (isChangeCall) says them as the
-// note's review does: Keep, its two grants in the menu beside it, and
-// Undo; another call's says Allow once, Allow in this chat, Always allow
-// and Don't allow. The first runs the call. The chat grant also stops
-// asking for this permission in this conversation; the always one also
-// sets the permission to Allow for this kind of chat in Settings. The
-// declining one opens a line for what to do instead (optional) and leaves
-// the call unmade; Gamma AI gets that line with the decline, and the card
-// names it ("Kept. Gamma AI goes on…"). A deletion's first answer is the
-// red one. What a computer's agent asks is a card on the same shell
-// (AskCard, below).
-import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+// offers four answers. A call naming several pages shows one line per page
+// in the same box (it scrolls), and notes the pages it leaves out. Allow
+// once runs it. Allow in this chat also stops asking for this permission in
+// this conversation. Always allow also sets the permission to Allow for
+// this kind of chat in Settings. Don't allow opens a line for what to do
+// instead (optional) and leaves the call unmade; Gamma AI gets that line
+// with the decline, and the card names it ("Allowed. Gamma AI goes on…"). A deletion's Allow once is the red one. What a
+// computer's agent asks is a card on the same shell (AskCard, below).
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { ActivityIcon, LocateIcon, PencilIcon, TerminalIcon } from "../shared/ui/Icons";
-import { GammaNavContext } from "../shared/ui/Widgets";
-import { approvalTitle, batchNotes, deletionNotes, isChangeCall, placeText, toolAnswers } from "./approvals.js";
+import { ActivityIcon, PencilIcon, TerminalIcon } from "../shared/ui/Icons";
+import { approvalTitle, batchNotes, deletionNotes, placeText, toolAnswers } from "./approvals.js";
 import ApprovalShell, { WordDiff } from "./ApprovalShell";
 import { pictureSrc } from "./pictureSrc.js";
 import { permissionIcon, permissionLabel } from "../settings/AssistantTools";
@@ -68,50 +62,18 @@ function ApprovalPreview({ tool, preview = {}, args = {} }) {
   </div> : null;
 }
 
-// Where a card's change is drawn while it waits (chat/noteReview.js), for
-// Show to open: the note it edits, deletes or moves (a move on the note's
-// own page, `src_page_id` when it goes to another), the note a new one
-// follows (or its parent), the PDF page or the page of paper it draws on.
-function drawnAt(approval) {
-  const p = approval.preview || {};
-  if (!p.page_id) return null;
-  if (p.sheet_id) return { block: p.sheet_id, page: p.page_id };
-  if (p.shape && p.pdf_page) return { pdf: p.pdf_page, page: p.page_id };
-  if (p.block_id && !p.shape) return { block: p.block_id, page: p.src_page_id || p.page_id };
-  if (approval.tool === "create_block" && p.parent_id) return { block: p.after_id || p.parent_id, page: p.page_id };
-  return null;
-}
-
-// `answered`: the decision given elsewhere, on the bar of the note the
-// card's change is drawn in (editor/NoteReviewBar.jsx) or under it on its
-// page (markup/ReviewLayer.jsx): the card says it as if given here. Show
-// opens where it is drawn.
+// `answered`: the decision already given for it (chat/ChatDock.jsx keeps
+// them), which a card drawn again says as if just given.
 export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide, answered = "" }) {
   const permission = permissionLabel(approval.perm);
-  const nav = useContext(GammaNavContext);
-  const at = drawnAt(approval);
-  const show = !at || !nav ? null : () => (at.pdf
-    ? nav.openPage(at.page, { kind: "citation", pageId: at.page, page: at.pdf, quote: "" })
-    : nav.openBlock(at.block, at.page));
-  // The card is up: the hint that explains a change's answers (Keep, its
-  // grants, Undo) may show beside it, not beside another call's card,
-  // whose answers are Allow once and Don't allow (guide/tours/hints.js).
-  // It goes again with the card.
-  useEffect(() => {
-    guideEvents.emit("approval.shown", { tool: approval.tool, change: isChangeCall(approval.tool, approval.perm) });
-  }, [approval.id, approval.tool, approval.perm]);
+  // The card is up: the hint that explains the four answers may show
+  // beside it (guide/tours/hints.js). It goes again with the card.
+  useEffect(() => { guideEvents.emit("approval.shown", { tool: approval.tool }); }, [approval.id, approval.tool]);
   return (
     <ApprovalShell permission={permission} icon={permissionIcon(approval.perm)} guide="chat.approval"
       title={approvalTitle(approval, { titleOf, permission })}
-      answers={toolAnswers({ tool: approval.tool, perm: approval.perm, permission, kind: kindLabel })} agent={t("Gamma AI")}
-      call={approval}
+      answers={toolAnswers({ tool: approval.tool, permission, kind: kindLabel })} agent={t("Gamma AI")}
       onDecide={(decision, note) => onDecide(approval, decision, note)} answered={answered}>
-      {show && !answered ? (
-        <button type="button" className="uiBtn sm ghost chatApprovalShow" onClick={show}
-          title={t("Show the change where it would be made")}>
-          <LocateIcon size={14} />{t("Show")}
-        </button>
-      ) : null}
       <ApprovalPreview tool={approval.tool} preview={approval.preview} args={approval.args} />
     </ApprovalShell>
   );

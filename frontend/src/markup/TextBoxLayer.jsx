@@ -73,7 +73,7 @@ export function TextBoxLayer({ surface, wrapRef, width, height, marks }) {
       // a box, the ruler (its band moves it, ink/InkLayer.jsx InkRuler), a
       // selected picture and its controls (markup/PictureLayer.jsx) or the
       // page's own controls (ink/InkLayer.jsx PAGE_CONTROLS: a comment card
-      // beside the page, an agent's change's bar or mark) keeps its press
+      // beside the page, an agent's change's buttons) keeps its press
       if (e.button !== 0 || e.target.closest?.(`.textBox, .inkRuler, .pagePicture.selected, .pictureHandle, .pictureCrop, ${PAGE_CONTROLS}`)) return;
       e.preventDefault();
       e.stopPropagation();

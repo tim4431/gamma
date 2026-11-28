@@ -153,7 +153,9 @@ changes hands later relabels nothing; the avatar's title names it:
 names the agent by its id, name, computer and owner, worded in the
 reader's language (`chat/agents.js` `madeBy`): a comment, a block's stamp,
 a thread's `resolved_agent` and an Inbox item's `agent` (`Agent.shown`,
-`agentWords`). A server's own words name an agent by its English label,
+`agentWords`). It names the person the agent acted for only when that is
+not the signed-in viewer (`setViewer`, which App calls as the session
+resolves, and `isViewer`). A server's own words name an agent by its English label,
 "Codex on TIM-PC" (`Agent.label`): the annotations' Markdown ("**Codex on
 TIM-PC**, for tim"), a prompt. Comments of a
 computer's agent from before step 60 were signed `local:<name>`; the step
@@ -486,7 +488,8 @@ write made the item, `{id, kind, name, on?, owner?}`, named as a comment's
 agent is (`agents.read_all` in the item's workspace: a computer as it is
 called now), null for a person's; the client words it in the reader's
 language (`chat/agents.js` `agentWords`), "Codex on TIM-PC" in the sentence
-and "Codex on TIM-PC, for tim" as the row's avatar title (`inboxText.js`).
+and "Codex on TIM-PC, for bob" as the row's avatar title (`inboxText.js`),
+the person left out when it is the viewer.
 An item of before step 66 names its agent by its id where users.db knew
 the label's agent (`migrations._v66_label_agent`: Gamma AI, a connection of
 the actor's by its display name, a computer the actor's channel announced
@@ -727,9 +730,10 @@ reply field keeps the thread's full width. A comment shows its author's avatar (
 a person's initial, an agent's `AgentAvatar`, its kind's icon on a neutral
 disc: Gamma AI's sparkles, a computer agent's bot, a connection's link),
 name (an agent's followed by "on TIM-PC, for
-tim", `agentFor`, and the whole of it in the title, `authorTitle`: "Written
-by Codex on TIM-PC, for tim", a connection's "Written by Claude Code with
-tim's connection"), time and text rendered as a note is (`BlockMarkdown`
+bob", `agentFor`, the person only when it is not the viewer, and the whole
+of it in the title, `authorTitle`: "Written by Codex on TIM-PC, for bob", a
+connection's "Written by Claude Code with tim's connection", whoever
+reads it), time and text rendered as a note is (`BlockMarkdown`
 with `blockId="comment:<id>"`, so math, @people chips and `[[links]]` work,
 a link to a block outside the page getting its label from App's reference
 cache, which `onFetchRefs` fills when the threads arrive; the

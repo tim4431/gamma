@@ -26,8 +26,8 @@ each page links at its end.
   into it. Notes are Markdown. Exports use the other side's own formats
   ([Formats](formats.md)).
 - **The AI works for you, within your rights.** It reaches only what you
-  could, asks before it changes anything unless you allow it, and never
-  deletes a page for good ([AI](ai.md)).
+  could, asks before it changes anything unless you allow it or review its
+  edits as suggestions, and never deletes a page for good ([AI](ai.md)).
 - **One behaviour on every device.** The same controls at the same sizes
   under a mouse, a finger and a pen; each command declared once, behind
   every key, menu and toolbar that offers it ([Interaction](interaction.md)).

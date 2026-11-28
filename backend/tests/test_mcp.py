@@ -816,8 +816,9 @@ def test_a_connection_undoes_its_own_changes(client, connection):
     """Every change a connection makes is journaled under a change id its
     answer names: undo_change takes it back once, only that connection's,
     and stops, saying what would be lost, when someone changed it since;
-    the person sees the same changes under its row in Settings and keeps or
-    undoes them there. create_page makes a page, and its undo moves it away."""
+    the person sees the same changes under its row in Settings and undoes
+    them there. In Editing each is kept as it is made, and no page draws it.
+    create_page makes a page, and its undo moves it away."""
     c, ws, item = connection
     token = item["token"]
     other = c.post("/api/integrations/tokens", json={"name": "Other"}).json()
@@ -834,11 +835,9 @@ def test_a_connection_undoes_its_own_changes(client, connection):
         second = edited["structuredContent"]["change_id"]
         listed = call(client, token, "list_changes", {})["structuredContent"]["changes"]
         assert [x["change_id"] for x in listed] == [second, first] and not any(x["undone"] for x in listed)
-        assert {x["state"] for x in listed} == {"open"}
-        # the person's note draws them, by the connection's name, as the chat's
-        drawn = c.get("/api/ai/changes", params={"page_id": page["id"]}).json()["changes"]
-        assert [x["id"] for x in drawn] == [first, second] and {x["source"] for x in drawn} == {"mcp"}
-        assert drawn[1]["agent"]["name"] == "Codex" and drawn[1]["revert"]["after"].endswith("McpAppended")
+        assert {x["state"] for x in listed} == {"kept"}
+        assert edited["structuredContent"]["change_state"] == "kept" and "suggestion" not in edited["content"][0]["text"]
+        assert c.get("/api/ai/changes", params={"page_id": page["id"]}).json()["changes"] == []
         theirs = call(client, other["token"], "undo_change", {"change_id": second})
         assert theirs["isError"] and "No change of this connection" in theirs["content"][0]["text"]
         undone = call(client, token, "undo_change", {"change_id": second})
@@ -860,11 +859,7 @@ def test_a_connection_undoes_its_own_changes(client, connection):
         changes = c.get(f"/api/integrations/tokens/{item['id']}/changes").json()["changes"]
         assert changes[0]["summary"] == "Made the page “McpMadePage”"
         assert [x["undone"] for x in changes] == [False, True, True]
-        # the person keeps it there (the note's own decision, for the change's workspace), the
-        # connection hears it was kept, and a kept change still undoes
-        kept = c.post(f"/api/ai/changes/{changes[0]['id']}", params={"ws": ws}, json={"decision": "keep"})
-        assert kept.status_code == 200 and kept.json()["state"] == "kept", kept.text
-        assert c.get(f"/api/integrations/tokens/{item['id']}/changes").json()["changes"][0]["state"] == "kept"
+        assert changes[0]["state"] == "kept"
         assert "Made the page “McpMadePage” (kept)" in call(client, token, "list_changes", {})["content"][0]["text"]
         r = c.post(f"/api/integrations/tokens/{item['id']}/changes/{changes[0]['id']}/undo", json={"workspace_id": ws})
         assert r.status_code == 200, r.text
@@ -874,6 +869,98 @@ def test_a_connection_undoes_its_own_changes(client, connection):
                       json={"workspace_id": ws}).status_code == 404, "another connection's change is not its"
     finally:
         c.delete(f"/api/integrations/tokens/{other['id']}")
+
+
+def test_in_reviewing_a_tracked_change_is_made_unasked_as_a_suggestion(client, connection, monkeypatch):
+    """With the account in Reviewing, a connection that asks first makes a
+    change Gamma draws where it lands without asking (a client on the
+    stateless transport, which cannot be asked, makes it too): its answer
+    says it is a suggestion, the person's page draws it by the connection's
+    name, list_changes says it waits, and once the person accepts it in
+    Gamma it is kept. A change no page draws (a page made) still asks, and a
+    paste too large for Reject to delete again is an error, unwritten."""
+    from gamma.ai_tools import notes
+
+    c, ws, item = connection
+    token = item["token"]
+    assert c.patch(f"/api/integrations/tokens/{item['id']}",
+                   json={"workspaces": [ws], "edit_workspaces": [ws]}).status_code == 200
+    page = _page_with_note(c, ws, "Suggested target", "McpSuggestedNote")
+    note = _child(ws, page["id"], "McpSuggestedNote")
+    edit = {"block_id": note, "content": " McpSuggested", "mode": "append"}
+    unasked = call(client, token, "edit_block", edit)
+    assert unasked["isError"] and "cannot show its question" in unasked["content"][0]["text"], "Editing asks"
+    assert c.put("/api/prefs/ai-review", json={"value": True}).status_code == 200
+    try:
+        made = call(client, token, "edit_block", edit)
+        assert not made["isError"], made
+        said = made["content"][0]["text"]
+        change = made["structuredContent"]["change_id"]
+        assert made["structuredContent"]["change_state"] == "open"
+        assert "as a suggestion: the user reviews AI changes in Gamma and accepts or rejects it there" in said
+        assert said.endswith(f'Change {change}: undo_change(change_id="{change}") takes it back.')
+        assert _text(ws, note).endswith("McpSuggested")
+        [drawn] = c.get("/api/ai/changes", params={"page_id": page["id"]}).json()["changes"]
+        assert (drawn["id"], drawn["source"], drawn["state"]) == (change, "mcp", "open")
+        assert drawn["agent"]["name"] == "Codex" and drawn["revert"]["after"].endswith("McpSuggested")
+        listed = call(client, token, "list_changes", {})
+        assert "(a suggestion the user has yet to accept or reject in Gamma)" in listed["content"][0]["text"]
+        assert listed["structuredContent"]["changes"][0]["state"] == "open"
+        made_page = call(client, token, "create_page", {"title": "McpAskedPage"})
+        assert made_page["isError"] and "cannot show its question" in made_page["content"][0]["text"]
+        monkeypatch.setattr(notes, "_DELETE_REVERT_MAX", 20)
+        big = call(client, token, "create_block", {"parent_id": page["id"], "content": "## McpBig\n\nits paragraph"})
+        assert big["isError"] and big["content"][0]["text"].startswith("error: not pasted"), big
+        with connect_pages_db(ws) as conn:
+            assert not conn.execute("SELECT 1 FROM unified_blocks WHERE content = '## McpBig'").fetchone()
+        # the person accepts it in Gamma (for the change's workspace); the connection hears it was kept
+        kept = c.post(f"/api/ai/changes/{change}", params={"ws": ws}, json={"decision": "keep"})
+        assert kept.status_code == 200 and kept.json()["state"] == "kept", kept.text
+        assert c.get(f"/api/integrations/tokens/{item['id']}/changes").json()["changes"][0]["state"] == "kept"
+        assert "(kept)" in call(client, token, "list_changes", {})["content"][0]["text"]
+        assert c.get("/api/ai/changes", params={"page_id": page["id"]}).json()["changes"] == []
+    finally:
+        assert c.put("/api/prefs/ai-review", json={"value": False}).status_code == 200
+
+
+def test_in_editing_a_change_asks_the_client_and_is_kept(client, connection):
+    """In Editing, a connection that asks first puts Gamma's question to its
+    client (elicitation, ``GammaMCP._ask``), and the change the person
+    allows there is kept as it is written: no page draws it."""
+    from types import SimpleNamespace
+
+    import anyio
+    from mcp.server.lowlevel.server import request_ctx
+
+    from gamma.integrations import resolve_connection
+    from gamma.mcp_server import GammaMCP
+
+    c, ws, item = connection
+    assert c.patch(f"/api/integrations/tokens/{item['id']}",
+                   json={"workspaces": [ws], "edit_workspaces": [ws]}).status_code == 200
+    page = _page_with_note(c, ws, "Asked target", "McpAskedNote")
+    asked = []
+
+    class Session:
+        client_params = SimpleNamespace(capabilities=SimpleNamespace(elicitation=SimpleNamespace(form={}, url=None)))
+
+        async def elicit_form(self, question, schema, related_request_id=None):
+            asked.append(question)
+            return SimpleNamespace(action="accept", content={})
+
+    request = SimpleNamespace(state=SimpleNamespace(gamma_base="http://localhost"), headers={"mcp-session-id": "s1"})
+    reset = request_ctx.set(SimpleNamespace(session=Session(), request_id=1))
+    try:
+        result = anyio.run(GammaMCP()._ask, resolve_connection(item["token"]), request, "create_block",
+                           {"parent_id": page["id"], "content": "McpAskedAdd"})
+    finally:
+        request_ctx.reset(reset)
+    assert not result.isError, result
+    assert len(asked) == 1 and "wants to add a note to “Asked target”" in asked[0]
+    assert result.structuredContent["change_state"] == "kept" and "suggestion" not in result.content[0].text
+    assert _child(ws, page["id"], "McpAskedAdd")
+    assert c.get("/api/ai/changes", params={"page_id": page["id"]}).json()["changes"] == []
+    assert call(client, item["token"], "list_changes", {})["structuredContent"]["changes"][0]["state"] == "kept"
 
 
 def test_deleting_notes_is_allowed_on_its_own(client, connection):

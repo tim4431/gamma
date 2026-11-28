@@ -16,8 +16,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import (agent_asks, agent_changes, agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_steer,
-                ai_usage, chatgpt_oauth, fetch_handoff, net_proxy, pdf_ocr, search_services, skills, translate_engines)
+from .. import (agent_changes, agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_steer, ai_usage,
+                chatgpt_oauth, fetch_handoff, net_proxy, pdf_ocr, search_services, skills, translate_engines)
 from ..ai_client import (
     Alarm,
     CallRefused,
@@ -1747,9 +1747,13 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
             # What a block or a comment the chat makes says of who made it
             # (agents.stamp): Gamma AI, or a token's connection that drives it.
             "agent": agents.stamp(agents.of_request(request) or agents.gamma(), request.state.user or ""),
-            # Where its changes are journaled for the person's review
-            # (gamma/agent_changes.py): the chat's, and the token that drives it.
+            # Where its changes are journaled (gamma/agent_changes.py): the
+            # chat's, and the token that drives it.
             "journal": {"source": "chat", "token": request.state.token_id if is_token(request) else ""},
+            # The account's review mode, read once for the request: in
+            # Reviewing a tracked tool asks nobody and its change is a
+            # suggestion (ai_agent.ApprovalGate, ai_tools.run_agent_tool).
+            "reviewing": agent_changes.reviewing(user_id),
             # The skills a message may run and load_skill may load
             # (gamma/skills.py): the account's own only in its own session,
             # the built-ins alone for a guest, a share link or an integration
@@ -1910,13 +1914,8 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
     the conversation, from now on, or not at all. Authenticated like the
     chat itself; only the account whose chat asked can answer. 404 when no
     approval of theirs waits under that id: answered already, timed out,
-    or its chat was stopped. An assistant's question over MCP drawn in
-    Gamma (gamma/agent_asks.py) is answered here too, by a signed-in
-    session only: to an integration token, the connection's own among
-    them, it is no approval of theirs."""
+    or its chat was stopped."""
     require_ws(request)
-    if is_token(request) and agent_asks.holds(approval_id):
-        raise HTTPException(404, "This approval is no longer waiting")
     if not ai_permissions.answer(approval_id, request.state.user_id or "", payload.decision, payload.note):
         raise HTTPException(404, "This approval is no longer waiting")
     return {"ok": True}

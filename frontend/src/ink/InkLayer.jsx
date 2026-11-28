@@ -88,11 +88,11 @@ export const ERASER_SIZES = [5, 9, 16];
 // placed while a pen is armed moves before the pen writes over it), and the
 // page's own controls (PAGE_CONTROLS, which the Text tool leaves alone too:
 // markup/TextBoxLayer.jsx): the comment cards beside a PDF page
-// (comments/CommentMargin.jsx), and the bars and marks of an agent's
-// changes on it (markup/ReviewLayer.jsx). The ruler's band is the pointer's kind's: a pen
+// (comments/CommentMargin.jsx), and the buttons of an agent's changes on it
+// (markup/ReviewLayer.jsx). The ruler's band is the pointer's kind's: a pen
 // about to write writes along it, any other pointer moves it (writesOnBand).
 const BESIDE_PAGE = ".commentMargin";
-export const PAGE_CONTROLS = `${BESIDE_PAGE}, .reviewTag, .reviewObjectMark`;
+export const PAGE_CONTROLS = `${BESIDE_PAGE}, .reviewTag`;
 const NOT_INK = `.inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing, .pagePicture.selected, .pictureCrop, ${PAGE_CONTROLS}`;
 // What a pen's press decides by (the rule in one place): a tool armed is
 // what it uses. With none, its eraser end (buttons 32) or barrel (2) erases
@@ -1953,7 +1953,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     const onTouch = (e) => {
       const L = live.current;
       if (!L.width || !(L.tool || L.penInk || drawing)) return;
-      // a Pencil on a comment card, or on an agent's change's bar or mark,
+      // a Pencil on a comment card, or on an agent's change's buttons,
       // scrolls and presses it, as a finger does
       if (!drawing && e.target.closest?.(PAGE_CONTROLS)) return;
       const pencil = Array.from(e.changedTouches).some((t) =>

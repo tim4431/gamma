@@ -184,25 +184,6 @@ export async function settingsScenarios(env) {
     }
   });
 
-  await step("settings: Marks of kept changes sets how long an agent's kept change stays marked, a minute by default", async () => {
-    const { ctx, page } = await setup();
-    try {
-      await openSettings(page);
-      await nav(page, "Tool usage").click();
-      const choice = row(page, "Marks of kept changes").getByRole("button", { name: "Marks of kept changes", exact: true });
-      assert((await choice.innerText()).includes("1 minute"), "a minute by default");
-      await choice.click();
-      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Until I clear them", exact: true }).click();
-      await until(async () => String((await user.api("/api/prefs/profile")).value?.aiMarkMinutes) === "0",
-        { what: "the choice is the account's" });
-      assert((await choice.innerText()).includes("Until I clear them"));
-      assertNoProblems(page);
-    } finally {
-      await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { aiMarkMinutes: 1 } } });
-      await ctx.close();
-    }
-  });
-
   await step("settings: online search services are set up in the Tool usage pane, and the engine choice survives a reload", async () => {
     const { ctx, page } = await setup();
     try {
@@ -942,8 +923,10 @@ export async function settingsScenarios(env) {
       await deleting.waitFor({ state: "detached" });
       assertEq((await user.api("/api/integrations/tokens")).tokens[0].deletes, true);
       await page.getByText(/edits notes in .* · may delete notes/).waitFor();
-      // A change it makes through MCP is listed under its row, and undone there
+      // A change it makes through MCP is listed under its row, and undone there: made while the account reviews,
+      // a suggestion, which Accept there keeps
       const target = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Settings undo page" } });
+      await user.api("/api/prefs/ai-review", { method: "PUT", body: { value: true } });
       const pasted = await fetch(`${server.base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${codexToken}`,
         "Content-Type": "application/json", Accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2025-11-25" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_block",
@@ -952,10 +935,12 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Changes", exact: true }).click();
       const change = page.getByText("Added 2 notes in “Settings undo page”", { exact: true });
       await change.waitFor();
-      // made without asking, it waits for review: Keep there keeps it, and Undo still takes it back
-      await page.getByRole("button", { name: "Keep", exact: true }).click();
-      await page.getByText("Kept", { exact: true }).waitFor();
-      assertEq(await page.getByRole("button", { name: "Keep", exact: true }).count(), 0, "a kept change has no Keep");
+      const suggestion = page.locator(".settingsPane .uiTag", { hasText: "Suggestion" });
+      await suggestion.waitFor();
+      await page.getByRole("button", { name: "Accept", exact: true }).click();
+      await suggestion.waitFor({ state: "detached" });
+      assertEq(await page.getByRole("button", { name: "Accept", exact: true }).count(), 0, "an accepted change has no Accept");
+      assertEq((await user.api(`/api/blocks/${target.id}/children`)).children.length, 2, "accepted, the paste stays");
       await page.getByRole("button", { name: "Undo", exact: true }).click();
       await page.getByText("Undone", { exact: true }).waitFor();
       assertEq((await user.api(`/api/blocks/${target.id}/children`)).children.length, 0, "the paste is gone");
@@ -1009,6 +994,7 @@ export async function settingsScenarios(env) {
       assertNoProblems(page);
     } finally {
       await ctx.close();
+      await user.api("/api/prefs/ai-review", { method: "PUT", body: { value: false } });
       await user.api(`/api/workspaces/${second.id}`, { method: "DELETE" });
     }
   });

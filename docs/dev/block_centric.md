@@ -167,10 +167,12 @@ the op log and a mirror's round, a Gamma export and a backup merge. A
 vault's file holds no property: its text is the block's while the lens
 keeps the block, and a block made from the file is the person's. A
 Duplicate, of blocks or of a page, drops it (`blockModel.js` `freshCopy`,
-App's `duplicatePage`): the copy is the copier's own. The app says it on a
-highlight: its row in Notes and its tooltip on the PDF read *Highlighted by
-Codex on TIM-PC, for tim* (`blockModel.js` `blockAgent`, `chat/agents.js`
-`stampLabel`), and the Properties popover shows any block's under *Made by*.
+App's `duplicatePage`): the copy is the copier's own. The app says it in a
+highlight's tooltip on the PDF, *Highlighted by Codex on TIM-PC*
+(`blockModel.js` `blockAgent`, `chat/agents.js` `stampLabel`), and the
+Properties popover shows any block's under *Made by*. Both name the person
+it acted for only when that is not the viewer (`agents.js` `isViewer`):
+*Highlighted by Gamma AI, for bob*.
 
 ## Where the code still says "page = PDF" (inventory, 2026-09-02)
 

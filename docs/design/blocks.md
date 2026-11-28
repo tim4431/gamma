@@ -133,8 +133,10 @@ GitHub and in any export:
 ## Who made a block
 
 A block made by Gamma's AI, by an assistant over MCP or by an agent on your
-computer says so (*Highlighted by Codex on TIM-PC, for tim*), and no app
-can forge the mark. It still belongs to the account it acted for, so
+computer says so, under *Made by* in its properties and, for a highlight,
+when you point at it on the PDF (*Highlighted by Codex on TIM-PC*). The
+person it acted for is named only when that is someone else (*…, for
+bob*). No app can forge the mark. It still belongs to the account it acted for, so
 permissions and notifications read the account. Undo keeps the mark;
 Duplicate drops it, because the copy is yours.
 

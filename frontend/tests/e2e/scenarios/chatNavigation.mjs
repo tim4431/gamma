@@ -1913,7 +1913,7 @@ export async function chatNavigationScenarios(env) {
       await input.waitFor();
       await page.waitForLoadState("networkidle");
 
-      // 1. The note edit waits on its card; "Keep, and allow in this chat" (Keep's menu) runs it.
+      // 1. The note edit waits on its card; "Allow in this chat" runs it.
       const first = await send("Add the key result to my notes", 1);
       assertEq(first.permissions.block_edit, "ask", "a note edit asks by default");
       assertEq(first.permissions.read, "allow");
@@ -1929,9 +1929,8 @@ export async function chatNavigationScenarios(env) {
         await card.screenshot({ path: `${server.dir}/approval-card.png`, animations: "disabled" });
         await page.locator(".chatPanel").screenshot({ path: `${server.dir}/approval-panel.png`, animations: "disabled" });
       }
-      await card.getByRole("button", { name: "More ways to keep it" }).click();
-      await page.getByRole("menuitem", { name: "Keep, and allow in this chat" }).click();
-      await card.getByText("Kept. Gamma AI goes on…").waitFor();
+      await card.getByRole("button", { name: "Allow in this chat", exact: true }).click();
+      await card.getByText("Allowed. Gamma AI goes on…").waitFor();
       await page.locator(".chatSteps").getByText("Appending to a note…").waitFor();
       assertEq(JSON.stringify(await answers()), JSON.stringify([{ id: "a1", decision: "chat" }]));
       await push(edited("chat"));
@@ -1987,15 +1986,14 @@ export async function chatNavigationScenarios(env) {
       assertEq(await page.locator(".chatStepsFailed").count(), 0, "a declined call is not a failure");
       if (flags.keep) await page.locator(".chatPanel").screenshot({ path: `${server.dir}/approval-declined.png`, animations: "disabled" });
 
-      // 3. Asking again for the chat, then "Keep, and always allow" sets it in Settings.
+      // 3. Asking again for the chat, then "Always allow" sets it in Settings.
       await chip.click();
       await until(async () => !(await chip.count()), { what: "the chip goes once the chat asks again" });
       const third = await send("Add one more line", 3);
       assertEq(JSON.stringify(third.granted), "[]");
       await push({ step: { id: "c-a3", tool: "edit_block", args: edit } });
       await push({ approval: editCard("a3") });
-      await card.getByRole("button", { name: "More ways to keep it" }).click();
-      await page.getByRole("menuitem", { name: "Keep, and always allow" }).click();
+      await card.getByRole("button", { name: "Always allow", exact: true }).click();
       await until(async () => (await alice.api("/api/prefs/profile")).value?.agentPerms?.notes?.block_edit === "allow",
         { what: "Always allow sets the notes chat's note editing to Allow" });
       assertEq(JSON.stringify((await answers()).map((a) => a.decision)), JSON.stringify(["chat", "deny", "always"]));
@@ -2020,303 +2018,321 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
-  await step("chat navigation: an agent's note changes show in their notes as a diff — asked ones before they are made, answered there as on the card; kept ones fold to a mark that unfolds, as their row in the chat does", async () => {
-    const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Tracked page" } });
-    const one = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "The cavity has a Q of 1e6." } });
-    const two = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "Energy $E = mc$ here.", before: one.position } });
-    const three = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "A third note to tidy.", before: two.position } });
-    // An assistant over MCP that edits without asking: each change it makes is journaled for alice's review.
-    const token = await alice.api("/api/integrations/tokens", { method: "POST", body: { name: "Codex" } });
-    await alice.api(`/api/integrations/tokens/${token.id}`, { method: "PATCH",
-      body: { workspaces: [alice.ws], edit_workspaces: [alice.ws], asks: false } });
-    const mcp = async (name, args) => {
-      const response = await fetch(`${server.base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${token.token}`,
-        "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) });
-      const { result } = await response.json();
-      assert(result && !result.isError, `${name}: ${JSON.stringify(result)}`);
-      return result.structuredContent;
-    };
-    // The guide's hint on the first AI change drawn in a note (docs/dev/onboarding.md): every other guide settled, so it is the load's one offer.
-    const { value: profile } = await alice.api("/api/prefs/profile");
-    const settled = Object.fromEntries(Object.values(TOURS).filter((t) => t.id !== "note-review").map((t) => [t.id, { state: "dismissed", version: t.version }]));
-    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { tourProgress: settled, suggestTours: true } } });
-    const ctx = await alice.context(browser, { suggestTours: true });
-    await fakeAiModels(ctx);
-    await ctx.addInitScript(() => {
-      localStorage.setItem("gamma-ai-login-check", "off");
-      window.chatBodies = [];
-      window.approvalAnswers = [];
-      const fetch = window.fetch.bind(window);
-      window.fetch = (input, init) => {
-        const url = String(input);
-        if (url.endsWith("/api/ai/chat")) {
-          window.chatBodies.push(JSON.parse(init.body));
-          return Promise.resolve(new Response(new ReadableStream({
-            start(controller) {
-              window.chatStream = {
-                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
-                finish: () => controller.close(),
-              };
-            },
-          }), { headers: { "Content-Type": "application/x-ndjson" } }));
-        }
-        if (url.includes("/api/ai/approvals/")) {
-          window.approvalAnswers.push({ id: decodeURIComponent(url.split("/").pop()), ...JSON.parse(init.body) });
-          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
-        }
-        return fetch(input, init);
-      };
-    });
-    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${notesPage.id}`);
-    const push = (event) => page.evaluate((e) => window.chatStream.push(e), event);
-    const input = page.getByRole("combobox", { name: "Message AI" });
-    const row = (block) => page.locator(`.blockRowWrap[data-block-id="${block.id}"]`);
-    const strip = page.locator(".pageReviewStrip");
-    const noteText = (block) => alice.api(`/api/blocks/${block.id}`).then((b) => b.content);
-    const send = async (text, n) => {
-      await input.fill(text);
-      await input.press("Enter");
-      await until(() => page.evaluate((count) => window.chatBodies.length === count && !!window.chatStream, n), { what: `message ${n} is sent` });
-    };
-    const finish = async (text) => {
-      await page.evaluate((delta) => { window.chatStream.push({ delta }); window.chatStream.finish(); window.chatStream = null; }, text);
-      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()), { what: "the reply ends" });
+  // The review steps' account: its Editing / Reviewing mode and its chat model are its own. Made once.
+  let reviewer = null;
+  async function reviewAccount() {
+    if (!reviewer) {
+      await server.manage("create-user", "cn-reviewer", "cn-reviewer-pw");
+      reviewer = await new Account(server, "cn-reviewer", "cn-reviewer-pw").login();
+    }
+    return reviewer;
+  }
+  // A browser on one of the review account's pages once `ready` (a selector) shows, its chat answered through
+  // the server by a scripted stand-in model (scriptedModel), so the server's own rules decide what asks:
+  // `say(text, calls, answer)` sends a message whose turn makes `calls` ([name, args], one after the other's
+  // answer) and then answers `answer`; `answered(answer)` waits for that answer; `text(id)` reads a note.
+  async function reviewChat(pageId, ready, { suggestTours = false } = {}) {
+    const me = await reviewAccount();
+    const model = await scriptedModel();
+    const provider = (await me.api("/api/ai/providers", { method: "POST", body: { protocol: "openai",
+      name: "Stand-in model", api_key: "e2e-review-only", base_url: model.base, models: "review-model" } }))
+      .providers.find((p) => p.base_url === model.base);
+    const ctx = await me.context(browser, { suggestTours });
+    const close = async () => {
+      await ctx.close();
+      await me.api(`/api/ai/providers/${provider.id}`, { method: "DELETE" });
+      await me.api("/api/prefs/ai-review", { method: "PUT", body: { value: false } });
+      await me.api(`/api/chats/${pageId}`, { method: "PUT", body: { messages: [] } });
+      await model.close();
     };
     try {
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const page = await openPage(ctx, `${server.base}/?ws=${me.ws}&page=${pageId}`);
+      await page.locator(ready).first().waitFor();
+      if (!(await page.locator(".dockWindow:has(.chatPanel)").count())) {
+        await page.getByRole("button", { name: "View", exact: true }).click();
+        await page.locator(".menuPopover .ctxMenuItem", { hasText: "AI Chat" }).click();
+        await page.keyboard.press("Escape");
+      }
+      const input = page.getByRole("combobox", { name: "Message AI" });
       await input.waitFor();
-      await page.waitForLoadState("networkidle");
+      const say = async (text, calls, answer) => {
+        model.turn(calls, answer);
+        await input.fill(text);
+        await input.press("Enter");
+      };
+      const answered = (answer) => page.locator(".chatBubble.ai", { hasText: answer }).waitFor({ timeout: 15000 });
+      const text = async (id) => (await me.api(`/api/blocks/${id}`)).content;
+      return { me, model, page, say, answered, text, close };
+    } catch (err) {
+      await close();
+      throw err;
+    }
+  }
 
-      // 1. Made while the page is open: the server's word draws it at once, by the agent's name, struck where
-      //    the old words stood, the new ones tinted, the formula set whole; the page's strip counts them.
-      await mcp("edit_block", { block_id: one.id, mode: "patch", find: "has", content: "had" });
-      await row(one).locator(".mdDiffView del.mdDiff", { hasText: "has" }).waitFor();
-      assertEq(await row(one).locator(".mdDiffView ins.mdDiff").innerText(), "had");
-      await row(one).locator(".noteReviewBar", { hasText: "Edited by Codex" }).waitFor();
-      assertEq(await row(one).locator(".blockRow.aiReview-open.aiReview-edit").count(), 1, "the note's gutter is marked");
-      await page.waitForSelector('[data-guide-offer="note-review"] .guideCard');
-      assertEq(await row(one).locator('[data-guide="notes.review"][data-guide-active]').count(), 1, "the hint points at the note's bar");
-      await page.getByRole("button", { name: "Got it", exact: true }).click();
-      assertEq(await guideProgress(page, "alice", "note-review"), "done");
-      await mcp("edit_block", { block_id: two.id, mode: "patch", find: "mc$", content: "mc^2$" });
-      await row(two).locator(".mdDiffView del.mdDiff .katex").waitFor();
-      await row(two).locator(".mdDiffView ins.mdDiff .katex").waitFor();
-      assertEq(await row(two).locator(".katex-error").count(), 0, "both formulas set");
-      await strip.filter({ hasText: "2 AI changes to review" }).waitFor();
-      if (flags.keep) await page.locator(".blockList").screenshot({ path: `${server.dir}/tracked-changes.png`, animations: "disabled" });
-      // ›  steps to the changes in the page's order.
-      await strip.getByRole("button", { name: "Next change" }).click();
-      await strip.getByText("1 of 2").waitFor();
-      await strip.getByRole("button", { name: "Next change" }).click();
-      await strip.getByText("2 of 2").waitFor();
-
-      // 2. Keep: the diff folds to a mark at the note's edge, the text stays; the mark unfolds it again, with
-      //    Undo and Fold. A reload draws what waits and what is marked, as the journal holds both.
-      await row(one).getByRole("button", { name: "Keep", exact: true }).click();
-      await until(async () => !(await row(one).locator(".mdDiffView, .noteReviewBar").count()), { what: "a kept change folds" });
-      assertEq((await row(one).locator(".blockRendered").innerText()).trim(), "The cavity had a Q of 1e6.");
-      const mark = row(one).locator(".aiChangeMark");
-      await mark.waitFor();
-      await strip.filter({ hasText: "1 AI change to review" }).waitFor();
-      await mark.click();
-      await row(one).locator(".mdDiffView del.mdDiff", { hasText: "has" }).waitFor();
-      const unfolded = row(one).locator(".noteReviewBar", { hasText: "Edited by Codex" });
-      assertEq(JSON.stringify(await unfolded.getByRole("button").allInnerTexts()), JSON.stringify(["Undo", "Fold"]), "a kept change's bar");
-      if (flags.keep) await page.locator(".blockList").screenshot({ path: `${server.dir}/kept-unfolded.png`, animations: "disabled" });
-      await unfolded.getByRole("button", { name: "Fold", exact: true }).click();
-      await until(async () => !(await row(one).locator(".mdDiffView").count()), { what: "folded again" });
-      await page.reload();
-      await row(two).locator(".mdDiffView ins.mdDiff .katex").waitFor();
-      await row(one).locator(".aiChangeMark").waitFor();
-      assertEq(await row(one).locator(".mdDiffView").count(), 0, "the kept change stays folded");
-      if (flags.keep) await page.locator(".blockList").screenshot({ path: `${server.dir}/kept-mark.png`, animations: "disabled" });
-
-      // 3. Undo: taken back on the server. With nothing left to review the strip counts the marks, and Clear
-      //    marks takes them away; the change stays.
-      await row(two).getByRole("button", { name: "Undo", exact: true }).click();
-      await until(async () => (await noteText(two)) === "Energy $E = mc$ here.", { what: "the edit is undone" });
-      await until(async () => !(await row(two).locator(".mdDiffView, .noteReviewBar").count()), { what: "an undone change no longer shows" });
-      await strip.filter({ hasText: "1 AI change marked" }).getByRole("button", { name: "Clear marks" }).click();
-      await until(async () => !(await strip.count()) && !(await row(one).locator(".aiChangeMark").count()), { what: "the marks cleared" });
-      assertEq(await noteText(one), "The cavity had a Q of 1e6.", "clearing a mark keeps the change");
-
-      // 4. The reply's row and the note's bar are one decision: kept in the note, the row says Kept; undone
-      //    from the row, the note goes back.
-      const made = await mcp("edit_block", { block_id: three.id, mode: "patch", find: "to tidy", content: "tidied" });
-      await row(three).locator(".noteReviewBar", { hasText: "Edited by Codex" }).waitFor();
-      await send("Tidy the third note", 1);
-      await push({ action: { kind: "edit", tool: "edit_block", mode: "patch", page_id: notesPage.id, block_id: three.id,
-        title: "Tracked page", summary: "Edited a note in “Tracked page”", args: { block_id: three.id }, result: "ok",
-        change_id: made.change_id, revert: { before: "A third note to tidy.", after: "A third note tidied." } } });
-      await finish("Tidied it.");
-      const changeRow = page.locator(".chatChanges", { hasText: "Changed in your notes" }).locator(".chatChange");
-      await changeRow.getByRole("button", { name: "Keep this change" }).waitFor();
-      await row(three).getByRole("button", { name: "Keep", exact: true }).click();
-      await changeRow.filter({ hasText: "Kept" }).waitFor();
-      assertEq(await changeRow.getByRole("button", { name: "Keep this change" }).count(), 0, "kept: nothing left to keep");
-      await row(three).locator(".aiChangeMark").waitFor();
-      // the row's link unfolds the change in its note, as the mark does
-      await changeRow.locator(".chatChangeLink").click();
-      await row(three).locator(".mdDiffView ins.mdDiff", { hasText: "tidied" }).waitFor();
-      await changeRow.getByRole("button", { name: "Undo this change" }).click();
-      await changeRow.filter({ hasText: "Undone" }).waitFor();
-      await until(async () => (await noteText(three)) === "A third note to tidy.", { what: "the row's undo reaches the note" });
-
-      // 5. An edit waiting on its card: drawn in its note against what it says now, with a dashed gutter, and
-      //    answered there with the card's answers, Keep and its grants; Keep, and allow in this chat is the card's.
-      await send("Round the Q up", 2);
-      await push({ step: { id: "c-t1", tool: "edit_block", args: { block_id: one.id, mode: "patch" } } });
-      await push({ approval: { id: "t1", call_id: "c-t1", tool: "edit_block", perm: "block_edit", timeout: 600,
-        args: { block_id: one.id, mode: "patch" },
-        preview: { page_id: notesPage.id, title: "Tracked page", block_id: one.id, mode: "patch",
-          diff: [["ctx", "The cavity had a Q of "], ["del", "1e6."], ["ins", "2e6."]], text: "The cavity had a Q of 2e6." } } });
+  await step("chat navigation: in Editing a note edit waits on its card and lands as written, no diff in the note; its row in the reply shows the diff there, until × or Esc hides it", async () => {
+    const me = await reviewAccount();
+    const notesPage = await me.api("/api/pages", { method: "POST", body: { title: "Editing page" } });
+    const note = await me.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "The cavity has a Q of 1e6." } });
+    const row = `.blockRowWrap[data-block-id="${note.id}"]`;
+    const chat = await reviewChat(notesPage.id, row);
+    const { page } = chat;
+    const diff = page.locator(`${row} .mdDiffView`);
+    const rendered = async () => (await page.locator(`${row} .blockRendered`).innerText()).trim();
+    try {
+      assertEq((await page.locator(".reviewModeBtn").innerText()).trim(), "Editing", "Editing by default");
+      await chat.say("Tighten the note", [["edit_block", { block_id: note.id, mode: "patch", find: "has", content: "had" }]],
+        "Tightened it.");
       const card = page.locator(".chatApproval");
-      await card.waitFor();
-      await row(one).locator(".mdDiffView ins.mdDiff", { hasText: "2e6." }).waitFor();
-      assertEq(await row(one).locator(".mdDiffView del.mdDiff").innerText(), "1e6.");
-      assertEq(await row(one).locator(".blockRow.aiReview-ask").count(), 1, "a dashed gutter: not written yet");
-      const asking = row(one).locator(".noteReviewBar", { hasText: "Gamma AI wants to make this change" });
-      assertEq(JSON.stringify(await asking.getByRole("button").evaluateAll((list) => list.map((b) => b.getAttribute("aria-label") || b.innerText.trim()))),
-        JSON.stringify(["Keep", "More ways to keep it", "Undo"]), "the card's answers");
-      assertEq(JSON.stringify(await card.getByRole("button").evaluateAll((list) => list.map((b) => b.getAttribute("aria-label") || b.innerText.trim()))),
-        JSON.stringify(["Show", "Keep", "More ways to keep it", "Undo"]), "the card says the same, and shows where");
-      await asking.getByRole("button", { name: "More ways to keep it" }).click();
-      await page.getByRole("menuitem", { name: "Keep, and allow in this chat" }).click();
-      await card.getByText("Kept. Gamma AI goes on…").waitFor();
-      assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "t1", decision: "chat" }]));
-      await until(async () => !(await row(one).locator(".noteReviewBar").count()), { what: "the answered card leaves its note" });
-      // Kept on its card, the change lands folded to its mark: no review left, the diff a press away.
-      await alice.api(`/api/blocks/${one.id}`, { method: "PUT", body: { content: "The cavity had a Q of 2e6." } });
-      await push({ action: { kind: "edit", tool: "edit_block", mode: "patch", page_id: notesPage.id, block_id: one.id,
-        title: "Tracked page", summary: "Edited part of a note in “Tracked page”", args: { block_id: one.id }, result: "ok",
-        approval: "chat", change_id: "t1-change", revert: { before: "The cavity had a Q of 1e6.", after: "The cavity had a Q of 2e6." } } });
-      await row(one).locator(".aiChangeMark").waitFor();
-      assertEq(await row(one).locator(".mdDiffView").count(), 0, "kept on its card: folded");
-      await row(one).locator(".aiChangeMark").click();
-      await row(one).locator(".mdDiffView ins.mdDiff", { hasText: "2e6." }).waitFor();
-      await row(one).getByRole("button", { name: "Fold", exact: true }).click();
-
-      // 6. A new note and a deletion asked for: the new one a ghost row where it would go, the other struck
-      //    out, each with the card's answers; Undo on the ghost row is the card's.
-      await push({ approval: { id: "t2", call_id: "c-t2", tool: "create_block", perm: "block_edit", timeout: 600, args: {},
-        preview: { page_id: notesPage.id, title: "Tracked page", parent_id: notesPage.id, after_id: two.id, text: "A summary line.",
-          count: 1, after: "Energy", diff: [["ins", "A summary line."]] } } });
-      const ghostRow = page.locator(".aiAskGhostWrap", { hasText: "A summary line." });
-      await ghostRow.waitFor();
-      assertEq(await ghostRow.evaluate((el) => el.previousElementSibling?.getAttribute("data-block-id")), two.id, "where it would go");
-      await ghostRow.getByText("Gamma AI wants to add this note").waitFor();
-      if (flags.keep) await page.locator(".blockList").screenshot({ path: `${server.dir}/ask-ghost.png`, animations: "disabled" });
-      await ghostRow.getByRole("button", { name: "Undo", exact: true }).click();
-      await ghostRow.getByRole("textbox").press("Enter");
-      await page.locator(".chatApproval").last().getByText("Undone. Gamma AI goes on without it…").waitFor();
-      await until(async () => !(await ghostRow.count()), { what: "the answered ghost row goes" });
-      await push({ approval: { id: "t3", call_id: "c-t3", tool: "delete_block", perm: "block_edit", timeout: 600, args: {},
-        preview: { page_id: notesPage.id, title: "Tracked page", block_id: three.id, what: "note", children: 0,
-          diff: [["del", "A third note to tidy."]] } } });
-      await row(three).locator(".blockRow.aiReview-ask.aiReview-delete").waitFor();
-      await row(three).locator(".noteReviewBar", { hasText: "Gamma AI wants to delete this note" }).waitFor();
-      const deleting = page.locator(".chatApproval").last();
-      await deleting.getByRole("button", { name: "Undo", exact: true }).click();
-      await deleting.getByRole("textbox").press("Enter");
-      await until(async () => !(await row(three).locator(".noteReviewBar").count()), { what: "the card's answer leaves the note" });
-      assertEq(JSON.stringify((await page.evaluate(() => window.approvalAnswers)).map((a) => a.decision)),
-        JSON.stringify(["chat", "deny", "deny"]));
-      await finish("Rounded it.");
-      await page.getByRole("button", { name: "Allowed in this chat: Edit note blocks. Ask again", exact: true }).waitFor();
+      await card.getByRole("button", { name: "Allow once", exact: true }).click({ timeout: 15000 });
+      // (the card's answered line shows only until the reply ends, which here is at once: the approval step reads it)
+      await chat.answered("Tightened it.");
+      await until(async () => (await rendered()) === "The cavity had a Q of 1e6.", { what: "the allowed edit lands" });
+      assertEq(await diff.count(), 0, "allowed on its card, it is drawn as written");
+      assertEq(await page.locator(`${row} .reviewBtns`).count(), 0, "nothing left to decide");
+      const change = page.locator(".chatChanges", { hasText: "Changed in your notes" }).locator(".chatChange");
+      assertEq(await change.locator(".chatChangeTag").count(), 0, "it stands: no suggestion");
+      // Its row shows it where it landed: struck where the old word stood, the new one tinted; × hides it.
+      await change.locator(".chatChangeLink").click();
+      await page.locator(`${row} .mdDiffView del.mdDiff`, { hasText: "has" }).waitFor();
+      assertEq(await page.locator(`${row} .mdDiffView ins.mdDiff`).innerText(), "had");
+      if (flags.keep) await page.locator(".blockList").screenshot({ path: `${server.dir}/shown-change.png`, animations: "disabled" });
+      await page.locator(row).getByRole("button", { name: "Hide the change", exact: true }).click();
+      await until(async () => !(await diff.count()), { what: "× hides it" });
+      assertEq(await rendered(), "The cavity had a Q of 1e6.");
+      // and again: Esc hides it, and so does a press outside it
+      await change.locator(".chatChangeLink").click();
+      await diff.waitFor();
+      await page.keyboard.press("Escape");
+      await until(async () => !(await diff.count()), { what: "Esc hides it" });
+      await change.locator(".chatChangeLink").click();
+      await diff.waitFor();
+      await page.getByRole("combobox", { name: "Message AI" }).click();
+      await until(async () => !(await diff.count()), { what: "a press outside it hides it" });
+      assertEq(await chat.text(note.id), "The cavity had a Q of 1e6.", "showing a change changes nothing");
       assertNoProblems(page);
     } finally {
-      await ctx.close();
-      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
-      await alice.api(`/api/chats/${notesPage.id}`, { method: "PUT", body: { messages: [] } });
-      await alice.api(`/api/integrations/tokens/${token.id}`, { method: "DELETE" });
+      await chat.close();
     }
   });
 
-  await step("chat navigation: a highlight asked for is drawn on its PDF page while its card waits, kept there as on the card, and marked on its page once kept", async () => {
-    const ctx = await alice.context(browser);
-    await fakeAiModels(ctx);
-    await ctx.addInitScript(() => {
-      localStorage.setItem("gamma-ai-login-check", "off");
-      window.chatBodies = [];
-      window.approvalAnswers = [];
-      const fetch = window.fetch.bind(window);
-      window.fetch = (input, init) => {
-        const url = String(input);
-        if (url.endsWith("/api/ai/chat")) {
-          window.chatBodies.push(JSON.parse(init.body));
-          return Promise.resolve(new Response(new ReadableStream({
-            start(controller) {
-              window.chatStream = {
-                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
-                finish: () => controller.close(),
-              };
-            },
-          }), { headers: { "Content-Type": "application/x-ndjson" } }));
-        }
-        if (url.includes("/api/ai/approvals/")) {
-          window.approvalAnswers.push({ id: decodeURIComponent(url.split("/").pop()), ...JSON.parse(init.body) });
-          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
-        }
-        return fetch(input, init);
-      };
-    });
-    await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
-    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${pdf.id}`);
-    const input = page.getByRole("combobox", { name: "Message AI" });
+  await step("chat navigation: in Reviewing, chosen in the page header's menu, the chat's note changes are made without a card and stay suggestions where they landed, through a reload, until ✓ or ✗ — a deleted note struck at its place; the menu counts them, steps to them (a deleted note under a folded one unfolded for), each flashing, accepts or rejects them all", async () => {
+    const me = await reviewAccount();
+    const notesPage = await me.api("/api/pages", { method: "POST", body: { title: "Reviewing page" } });
+    const add = (content, prev, extra = {}) => me.api("/api/blocks", { method: "POST",
+      body: { parent_id: notesPage.id, content, ...(prev ? { before: prev.position } : {}), ...extra } });
+    const a = await add("Alpha has a typo.");
+    // folded, over a note the chat deletes
+    const b = await add("Beta note to tidy.", a, { properties: { collapsed: true } });
+    const c = await add("Gamma note to drop.", b);
+    const d = await me.api("/api/blocks", { method: "POST", body: { parent_id: b.id, content: "Delta under beta." } });
+    // The guide's hint on the first suggestion (docs/dev/onboarding.md): every other guide settled, so it is the load's one offer.
+    const settled = Object.fromEntries(Object.values(TOURS).filter((t) => t.id !== "note-review")
+      .map((t) => [t.id, { state: "dismissed", version: t.version }]));
+    await me.api("/api/prefs/profile", { method: "PATCH", body: { set: { tourProgress: settled, suggestTours: true } } });
+    const chat = await reviewChat(notesPage.id, `.blockRowWrap[data-block-id="${c.id}"]`, { suggestTours: true });
+    const { page } = chat;
+    const row = (block) => page.locator(`.blockRowWrap[data-block-id="${block.id}"]`);
+    const inserted = (block, words) => row(block).locator(".mdDiffView ins.mdDiff", { hasText: words });
+    const rendered = async (block) => (await row(block).locator(".blockRendered").innerText()).trim();
+    const struck = page.locator(`.aiDeletedWrap[data-deleted-id="${c.id}"]`);
+    const struckUnder = page.locator(`.aiDeletedWrap[data-deleted-id="${d.id}"]`);
+    // a row a step of the menu landed on flashes, as a landing does (App's flashingId)
+    const flashed = (where) => where.locator(".blockRow.landed").waitFor({ timeout: 5000 });
+    const accept = (where) => where.getByRole("button", { name: "Accept", exact: true });
+    const reject = (where) => where.getByRole("button", { name: "Reject", exact: true });
+    const buttons = page.locator(".blockList .reviewBtns");
+    const mode = page.locator(".reviewModeBtn");
+    const menu = page.getByRole("menu", { name: "Reviewing" });
+    const fromMenu = async (name) => {
+      if (!(await menu.count())) await mode.click();
+      await menu.getByRole("menuitem", { name, exact: true }).click();
+    };
+    // the row a step of the menu landed on: the notes' focused row, as a jump to a note leaves it
+    const focused = (block) => row(block).locator(".blockRow.focused").count();
     try {
-      await page.locator('[data-page="1"] .textLayer span').first().waitFor();
-      await input.fill("Highlight the title");
-      await input.press("Enter");
-      await until(() => page.evaluate(() => !!window.chatStream), { what: "the message is sent" });
-      const { width, height } = await page.locator('.pdfPageWrap[data-page="1"]').evaluate((el) => ({
-        width: Number(el.getAttribute("data-pt-width")) || 612, height: 792 }));
-      await page.evaluate((e) => window.chatStream.push(e), { step: { id: "c-p1", tool: "highlight", args: { pdf_page: 1 } } });
-      await page.evaluate((e) => window.chatStream.push(e), { approval: { id: "p1", call_id: "c-p1", tool: "highlight", perm: "comment",
-        timeout: 600, args: { quote: "Chat navigation paper", pdf_page: 1 },
-        preview: { page_id: pdf.id, title: "Chat navigation paper", pdf_page: 1, place: { kind: "passage", page: 1, quote: "Chat navigation paper" },
-          shape: { kind: "highlight", frame: [width, height], rects: [[72, 90, 260, 106]], color: "#aaebaaa6", style: "highlight" } } } });
-      // drawn on its page, faded in a dashed frame, with the card's answers under it
-      const layer = page.locator('.pdfPageWrap[data-page="1"] .reviewLayer');
-      await layer.locator(".reviewFrame").waitFor();
-      assertEq(await layer.locator(".reviewShape rect").getAttribute("fill"), "#aaebaaa6", "the highlight's wash, in the colour it will store");
-      const tag = layer.locator(".reviewTag", { hasText: "Gamma AI wants to highlight this" });
-      await tag.waitFor();
-      if (flags.keep) await page.locator('.pdfPageWrap[data-page="1"]').screenshot({ path: `${server.dir}/ask-highlight.png`, animations: "disabled" });
-      const card = page.locator(".chatApproval");
-      await card.getByRole("button", { name: "Show", exact: true }).waitFor(); // the card, with where its change is drawn
-      // With the pen armed, a press on the page's bar or mark is the bar's or the mark's, never a stroke.
-      const strokes = () => page.locator('.pdfPageWrap[data-page="1"] .inkLayer path').count();
-      await page.click("button[aria-label='Handwriting tools']");
-      await page.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");
-      await tag.getByRole("button", { name: "Keep", exact: true }).click();
-      await card.getByText("Kept. Gamma AI goes on…").waitFor();
-      assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "p1", decision: "once" }]));
-      await until(async () => !(await layer.locator(".reviewFrame").count()), { what: "the answered card leaves its page" });
-      // Kept on its card, the highlight lands marked on its page, as a note's change at its row's edge: the mark
-      // unfolds it, framed, with Undo and Fold, and Fold folds it back.
-      const rect = { x1: 72, y1: 90, x2: 260, y2: 106 };
-      await page.evaluate((e) => window.chatStream.push(e), { action: { kind: "highlight", tool: "highlight", page_id: pdf.id,
-        block_id: "hl-made", title: "Chat navigation paper", summary: "Highlighted a passage in “Chat navigation paper”",
-        args: { pdf_page: 1 }, result: "ok", approval: "once", change_id: "hl-change",
-        revert: { after: "", parent: pdf.id, position: "a0", props: { quote: "Chat navigation paper",
-          pdf_position: { pageNumber: 1, width, height, boundingRect: rect, rects: [rect] } } } } });
-      const objectMark = layer.locator(".aiChangeMark"); // the notes' own mark
-      await objectMark.waitFor();
-      await objectMark.click();
-      await layer.locator(".reviewObjectFrame").waitFor();
-      if (flags.keep) await page.locator('.pdfPageWrap[data-page="1"]').screenshot({ path: `${server.dir}/kept-highlight.png`, animations: "disabled" });
-      await layer.locator(".reviewTag", { hasText: "Added by Gamma AI" }).getByRole("button", { name: "Fold", exact: true }).click();
-      await until(async () => !(await layer.locator(".reviewObjectFrame").count()) && (await objectMark.count()) === 1,
-        { what: "folded back to its mark" });
-      await page.waitForTimeout(300); // (a stroke would be saved by now)
-      assertEq(await strokes(), 0, "the presses on the bar and the mark drew nothing");
-      await page.click("button[aria-label='Handwriting tools']");
-      await page.evaluate(() => { window.chatStream.push({ delta: "Highlighted." }); window.chatStream.finish(); });
-      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
+      // The header's button: Editing, and Reviewing from its menu, the account's.
+      await mode.click();
+      await page.getByRole("menuitemradio", { name: /^Reviewing/ }).click();
+      await until(async () => (await me.api("/api/prefs/ai-review")).value === true, { what: "Reviewing is the account's" });
+      assertEq((await mode.innerText()).trim(), "Reviewing");
+
+      // 1. Two edits and two deletions: made at once with no card, each drawn where it landed with ✓ and ✗,
+      //    the deleted note struck through at the place it had (the one under the folded note out of sight);
+      //    the reply's rows say they are suggestions.
+      await chat.say("Tidy my notes", [
+        ["edit_block", { block_id: a.id, mode: "patch", find: "has", content: "had" }],
+        ["edit_block", { block_id: b.id, mode: "patch", find: "to tidy", content: "tidied" }],
+        ["delete_block", { block_id: c.id }],
+        ["delete_block", { block_id: d.id }],
+      ], "Tidied them.");
+      await chat.answered("Tidied them.");
+      assertEq(await page.locator(".chatApproval").count(), 0, "nothing asked");
+      await row(a).locator(".mdDiffView del.mdDiff", { hasText: "has" }).waitFor();
+      assertEq(await row(a).locator(".mdDiffView ins.mdDiff").innerText(), "had");
+      await inserted(b, "tidied").waitFor();
+      await struck.waitFor();
+      assertEq((await struck.locator(".aiDeletedText").innerText()).trim(), "Gamma note to drop.");
+      assertEq(await struck.evaluate((el) => el.previousElementSibling?.getAttribute("data-block-id")), b.id, "struck where it stood");
+      assertEq(await buttons.count(), 3, "each in sight with its ✓ and ✗");
+      assertEq(await struckUnder.count(), 0, "the note deleted under the folded one is folded away with it");
+      const who = await accept(row(a)).getAttribute("title");
+      assert(who.includes("Gamma AI") && !who.includes("cn-reviewer"), `its ✓ names the agent, not the viewer: ${who}`);
+      await page.waitForSelector('[data-guide-offer="note-review"] .guideCard');
+      assertEq(await page.locator('[data-guide="notes.review"][data-guide-active]').count(), 1, "the hint points at a suggestion's buttons");
+      await page.getByRole("button", { name: "Got it", exact: true }).click();
+      assertEq(await guideProgress(page, "cn-reviewer", "note-review"), "done");
+      const rows = page.locator(".chatChanges", { hasText: "Changed in your notes" }).locator(".chatChange");
+      await until(async () => (await rows.filter({ hasText: "Suggestion" }).count()) === 4, { what: "the reply's rows are suggestions" });
+      if (flags.keep) await page.locator(".blockList").screenshot({ path: `${server.dir}/suggestions.png`, animations: "disabled" });
+
+      // 2. A reload draws them again, as the journal holds them; the menu counts them and steps through them in
+      //    the page's order, each row it lands on flashing; the deleted note under the folded one is reached, its
+      //    parent unfolded for it.
+      await page.reload();
+      await inserted(a, "had").waitFor();
+      await inserted(b, "tidied").waitFor();
+      await struck.waitFor();
+      assertEq(await struckUnder.count(), 0, "folded again after the reload");
+      await mode.click();
+      await menu.getByText("4 suggestions on this page", { exact: true }).waitFor();
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/review-menu.png`, animations: "disabled" });
+      await fromMenu("Next suggestion");
+      await until(async () => (await focused(a)) === 1 && !(await focused(b)), { what: "Next lands on the first" });
+      await flashed(row(a));
+      await fromMenu("Next suggestion");
+      await until(async () => (await focused(b)) === 1, { what: "and then the second" });
+      await flashed(row(b));
+      await fromMenu("Next suggestion");
+      await flashed(struckUnder);
+      assertEq((await struckUnder.locator(".aiDeletedText").innerText()).trim(), "Delta under beta.");
+      await until(() => struckUnder.evaluate((el) => {
+        const r = el.getBoundingClientRect(), list = el.closest(".blockList").getBoundingClientRect();
+        return r.top >= list.top && r.bottom <= list.bottom;
+      }), { what: "the struck row under the unfolded note scrolled into view" });
+      await page.keyboard.press("Escape");
+
+      // 3. ✓ keeps an edit as written, and its row in the reply with it; ✗ takes one back; ✗ on the struck note
+      //    puts it back.
+      await accept(row(a)).click();
+      await until(async () => !(await row(a).locator(".mdDiffView, .reviewBtns").count()), { what: "accepted, it is drawn as written" });
+      assertEq(await rendered(a), "Alpha had a typo.");
+      assertEq(await chat.text(a.id), "Alpha had a typo.");
+      await until(async () => (await rows.filter({ hasText: "Suggestion" }).count()) === 3, { what: "its row in the reply is decided too" });
+      await reject(row(b)).click();
+      await until(async () => (await chat.text(b.id)) === "Beta note to tidy.", { what: "rejected, the edit is taken back" });
+      await until(async () => !(await row(b).locator(".mdDiffView, .reviewBtns").count()) && (await rendered(b)) === "Beta note to tidy.",
+        { what: "and drawn no more" });
+      await reject(struck).click();
+      await until(async () => !(await struck.count()) && (await row(c).count()) === 1, { what: "the deleted note is back" });
+      assertEq(await rendered(c), "Gamma note to drop.");
+      await reject(struckUnder).click();
+      await until(async () => !(await struckUnder.count()) && (await row(d).count()) === 1, { what: "and the one under the other" });
+      assertEq(await buttons.count(), 0, "nothing left to decide");
+
+      // 4. Accept all keeps the page's suggestions; Reject all takes them back.
+      await chat.say("Once more", [
+        ["edit_block", { block_id: a.id, mode: "patch", find: "typo", content: "slip" }],
+        ["edit_block", { block_id: b.id, mode: "patch", find: "to tidy", content: "tidied" }],
+      ], "Changed both.");
+      await chat.answered("Changed both.");
+      await inserted(a, "slip").waitFor();
+      await inserted(b, "tidied").waitFor();
+      await mode.click();
+      await menu.getByText("2 suggestions on this page", { exact: true }).waitFor();
+      await fromMenu("Accept all");
+      await until(async () => !(await buttons.count()), { what: "Accept all decides them" });
+      assertEq(JSON.stringify([await chat.text(a.id), await chat.text(b.id)]), JSON.stringify(["Alpha had a slip.", "Beta note tidied."]));
+      await mode.click();
+      await menu.getByRole("menuitemradio", { name: /^Editing/ }).waitFor();
+      assertEq(await menu.getByRole("menuitem", { name: "Accept all", exact: true }).count(), 0, "none left to count");
+      await page.keyboard.press("Escape");
+      await chat.say("And again", [
+        ["edit_block", { block_id: a.id, mode: "patch", find: "slip", content: "flaw" }],
+        ["edit_block", { block_id: b.id, mode: "patch", find: "tidied", content: "tidied up" }],
+      ], "Changed them again.");
+      await chat.answered("Changed them again.");
+      await inserted(a, "flaw").waitFor();
+      await inserted(b, "up").waitFor();
+      await fromMenu("Reject all");
+      await until(async () => !(await buttons.count()), { what: "Reject all decides them" });
+      await until(async () => JSON.stringify([await chat.text(a.id), await chat.text(b.id)])
+        === JSON.stringify(["Alpha had a slip.", "Beta note tidied."]), { what: "Reject all takes them back" });
+
+      // Back to Editing from the menu.
+      await mode.click();
+      await page.getByRole("menuitemradio", { name: /^Editing/ }).click();
+      await until(async () => (await me.api("/api/prefs/ai-review")).value === false, { what: "Editing again" });
       assertNoProblems(page);
     } finally {
-      await ctx.close();
-      await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
+      await chat.close();
+      await me.api("/api/prefs/profile", { method: "PATCH", body: { set: { suggestTours: false } } });
+    }
+  });
+
+  await step("chat navigation: in Reviewing Gamma AI's highlight and text box are made without a card and framed on their PDF pages with ✓ and ✗; the header's Next lands on each on its page; with the pen armed a press on them draws nothing, and ✗ takes the highlight back", async () => {
+    const me = await reviewAccount();
+    const up = await me.upload("/api/uploads", makePdf([["Reviewed paper", "page one"], ["Page two"], ["Page three", "a passage to mark"]]),
+      "reviewed.pdf", "application/pdf");
+    const paper = (await me.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
+      body: { default_title: "Reviewed paper", source_url: up.source_url } })).id;
+    await me.api("/api/prefs/ai-review", { method: "PUT", body: { value: true } });
+    const chat = await reviewChat(paper, '.pdfViewer [data-page="1"] .textLayer span');
+    const { page } = chat;
+    const layer = page.locator('.pdfPageWrap[data-page="3"] .reviewLayer');
+    const marks = () => page.locator('.pdfViewer [data-page="3"] [data-hl-id]').count();
+    const strokes = () => page.locator('.pdfViewer [data-page="3"] .inkLayer path').count();
+    // whether the frame of the suggestion on PDF page `n` is in the viewer's sight
+    const inSight = (n) => page.evaluate((n) => {
+      const viewer = document.querySelector(".viewerWrap:not(.pdfHidden) .pdfViewer");
+      const frame = viewer?.querySelector(`.pdfPageWrap[data-page="${n}"] .reviewObjectFrame`);
+      if (!frame) return false;
+      const v = viewer.getBoundingClientRect(), f = frame.getBoundingClientRect();
+      return f.bottom > v.top && f.top < v.bottom;
+    }, n);
+    const mode = page.locator(".reviewModeBtn");
+    const menu = page.getByRole("menu", { name: "Reviewing" });
+    try {
+      await chat.say("Mark the passage and remark on page two", [
+        ["highlight", { page_id: paper, pdf_page: 3, quote: "a passage to mark" }],
+        ["add_text_box", { page_id: paper, pdf_page: 2, text: "A remark on page two", at: [0.1, 0.1] }],
+      ], "Marked it.");
+      await chat.answered("Marked it.");
+      assertEq(await page.locator(".chatApproval").count(), 0, "nothing asked");
+      // Next in the header's menu lands on each where it shows, on its PDF page (a page out of sight lays out
+      // its layers as it comes near, the frame with them).
+      await page.locator(".viewerWrap:not(.pdfHidden) .pdfViewer").evaluate((v) => { v.scrollTop = 0; });
+      await until(async () => !(await inSight(2)) && !(await inSight(3)), { what: "the PDF at its first page" });
+      if (!(await mode.count())) {
+        await page.getByRole("button", { name: "View", exact: true }).click();
+        await page.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "Notes" }).click();
+        await page.keyboard.press("Escape");
+      }
+      await mode.click();
+      await menu.getByText("2 suggestions on this page", { exact: true }).waitFor();
+      const landed = async (what) => until(async () => ((await inSight(2)) ? 2 : 0) + ((await inSight(3)) ? 3 : 0), { what });
+      await menu.getByRole("menuitem", { name: "Next suggestion", exact: true }).click();
+      const first = await landed("Next lands on the first on its PDF page");
+      assert(first === 2 || first === 3, `one of them in sight, not both: ${first}`);
+      await menu.getByRole("menuitem", { name: "Next suggestion", exact: true }).click();
+      await until(async () => (await inSight(5 - first)) && !(await inSight(first)), { what: "and Next on the other, on its page" });
+      await page.keyboard.press("Escape");
+      await layer.scrollIntoViewIfNeeded();
+      await until(async () => (await marks()) > 0, { what: "the highlight on its page" });
+      assertEq(await layer.locator(".reviewBtns").getByRole("button").count(), 2, "its ✓ and ✗ by the frame");
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/suggested-highlight.png`, animations: "disabled" });
+      // With the pen armed, a press on the buttons is theirs, never a stroke.
+      await page.click("button[aria-label='Handwriting tools']");
+      await page.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");
+      await layer.getByRole("button", { name: "Reject", exact: true }).click();
+      await until(async () => !(await layer.locator(".reviewObjectFrame").count()) && !(await marks()),
+        { what: "rejected, the highlight goes from the page" });
+      await page.waitForTimeout(300); // (a stroke would be saved by now)
+      assertEq(await strokes(), 0, "the press drew nothing");
+      await page.click("button[aria-label='Handwriting tools']");
+      assertNoProblems(page);
+    } finally {
+      await chat.close();
     }
   });
 
@@ -2423,7 +2439,7 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
-  await step("chat navigation: deleting a folder asks by default with every answer, Keep in red, and its row puts the folder back with its pages filed", async () => {
+  await step("chat navigation: deleting a folder asks by default with every answer, Allow once in red, and its row puts the folder back with its pages filed", async () => {
     const name = "E2E doomed folder";
     const folder = await alice.folder(name);
     const filed = await alice.api("/api/pages", { method: "POST", body: { title: "Doomed folder page" } });
@@ -2487,7 +2503,7 @@ export async function chatNavigationScenarios(env) {
       assertEq(sent.permissions.organize_delete, "ask", "deleting folders asks by default");
       assertEq(sent.permissions.organize, "ask");
 
-      // The card: Keep in red, its grants in the menu beside it, and Undo.
+      // The card: the four answers, Allow once in red.
       await push({ step: { id: "c-d1", tool: "delete_folder", args } });
       await push({ approval: { id: "d1", call_id: "c-d1", tool: "delete_folder", perm: "organize_delete", args, timeout: 600,
         preview: { title: name, diff: [["del", name]], subfolders: [], subfolder_count: 0, pages: ["Doomed folder page"],
@@ -2496,13 +2512,14 @@ export async function chatNavigationScenarios(env) {
       assert((await card.innerText()).includes("Approval needed · Delete folders and labels"), "the card names the permission");
       assertEq(await card.locator(".chatApprovalNote").innerText(), "1 page leaves it and stays in your library: Doomed folder page");
       assertEq((await card.locator("del").innerText()).trim(), name);
-      assertEq(await card.getByRole("button", { name: "More ways to keep it" }).count(), 1);
-      assertEq(await card.getByRole("button", { name: "Undo", exact: true }).count(), 1);
-      const once = card.getByRole("button", { name: "Keep", exact: true });
-      assert((await once.getAttribute("class")).split(" ").includes("danger"), "Keep is the red button of a deletion");
+      assertEq(await card.getByRole("button", { name: "Allow in this chat", exact: true }).count(), 1);
+      assertEq(await card.getByRole("button", { name: "Always allow", exact: true }).count(), 1);
+      assertEq(await card.getByRole("button", { name: "Don't allow", exact: true }).count(), 1);
+      const once = card.getByRole("button", { name: "Allow once", exact: true });
+      assert((await once.getAttribute("class")).split(" ").includes("danger"), "Allow once is the red button of a deletion");
       if (flags.keep) await card.screenshot({ path: `${server.dir}/approval-delete-folder.png`, animations: "disabled" });
       await once.click();
-      await card.getByText("Kept. Gamma AI goes on…").waitFor();
+      await card.getByText("Allowed. Gamma AI goes on…").waitFor();
       await page.locator(".chatSteps").getByText(`Deleting the folder ${name}…`).waitFor();
       assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "d1", decision: "once" }]));
 
@@ -2692,12 +2709,12 @@ export async function chatNavigationScenarios(env) {
       assertEq(await card.locator(".chatApprovalNote").innerText(), "1 page is left out: zzz");
       assertEq((await card.locator(".chatApprovalDiff").innerText()).split("\n").length, 3, "one line per page");
       assertEq(JSON.stringify(await card.locator(".chatApprovalDiff del").allInnerTexts()), JSON.stringify(names));
-      for (const name of ["Keep", "More ways to keep it", "Undo"]) {
+      for (const name of ["Allow once", "Allow in this chat", "Always allow", "Don't allow"]) {
         assertEq(await card.getByRole("button", { name, exact: true }).count(), 1, `the card offers ${name}`);
       }
       if (flags.keep) await card.screenshot({ path: `${server.dir}/approval-batch.png`, animations: "disabled" });
-      await card.getByRole("button", { name: "Keep", exact: true }).click();
-      await card.getByText("Kept. Gamma AI goes on…").waitFor();
+      await card.getByRole("button", { name: "Allow once", exact: true }).click();
+      await card.getByText("Allowed. Gamma AI goes on…").waitFor();
       await page.locator(".chatSteps").getByText("Renaming 3 pages…").waitFor();
       assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "b1", decision: "once" }]));
 
@@ -3258,4 +3275,50 @@ export async function chatNavigationScenarios(env) {
       }
     });
   }
+}
+
+// A chat model's API as the server reaches it (the OpenAI wire, streamed), as inkAi.mjs's drawingModel: the
+// server's tool check answered with its check tool; a turn makes the calls `turn(calls, answer)` names, each
+// once the one before is answered, then says `answer`.
+function scriptedModel() {
+  let calls = [], answer = "Done.", seq = 0;
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (chunk) => { raw += chunk; });
+    req.on("end", () => {
+      if (req.method !== "POST") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ data: [{ id: "review-model" }] }));
+      }
+      const body = JSON.parse(raw || "{}");
+      const tools = new Set((body.tools || []).map((tool) => tool.function?.name));
+      // the calls answered since the person's last message; a user message right after a tool's answer is
+      // that answer's pictures (a placed text box is shown to the model so), not the person's
+      let done = 0;
+      (body.messages || []).forEach((m, i, all) => {
+        if (m.role === "tool") done += 1;
+        else if (m.role === "user" && all[i - 1]?.role !== "tool") done = 0;
+      });
+      const chunk = (delta, finish = null) => `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+      const call = (name, args) => chunk({ tool_calls: [{ index: 0, id: `call-${++seq}-${name}`, type: "function",
+        function: { name, arguments: JSON.stringify(args) } }] }) + chunk({}, "tool_calls");
+      let said;
+      if (tools.has("report_ok")) said = call("report_ok", { status: "ok" });
+      else if (done < calls.length) {
+        const [name, args] = calls[done];
+        said = tools.has(name) ? call(name, args) : chunk({ content: `No ${name} offered.` }) + chunk({}, "stop");
+      } else said = chunk({ content: answer }) + chunk({}, "stop");
+      if (!body.stream) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: "Review" }, finish_reason: "stop" }] }));
+      }
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.end(`${said}data: [DONE]\n\n`);
+    });
+  });
+  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({
+    base: `http://127.0.0.1:${server.address().port}`,
+    turn: (next, said) => { calls = next; answer = said; },
+    close: () => new Promise((closed) => server.close(closed)),
+  })));
 }

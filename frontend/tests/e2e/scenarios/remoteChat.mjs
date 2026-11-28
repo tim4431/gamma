@@ -489,8 +489,8 @@ export async function remoteChatScenarios(env) {
         const answer = thread.locator(".commentItem.reply", { hasText: CHAT_REPLY });
         await answer.waitFor({ timeout: 60000 });
         assertEq((await answer.locator(".commentAuthor").textContent()).trim(), "Codex", "the reply is Codex's");
-        assertEq(await answer.locator(".commentFor").textContent(), `on ${name}, for rc-bob`, "on its computer, for bob");
-        assertEq(await answer.locator(".commentAuthor").getAttribute("title"), `Written by rc-alice's Codex on ${name}, for rc-bob`,
+        assertEq(await answer.locator(".commentFor").textContent(), `on ${name}`, "on its computer, bob being the viewer");
+        assertEq(await answer.locator(".commentAuthor").getAttribute("title"), `Written by rc-alice's Codex on ${name}`,
           "the byline's title names its owner too");
         assertNoProblems(page);
       } finally { await ctx.close(); }

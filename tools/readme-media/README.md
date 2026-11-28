@@ -249,7 +249,7 @@ shows "Block at your cursor"), at a 130% interface size with the chat docked
 right. A real Ctrl+V pastes a lecture slide into the chat (the recorder draws
 `rabi-slide.png` with the app's own KaTeX), the request asks for the
 equation under that block, the agent's `create_block` waits on its approval
-card (Edit note blocks is Ask), and **Keep** lands it rendered under the
+card (Edit note blocks is Ask), and **Allow once** lands it rendered under the
 caption. The take checks that the request carried the picture and the cursor
 block, that the saved chat holds the call, and that after a reload the new
 block sits under the caption with both equations rendered.

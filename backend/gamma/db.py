@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 73
+SCHEMA_VERSION = 74
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -1469,13 +1469,13 @@ PAGES_SCHEMA = [
     # for a person's own chat), `agent` its stamp then (agents.stamp, JSON),
     # `tool` and `summary` what it did, `kind` the revert's
     # (ai_revert._PLANS), `block_id` and `page_id` what it changed, `revert`
-    # the tool's revert record (JSON: before and after), `kept_at` when the
-    # person kept it, `undone_at` when it was taken back (both '' while it
-    # waits for review), `cleared_at` when the person cleared a kept one's
-    # mark from its note. The newest per account and connection only, and
-    # none older than agent_changes.KEEP_DAYS. Each account's own: a backup
-    # carries none (ws_backup.PRIVATE_TABLES), and no mirror or Gamma export
-    # does. `account`, `source`, `kept_at` and `cleared_at` came with step 73.
+    # the tool's revert record (JSON: before and after), `kept_at` when it
+    # was kept (made so, or accepted), `undone_at` when it was taken back
+    # (both '' while it is a suggestion that waits for the person). The
+    # newest per account and connection only, and none older than
+    # agent_changes.KEEP_DAYS, a suggestion excepted. Each account's own: a
+    # backup carries none (ws_backup.PRIVATE_TABLES), and no mirror or Gamma
+    # export does. `account`, `source` and `kept_at` came with step 73.
     """CREATE TABLE IF NOT EXISTS agent_changes (
         id TEXT PRIMARY KEY,
         token_id TEXT NOT NULL,
@@ -1490,8 +1490,7 @@ PAGES_SCHEMA = [
         undone_at TEXT NOT NULL DEFAULT '',
         account TEXT NOT NULL DEFAULT '',
         source TEXT NOT NULL DEFAULT '',
-        kept_at TEXT NOT NULL DEFAULT '',
-        cleared_at TEXT NOT NULL DEFAULT ''
+        kept_at TEXT NOT NULL DEFAULT ''
     ) WITHOUT ROWID""",
     "CREATE INDEX IF NOT EXISTS idx_agent_changes_token ON agent_changes(token_id, at)",
     "CREATE INDEX IF NOT EXISTS idx_agent_changes_page ON agent_changes(account, page_id)",
@@ -2105,7 +2104,13 @@ USER_PREF_KEYS = frozenset({"ai-settings", "translate-engines", "search-services
                             # model each task uses and the favorites; only
                             # /api/ai/models/roles and /import write it,
                             # never synced to Gamma Cloud.
-                            "ai-models"})
+                            "ai-models",
+                            # gamma/agent_changes.py REVIEW_PREF_KEY: true
+                            # while the account reviews its agents' changes
+                            # (Reviewing), else Editing; read and written
+                            # through /api/prefs, never synced to Gamma Cloud
+                            # (the suggestions are this server's).
+                            "ai-review"})
 
 
 def pref_scope(key: str, ws: str) -> str:

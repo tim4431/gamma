@@ -1922,9 +1922,10 @@ nobody else learns it exists), 403 for a token or the guest
 
 - **Comments** (`comments/comments.js`): a computer agent's comment
   (`agent_kind: "computer"`, `agent_on` its computer) reads *Codex* with
-  *on TIM-PC, for tim* after it (`agentFor`) beside its bot avatar
+  *on TIM-PC, for bob* after it (`agentFor`) beside its bot avatar
   (`AgentAvatar`), and its `authorTitle` "Written by Codex on TIM-PC, for
-  tim";
+  bob"; to bob himself, *on TIM-PC* and "Written by Codex on TIM-PC"
+  (`chat/agents.js` `isViewer`);
   `turnChip` of a thread's turn reads *Codex is working…* with a spinner,
   *Waiting for Codex* (or *Waiting for TIM-PC*) while it is queued, and
   *Codex is waiting for you* while it asks (comments.md "Sent to an

@@ -250,12 +250,6 @@ def test_a_paste_lands_where_it_is_asked_to_and_stays_together(notes):
     from gamma.ai_tools.registry import approval_preview
     preview, _ = approval_preview(ids["ws"], scope, "create_block", paste)
     assert preview["after"] == "first" and preview["count"] == 2
-    # where its note draws it while the card waits: under the page, after the first note, as written
-    assert (preview["parent_id"], preview["after_id"], preview["text"]) == (page, first, paste["content"])
-    first_place = approval_preview(ids["ws"], scope, "create_block", {**paste, "after_id": page})[0]
-    assert (first_place["parent_id"], first_place["after_id"]) == (page, "")
-    moved = approval_preview(ids["ws"], scope, "move_block", {"block_id": last, "parent_id": first})[0]
-    assert (moved["block_id"], moved["parent_id"]) == (last, first)
     typed = c.post("/api/blocks", json={"parent_id": page, "content": "typed meanwhile", "before": props(c, first)["position"],
                                         "after": props(c, last)["position"]}).json()["id"]
     assert children(c, page) == [first, typed, last]

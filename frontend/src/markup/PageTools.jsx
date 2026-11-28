@@ -6,8 +6,8 @@
 import { createContext, useContext } from "react";
 
 // {readOnly, pageId (the open page, whose PDF the surfaces are), review (the
-// account reviews agents' changes here: not read-only, not a share link;
-// markup/ReviewLayer.jsx), ink: {tool, penTool, penWritesPdf, penOnly, pressure, eraserMode,
+// account's agents' suggestions and shown changes are drawn here: not
+// read-only, not a share link; markup/ReviewLayer.jsx), ink: {tool, penTool, penWritesPdf, penOnly, pressure, eraserMode,
 // eraserSize, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
 // lassoPictures, clip, keys, hoverPreview}, text: {armed, style, zotero},
 // actions}. ink.lassoPictures: the lasso takes pictures with strokes.

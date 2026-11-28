@@ -291,11 +291,11 @@ function resealed(s, kept) {
 //   onQueued()                — a local edit was queued (the clone's sync pill shows it as pending)
 //   onInbox()                 — the account has something new in its inbox ({t: "inbox"},
 //                               content-free; the hook dispatches the window event gamma:inbox)
-//   onAiChanges(pageId)       — an agent's change of the account's moved on: made, kept or
-//                               undone, or an assistant asks about a page ({t: "ai_changes",
-//                               ws, page_id}, content-free, on any page: its page_id), and on
-//                               every hello for the socket's page; the hook dispatches the
-//                               window event gamma:ai-changes
+//   onAiChanges(pageId)       — an agent's change of the account's was made, accepted,
+//                               rejected, undone or redone ({t: "ai_changes", ws, page_id},
+//                               content-free, on any page: its page_id), and on every hello
+//                               for the socket's page; the hook dispatches the window event
+//                               gamma:ai-changes
 //   timers                — {set(fn, ms) → id, clear(id)}; default the globals
 //   fallback              — poll the op log while the socket can't connect (the
 //                           hook passes true; without it none of that is armed:

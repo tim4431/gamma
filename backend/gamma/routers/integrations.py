@@ -152,7 +152,7 @@ def change_access(token_id: str, payload: AccessChange, request: Request):
     return {"id": token_id, "workspace_id": primary, **_access(primary, value, edits, comments)}
 
 
-def _token_workspaces(user_id: str, token_id: str) -> list[str]:
+def token_workspaces(user_id: str, token_id: str) -> list[str]:
     """The workspaces one of the account's connections reads that the
     account can still open; 404 for a token not the account's."""
     with connect_users_db() as conn:
@@ -170,14 +170,14 @@ def token_changes(token_id: str, request: Request, response: Response):
     """The changes the connection made through MCP in the workspaces it
     reads (gamma/agent_changes.py), newest first, the latest 100: each one's
     id, workspace, time, tool, summary, page, whether it was undone and its
-    review's state."""
+    state (kept, undone, or open: a suggestion that waits for the person)."""
     user_id, _ws = _owner(request)
     response.headers["Cache-Control"] = "no-store"
     names = {w["id"]: w["name"] for w in list_for_user(user_id)}
     found = [{"id": c["id"], "workspace_id": ws, "workspace": names.get(ws, ""), "at": c["at"], "tool": c["tool"],
               "summary": c["summary"], "page_id": c["page_id"], "page_title": c["page_title"], "undone": c["undone"],
               "state": c["state"]}
-             for ws in _token_workspaces(user_id, token_id) for c in agent_changes.listed(ws, token_id, 100)]
+             for ws in token_workspaces(user_id, token_id) for c in agent_changes.listed(ws, token_id, 100)]
     return {"changes": sorted(found, key=lambda c: c["at"], reverse=True)[:100]}
 
 
@@ -196,7 +196,7 @@ def undo_token_change(token_id: str, change_id: str, payload: ChangeUndo, reques
     no longer edits. Undone already, it answers ``noop``."""
     user_id, _ws = _owner(request)
     ws = payload.workspace_id
-    if ws not in _token_workspaces(user_id, token_id) or role_of(ws, user_id) not in EDITING_ROLES:
+    if ws not in token_workspaces(user_id, token_id) or role_of(ws, user_id) not in EDITING_ROLES:
         raise HTTPException(403, "You no longer edit that workspace.")
     refuse_writes(ws)
     change = agent_changes.find(ws, change_id)

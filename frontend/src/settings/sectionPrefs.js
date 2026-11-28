@@ -73,7 +73,7 @@ export const SECTION_PREFS = Object.freeze({
     "Context size": ["chatContextChars", "metaContextChars", "multiContextChars", "chatPictures"],
   }),
   tools: sections({
-    Tools: ["agentEnabled", "agentPerms", "fetchInBackground", "delegateReads", "aiMarkMinutes"],
+    Tools: ["agentEnabled", "agentPerms", "fetchInBackground", "delegateReads"],
     "Tool limits": ["toolRounds", "toolRoundsUnlimited", "agentReadChars"],
   }),
   diagnostics: sections({

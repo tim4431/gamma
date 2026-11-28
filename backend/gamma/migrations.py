@@ -2444,6 +2444,24 @@ def _v73_agent_changes(ws: str, pages: sqlite3.Connection, data) -> None:
     pages.execute("UPDATE agent_changes SET kept_at = at, cleared_at = at WHERE kept_at = '' AND undone_at = ''")
 
 
+def _v74_review_mode(ws: str, pages: sqlite3.Connection, data) -> None:
+    """An agent's change is a suggestion only while its account reviews its
+    agents' changes (Reviewing, docs/dev/ai.md "Reviewing an agent's
+    changes"), and a kept change leaves no mark: ``agent_changes`` loses
+    ``cleared_at`` (when a kept change's mark was cleared), and every change
+    that still waits for the person is kept as of when it was made, since
+    none was made in Reviewing, which came with this step. An undone one
+    stays undone. Re-runnable: the column is dropped only where
+    ``_columns()`` has it, and only rows neither kept nor undone are kept.
+    The table never leaves a workspace's own copy (``LOCAL_STEPS``)."""
+    columns = _columns(pages, "agent_changes")
+    if not columns:
+        return
+    pages.execute("UPDATE agent_changes SET kept_at = at WHERE kept_at = '' AND undone_at = ''")
+    if "cleared_at" in columns:
+        pages.execute("ALTER TABLE agent_changes DROP COLUMN cleared_at")
+
+
 def _v71_entry_lists(conn: sqlite3.Connection) -> tuple[dict, dict]:
     """``(own, shared)``: every account's own AI provider entries as
     ``{account id: {entry id: entry}}`` (its ``ai-settings`` pref) and the
@@ -2778,6 +2796,7 @@ WORKSPACE_STEPS = [
     (69, "far_answers", _v69_far_answers),
     (72, "citations", _v72_citation_fields),
     (73, "agent_changes", _v73_agent_changes),
+    (74, "review_mode", _v74_review_mode),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows
@@ -2789,4 +2808,4 @@ DERIVED_STEPS = {47, 48, 53}
 # in step with another (comments, the Inbox's rows, the Sends of before step 65, a computer
 # agent's conversations): a mirror never sends them, so two copies on either
 # side of one still agree.
-LOCAL_STEPS = {54, 58, 59, 60, 62, 63, 64, 65, 66, 68, 69, 73}
+LOCAL_STEPS = {54, 58, 59, 60, 62, 63, 64, 65, 66, 68, 69, 73, 74}

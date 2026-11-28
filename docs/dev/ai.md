@@ -9,8 +9,8 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 `gamma/ai_protocols/` (one adapter per wire), `gamma/ai_client.py`,
 `gamma/ai_catalog.py`, `gamma/ai_context.py`, `gamma/ai_tools/`,
 `gamma/chatgpt_oauth.py`, `gamma/gemini_oauth.py`, `gamma/routers/ai.py`,
-`gamma/routers/agent_changes.py` (an agent's changes reviewed and
-reverted). PDF translation
+`gamma/routers/agent_changes.py` (an agent's changes accepted, rejected
+and undone). PDF translation
 (`gamma/routers/translate.py`), the handwriting selection's Redraw as
 shapes and Convert to text (`gamma/routers/ink_ai.py`) and the stored chat
 conversations have their own documents: [translation.md](translation.md),
@@ -2190,13 +2190,11 @@ Under the permission table, **Fetch blocked papers in the background**
 the page to Gamma Connector without a click, and **Read long papers with a
 helper** (`gamma-ai-delegate-reads`, default on) offers `read_paper`, which
 gives one document to a second agent and keeps only its cited answer
-([ai_tools.md](ai_tools.md#read_paper)). **Marks of kept changes**
-(`gamma-ai-mark-minutes`, `aiMarkMinutes`) is how long an agent's change
-the person kept stays marked in its note
-([Reviewing an agent's changes](#reviewing-an-agents-changes)). It is 1, 5
-or 15 minutes, an hour, a day, or Until I clear them, a minute by default.
-All three are account-wide, not per-chat-kind: they change how a tool's
-work shows rather than what a chat may reach.
+([ai_tools.md](ai_tools.md#read_paper)). Both are account-wide, not
+per-chat-kind: they change how a tool's work runs rather than what a chat
+may reach. Whether an agent's note and drawing changes ask first or land
+as suggestions is the account's review mode, set from the page header,
+not here ([Reviewing an agent's changes](#reviewing-an-agents-changes)).
 
 Which tools a chat may use is configured per chat KIND — there are three
 (`CHAT_KINDS` in `app/prefDefs.js`, `CHAT_KIND_ROWS` in `settings/AssistantTools.jsx`):
@@ -2211,7 +2209,10 @@ server, `chat/chatSettings.js` in the client):
 - **Allow**: its tools run whenever the model calls them.
 - **Ask**: its tools are offered, and each call waits for the user's answer
   on an approval card in the reply ([Asking before a call](#asking-before-a-call-approvals)).
-- **Off**: its tools are not offered, and a call is refused.
+  In Reviewing, a tracked tool's call does not wait: its change is made as
+  a suggestion ([Reviewing an agent's changes](#reviewing-an-agents-changes)).
+- **Off**: its tools are not offered, and a call is refused, in either
+  review mode.
 
 Reading is allowed by default and changes ask: Save papers, Create pages,
 Rename pages, Move pages, Restore deleted pages, Delete pages, Organize
@@ -2419,12 +2420,9 @@ A call of a tool whose permission is Ask waits for the user
    It shows the change as `diff`, a list of `[kind, text]` pairs: `ctx` kept,
    `del` removed, `ins` added (`ai_tools.text_diff`). Words are compared one
    by one, and CJK text character by character; long kept stretches are cut
-   around "…". A note edit's preview also has `text`, the block's whole
-   new text, which its note draws against what it says (below). A page
-   move has `from` / `to` instead. A created or moved
-   block has its `parent`, and `src_title` when it leaves its page. What a
-   change's preview also carries to be drawn where it lands is listed under
-   [Reviewing an agent's changes](#reviewing-an-agents-changes). A
+   around "…". A page move has `from` / `to` instead. A created or moved
+   block has its `parent`, and `src_title` when it leaves its page. A
+   deletion has its `block_id` and how many notes go with it (`children`). A
    saved paper has the folder it goes `to` and its source as the `diff`,
    plus `existed` and `page_id` when the library holds it already. A
    restored page has the folders it goes back `to`. A folder or label
@@ -2467,6 +2465,11 @@ would learn of it only once it is collected. `wait_for` then returns `"stopped"`
 ends. Nothing runs for that call, not even one allowed a moment before, and
 no further provider round is opened.
 
+In Reviewing ([Reviewing an agent's changes](#reviewing-an-agents-changes)),
+`ApprovalGate.asks` is false for a tracked tool (`TRACKED_TOOLS`): its call
+gets no card and its change is made at once, as a suggestion. Every other
+asking tool asks as in Editing.
+
 Only a streamed request of a signed-in account can ask (`_chat_scope`'s
 `can_ask`). A request without a stream arms no asking tool, and the context
 export shows the tools as the streamed chat would. The agent prompt says
@@ -2478,71 +2481,36 @@ stays while any armed tool asked at the start of the conversation, so the
 system prompt reads the same before and after a grant and the cached
 prefix holds. An asking `edit_block` or `create_block`
 streams no `progress`, so the note is not typed in before the user decides.
+In Reviewing they ask nobody, so they stream it.
 
 In the client (`chat/ApprovalCard.jsx` on the shared card shell
 `chat/ApprovalShell.jsx`, its rules in `chat/approvals.js`),
 the card stands under the streaming reply's pill, which reads "Waiting for
 your approval" until the user answers. The card
 carries the `chat.approval` guide anchor and emits `approval.shown` while it
-is up, so a hint beside the first change's card ever shown explains Keep and
-Undo. A card that says Allow and Don't allow shows none
-([onboarding.md](onboarding.md)). The card
-names the change ("Add to a note in “Paper”") and the permission, and shows
-the diff. Its answers depend on what the call is (`approvals.isChangeCall`):
+is up, so a hint beside the first one ever shown explains the four answers
+([onboarding.md](onboarding.md)). The card names the change ("Add to a note
+in “Paper”") and the permission, and shows the diff. Its four buttons
+(`approvals.toolAnswers`, then the shell's own Don't allow):
 
-- **A change** says what the note's review says
-  ([Reviewing an agent's changes](#reviewing-an-agents-changes)). It is a
-  call of a permission in the "Make changes" group, other than a comment or
-  a resolve.
-  - Its answers are **Keep** (primary), a chevron beside it (`ActionMenu`,
-    "More ways to keep it") holding **Keep, and allow in this chat** and
-    **Keep, and always allow**, and **Undo** (ghost).
-  - Answered, the card says "Kept. Gamma AI goes on…" or "Undone. Gamma AI
-    goes on without it…".
-- **Anything else** keeps **Allow once** (primary), **Allow in this chat**,
-  **Always allow** and **Don't allow** (ghost). That is a comment or a
-  resolve (speech, not a change) and a reading tool set to Ask (nothing to
-  draw).
-  - Answered, it says "Allowed. Gamma AI goes on…" or "Not allowed. Gamma
-    AI goes on without it…", as a computer agent's card names its agent.
+- **Allow once** (primary) runs the call.
+- **Allow in this chat** also stops asking for this permission in this
+  conversation.
+- **Always allow** also sets the permission to Allow for this kind of chat.
+- **Don't allow** (ghost) opens one line, "Tell Gamma AI why, or what to do
+  instead (optional)", with its own Don't allow (Enter) and Back (Escape).
+  The line takes the focus unless that would raise an on-screen keyboard
+  (`touchTyping()`).
 
-The words come from one place (`approvals.toolAnswers` and `answerWords`),
-so the card and the note's bar read the same. The one that declines (Undo,
-Don't allow) opens one line, "Tell Gamma AI why, or what to do instead
-(optional)", with its own button of that name (Enter) and Back (Escape). The
-line takes the focus unless that would raise an on-screen keyboard
-(`touchTyping()`). The buttons never take the focus themselves, so typing in
-the composer cannot answer a card. A deletion's card (`isDeletion`: a
-`delete_*` tool) has the same answers, its first one `primary danger`.
+Once answered the card says "Allowed. Gamma AI goes on…" or "Not allowed.
+Gamma AI goes on without it…", as a computer agent's card names its agent.
+The buttons never take the focus themselves, so typing in the composer
+cannot answer a card. A deletion's card (`isDeletion`: a `delete_*` tool)
+has the same four, its Allow once `primary danger`. A change allowed on
+its card is journaled kept. It is drawn only while its row in the chat
+shows it ([Reviewing an agent's changes](#reviewing-an-agents-changes)).
 
-A change's card is drawn where the change would land too, wherever that
-shows, as a diff of what is not written yet
-([Reviewing an agent's changes](#reviewing-an-agents-changes)).
-
-- A note edit (`edit_block` with the preview's `text`) is drawn as tracked
-  changes against what the note says now. A new note is a ghost row where it
-  would go, a note to delete is struck out, and a note to move is marked
-  with where it goes.
-- A highlight, a drawing, a text box or a picture is drawn on its PDF page
-  or page of paper.
-- Each carries the card's answers (the shell's `ApprovalAnswers`). Undo
-  opens the card's line for what to do instead, and a refusal is said
-  there.
-- An answer there is the card's own, through the latest render's
-  `decideApproval`. So Keep, and allow in this chat files its grant under
-  the conversation as it is now. The card then shows it as answered
-  (`answered`).
-- An answer on the card, the call's action or the end of the reply takes
-  the drawing away (`noteReview.settle`).
-- The card's **Show** (`drawnAt` in `ApprovalCard.jsx`) opens where it is
-  drawn: the note, or the PDF page (a `citation` target). For a move, Show
-  opens the page the note is on now (`src_page_id`), where the move is
-  drawn, though the note goes to another.
-- A change kept on its card is journaled as kept and lands folded to its
-  mark: the person saw it before it was written.
-
-The two grants (a change's card says them as Keep, and allow in this chat
-and Keep, and always allow):
+The two grants:
 
 - **Allow in this chat** is kept per account and conversation in this
   browser: localStorage `gamma-ai-chat-grants`, keyed by the conversation's
@@ -2791,8 +2759,9 @@ notes panel shows where the agent is, not just what it did.
   named sibling. When the action lands, the reload swaps in the real block.
   Only armed edit/create tools are previewed; other tools' arguments are
   never streamed. Non-stream callers never see progress lines.
-- A note's edits are drawn in the note as tracked changes until the person
-  keeps or undoes them: [Reviewing an agent's changes](#reviewing-an-agents-changes).
+- In Reviewing, a change is drawn where it landed as a suggestion until the
+  person accepts or rejects it, and in either mode a press on its row in
+  the chat shows it there: [Reviewing an agent's changes](#reviewing-an-agents-changes).
 
 The marks, previews and the scan are display-only: they live in App state
 (`aiMarks`, `aiLive`, `aiScan` → `rowProps` → `BlockRow`/`BlockTree`),
@@ -2801,42 +2770,74 @@ tree, the undo history or the op queue.
 
 ### Reviewing an agent's changes
 
-Every change an agent makes is shown as a diff where it lands, as VS Code
-shows its chat's edits. While its card asks, the change is drawn before it
-is written. Once written and kept, it leaves a mark that unfolds to the
-change. Gamma AI's changes in the chat and an assistant's over MCP
-([mcp.md](mcp.md#undoing-a-change)) are one kind of change. Every place that
-decides one decides the same change: the card, the drawing under it, the
-note's bar, the page's strip, the reply's row in the chat, the connection's
-Changes in Settings and MCP's `undo_change`. The research behind it:
+The account takes its agents' changes in one of two modes, Editing or
+Reviewing, as Overleaf's editor and Word's Track Changes offer them. Gamma
+AI's changes in the chat and an assistant's over MCP
+([mcp.md](mcp.md#undoing-a-change)) are one kind of change, in one journal.
+Every place that decides one decides the same change: where it is drawn,
+the page header's menu, the reply's row in the chat, the connection's
+Changes in Settings and MCP's `undo_change`. The survey behind the journal,
+and the design this mode replaced, is
 [research/ai-change-review.md](../research/ai-change-review.md).
 
-**Three states, one look.**
+**The two modes.** The mode is the account pref `ai-review`
+(`agent_changes.REVIEW_PREF_KEY`, in `db.USER_PREF_KEYS`). `true` is
+Reviewing; `false` or unset is Editing. The server reads it with
+`agent_changes.reviewing(account)`, and no account (a share link's
+visitor) is Editing.
 
-- **Asked**: the call waits on its card (Ask, every change's default). It is
-  drawn in place, dashed at its edge, since it is not written yet.
-  - It carries the card's answers, Keep and Undo. An answer in either place
-    answers both.
-  - An assistant over MCP that asks first is drawn the same way, under its
-    name. Its client's question and the drawing are one question too
-    ([mcp.md](mcp.md#asking-first)).
-- **Waiting for review**: made without asking (a permission set to Allow, a
-  grant, an assistant over MCP that asks nothing). It is drawn unfolded,
-  solid at its edge, with Keep and Undo.
-  - A deletion and a page made have nothing in a note to draw on. Each is
-    reviewed from its row: the reply's in the chat for Gamma AI, the
-    connection's Changes in Settings for an assistant over MCP.
-  - The page's strip does not count them.
-- **Kept**: kept on its card or after. The diff folds to a mark at the
-  note's left edge, as a diff's gutter marks a line: the accent for an edit
-  or a move, green for what was added.
-  - A press on the mark unfolds the change, with **Undo** and **Fold**. So
-    does a press on the change's row in the chat, but not on an undone
-    one's: nothing stands to unfold.
-  - The mark stays until the person clears it (Clear marks) or its time is
-    up. The time is **Marks of kept changes** in Settings → AI → Tool
-    usage: a minute by default, longer, or until cleared.
-  - A mark unfolded when its time comes stays until it is folded.
+- **Editing**, the default. A change waits for consent as the permissions
+  say: the chat's approval card ([Asking before a call](#asking-before-a-call-approvals))
+  or the MCP client's own question ([mcp.md](mcp.md#asking-first)).
+  - Once allowed it is written and journaled kept, and nothing is drawn. A
+    press on its row in the chat shows its diff where it landed, until it is
+    hidden (below).
+- **Reviewing.** A tracked tool's change is written at once, without
+  asking. The chat shows no card, and MCP sends no question.
+  - A permission set to Off still blocks the tool: it is not armed.
+  - The change is journaled open: a suggestion, drawn where it landed until
+    the person accepts or rejects it.
+  - Every other change asks, or not, as in Editing, and is kept: a page
+    tool, `create_page`, a folder or label, a comment or a resolve,
+    `undo_change`.
+- **The tracked tools** (`ai_tools.registry.TRACKED_TOOLS`, the TOOLS
+  entries with `tracked: True`) are those whose change Gamma draws where it
+  lands. They are `edit_block`, `create_block`, `move_block`,
+  `delete_block`, `highlight`, `draw`, `add_text_box`, `place_picture` and
+  `add_sheet`.
+- **When the mode is read.** The chat reads it once per request
+  (`_chat_scope`'s `reviewing`), MCP once per tracked call (`call_tool`).
+  A suggestion stays one after the account goes back to Editing, until it
+  is decided.
+- **Where it is set.** The page header's switch sets it
+  (`editor/ReviewMode.jsx`, below), through `/api/prefs/ai-review`
+  ([api.md](api.md)). It never syncs to Gamma Cloud: the suggestions are
+  this server's.
+
+**What the model is told.**
+
+- A suggestion's tool result ends with `agent_changes.SUGGESTED`. It says
+  the change is made as a suggestion the user accepts or rejects in Gamma,
+  and not to make it again. MCP's answer carries the same line.
+- In Reviewing, a `delete_block` whose subtree would pass
+  `_DELETE_REVERT_MAX` is refused, since Reject could not put it back. The
+  model is told to ask the user to delete it, or to switch Gamma to Editing.
+  - In Editing it is made, and its result says it was too large to record
+    for a revert.
+- In Reviewing, a paste (`create_block` of several blocks) whose record
+  would pass `_DELETE_REVERT_MAX` is refused before anything is written,
+  since Reject could not delete it again. The record is built from the
+  planned inserts. The model is told to paste it in parts, or to ask the
+  user to switch Gamma to Editing.
+  - In Editing it is made, and not journaled; its result says it was too
+    large to record for a revert.
+- Both refusals start with `error:`, so the chip is an error and MCP
+  answers `isError`.
+- A suggestion the journal cannot keep (`agent_changes.record` raised or
+  kept nothing) stands as written. Its result ends with
+  `agent_changes.UNTRACKED`, which tells the model to tell the user.
+- The system prompt does not name the mode, so a switch keeps the cached
+  prefix. Its sentence about asking follows the permissions alone.
 
 **The journal** (`gamma/agent_changes.py`, the table `agent_changes` in the
 workspace's `pages.db`).
@@ -2849,129 +2850,119 @@ workspace's `pages.db`).
     chat's router sets `chat` and the token that drives it. MCP's `_writes`
     sets `mcp` and the connection.
   - The action carries the row's `change_id`, so the conversation and the
-    journal name the same change.
+    journal name the same change. Its `change_state` is the state it starts
+    in: `open` for a tracked tool in Reviewing, else `kept`.
 - **A row** holds the account it was made for, the agent's stamp, the tool,
   the kind, the block and page, and the revert record (before and after).
-  Three times record what the person did: `kept_at`, `cleared_at` and
-  `undone_at`.
-- **Its state.** A change is **open** until the person keeps it (**kept**)
-  or undoes it (**undone**). A redo of an undone one keeps it again, with
-  its mark back.
-  - A change allowed on its card (`ApprovalGate`'s `asked`) or in an MCP
-    client's question is kept as it is written.
-  - A deletion or a page made without asking waits for review like any
-    other.
+  Two times record what was decided, `kept_at` and `undone_at`, both `''`
+  while it is a suggestion.
+- **Its state.** A suggestion is **open** until the person accepts it
+  (**kept**) or rejects it (**undone**). A kept change can still be undone,
+  and a redo of an undone one keeps it.
 - **The nudge.** Each write sends the account's open page sockets a
   content-free `{t: "ai_changes", ws, page_id}` (`collab.publish_account`).
   The tabs hear it as the window event `gamma:ai-changes`
   ([collab.md](collab.md)).
-- **What the journal holds.** It holds the newest `KEEP_PER_CONNECTION`
-  (500) per account and connection, none older than `KEEP_DAYS` (30). A change past them is not
-  drawn and stays as written.
+- **What the journal holds.** Of the decided changes, it holds the newest
+  `KEEP_PER_CONNECTION` (500) per account and connection, none older than
+  `KEEP_DAYS` (30). A suggestion stays until it is decided.
   - The table is private (`ws_backup.PRIVATE_TABLES`): no backup, mirror or
     Gamma export carries it.
+  - Migration step 74 drops `cleared_at` and keeps the rows still open from
+    before the mode existed ([migrations.md](migrations.md)).
 
 **The routes** ([api.md](api.md)):
 
-- `GET /api/ai/changes?page_id=` lists what the account's note of a page
-  draws, oldest first: the open changes and the kept ones whose mark
-  stands.
-  - Each has its `state`, and a kept one its `kept_ago`. That is in seconds
-    by the server's clock, so a tab times the mark out on its own clock,
-    whatever the two clocks say.
-  - `marks_for` (seconds) leaves out the kept ones whose time is up.
-  - `?ids=` reads the states of those changes instead, which a reply's rows
-    show.
+- `GET /api/ai/changes?page_id=` lists the account's suggestions on a page,
+  oldest first, each with `state` `open`. `?ids=` reads the states of
+  those changes instead (`{states}`), which a reply's rows show.
+- `GET /api/ai/changes/{id}` reads one change with its state, for the page
+  it landed on to show its diff. Settings' **Open** uses it.
+  - A row an MCP connection journaled before step 73 has `account` `''`.
+    It is the caller's when its `token_id` is a connection of theirs that
+    reads the workspace (`routers/integrations.token_workspaces`, which the
+    connection's Changes list by).
 - `POST /api/ai/changes/{id}` with `{decision: keep | undo | redo, force}`
-  decides one and answers the change's state after it.
+  decides one and answers the change's state after it. Accept is `keep`,
+  and Reject is `undo`.
   - A keep with nothing to keep (undone or kept meanwhile, in another tab
     say) answers the journal's state with `noop`. It never answers "kept"
     for a change that is not.
   - Undo and redo are `ai_revert.revert_change`'s, with `/api/ai/revert`'s
     409s ([ai_tools.md](ai_tools.md#reverting-a-note-change)).
-- `POST /api/ai/changes/keep` with `{ids}` keeps several (Keep All) and
-  answers the ids it kept. `POST /api/ai/changes/clear` with `{ids}` clears
-  kept ones' marks (Clear marks).
+- `POST /api/ai/changes/keep` with `{ids}` accepts several (Accept all) and
+  answers the ids it kept.
 - **Who decides.** Only the account a change was for. Another account gets
   404, and a share link's visitor has none.
-  - Keeping, clearing and answering a question drawn in Gamma are the
-    person's, from a signed-in session. An integration token does none of
-    them, the MCP connection's own (which may have made the change) among
-    them.
-  - To an integration token, the page's read lists no `asks`, a keep or a
-    clear answers 403 (`auth.TOKEN_REFUSAL`), and an answer to an
-    assistant's question 404, as for an id that is not theirs.
-
-**What a card's preview carries to be drawn** ([ai_tools.md](ai_tools.md)):
-
-- A note edit: its whole new `text`.
-- A new note: its `parent_id`, `after_id` ("" when first) and `text`.
-- A deletion: its `block_id` and how many notes go with it (`children`).
-- A move: its `block_id` and the `parent_id` it goes under.
-- A highlight, a drawing, a text box or a picture: its `pdf_page` (or
-  `sheet_id`) and a `shape` in the surface's points (`frame`).
-  - The shape is a highlight's rectangles, style and colour, a drawing's
-    strokes as point lists, a text box's frame, text, size and colours, or
-    a picture's frame and file.
-  - A highlight's colour is the value its block will store in
-    `props.color` (`hand.stored_color`, the `#rrggbbaa` `hand.highlight`
-    writes), not the colour's name. A colour name the highlight tool does
-    not know is refused at the preview, so nobody is asked about it.
+  - Accepting, and reading one change, are the person's, from a signed-in
+    session. An integration token gets 403 (`auth.TOKEN_REFUSAL`), the MCP
+    connection's own (which may have made the change) among them.
+  - Undo and redo need a workspace editor, as the chat's writes do.
 
 **The client** keeps one store every surface reads (`chat/noteReview.js`).
 It holds:
 
-- The changes of the pages on screen, and an assistant's questions about
-  them (`watch`, below).
-- A reply's change as it lands in this tab (`landed`): kept when its card
-  allowed it, else open. It is drawn at once on a watched page.
-- The calls waiting on their cards (`ask`), indexed by the note, the parent
-  or the surface they draw on.
-- Which kept marks are unfolded (`expanded`: `toggle`, `focus`, `reveal`).
-  A block stays unfolded only while it has a change, so one undone or
-  cleared folds. A Keep folds its change to the mark.
+- The account's mode (`reviewing`, `useReviewing`). `loadMode` reads
+  `/api/prefs/ai-review`; `setReviewing(on)` shows the switch at once,
+  writes it, and puts it back when the write fails.
+  - A read is left when a newer read was sent, or when a write was on its
+    way as it was sent or was sent since, so a read never undoes a switch.
+    A failed write puts the mode back unless a newer write was sent.
+- The suggestions of the pages on screen (`pages`, read through `watch`,
+  below).
+- A reply's change as it lands in this tab (`landed`), in the state its
+  action's `change_state` names. A suggestion on a watched page is drawn at
+  once, before the server's word.
+- The change shown from a reply's row (`shown`: `reveal`, `hide`), one at
+  a time. While it shows, one listener on the document hides it on Esc or
+  a press outside it. What draws it carries `data-review-shown`
+  (`shownMark`); a press within that box counts as on it, since a frame
+  takes no pointer.
 - What was decided about each change it has heard of (`states`). A row asks
   through `useChangeState`, and the ids asked for together are read in one
   batch.
   - An id is read once at a time. After a failed read it is not read again
     for 30 s, doubling up to 5 minutes.
-- The refusal an Undo or a Keep met (`refusals`).
-- How long a kept mark stays (`markLife`, `setMarkLife`). `ReviewMarkLife`
-  sets it from the account's `aiMarkMinutes`: a component that draws
-  nothing, mounted once in `app/App.jsx` whatever the page shows.
-  - A change of it reads the watched pages again.
-  - A kept change past its time is left out of what the notes draw, unless
-    it is unfolded. One timer (`expiry`, on an injectable `clock`) wakes the
-    store when the next one's time comes.
+- The refusal an Accept or a Reject met (`refusals`, `useRefusal`), which
+  every surface that draws the block shows by its buttons.
 
 The store's rules:
 
-- **A Keep settles by the server's word.** One change goes by the answer's
-  `state`, Keep All by the ids its answer kept. The others' states and pages
-  are read again, so a change undone elsewhere meanwhile never shows as
-  kept.
-- **What a change draws** comes from its revert record (`noteChanges`): an
-  edit's text before and after, a new note's text (each block of a paste),
-  a move, or a placed block drawn as it is (a drawing, a text box, a
+- **What a change draws** comes from its revert record (`noteChanges`). It
+  is an edit's text before and after, a new note's text (each block of a
+  paste), a move, or a placed block drawn as it is (a drawing, a text box, a
   picture, a page of paper, a highlight).
+  - A deletion draws the note that went: its text, its parent, its sibling
+    key and the notes that went with it.
   - Several edits of one block in a row are one change, from the text before
     the first to the text after the last (`withChange`).
   - A move or a placed block joins the block's change. An edit after a move
     is drawn as the edit, the move kept in it.
   - An edit that starts from a text the change did not leave (the block was
-    typed in since) is drawn alone. The earlier steps that still wait are
-    kept in it, so Keep and Undo reach them all.
+    typed in since) is drawn alone. The earlier steps still open are kept in
+    it, so Accept and Reject reach them all.
+  - A deletion takes in the changes of the notes that went with it.
+- **Accept** (`accept`, `acceptBlock`, `acceptPage`) keeps a change's open
+  steps. **Reject** (`rejectBlock`, `rejectPage`) undoes its steps newest
+  first, and stops at the first that stops.
+- **A decision settles by the server's word.** One change goes by the
+  answer's `state`, several by the ids the answer kept. The others' states
+  and pages are read again, so a change undone elsewhere meanwhile never
+  shows as kept.
 - **Its requests** come from the app (`setRequest`, in `app/App.jsx`), which
   keeps the module free of the browser for its tests.
+- **Each surface reads its own slice**, so a change elsewhere renders
+  nothing there. A row reads `useNoteChange(blockId)`, a parent
+  `useDeletedByParent`, a surface `useSurfaceChanges(surfaceKey(page,
+  surface))` and the header `usePageChanges(pageId)`.
 
-**Watching a page.** A page's changes, and the questions an assistant over
-MCP asks about it, are read while anything on screen draws the page
-(`noteReview.watch(pageId)`, which returns its unwatch; `useWatchPage(pageId,
-enabled)` in a component).
+**Watching a page.** A page's suggestions are read while anything on
+screen draws the page (`noteReview.watch(pageId)`, which returns its
+unwatch; `useWatchPage(pageId, enabled)` in a component).
 
-- The watchers are the page's strip, each PDF page and page of paper
-  (`markup/ReviewLayer.jsx`, by `PageTools`' `pageId`, where the page tools
-  carry `review`) and a tab group's view of a page
+- The watchers are the page header's switch (`ReviewMode`), each PDF page
+  and page of paper (`markup/ReviewLayer.jsx`, by `PageTools`' `pageId`,
+  where the page tools carry `review`) and a tab group's view of a page
   (`workspace/PagePane.jsx`). They watch whether or not the notes show.
 - The first watcher reads them (`load`). While one stays, each nudge about
   the page reads them again (`gamma:ai-changes`, heard by one window
@@ -2982,16 +2973,15 @@ enabled)` in a component).
   surface mounted again in the same render neither drops nor reads them.
 - A page's reads may answer in any order. One older than an answer applied
   already is left, as is one sent before its page was dropped.
-- A question about a move belongs to the page the note is on now
-  (`src_page_id || page_id`, as `agent_asks` files it), where the move is
-  drawn.
 - A viewer and a share link watch nothing.
 
-**Where it is drawn.**
+**Where it is drawn.** A suggestion is drawn until it is decided, whatever
+the mode is since. The change shown from a reply's row is drawn the same
+way, until Esc, a press outside it or its Hide hides it, or it is decided.
 
 - **In the note** (`editor/BlockTree.jsx`, `editor/mdDiff.js`,
-  `editor/PictureDiff.jsx`, `editor/NoteReviewBar.jsx`). An edit is drawn
-  while the block says what the agent wrote.
+  `editor/PictureDiff.jsx`). An edit is drawn as tracked changes while the
+  block says what the agent wrote.
   - `editor/mdDiff.js` merges the two texts into one Markdown source with
     marks around what changed. It compares lines first, then the words of
     two lines of the same shape.
@@ -3017,120 +3007,139 @@ enabled)` in a component).
     removed or only added stays as `rehypeDiffMarks` drew it, the one that
     went faded.
   - A new block's text renders as it is, tinted whole.
-  - The row carries its state at its left edge: `.aiReview` with
-    `aiReview-ask` dashed, `aiReview-open` solid, `aiReview-kept` the mark,
-    and the kind (`-edit`, `-add`, `-move`, `-object`, `-delete`). A kept
-    change's mark is a button (`.aiChangeMark`, `aria-expanded`).
-- **An asked change in the note.**
-  - An edit is drawn against the block's text now.
-  - A deletion strikes the row out.
-  - A move says where it goes ("Gamma AI wants to move this note under
-    “Methods”", to the page's top level, or to another page by its title).
-    It is drawn on the page the note is on now.
-  - A new note is a ghost row (`AskGhostRow`) after the sibling its card
-    names, or first, or last.
-- **The note's bar** says who ("Edited by Codex", "Added by Gamma AI",
-  "Moved by Gamma AI"). It has Keep and Undo while the change waits, and
-  Undo and Fold once it is kept and unfolded.
-  - A block typed in since shows its text as it is, with the bar alone
-    ("Changed by Codex, and edited since"). This holds while the change
-    waits, and once kept, unfolded from its mark, which stays. Its Undo
-    merges, as every undo does.
-  - The person's own typing in a block whose change waits keeps the change:
-    the words are theirs now.
-  - An Undo that stops says why on the bar, with the diff of what undoing
-    anyway would write and **Undo anyway** where it can be forced
-    (`refusalCopy`, the rows' words).
-  - A Keep that fails (the server away, say) says why in the same place,
-    with **Dismiss** (`keepBlock`'s refusal, kept in the store). So every
-    surface that draws the block shows it, the note's row and its frame on
-    the page alike. So does the keep that typing makes.
+  - The row's left edge carries a 3px mark (`.aiReview` and its kind:
+    `aiReview-edit`, `-add`, `-move`, `-object`, `-delete`). It is the
+    accent for an edit or a move, green for what was added, red for a
+    deletion.
+  - A move and a placed block tint the row's body in the mark's colour. A
+    move is drawn where the note went.
+  - A block typed in since shows its text as it is, with the buttons. Their
+    tooltips say "Changed by Codex, and edited since", and Reject merges, as
+    every undo does.
+  - The person's own typing in a suggested note accepts it, since the words
+    are theirs now (`acceptBlock`).
   - An open editor, the text being written and a row that cannot be edited
     show the text as it is. A preview tree (a split pane) draws none of it.
+- **A deleted note** (`DeletedRow` in `editor/BlockTree.jsx`) is a ghost row
+  at the place it had among its parent's notes (`deletedAt`, by its sibling
+  key).
+  - Its text is struck through and faded, with "With the 3 notes under it"
+    when notes went with it.
+  - Accept keeps it deleted. Reject puts the subtree back under the same
+    ids.
+  - A parent left with no notes under it still holds the row.
+- **The buttons** (`ReviewButtons` in `editor/ReviewButtons.jsx`) sit in
+  one pill at the row's right edge, before its comment control.
+  - A suggestion has ✓ Accept and ✗ Reject. Their tooltips say what the
+    change was, by which agent and when ("Accept: Edited by Codex · …").
+  - The shown change has Hide alone (an eye struck through). Its Undo stays
+    on the chat's row.
+  - A deleted note's ghost row has no comment control or ×: stand-ins of
+    them keep its buttons where the other rows' are.
+  - A Reject that stops says why in a small card under the buttons
+    (`refusalCopy`, the rows' words). It shows the diff of what rejecting
+    anyway would write, the button that forces it where it can be forced,
+    and **Keep it**.
+  - An Accept that fails (the server away, say) says why in the same card,
+    with **Dismiss**. So does the accept that typing makes.
+  - The agent is named as the app names one (`stampLabel`): the person it
+    acted for only when that is not the viewer.
 - **On a PDF page or a page of paper** (`markup/ReviewLayer.jsx`, mounted by
   `markup/MarkupLayers.jsx` over every surface's layers). `PageTools`'
   `pageId` names the page its PDF is.
   - Each surface watches its page (`useWatchPage`). So the PDF draws the
-    page's changes and an assistant's questions with the notes closed or
-    the page empty of notes.
+    page's suggestions with the notes closed or the page empty of notes.
   - It draws only where the page tools carry `review`: the account's own
     page, not read-only and not through a share link, whose visitor has no
     journal to read. A tab group's view of a page (`workspace/PagePane.jsx`)
-    has none.
-  - An asked highlight, drawing, text box or picture is drawn where it would
-    go, as its block will look, faded inside a dashed frame in the accent.
-    - A highlight's wash is in its stored colour as it is (`shape.color`,
-      the `#rrggbbaa` with its alpha). An underline, squiggle or strike-out
-      is in `palette.js` `lineColor` of it, as `PdfViewer` draws a stored
-      highlight.
-    - A stroke has the dash its file will draw (`ink/ink.js`'s table).
-    - A text box has the written box's face (`.textBoxBody`).
-    - A picture loads from its upload URL, as every picture does
-      (`assetUrl`).
-  - On a dark PDF the proposed strokes and text boxes are inverted as the
-    written ones are. A picture is not.
-  - The card's answers sit in a tag under the frame ("Gamma AI wants to
-    highlight this"). Near the page's foot they sit over it, always inside
-    the page.
-  - The shapes take no pointer. The answers and marks do, and a press on
-    them is theirs, never an armed pen's or text tool's (`PAGE_CONTROLS` in
+    draws none.
+  - The block is on the page as itself. A suggestion, and the shown change,
+    is framed in green (`.reviewObjectFrame`), its buttons in a tag ending
+    at the frame's right edge (`.reviewTag`).
+  - The tag sits under the frame where it fits, else above it, else over
+    the frame's foot, always inside the page. It is placed in screen pixels,
+    and again as the page or the buttons resize.
+  - The frames take no pointer. The buttons do, and a press on them is
+    theirs, never an armed pen's or text tool's (`PAGE_CONTROLS` in
     `ink/InkLayer.jsx`).
-  - Once made, the block is on the page as itself. One waiting for review is
-    framed solid in green, with Keep and Undo under it.
-  - A kept one leaves a mark at its left, the note's own control
-    (`.aiChangeMark`, placed at the frame). It unfolds the change to its
-    frame with Undo and Fold, the same unfolding as its row's mark in the
-    notes (`noteReview.toggle` on the same block).
   - Where it sits comes from its revert record (`objectFrame` in
     `chat/noteReview.js`). That is a highlight's or a drawing's
     `pdf_position`, or a text box's or a picture's frame, on its PDF page or
     on the page of paper it was made under.
   - A drawing on a page of paper keeps its strokes in its file, so its row
-    in the notes marks it alone.
-- **The page's strip** (`editor/PageReviewStrip.jsx`), at the foot of the
-  notes (sticky while they scroll) while the page has changes marked.
-  - While some wait for review: "2 AI changes to review", **Undo All** and
-    **Keep All**. Undo All goes newest first, and stops at the first change
-    whose Undo stops.
-  - Else: "3 AI changes marked" and **Clear marks**, which takes the marks
-    away and leaves the changes.
-  - ‹ and › step through the changes in the order of the page's tree, notes
-    under a folded one included ("1 of 3", counted on the same list).
-  - Each step, and Undo All's stop, lands on its note as a jump to a note
-    does (`onLand`, App's `scrollToBlock`: its folded parents unfold and it
-    scrolls to the middle of the notes). The note is then flashed and
-    unfolded.
-  - It counts what a note draws, so a deletion or a page made is not among
-    them.
-  - It watches the page while it shows. So a change made in another tab, on
-    another device or by an assistant over MCP is drawn while the page is
-    open.
-  - A share view has none.
+    in the notes draws it alone.
+- **The page header's switch** (`editor/ReviewMode.jsx`, among
+  `app/App.jsx`'s page actions, none through a share link or for a viewer).
+  It reads "Editing ▾" or "Reviewing ▾" (`.reviewModeBtn`, in the accent
+  while Reviewing).
+  - Its menu has the two modes, each with a line saying what it does. The
+    mode is read again as the button mounts and as the menu opens, so a
+    switch in another tab or on another device shows.
+  - While the page has suggestions, the menu adds "3 suggestions on this
+    page", **Previous suggestion**, **Next suggestion**, **Accept all** and
+    **Reject all**.
+  - Previous and Next step through them in the order of the page's tree,
+    notes under a folded one included, a deleted note at its old place. They
+    keep the menu open.
+  - Each step lands where the change shows, as a jump to a change does
+    (`onLand`, App's `landOnChange`, below). Its row flashes as a landing
+    does (`flashingId`, `.blockRow.landed`).
+  - Reject all goes newest first and stops at the first Reject that stops.
+    The menu then lands on it, and its buttons say why.
+  - It watches the page while it shows. So a suggestion made in another
+    tab, on another device or by an assistant over MCP is drawn while the
+    page is open.
 - **The reply's rows** (`chat/AgentChanges.jsx`). A change the journal holds
   goes by its state.
-  - While open, its row has a check (Keep this change) and an undo button.
-  - Once kept, it is tagged **Kept** and keeps its undo. Once undone, it is
-    tagged **Undone** and has a redo.
-  - The head's **Keep All** keeps the reply's open changes.
+  - A suggestion is tagged **Suggestion** and has a check (Accept this
+    suggestion) beside its undo button, which rejects it.
+  - A kept one has its undo. An undone one is tagged **Undone** and has a
+    redo.
+  - The head's **Accept all** accepts the reply's suggestions, shown while
+    it has one. One that fails says why under the head, as a row's Accept
+    does.
   - A highlight's row undoes and redoes it as a note the agent made.
     `chat/aiRevert.js` takes it back as a new block, as
     `agent_changes.revert_kind` does.
-  - A press on a note change's link opens its note with the change unfolded
-    (`noteReview.reveal`), as its mark unfolds it. An undone one unfolds
-    nothing (`isUndone` in `chat/noteReview.js`: the journal's word, else
-    the conversation's, the rule the row's Undone tag reads too).
-  - One the journal no longer holds, or saved before it, is drawn from the
-    row's own record, its Undo the row's. It goes once it is folded.
   - An undo or redo from a row, or from the dialog that takes back several,
-    goes through the journal (`sendRevert`: `noteReview.decide`). So the
-    note and every other tab hear of it.
+    goes through the journal (`sendRevert`: `noteReview.decide`). So every
+    surface and every other tab hear of it.
   - A change the journal does not hold goes through `POST /api/ai/revert`
     with the record its action keeps
     ([ai_tools.md](ai_tools.md#reverting-a-note-change)).
 
-The guide's hint on the first change marked in a note (`note.aiChange`,
-anchor `notes.review`, on the mark or the bar) says two things. The mark
-unfolds the change, and Undo takes it back ([onboarding.md](onboarding.md)).
+**Showing a change from the chat or from Settings.** A press on a note
+change's link in a reply opens where it landed and shows its diff there
+(`openChange` in `chat/AgentChanges.jsx`).
+
+- `noteReview.reveal` draws it from the reply's own record, every note of
+  a paste. A suggestion is drawn already, so the press lands on it.
+- An undone one shows nothing (`isUndone` in `chat/noteReview.js`: the
+  journal's word, else the conversation's, the rule the row's Undone tag
+  reads too).
+- Where it lands is `changeLanding` (`chat/noteReview.js`), and the jump
+  is App's, through `GammaNavContext`'s `openChange` (`openChangeAt`). On
+  the open page it is `landOnChange`, which the header's Previous and Next
+  use too:
+  - A note lands at its row, which flashes. A highlight's passage is
+    jumped to on the PDF as well (`landOnBlock`).
+  - A drawing, a text box or a picture is shown where it sits, on its PDF
+    page or its page of paper (`showOnPage`, which adds no step of Back).
+  - A deleted note lands at its struck row once it renders, its parent and
+    the parent's folded ones unfolded for it (`revealUnder`), and the row
+    flashes.
+  - On another page it is a link jump, which Back returns from: at the
+    note, at the PDF page of a text box or a picture on one (a `citation`
+    target), or at the struck row once the page's notes draw it.
+- One change shows at a time. Esc, a press outside it or its Hide hides it
+  (`noteReview.hide`), and so does deciding it.
+- In Settings → AI → Integrations, a connection's change in the open
+  workspace has **Open**. It reads the change (`GET /api/ai/changes/{id}`),
+  closes Settings and opens it as a reply's row does.
+
+The guide's hint on the first suggestion drawn (`note.aiChange`, from the
+note's row or a deleted note's ghost row; anchor `notes.review`, the
+buttons) says ✓ accepts it and ✗ rejects it ([onboarding.md](onboarding.md)).
 
 ### Replay across turns
 
@@ -3150,8 +3159,8 @@ it is undone except on that many pages (`_REVERTED_KEPT_NOTE`). A redo that left
 `kept` without the mark, and the note says it was redone except on those
 (`_REDONE_KEPT_NOTE`) ([ai_tools.md](ai_tools.md) "Reverting a note change").
 An action that names a change of the journal (`change_id`) is marked by what
-the journal says now, wherever the person decided it (its row, its note, the
-dialog, another tab). `agent_changes.mark_history` runs on the request's
+the journal says now, wherever the person decided it (its row, where it
+landed, the dialog, another tab). `agent_changes.mark_history` runs on the request's
 history before the turns are built. It sets `reverted` while the change is
 undone and clears it once redone. One the journal no longer holds keeps the
 mark its conversation saved ([Reviewing an agent's changes](#reviewing-an-agents-changes)).

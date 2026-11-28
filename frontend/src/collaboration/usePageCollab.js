@@ -53,9 +53,9 @@ function socketUrl(pageId) {
 //                               recognition, or the one on screen (pdf/ocrState.js)
 // A `{t: "inbox"}` nudge (the account's inbox has news) becomes the window
 // event gamma:inbox, and an `{t: "ai_changes"}` one (an agent's change was
-// made, kept or undone, or an assistant asks about a page) gamma:ai-changes,
-// whatever page it arrived on, as does every hello for the socket's page
-// (one the socket missed while it was away).
+// made, accepted, rejected, undone or redone) gamma:ai-changes, whatever
+// page it arrived on, as does every hello for the socket's page (one the
+// socket missed while it was away).
 // Returns the session's commit/flush/hasPending/sendCursor/sendInkLive/overlay/
 // reloadFailed/tooLong/gone, `peers`, `me`, and `reconnect` (reopen the
 // socket — after a display-name change, since the name travels in the
