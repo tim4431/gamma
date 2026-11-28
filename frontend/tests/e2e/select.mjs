@@ -112,6 +112,9 @@ const INK = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "ink-ai", "pen", "p
 // what a page surface carries (ink, text boxes and pictures) and the tool strip, whose anchors the ink tour uses;
 // ink-ai: Convert to text places a text box
 const MARKUP = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "ink-ai", "pen", "pdf-touch", "triggered-guide", "notebooks", "textbox", "pictures", "touch", "comments"];
+// what the notes' editor (src/editor/) can break (text-search: a note's line link is a pill;
+// text-anchors: a text range's row, its dot and its title)
+const EDITOR = ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search", "text-anchors"];
 
 // [glob, groups], first match wins. `**` spans folders, `*` stays in one.
 // ALL is for what every scenario goes through (the app shell, shared UI,
@@ -169,6 +172,8 @@ export const RULES = [
   ["frontend/src/ink/inkSurfaces.js", [...INK, "recording"]],
   ["frontend/src/ink/**", INK], // inkCommands.js too: the commands' keys are ink-editing's and ipad's steps
   ["frontend/src/markup/usePictures.js", [...MARKUP, "ipad"]], // the images the iPad app is handed go through its placeInView
+  // a suggestion's frame on a PDF page or a page of paper (the chat's highlight, an MCP connection's text box)
+  ["frontend/src/markup/ReviewLayer.jsx", [...MARKUP, "chat-navigation", "mcp"]],
   ["frontend/src/markup/**", MARKUP],
   ["frontend/src/notebook/**", ["notebooks", "textbox", "pictures", "touch"]],
   // the replay store every handwriting replay and a recording's player run on
@@ -195,8 +200,11 @@ export const RULES = [
   // a note's link by path, opened through the work folder it is in (the e2e explorer group)
   ["frontend/src/editor/PathLink.jsx", ["sub-pages", "notes-pdf-share", "explorer"]],
   ["frontend/src/editor/pathLinkContext.js", ["sub-pages", "notes-pdf-share", "explorer"]],
-  // (text-search: a note's line link is a pill; text-anchors: a text range's row, its dot and its title)
-  ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search", "text-anchors"]],
+  // the page header's Editing / Reviewing button and a suggestion's ✓ and ✗, which draw the chat's
+  // and an MCP connection's changes
+  ["frontend/src/editor/ReviewMode.jsx", [...EDITOR, "chat-navigation"]],
+  ["frontend/src/editor/ReviewButtons.jsx", [...EDITOR, "chat-navigation"]],
+  ["frontend/src/editor/**", EDITOR],
   // the account's models for each task and the model menu: the chat's model chip, Settings → AI → Models,
   // Translate with, and the model the translation and handwriting requests go to
   ["frontend/src/ai/**", [...CHAT, "settings", "translation", "ink-ai", "local-agents", "remote-chat"]],

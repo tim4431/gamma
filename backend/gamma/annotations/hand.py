@@ -263,15 +263,6 @@ def open_thread(conn, writer: Writer, ws: str, page_id: str, place: Place, body)
     return {"thread": out["thread"], "comment": out["comment"], "created": True, "highlight": made}
 
 
-def stored_color(name: str) -> str:
-    """What a highlight in the colour ``name`` (of ``COLORS``, the first
-    when empty) stores in its ``color``, and its preview is drawn in.
-    ValueError for another name."""
-    if name and name not in COLORS:
-        raise ValueError(f"color is one of {', '.join(COLORS)}")
-    return colors.highlight_color(COLORS[name or "yellow"])
-
-
 def highlight(conn, writer: Writer, ws: str, page_id: str, place: Place, *, note: str = "", color: str = "",
               style: str = "") -> dict:
     """The writer's highlight of ``place`` (a passage, an area or a range)
@@ -283,7 +274,8 @@ def highlight(conn, writer: Writer, ws: str, page_id: str, place: Place, *, note
     refusal: a viewer makes none (``may_mark``)."""
     may_write(writer, ws)
     may_mark(writer, ws)
-    stored = stored_color(color)
+    if color and color not in COLORS:
+        raise ValueError(f"color is one of {', '.join(COLORS)}")
     if style and style not in STYLES:
         raise ValueError(f"style is one of {', '.join(STYLES)}")
     if not isinstance(note, str) or len(note) > comments.MAX_BODY:
@@ -308,7 +300,7 @@ def highlight(conn, writer: Writer, ws: str, page_id: str, place: Place, *, note
             same = (pos.get("line"), pos.get("end")) == place.lines
         if same:
             return {"block_id": block_id, "created": False}
-    props = {"color": stored, **place.props}
+    props = {"color": colors.highlight_color(COLORS[color or "yellow"]), **place.props}
     if style and style != "highlight":
         props["style"] = style
     return {"block_id": _mark(conn, writer, ws, page_id, props, note.strip()), "created": True}

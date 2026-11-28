@@ -1,102 +1,39 @@
-// An agent's changes on a surface, as a diff shows them (chat/noteReview.js).
-// Asked for: a highlight's wash, a drawing's strokes, a text box with its
-// text, a picture, each where the call would put it (its preview's `shape`,
-// in the surface's points: gamma/ai_tools/drawing.py _shape_of,
-// commenting.py _highlight_shape), drawn as the page will draw it once
-// written, faded and inside a dashed frame, as a diff marks what is not
-// written yet, and under the frame the card's own answers
-// (editor/NoteReviewBar.jsx AskBar): Keep there or on the card, it is one
-// question. Made: the block is on the page as itself; one waiting for
-// review is framed, solid, with Keep and Undo under it, and a kept one
-// leaves a mark at its left, the notes' own mark (.aiChangeMark), which
-// unfolds it to its frame with Undo and Fold — the same unfolding as its
-// row's mark in the notes, since it is the same block (`noteReview.toggle`).
-// A PDF page is its page's number, a page of paper its sheet's id
-// (markup/MarkupLayers.jsx mounts this over the other layers). The shapes
-// take no pointer; the marks and the bars do. Each surface watches its
-// page's changes (`useWatchPage`), so they are read whether or not the notes
-// show.
+// An agent's changes on a surface (chat/noteReview.js): a highlight, a
+// drawing, a text box or a picture it placed, which the page draws as
+// itself. One that is a suggestion (made while the account reviews, until
+// it is accepted or rejected) is framed in green, and so is the change a
+// click in the chat shows, each with its buttons at the frame's right edge
+// (editor/ReviewButtons.jsx: Accept and Reject, or the shown change's
+// Hide), as the block's row in the notes has them. A PDF page is its
+// page's number, a page of paper its sheet's id (markup/MarkupLayers.jsx
+// mounts this over the other layers). The frames take no pointer; the
+// buttons do. The shown change's frame carries shownMark, so a press within
+// it keeps the change shown (chat/noteReview.js). Each surface watches its
+// page's changes (`useWatchPage`), so they are read whether or not the
+// notes show.
 import { useLayoutEffect, useRef, useState } from "react";
-import { DEFAULT_HIGHLIGHT, lineColor } from "../shared/model/palette.js";
-import { assetUrl } from "../shared/lib/utils.js";
-import { t } from "../shared/i18n/i18n.js";
-import { FILL_OPACITY, clamp, dashArray } from "../ink/ink.js";
-import { textStyle } from "./textBox.js";
-import { CHANGE_STATES, noteReview, surfaceKey, useExpanded, useSurfaceAsks, useSurfaceChanges,
-  useWatchPage } from "../chat/noteReview.js";
-import { AskBar, NoteReviewBar, changedBy } from "../editor/NoteReviewBar";
+import { clamp } from "../ink/ink.js";
+import { CHANGE_STATES, shownMark, surfaceKey, useSurfaceChanges, useWatchPage } from "../chat/noteReview.js";
+import { ReviewButtons } from "../editor/ReviewButtons";
 import { usePageTools } from "./PageTools";
 
 const PAD = 4; // the frame's room around what it holds, in points
 const padded = ([x0, y0, x1, y1]) => [x0 - PAD, y0 - PAD, x1 + PAD, y1 + PAD];
-// The layer's units per point of a shape measured in `frame` ([width,
+// The layer's units per point of a box measured in `frame` ([width,
 // height]; none: the surface's own points).
 const scaleOf = (frame, width) => (frame?.[0] ? width / frame[0] : 1);
+// What the layer frames: the suggestions, and the change shown from the chat.
+const framed = ({ change }) => change.state === CHANGE_STATES.OPEN || !!change.shown;
+const stop = (e) => e.stopPropagation();
 
-// A shape's own frame in the surface's points, with its room: [x0, y0, x1, y1].
-function boundsOf(shape, k) {
-  const xs = [], ys = [];
-  if (shape.kind === "highlight") {
-    for (const [x0, y0, x1, y1] of shape.rects) { xs.push(x0 * k, x1 * k); ys.push(y0 * k, y1 * k); }
-  } else if (shape.kind === "ink") {
-    for (const s of shape.strokes) for (const [x, y] of s.points) { xs.push(x * k); ys.push(y * k); }
-  } else if (shape.box) {
-    xs.push(shape.box.x * k, (shape.box.x + shape.box.w) * k);
-    ys.push(shape.box.y * k, (shape.box.y + shape.box.h) * k);
-  }
-  if (!xs.length) return null;
-  return padded([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]);
-}
-
-// A highlight in the colour it will store (its alpha in it), a line style in
-// that colour's line, as the PDF draws a stored one (pdf/PdfViewer.jsx).
-function Highlight({ shape, k }) {
-  const fill = shape.color || DEFAULT_HIGHLIGHT;
-  const line = lineColor(fill) || fill;
-  return shape.rects.map(([x0, y0, x1, y1], i) => {
-    const [x, y, w, h] = [x0 * k, y0 * k, (x1 - x0) * k, (y1 - y0) * k];
-    if (shape.style === "underline" || shape.style === "squiggly") {
-      return <line key={i} x1={x} y1={y + h} x2={x + w} y2={y + h} stroke={line} strokeWidth={1.5}
-        strokeDasharray={shape.style === "squiggly" ? "2 2" : undefined} />;
-    }
-    if (shape.style === "strikeout") return <line key={i} x1={x} y1={y + h / 2} x2={x + w} y2={y + h / 2} stroke={line} strokeWidth={1.5} />;
-    return <rect key={i} x={x} y={y} width={w} height={h} fill={fill} />;
-  });
-}
-
-// A drawing's strokes, dashed by the ink's own table (ink/ink.js DASH).
-function Strokes({ shape, k }) {
-  return shape.strokes.map((s, i) => (
-    <polyline key={i} points={s.points.map(([x, y]) => `${x * k},${y * k}`).join(" ")} fill={s.fill ? s.color : "none"}
-      fillOpacity={s.fill ? FILL_OPACITY : undefined} stroke={s.color} strokeWidth={s.size * k} strokeLinecap="round" strokeLinejoin="round"
-      strokeDasharray={dashArray({ dash: s.dash, size: s.size * k }) ?? undefined} />
-  ));
-}
-
-// A picture or a text box in its frame: the text box in the page's own box
-// face (.textBoxBody: its padding, size and colours, one point `k`), so it
-// wraps as the written box will.
-function Placed({ shape, k }) {
-  const { x, y, w, h } = shape.box;
-  if (shape.kind === "picture") {
-    return <image href={assetUrl(shape.url)} x={x * k} y={y * k} width={w * k} height={h * k} preserveAspectRatio="none" />;
-  }
-  const { size, color, bg } = textStyle(shape);
-  return (
-    <foreignObject x={x * k} y={y * k} width={w * k} height={h * k}>
-      <div className="textBoxBody reviewTextBox" style={{ "--tb-pt": `${k}px`, "--tb-size": size, color,
-        background: bg || undefined }}>{shape.text}</div>
-    </foreignObject>
-  );
-}
-
-// A bar under its frame (`frame`: [x0, y0, x1, y1] in the layer's units,
-// of `width` × `height`), kept inside its page, which the next page would
-// paint over: below the frame where it fits, else above it, else over the
-// frame's foot; from the frame's left, moved in from the page's right edge.
-// Measured in screen pixels, and again as the page or the bar resizes (a
-// zoom, a longer line).
-function ReviewTag({ frame: [x0, y0, , y1], width, height, children }) {
+// The buttons by their frame (`frame`: [x0, y0, x1, y1] in the layer's
+// units, of `width` × `height`), kept inside its page, which the next page
+// would paint over: below the frame where they fit, else above it, else
+// over the frame's foot; ending at the frame's right edge, moved in from
+// the page's left. Measured in screen pixels, and again as the page or the
+// buttons resize (a zoom, a Reject's refusal). Their presses are not the
+// page's, which would start a selection or a stroke.
+function ReviewTag({ frame: [, y0, x1, y1], width, height, children }) {
   const ref = useRef(null);
   const [at, setAt] = useState(null);
   useLayoutEffect(() => {
@@ -107,7 +44,7 @@ function ReviewTag({ frame: [x0, y0, , y1], width, height, children }) {
       if (!W || !H) return;
       const below = (y1 / height) * H, above = (y0 / height) * H - h;
       const next = {
-        left: clamp((x0 / width) * W, 0, W - w),
+        left: clamp((x1 / width) * W - w, 0, W - w),
         top: below + h <= H ? below : above >= 0 ? above : clamp(below, 0, H - h),
       };
       setAt((was) => (was && was.left === next.left && was.top === next.top ? was : next));
@@ -117,38 +54,26 @@ function ReviewTag({ frame: [x0, y0, , y1], width, height, children }) {
     sizes.observe(layer);
     sizes.observe(tag);
     return () => sizes.disconnect();
-  }, [x0, y0, y1, width, height]);
+  }, [y0, x1, y1, width, height]);
   return (
     <div ref={ref} className="reviewTag"
-      style={at || { left: `${(x0 / width) * 100}%`, top: `${(y1 / height) * 100}%` }}>
-      {children}
+      style={at || { right: `${(1 - x1 / width) * 100}%`, top: `${(y1 / height) * 100}%` }}>
+      <div className="reviewTagBox" onPointerDown={stop} onMouseDown={stop}>{children}</div>
     </div>
   );
 }
 
-// A placed block an agent made, on its surface: framed with its bar while
-// it waits for review or is unfolded, else its mark. `box` is in the
-// surface's points.
-function MadeObject({ change, box, width, height }) {
-  const unfolded = useExpanded(change.blockId);
+// A placed block's frame and its buttons; `box` in the layer's units.
+function ChangeFrame({ change, box, width, height }) {
   const pct = (v, of) => `${(v / of) * 100}%`;
   const frame = padded(box);
-  if (change.state !== CHANGE_STATES.OPEN && !unfolded) {
-    const [, y0, , y1] = box;
-    return (
-      <button type="button" className="aiChangeMark aiChangeMark-object reviewObjectMark" aria-expanded="false"
-        style={{ left: pct(frame[0], width), top: pct(y0, height), height: pct(y1 - y0, height) }}
-        title={changedBy(change, { show: true })} aria-label={t("Show the AI's change")}
-        onPointerDown={(e) => e.stopPropagation()} onClick={() => noteReview.toggle(change.blockId, true)} />
-    );
-  }
   const [x0, y0, x1, y1] = frame;
   return (
     <>
-      <div className="reviewObjectFrame" style={{ left: pct(x0, width), top: pct(y0, height),
+      <div className="reviewObjectFrame" {...shownMark(change)} style={{ left: pct(x0, width), top: pct(y0, height),
         width: pct(x1 - x0, width), height: pct(y1 - y0, height) }} />
       <ReviewTag frame={frame} width={width} height={height}>
-        <NoteReviewBar change={change} />
+        <ReviewButtons change={change} blockId={change.blockId} />
       </ReviewTag>
     </>
   );
@@ -158,47 +83,15 @@ function MadeObject({ change, box, width, height }) {
 // carry; a tab group's view of another page (workspace/PagePane.jsx) has none.
 export function ReviewLayer({ surface, width, height }) {
   const { pageId, review } = usePageTools();
-  const shown = !!review;
-  useWatchPage(pageId, shown);
-  const key = surfaceKey(pageId, surface);
-  const asks = useSurfaceAsks(key);
-  const made = useSurfaceChanges(key);
-  if (!shown || !width || !height || (!asks.length && !made.length)) return null;
-  const drawn = asks.map((ask) => {
-    const shape = ask.preview.shape;
-    const k = scaleOf(shape.frame, width);
-    return { ask, shape, k, bounds: boundsOf(shape, k) };
-  }).filter((d) => d.bounds);
-  const inked = drawn.filter((d) => d.shape.kind === "ink");
-  // The strokes in a layer of their own, which a dark page flips as it
-  // flips the page's ink (app.css); the rest, and every frame, over them.
+  const allowed = !!review;
+  useWatchPage(pageId, allowed);
+  const changes = useSurfaceChanges(surfaceKey(pageId, surface)).filter(framed);
+  if (!allowed || !width || !height || !changes.length) return null;
   return (
     <div className="reviewLayer">
-      {inked.length ? (
-        <svg className="reviewShapes reviewInk" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-          {inked.map(({ ask, shape, k }) => <g key={ask.id} className="reviewShape"><Strokes shape={shape} k={k} /></g>)}
-        </svg>
-      ) : null}
-      <svg className="reviewShapes" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-        {drawn.map(({ ask, shape, k, bounds: [x0, y0, x1, y1] }) => (
-          <g key={ask.id}>
-            {shape.kind === "ink" ? null : (
-              <g className="reviewShape">
-                {shape.kind === "highlight" ? <Highlight shape={shape} k={k} /> : <Placed shape={shape} k={k} />}
-              </g>
-            )}
-            <rect className="reviewFrame" x={x0} y={y0} width={x1 - x0} height={y1 - y0} />
-          </g>
-        ))}
-      </svg>
-      {drawn.map(({ ask, bounds }) => (
-        <ReviewTag key={ask.id} frame={bounds} width={width} height={height}>
-          <AskBar ask={ask} />
-        </ReviewTag>
-      ))}
-      {made.map(({ change, frame, box }) => {
+      {changes.map(({ change, frame, box }) => {
         const k = scaleOf(frame, width);
-        return <MadeObject key={change.blockId} change={change} box={box.map((v) => v * k)} width={width} height={height} />;
+        return <ChangeFrame key={change.blockId} change={change} box={box.map((v) => v * k)} width={width} height={height} />;
       })}
     </div>
   );

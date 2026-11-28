@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   GAMMA, agentChoice, agentKind, agentPeople, asksNewChat, chatAgents, computerAgents, farAgents, gammaAgent, localAgent, madeBy,
-  commentAgents, newChatQuestion, pickAgent, showsLocalAgents, stampLabel,
+  commentAgents, newChatQuestion, pickAgent, setViewer, showsLocalAgents, stampLabel,
 } from "../src/chat/agents.js";
 import { blockAgent } from "../src/shared/model/blockModel.js";
 import { readAccountComputers } from "../src/vault/vaultState.js";
@@ -167,6 +167,18 @@ test("who made what an agent made: its kind by its id, its name, its computer an
   // a co-author's turn: its owner said too, and kept in the stamp
   assert.equal(madeBy({ name: "Codex", on: "TIM-PC", person: "bob", owner: "alice" }), "alice's Codex on TIM-PC, for bob");
   assert.equal(stampLabel({ ...stamp, for: "bob", owner: "alice" }), "alice's Codex on TIM-PC, for bob");
+});
+
+test("the person an agent acted for is named only to someone else", (t) => {
+  t.after(() => setViewer(""));
+  setViewer("tim");
+  const stamp = { id: "computer:PC:codex", name: "Codex", on: "TIM-PC", for: "tim" };
+  assert.equal(stampLabel(stamp), "Codex on TIM-PC", "tim's own block");
+  assert.equal(madeBy({ id: GAMMA, name: "Gamma AI", person: "tim" }), "Gamma AI");
+  assert.equal(stampLabel({ ...stamp, for: "bob" }), "Codex on TIM-PC, for bob", "a collaborator's");
+  assert.equal(madeBy({ name: "Codex", person: "tim", owner: "alice" }), "alice's Codex", "a co-author's agent, for tim");
+  setViewer(null);
+  assert.equal(stampLabel(stamp), "Codex on TIM-PC, for tim", "signed out, or a share link's visitor");
 });
 
 test("an agent another account lends: offered to the person it serves as theirs to use, its owner named", () => {

@@ -1,31 +1,32 @@
-"""The changes agents make to a workspace's notes, kept until the person
-reviews them (docs/dev/ai.md "Reviewing an agent's changes"): Gamma AI's
-in the chat and an MCP connection's alike, in the workspace's
-``agent_changes`` table (db.PAGES_SCHEMA). SDK-free, like ``mcp_export``.
+"""The changes agents make to a workspace's notes (docs/dev/ai.md
+"Reviewing an agent's changes"): Gamma AI's in the chat and an MCP
+connection's alike, in the workspace's ``agent_changes`` table
+(db.PAGES_SCHEMA). SDK-free, like ``mcp_export``.
 
 Every changing tool's action carries a revert record, the note as it was
 before the call and as the call left it (docs/dev/ai_tools.md "Reverting
 a note change"). ``ai_tools.registry.run_agent_tool`` journals each one
 whose kind ``ai_revert`` takes back (``KINDS``) under an id its action
-names (``change_id``). That one row is what every surface draws and
-decides on: the note's tracked changes and its review strip, the reply's
-rows in the chat, the connection's Changes in Settings and MCP's own
-``list_changes`` and ``undo_change``.
+names (``change_id``), with the state it starts in (``change_state``).
+That one row is what every surface reads: the reply's rows in the chat,
+the page that draws a suggestion, the connection's Changes in Settings and
+MCP's own ``list_changes`` and ``undo_change``.
 
-A change waits for review (``open``) until the person keeps it
-(``kept``) or undoes it (``undone``); a redo of an undone one keeps it. A
-change the person allowed on a card or in a question before it was made
-is kept as it is written: they saw it then. A kept change still marks its
-note, as a diff's gutter does, until the person clears the mark
-(``cleared_at``) or the mark's time is up (the account's choice, kept by
-the client: ``marked_on``'s ``kept_since``); the mark unfolds to the
-change, which can still be undone. Undoing is ``ai_revert``'s
-revert, a merge into the notes as they are now, which stops (``filled``,
+The account's review mode (``REVIEW_PREF_KEY``, read by ``reviewing``)
+decides that state. In Editing, the default, a change is made once the
+person allowed it as their permissions say (a card, a client's question,
+Allow) and is kept as it is written. In Reviewing, a change Gamma draws
+where it lands (``ai_tools.registry.TRACKED_TOOLS``) is made without
+asking and is a suggestion (``open``) until the person accepts it
+(``kept``) or rejects it (``undone``); every other change is kept, as in
+Editing. A suggestion stays one after the account goes back to Editing.
+A redo of an undone change keeps it. Undoing is ``ai_revert``'s revert, a
+merge into the notes as they are now, which stops (``filled``,
 ``changed``, ``moved``; forceable) when someone's work since would be
-lost. Each write tells the account's open tabs (``{t: "ai_changes"}``)
-so every note that draws the change draws it as it is now. The newest
-KEEP_PER_CONNECTION per account and connection are kept, none older than
-KEEP_DAYS: a change past them is no longer drawn and stays as written.
+lost. Each write tells the account's open tabs (``{t: "ai_changes"}``) so
+every page that draws a suggestion draws it as it is now. Of the decided
+changes, the newest KEEP_PER_CONNECTION per account and connection are
+kept, none older than KEEP_DAYS; a suggestion stays until it is decided.
 """
 
 import json
@@ -33,7 +34,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from . import ai_revert, collab
-from .db import connect_pages_db, format_stamp, page_now, parse_stamp
+from .db import connect_pages_db, format_stamp, get_pref, page_now
 
 KEEP_DAYS = 30
 KEEP_PER_CONNECTION = 500
@@ -41,8 +42,18 @@ KEEP_PER_CONNECTION = 500
 # (ai_revert._PLANS; frontend chat/aiRevert.js ``revertKind``).
 KINDS = ("edit", "create", "move", "delete", "made")
 OPEN, KEPT, UNDONE = "open", "kept", "undone"
-# The most ids one read of their states or one Keep all names.
+# What the model reads after a change made as a suggestion (Reviewing), in
+# the chat and over MCP alike (ai_tools/registry.py run_agent_tool).
+SUGGESTED = ("It is made, as a suggestion: the user reviews AI changes in Gamma and accepts or rejects it "
+             "there. Do not make it again.")
+# What the model reads after such a change the journal could not keep: it
+# stands as written, with nothing in Gamma to accept or reject.
+UNTRACKED = "It is made, but could not be kept as a suggestion: it stands as written. Tell the user."
+# The most ids one read of their states or one Accept all names.
 MAX_IDS = 500
+# The account's review mode (db.USER_PREF_KEYS): true for Reviewing; false
+# or unset for Editing. The web app reads and writes it through /api/prefs.
+REVIEW_PREF_KEY = "ai-review"
 
 LIST_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -51,8 +62,9 @@ LIST_SCHEMA = {
 }
 LIST_DESCRIPTION = (
     "List the changes this connection made to the notes where it edits, newest first: each one's change_id, "
-    "when, what it did and where, and whether the user kept it, undid it or has yet to review it. Every "
-    "change's own answer names its change_id too; use this when you no longer have it.")
+    "when, what it did and where, and whether it stands, was undone, or is a suggestion the user has yet to "
+    "accept or reject in Gamma. Every change's own answer names its change_id too; use this when you no longer "
+    "have it.")
 UNDO_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {
@@ -72,6 +84,14 @@ UNDO_DESCRIPTION = (
     "change first when several touch the same note.")
 
 
+def reviewing(account: str) -> bool:
+    """Whether ``account`` (users.id, as the journal's ``account``) reviews
+    its agents' changes: its ``REVIEW_PREF_KEY`` pref is true. An account
+    that never chose is Editing, and so is no account (a share link's
+    visitor)."""
+    return bool(account) and get_pref(account, REVIEW_PREF_KEY)[0] is True
+
+
 def revert_kind(tool: str, action: dict) -> str:
     """The revert kind a tool's action is taken back by: a page made by
     create_page's ``made``, a highlight by a new block's, a note tool's its
@@ -80,10 +100,13 @@ def revert_kind(tool: str, action: dict) -> str:
 
 
 def nudge(account: str, ws: str, page_id: str) -> None:
-    """Tell the account's open tabs that a change of this page moved on, or
-    a question about one (gamma/agent_asks.py): content-free, a tab reads
-    the page's changes and asks again over HTTP."""
+    """Tell the account's open tabs that a change of this page moved on:
+    content-free, a tab reads the page's suggestions again over HTTP."""
     collab.publish_account(account, {"t": "ai_changes", "ws": ws, "page_id": page_id})
+
+
+# A change still waiting for the person: neither kept nor undone.
+_UNDECIDED = "kept_at = '' AND undone_at = ''"
 
 
 def record(ws: str, *, account: str, source: str, token_id: str, agent: dict, tool: str, action: dict,
@@ -91,10 +114,10 @@ def record(ws: str, *, account: str, source: str, token_id: str, agent: dict, to
     """Journal one change ``account``'s agent made (``source`` ``chat`` or
     ``mcp``; ``token_id`` the connection, '' for a person's chat), with the
     stamp it made it under, when its action carries a revert record: its
-    change_id, else "" (nothing to take back by). ``kept``: the person
-    allowed this very change before it was made, so it waits for no
-    review. A change made for no account (a share link's visitor) is not
-    journaled: nobody could review it."""
+    change_id, else "" (nothing to take back by). ``kept``: the change is
+    kept as it is written; else it is a suggestion that waits for the
+    person. A change made for no account (a share link's visitor) is not
+    journaled: nobody could decide on it."""
     revert, kind = action.get("revert"), revert_kind(tool, action)
     if not account or not isinstance(revert, dict) or kind not in KINDS or not action.get("block_id"):
         return ""
@@ -108,10 +131,11 @@ def record(ws: str, *, account: str, source: str, token_id: str, agent: dict, to
                      (change_id, account, source, token_id, json.dumps(agent or {}), at, tool, kind,
                       action["block_id"], page_id, action.get("summary") or tool, json.dumps(revert),
                       at if kept else ""))
-        conn.execute("DELETE FROM agent_changes WHERE at < ?", (format_stamp(now - timedelta(days=KEEP_DAYS)),))
-        conn.execute("DELETE FROM agent_changes WHERE account = ? AND token_id = ? AND id NOT IN (SELECT id FROM "
-                     "agent_changes WHERE account = ? AND token_id = ? ORDER BY at DESC LIMIT ?)",
-                     (account, token_id, account, token_id, KEEP_PER_CONNECTION))
+        conn.execute(f"DELETE FROM agent_changes WHERE at < ? AND NOT ({_UNDECIDED})",
+                     (format_stamp(now - timedelta(days=KEEP_DAYS)),))
+        conn.execute(f"DELETE FROM agent_changes WHERE account = ? AND token_id = ? AND NOT ({_UNDECIDED}) AND id "
+                     "NOT IN (SELECT id FROM agent_changes WHERE account = ? AND token_id = ? ORDER BY at DESC "
+                     "LIMIT ?)", (account, token_id, account, token_id, KEEP_PER_CONNECTION))
         conn.commit()
     nudge(account, ws, page_id)
     return change_id
@@ -130,7 +154,7 @@ def _change(row) -> dict:
     return {"id": row[0], "token_id": row[1], "at": row[2], "tool": row[3], "kind": row[4], "block_id": row[5],
             "page_id": row[6], "summary": row[7], "revert": json.loads(row[8]), "undone": state == UNDONE,
             "state": state, "page_title": row[10] or "", "account": row[11], "source": row[12],
-            "agent": json.loads(row[14] or "{}"), "kept_at": row[13]}
+            "agent": json.loads(row[14] or "{}")}
 
 
 def _select(where: str) -> str:
@@ -146,26 +170,13 @@ def listed(ws: str, token_id: str, limit: int) -> list[dict]:
     return [_change(r) for r in rows]
 
 
-def marked_on(ws: str, account: str, page_id: str, kept_since: float) -> list[dict]:
-    """The changes made for ``account`` on the page that its note draws,
-    oldest first: those that wait for review, and the kept ones whose mark
-    was not cleared — with ``kept_since`` (seconds) above 0, only those kept
-    that recently (the account's marks last that long). A kept one carries
-    ``kept_ago``, the seconds since it was kept by this server's clock, so a
-    client times its mark out on its own clock."""
-    now = datetime.now(timezone.utc)
-    where = "c.account = ? AND c.page_id = ? AND c.undone_at = '' AND c.cleared_at = ''"
-    args = [account, page_id]
-    if kept_since > 0:
-        where += " AND (c.kept_at = '' OR c.kept_at >= ?)"
-        args.append(format_stamp(now - timedelta(seconds=kept_since)))
+def suggested_on(ws: str, account: str, page_id: str) -> list[dict]:
+    """The suggestions made for ``account`` on the page (its changes that
+    are neither kept nor undone), oldest first: what the page draws."""
     with connect_pages_db(ws) as conn:
-        rows = conn.execute(_select(where + " ORDER BY c.at"), args).fetchall()
-    out = []
-    for change in map(_change, rows):
-        kept = parse_stamp(change["kept_at"]) if change["state"] == KEPT else None
-        out.append({**change, **({"kept_ago": max(0.0, round((now - kept).total_seconds(), 1))} if kept else {})})
-    return out
+        rows = conn.execute(_select("c.account = ? AND c.page_id = ? AND c.kept_at = '' AND c.undone_at = '' "
+                                    "ORDER BY c.at"), (account, page_id)).fetchall()
+    return [_change(r) for r in rows]
 
 
 def _wanted(ids) -> list[str]:
@@ -191,18 +202,18 @@ def find(ws: str, change_id: str) -> dict | None:
     return _change(row) if row else None
 
 
-def _stamp(ws: str, account: str, ids, column: str, condition: str) -> list[str]:
-    """Stamp ``column`` now on ``account``'s changes among ``ids`` that meet
-    ``condition``, and tell the tabs of each page they are on: the ids
-    stamped."""
+def keep(ws: str, account: str, ids) -> list[str]:
+    """Accept ``account``'s suggestions among ``ids``, and tell the tabs of
+    each page they are on: the ids kept now. One undone or kept already is
+    not among them."""
     wanted = _wanted(ids)
     if not account or not wanted:
         return []
     with connect_pages_db(ws) as conn:
-        rows = conn.execute(f"SELECT id, page_id FROM agent_changes WHERE account = ? AND {condition} AND id IN "
+        rows = conn.execute(f"SELECT id, page_id FROM agent_changes WHERE account = ? AND {_UNDECIDED} AND id IN "
                             f"({', '.join('?' * len(wanted))})", (account, *wanted)).fetchall()
         if rows:
-            conn.execute(f"UPDATE agent_changes SET {column} = ? WHERE id IN ({', '.join('?' * len(rows))})",
+            conn.execute(f"UPDATE agent_changes SET kept_at = ? WHERE id IN ({', '.join('?' * len(rows))})",
                          (page_now(), *[r[0] for r in rows]))
             conn.commit()
     for page_id in {r[1] for r in rows}:
@@ -210,30 +221,17 @@ def _stamp(ws: str, account: str, ids, column: str, condition: str) -> list[str]
     return [r[0] for r in rows]
 
 
-def keep(ws: str, account: str, ids) -> list[str]:
-    """Keep ``account``'s changes among ``ids`` that wait for review: the
-    ids kept now."""
-    return _stamp(ws, account, ids, "kept_at", "kept_at = '' AND undone_at = ''")
-
-
-def clear(ws: str, account: str, ids) -> list[str]:
-    """Clear the marks of ``account``'s kept changes among ``ids`` (a page's
-    Clear marks): the ids cleared now. One that waits for review is not a
-    mark to clear: it is kept or undone first."""
-    return _stamp(ws, account, ids, "cleared_at", "kept_at != '' AND cleared_at = '' AND undone_at = ''")
-
-
 def undo(ws: str, change: dict, *, actor: str, force: bool = False, redo: bool = False) -> dict:
     """Take ``change`` back (one ``find`` answered), or with ``redo`` put an
     undone one back, written as ``actor``: ``ai_revert.revert_change``'s
-    answer, and the change marked undone, or kept again. Raises
+    answer, and the change marked undone, or kept. Raises
     ``ai_revert.RevertError`` when it cannot (409 with what forcing would
     do, 404 when what it changed is gone)."""
     result = ai_revert.revert_change(ws, change["kind"], change["block_id"], change["revert"], force=force,
                                      redo=redo, actor=actor)
     with connect_pages_db(ws) as conn:
         if redo:
-            conn.execute("UPDATE agent_changes SET undone_at = '', kept_at = ?, cleared_at = '' WHERE id = ?",
+            conn.execute("UPDATE agent_changes SET undone_at = '', kept_at = ? WHERE id = ?",
                          (page_now(), change["id"]))
         else:
             conn.execute("UPDATE agent_changes SET undone_at = ? WHERE id = ? AND undone_at = ''",
@@ -247,7 +245,7 @@ def undo(ws: str, change: dict, *, actor: str, force: bool = False, redo: bool =
 def mark_history(ws: str, account: str, history) -> None:
     """Mark the replayed actions of a conversation's ``history`` that name a
     change of the journal by what the person decided since: ``reverted``
-    while it is undone, wherever they undid it (its row, the note, the
+    while it is undone, wherever they undid it (its row, the page, the
     dialog), so the model never builds on a change that is gone. An action
     without a ``change_id``, or whose row is gone, keeps the mark the chat
     saved with it."""

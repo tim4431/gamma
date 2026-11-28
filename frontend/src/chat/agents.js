@@ -23,7 +23,8 @@
 // username for a co-author ("" for one's own). A computer's agent also
 // carries `code` (catalog.code), `version`, `found`, `enabled`, `runs`, and
 // for another computer's `remote: true`, `online` and `since`, and on a
-// page of the work folder that computer keeps `folder` and `paused`. Pure:
+// page of the work folder that computer keeps `folder` and `paused`. Pure
+// but for the signed-in account madeBy reads (`setViewer`):
 // tests/chatAgents.test.mjs.
 import { T, t } from "../shared/i18n/i18n.js";
 import { modelLabel } from "./modelPrefs.js";
@@ -193,19 +194,29 @@ export const agentChoice = (agent) => (agent?.where ? t("{agent} on {computer}",
 // token's id of a connection; "" for none (a person).
 export const agentKind = (id) => (!id ? "" : id === GAMMA ? "gamma" : String(id).startsWith("computer:") ? "computer" : "connection");
 
+// The signed-in account's username, which App sets as its session resolves
+// ("" until then, and in a share link's view): the person an agent acted
+// for is named only when it is someone else.
+let viewer = "";
+export const setViewer = (username) => { viewer = String(username || ""); };
+// Whether `person` (a username) is the viewer: what an agent did for them
+// says no "for {person}".
+export const isViewer = (person) => !!person && person === viewer;
+
 // Who an agent that wrote or made something is, with the person it acted
-// for: "Codex on TIM-PC, for tim", "Gamma AI, for tim", and for a
-// co-author's turn its owner too, "alice's Codex on TIM-PC, for bob". `id`
-// and `name` the agent's, `on` its computer ("" for none, or one no longer
-// known), `person` the account's username, `owner` the agent's owner's
-// where that is another account ("" otherwise). A comment's agent
+// for where that is not the viewer (`setViewer`): to tim, "Codex on
+// TIM-PC" and "Gamma AI" for his own, "Gamma AI, for bob" for bob's, and
+// for a co-author's turn its owner too, "alice's Codex on TIM-PC, for bob".
+// `id` and `name` the agent's, `on` its computer ("" for none, or one no
+// longer known), `person` the account's username, `owner` the agent's
+// owner's where that is another account ("" otherwise). A comment's agent
 // (comments.js) and a block's `properties.agent` (blockModel.js blockAgent)
 // read alike.
 export function madeBy({ id = "", name = "", on = "", person = "", owner = "" }) {
   const named = id === GAMMA ? t("Gamma AI") : name;
   const agent = owner ? t("{owner}'s {agent}", { owner, agent: named }) : named;
   const who = on ? t("{agent} on {computer}", { agent, computer: on }) : agent;
-  return person ? t("{agent}, for {person}", { agent: who, person }) : who;
+  return person && !isViewer(person) ? t("{agent}, for {person}", { agent: who, person }) : who;
 }
 
 // The same of a block an agent made, from its stamp (`properties.agent`,

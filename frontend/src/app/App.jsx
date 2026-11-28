@@ -54,8 +54,8 @@ import {
 } from "../shared/ui/Widgets";
 import { OpenTabs } from "../workspace/OpenTabs.jsx";
 import { BlockTree, _dragState } from "../editor/BlockTree";
-import { PageReviewStrip } from "../editor/PageReviewStrip";
-import { noteReview, ReviewMarkLife } from "../chat/noteReview.js";
+import { ReviewMode } from "../editor/ReviewMode";
+import { noteReview } from "../chat/noteReview.js";
 import { MentionClock, MentionContext } from "../editor/MentionMenu";
 import { REF_RE, refIdsOf, refLabelOf, refLabelsByBlock } from "../editor/refLabels.js";
 import { BacklinksPanel } from "../editor/BacklinksPanel";
@@ -128,6 +128,7 @@ import {
   isFolded,
   toggleFold,
   revealBlock,
+  revealUnder,
   sameShape,
   isFoldedAway,
   updateBlockTree,
@@ -266,7 +267,7 @@ import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
 import { addsToLibrary, baseName, carriesToServer, isOpenedFile, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, revealLabel, showsOnDisk, vaultConflictsPath } from "../vault/vaultState.js";
 import { StateTag } from "../shared/ui/StateTag";
-import { chatAgents, commentAgents } from "../chat/agents.js";
+import { chatAgents, commentAgents, setViewer } from "../chat/agents.js";
 import { useLocalAgents } from "../chat/useLocalAgents.js";
 import { showInChat } from "../chat/computer/chatSide.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
@@ -610,8 +611,9 @@ function captureViewerSnapshot(root) {
   try { return out.toDataURL("image/jpeg", SNAP_QUALITY); } catch { return null; }
 }
 
-// The agents' changes waiting for review reach the server through the API
-// (chat/noteReview.js stays free of the browser, for its tests).
+// The agents' suggestions and the account's Editing / Reviewing mode reach
+// the server through the API (chat/noteReview.js stays free of the
+// browser, for its tests).
 noteReview.setRequest((path, init) => apiJson(`${API}${path}`, init));
 
 // Horizontal card strip. No arrow chrome: the wheel pans it sideways.
@@ -902,6 +904,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         fetchHomeBlocks({ still: true });
         if (data.user !== authUser?.user) preloadPrefs(data.user, { guest: data.is_guest });
         refreshAiModels(data.user);
+        setViewer(data.user);
         setAuthUser({ user: data.user, is_guest: data.is_guest, is_admin: data.is_admin, build: data.build,
           guest_expires_at: data.guest_expires_at || "" });
       } else {
@@ -3455,7 +3458,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear, chatPictures, setChatPictures,
-    fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads, aiMarkMinutes, setAiMarkMinutes,
+    fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads,
   } = appPrefs;
   const viewerWrapRef = useRef(null);
   const pdfRetryRef = useRef(null); // set by PdfViewer: re-runs a failed load (pill's Retry button)
@@ -4720,7 +4723,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // run by the effect after openPageThen.
   const pendingPageActionRef = useRef(null);
   // A request to scroll to (and focus) a block's row once it is rendered:
-  // the id in the ref, and a counter the effect below listens to — a
+  // the id in the ref (or, for a deleted note's struck row, {struck,
+  // parent}: landOnChange), and a counter the effect below listens to — a
   // request must be answered even when nothing else changes (the block was
   // never folded away, the tree is as it was).
   const [blockScrollReq, setBlockScrollReq] = useState(0);
@@ -4733,6 +4737,35 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     reveal(id);
     pendingJumpRef.current = id;
     setPdfJumpReq((n) => n + 1);
+  };
+  // A jump to an agent's change on the open page (chat/noteReview.js
+  // changeLanding's `where`), from the page header's Previous and Next
+  // (editor/ReviewMode.jsx) and, through openChangeAt, a reply's row and
+  // Settings' Open. Its note's row is scrolled to and flashes. A highlight's
+  // passage is jumped to on the PDF too (landOnBlock), and a drawing, a text
+  // box or a picture is shown where it sits, on its PDF page or its page of
+  // paper (showOnPage, which moves the PDF with no step of Back and flashes
+  // it there). A deleted note's struck row is scrolled to once it renders,
+  // its parent and the parent's folded ones unfolded for it, and flashes
+  // (the scroll effect below). The navigation (gammaNav) holds it, so what
+  // it reads besides refs is among the navigation's deps.
+  const landOnChange = (where) => {
+    if (!where?.blockId) return;
+    if (where.struck) {
+      scrollToBlock({ struck: where.struck, parent: where.blockId });
+      return;
+    }
+    const id = where.blockId;
+    const block = findBlock(blocksRef.current, id);
+    if (block && (isTextBox(block) || isPicture(block) || isInkGroup(block))) {
+      scrollToBlock(id);
+      showOnPageRef.current(id);
+      if (!isInkGroup(block)) triggerFlash(id); // (a drawing's flash is its outline on the page)
+      return;
+    }
+    landOnBlock(id);
+    // a passage on the PDF shown flashes there and in the notes as its jump lands
+    if (pdfHidden || !anchors.some((a) => a.id === id)) triggerFlash(id);
   };
   // The AI agent's live footprint on the open page (handleAgentEvent):
   // aiMarks lights up the blocks it reads/edits (id → {kind, n}), aiLive is
@@ -4996,6 +5029,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     if (!pendingBlockScrollRef.current) return;
     const id = pendingBlockScrollRef.current;
+    if (id.struck) {
+      // A deleted note's struck row (landOnChange), drawn by the review
+      // store under its parent in the open page's notes: scrolled to and
+      // flashed once it renders, the scroll a frame later, after a page's
+      // passive landing in the same commit (the effect after this one);
+      // until then its parent and whatever folds the parent away unfold,
+      // the viewer's state as below.
+      const struck = liveSidebarRef.current?.querySelector(`.aiDeletedWrap[data-deleted-id="${CSS.escape(id.struck)}"]`);
+      if (struck && !struck.closest("[inert]")) {
+        pendingBlockScrollRef.current = null;
+        requestAnimationFrame(() => struck.scrollIntoView({ block: "center", behavior: "smooth" }));
+        triggerFlash(id.struck);
+        return;
+      }
+      const open = revealUnder(blocks, view, id.parent);
+      if (open !== view) setView(open);
+      return;
+    }
     const row = document.querySelector(`[data-block-id="${id}"]`);
     if (row && !row.closest("[inert]")) {
       row.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -5503,6 +5554,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (rootId && rootId !== id) await openBlock(rootId, { pushNav: true, link: true, block: id });
       else await openBlock(id, { pushNav: true, link: true });
     }
+  }
+
+  // A jump to an agent's change from a reply's row or Settings' Open
+  // (GammaNavContext's openChange, chat/AgentChanges.jsx; `where` is
+  // chat/noteReview.js changeLanding's): on the open page, landOnChange;
+  // else a link jump to its page, which Back returns from, landing on the
+  // note (a highlight's or a drawing's passage with it, as openBlock's
+  // `block` lands), at the PDF page of a text box or a picture on one (as a
+  // link to a passage opens it), or at a deleted note's struck row once the
+  // page's notes draw it.
+  async function openChangeAt(where) {
+    if (!where?.blockId) return;
+    const pageId = where.pageId || (findBlock(blocks, where.blockId) ? focusedBlockId : await pageOfBlock(where.blockId));
+    if (pageId && pageId === focusedBlockId) { landOnChange(where); return; }
+    if (!pageId) { await openBlockLink(where.blockId); return; }
+    if (where.struck) {
+      // once opened (its answer is the PDF's address, "" for none; nothing
+      // for an open that failed or was taken over), the struck row's jump
+      // takes over the open's own landing
+      if ((await openBlock(pageId, { pushNav: true, link: true })) !== undefined) landOnChange(where);
+      return;
+    }
+    if (where.pdfPage) setPageTarget({ kind: "citation", pageId, page: where.pdfPage, quote: "" });
+    await openBlock(pageId, { pushNav: true, link: true, block: where.blockId });
+    if (where.pdfPage) { setPdfHidden(false); setPhonePanel(null); }
   }
 
   // The page a block is on: the ref cache's, else the server's. A card's
@@ -10764,9 +10840,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Rebuilt when what the handlers close over changes; a click reads the
   // current value, so the cards themselves never re-render for navigation.
   const gammaNav = useMemo(
-    () => ({ openPage: openPageLink, openBlock: openBlockLink, citeSource,
+    () => ({ openPage: openPageLink, openBlock: openBlockLink, openChange: openChangeAt, citeSource,
       openThread: (threadId, blockId, pageId) => openThreadAt(threadId, blockId, pageId || focusedBlockId) }),
-    [focusedBlockId, blocks, refCache, shareMode, knownBlocks, pageTitle],
+    [focusedBlockId, blocks, refCache, shareMode, knownBlocks, pageTitle, anchors, pdfHidden],
   );
 
   // What every link card reads (shared/ui/LinkCard.jsx): one object for the
@@ -11247,6 +11323,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </button>
                 ) : null}
                 {!shareMode ? (<>
+                {/* how the account takes AI edits, and the page's suggestions:
+                    the account's own, so none through a share link or for a
+                    viewer; a step to one lands where it shows (landOnChange) */}
+                {!readOnly ? (
+                  <ReviewMode pageId={focusedBlockId} blocks={blocks} onLand={landOnChange} onStatus={setStatus} />
+                ) : null}
                 {hasSheets && !notebook ? (
                   // the way to the notebook view that stays in sight, opening at the sheet in view
                   <button className="uiBtn sm ghost" onClick={() => setNotebookView(focusedBlockId, true)}
@@ -12721,11 +12803,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       {backlinksPanel}
                       {notesTail}
                     </ListMotion>
-                    {/* the agents' changes on this page that wait for review: the
-                        account's own, so none through a share link; a step to
-                        one lands on its note as a jump does */}
-                    <PageReviewStrip pageId={focusedBlockId} blocks={blocks} readOnly={readOnly || shareMode}
-                      onLand={scrollToBlock} onStatus={setStatus} />
                     {notesReplayDock}
                     <BlockDropIndicator target={dropTarget} />
                   </>
@@ -13955,10 +14032,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     <MarkToolsContext.Provider value={textHighlighter.markTools}>
     <MentionContext.Provider value={mentionPeople}>
     <MentionClock.Provider value={reminders.now}>
-    {/* how long a kept agent change's mark stays, for every surface that
-        draws the page's changes (chat/noteReview.js), whatever shows;
-        first, so the pages are read with it */}
-    <ReviewMarkLife minutes={aiMarkMinutes} />
     <div
       ref={appRef}
       className={`app ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
@@ -15083,8 +15156,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setFetchInBackground,
           delegateReads,
           setDelegateReads,
-          aiMarkMinutes,
-          setAiMarkMinutes,
           reset: () => {
             setChatContextChars(60000);
             setMetaContextChars(6000);

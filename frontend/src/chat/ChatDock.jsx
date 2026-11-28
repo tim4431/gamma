@@ -478,7 +478,7 @@ export default function ChatDock({
   const chatToolPerms = agentPerms?.[chatKind] || {};
   const toolsEnabled = !!agentEnabled;
   const perm = (key) => permState(chatToolPerms, key) !== "off";
-  // An approval's "chat" grant (chat/approvals.js): the permissions this
+  // "Allow in this chat" (chat/approvals.js): the permissions this
   // conversation stopped asking for, kept per account and conversation in
   // this browser; another tab's change arrives as a storage event.
   const [grantStore, setGrantStore] = useState(readGrants);
@@ -496,8 +496,8 @@ export default function ChatDock({
     return next;
   });
   // Approvals answered here, id → decision: the steps pill names the running
-  // call again while it runs, instead of waiting, and a card answered from
-  // the note its edit is drawn in says so as if answered on it.
+  // call again while it runs, instead of waiting, and a card drawn again
+  // says its answer.
   const [answeredApprovals, setAnsweredApprovals] = useState(() => new Map());
   // What the agent may do here after applying the shared permissions.
   const agentReads = READ_TOOLS.some(perm);
@@ -533,24 +533,17 @@ export default function ChatDock({
   // conversation leave their card under the reply instead of holding it.
   const neverWaitHere = () =>
     updateGrants((store) => withoutPaperWait(store, activeUser(), conversationId(chatMessages)));
-  // The user's answer on an approval card, or on the bar of the note the
-  // card's change is drawn in (chat/noteReview.js): the server runs the call
-  // or leaves it; a "chat" grant is kept for the conversation and an
-  // "always" one sets the permission in Settings — once the server took it.
+  // The user's answer on an approval card: the server runs the call or
+  // leaves it; "Allow in this chat" is kept for the conversation and
+  // "Always allow" sets the permission in Settings — once the server took it.
   async function decideApproval(approval, decision, note = "") {
     await apiJson(`${API}/ai/approvals/${encodeURIComponent(approval.id)}`, {
       method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ decision, ...(note ? { note } : {}) }),
     });
     setAnsweredApprovals((done) => new Map(done).set(approval.id, decision));
-    noteReview.settle(approval.id);
     if (decision === "chat") updateGrants((store) => withGrant(store, activeUser(), conversationId(chatMessages), approval.perm));
     if (decision === "always") changePermission(setAgentPerms, chatKind, approval.perm, "allow");
   }
-  // The note's bar answers through the latest render's, as the card does:
-  // the reply's own closure would file a grant under the conversation as it
-  // stood before its first message.
-  const decideRef = useRef(decideApproval);
-  decideRef.current = decideApproval;
   // The block the user's cursor is on shows as a "Cursor" chip (like a PDF
   // selection) and rides with the message as focus_block_id; its × leaves it
   // out for that block until the cursor moves.
@@ -1603,13 +1596,6 @@ export default function ChatDock({
             helpers = withHelper(helpers, ev.helper);
           } else if (ev.approval) {
             approval = ev.approval;
-            // A change's card: where the change would land draws it too (a
-            // note, a new note's place, a PDF page or a page of paper), and
-            // answering there answers the card, with the card's answers
-            // (Keep, its grants, Undo).
-            const asked = ev.approval;
-            noteReview.ask(asked, (decision, note) => decideRef.current(asked, decision, note),
-              { permission: permissionLabel(asked.perm), kind: chatKindLabel });
           } else if (ev.handoff) {
             // A fetch met a wall: the reply waits on this card until the
             // user's browser sends the PDF, or they skip it.
@@ -1617,14 +1603,14 @@ export default function ChatDock({
           } else if (ev.action) {
             running = null;
             helpers = [];
-            if (approval) noteReview.settle(approval.id);
             approval = null;
             actions.push(ev.action);
             allActions.push(ev.action);
             // Live: the notes panel lights up the block the agent just
-            // read/edited (and reloads the tree for an applied edit), and the
-            // note shows what an edit changed until the user keeps or
-            // undoes it (chat/noteReview.js).
+            // read/edited (and reloads the tree for an applied edit), and a
+            // suggestion (`change_state` "open", made in Reviewing) is drawn
+            // where it landed until the user accepts or rejects it
+            // (chat/noteReview.js).
             onAgentEvent?.({ type: "action", action: ev.action, key: sendKey });
             noteReview.landed(ev.action);
           } else if (ev.progress) {
@@ -1726,8 +1712,6 @@ export default function ChatDock({
       // (a steer's own done above has none), so a page it asked to show
       // opens now (App's handleAgentEvent).
       onAgentEvent?.({ type: "done", key: sendKey, ended });
-      // A card the reply left waiting (stopped, or the stream failed) goes from its note too.
-      if (approval) noteReview.settle(approval.id);
       // Agent tools changed the library — reload the home feed. Read-only
       // tool calls (list/read/search) render as chips but change nothing.
       if (allActions.some(isChange)) onLibraryChange?.();

@@ -1,13 +1,14 @@
 // What an agent reply changed, listed under its steps pill (grouped by
 // chat/agentSteps.js): renamed, filed, saved, deleted or restored pages,
 // renamed, made, applied or deleted folders and labels, and edited, added or
-// moved notes, each with a link to what changed. A change the server
-// journaled for review (`change_id`, chat/noteReview.js) is the same
-// decision as its note's bar: while it waits for review its row has Keep
-// and Undo, once kept it says so and keeps Undo, once undone it has Redo,
-// whichever surface decided. A note change, pages the agent renamed,
-// moved, labelled, deleted or restored (one or many in one call), and a
-// deleted folder or label have an undo button (chat/aiRevert.js,
+// moved notes, each with a link to what changed, which opens where it
+// landed and shows its diff there (chat/noteReview.js reveal). A change
+// the server journaled (`change_id`, chat/noteReview.js) goes by what was
+// decided about it, wherever that was: a suggestion (one made in
+// Reviewing, not yet decided) is tagged so and has Accept beside its Undo,
+// which rejects it; an undone one has Redo. A note change, pages the agent
+// renamed, moved, labelled, deleted or restored (one or many in one call),
+// and a deleted folder or label have an undo button (chat/aiRevert.js,
 // gamma/ai_revert.py). An undo keeps what anyone wrote since. When the
 // note changed where the agent wrote, was filled in or moved on, the row
 // asks first: it says so, shows what undoing anyway would do as a word
@@ -15,10 +16,10 @@
 // redo button that puts it back the same way (and asks the same way). A
 // call that changed several pages is one row that unfolds to its pages,
 // and undoes them together; pages changed since are left as they are, and
-// an undo that would leave every one says so instead. Keep All in the head
-// keeps the reply's changes that wait for review; "Undo…" opens the dialog
-// that takes back several changes at once, this reply's or any of the
-// conversation's (chat/RevertChanges.jsx).
+// an undo that would leave every one says so instead. Accept all in the
+// head accepts the reply's suggestions, and says why under the head when
+// it fails; "Undo…" opens the dialog that takes back several changes at
+// once, this reply's or any of the conversation's (chat/RevertChanges.jsx).
 import React, { useContext, useState, useSyncExternalStore } from "react";
 import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { GammaNavContext } from "../shared/ui/Widgets";
@@ -31,7 +32,7 @@ import { PathLink } from "../editor/PathLink.jsx";
 import { changeCount, changePlace, isChange, noteChangeText } from "./agentSteps";
 import { canRedo, canRevert, refusalCopy, revertKind, revertRefusal } from "./aiRevert.js";
 import { WordDiff } from "./ApprovalShell";
-import { CHANGE_STATES, isUndone, noteReview, useChangeState } from "./noteReview.js";
+import { CHANGE_STATES, changeLanding, isUndone, noteReview, useChangeState } from "./noteReview.js";
 
 // The icon of each action kind, in this list and on the tool chips under the
 // pill (chat/ChatTranscript.jsx), each chip expanding to the raw call the
@@ -194,24 +195,49 @@ export function ThreadsOpened({ threads }) {
   );
 }
 
-// Keep All in a reply's head: keeps those of `ids` that wait for review,
-// shown while one does. Each id's row asks for its state (ChangeRow).
-function KeepAll({ ids, disabled }) {
+// Accept all in a reply's head: accepts those of `ids` that are still
+// suggestions, shown while one is. Each id's row asks for its state
+// (ChangeRow). `onFailed(err)`: the accept failed (the server away, say),
+// which the card then says, as a row's Accept does; `onStart()` clears it.
+function AcceptAll({ ids, disabled, onStart, onFailed }) {
   const states = useSyncExternalStore(noteReview.subscribe, () => noteReview.getSnapshot().states);
+  const [busy, setBusy] = useState(false);
   const open = ids.filter((id) => states.get(id) === CHANGE_STATES.OPEN);
   if (!open.length) return null;
+  const accept = async () => {
+    setBusy(true);
+    onStart();
+    try {
+      await noteReview.accept(open);
+    } catch (err) {
+      onFailed(err);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <button type="button" className="uiBtn sm ghost chatChangesAll" disabled={disabled} onClick={() => noteReview.keep(open)}
-      title={t("Keep this reply's changes that wait for review")}>
-      <CheckIcon size={14} />{t("Keep All")}
+    <button type="button" className="uiBtn sm ghost chatChangesAll" disabled={disabled || busy} onClick={accept}
+      title={t("Accept this reply's suggestions")}>
+      <CheckIcon size={14} />{t("Accept all")}
     </button>
   );
+}
+
+// Open where change `a` landed with its diff shown there (chat/noteReview.js
+// reveal), through `nav` (GammaNavContext's openChange, app/App.jsx): at its
+// note's row, a highlight's passage and a placed block's place on its page
+// as well, and a deleted note at its struck row (chat/noteReview.js
+// changeLanding). A reply's row and a connection's in Settings
+// (settings/SettingsIntegrations.jsx) open a change so.
+export function openChange(nav, a) {
+  noteReview.reveal(a);
+  nav.openChange(changeLanding(a));
 }
 
 // One change's row: its sentence, what was decided, and its buttons. A
 // change the journal holds (`change_id`, its state known) goes by that
 // state; another by the mark its conversation saved (`isUndone`).
-function ChangeRow({ a, text, row, working, busy, canAct, onUndo, onKeep, children }) {
+function ChangeRow({ a, text, row, working, busy, canAct, onUndo, onAccept, children }) {
   const state = useChangeState(a.change_id);
   const undone = isUndone(a, state);
   const open = state === CHANGE_STATES.OPEN;
@@ -225,10 +251,10 @@ function ChangeRow({ a, text, row, working, busy, canAct, onUndo, onKeep, childr
         <Icon size={14} />
         <span className="chatChangeText">{text}</span>
         {undone ? <span className="chatChangeTag">{t("Undone")}</span>
-          : state === CHANGE_STATES.KEPT ? <span className="chatChangeTag">{t("Kept")}</span> : null}
+          : open ? <span className="chatChangeTag">{t("Suggestion")}</span> : null}
         {canAct && open ? (
-          <button type="button" className="ctlBtn chatChangeRevert" disabled={held} title={t("Keep this change")}
-            aria-label={t("Keep this change")} onClick={onKeep}>
+          <button type="button" className="ctlBtn chatChangeRevert" disabled={held} title={t("Accept this suggestion")}
+            aria-label={t("Accept this suggestion")} onClick={onAccept}>
             <CheckIcon size={14} />
           </button>
         ) : null}
@@ -254,6 +280,8 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
   const nav = useContext(GammaNavContext);
   // index → {working} while its request runs, or {refusal, redo} once it stopped
   const [rows, setRows] = useState({});
+  // why the head's Accept all stopped (revertRefusal), until dismissed or tried again
+  const [allRefusal, setAllRefusal] = useState(null);
   const changes = actions.map((a, i) => ({ a, i })).filter(({ a }) => isChange(a));
   const library = changes.filter(({ a }) => changePlace(a) === "library");
   const notes = changes.filter(({ a }) => changePlace(a) === "notes");
@@ -278,17 +306,10 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
   const pageLink = (id, label) => id
     ? <button type="button" className="chatChangeLink" onClick={() => onOpenPage?.(id)}>{label}</button>
     : <span>{label}</span>;
-  // A note change's link opens its note with the change unfolded there,
-  // as its mark unfolds it (chat/noteReview.js reveal); one the journal no
-  // longer holds is drawn from this row's record and undone as the row does.
-  const blockLink = (a, label) => a.block_id && nav?.openBlock
-    ? <button type="button" className="chatChangeLink" onClick={() => {
-      const i = actions.indexOf(a);
-      noteReview.reveal(a, onReverted && canRevert(a) ? {
-        undo: async ({ force }) => onReverted([i], await sendRevert(a, { force }), true),
-      } : {});
-      nav.openBlock(a.block_id, a.page_id);
-    }}>{label}</button>
+  // A note change's link opens where it landed with its diff shown there
+  // (openChange), from this row's own record.
+  const blockLink = (a, label) => a.block_id && nav?.openChange
+    ? <button type="button" className="chatChangeLink" onClick={() => openChange(nav, a)}>{label}</button>
     : pageLink(a.page_id, label);
   const links = { page: pageLink, block: blockLink };
   const many = onReverted && onRevertMany && changes.some(({ a }) => canRevert(a));
@@ -322,10 +343,10 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
       </div>
     </div>
   );
-  const keepOne = async (i) => {
+  const acceptOne = async (i) => {
     setRow(i, { working: true });
     try {
-      await noteReview.keep([actions[i].change_id]);
+      await noteReview.decide(actions[i].change_id, "keep");
       setRow(i, null);
     } catch (err) {
       setRow(i, { refusal: revertRefusal(err), redo: false });
@@ -333,7 +354,7 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
   };
   const changeRow = ({ a, i }) => (
     <ChangeRow key={i} a={a} row={rows[i]} working={working} busy={busy} canAct={!!onReverted}
-      onUndo={(redo) => revertOne(i, { redo })} onKeep={() => keepOne(i)}
+      onUndo={(redo) => revertOne(i, { redo })} onAccept={() => acceptOne(i)}
       text={<>
         {changeText(a, links)}
         {a.items?.length ? (
@@ -346,7 +367,7 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
       {rows[i]?.refusal ? refusalRow(i) : rows[i]?.kept ? keptRow(i) : null}
     </ChangeRow>
   );
-  // every journaled change of the reply: Keep All keeps those that wait for review
+  // every journaled change of the reply: Accept all accepts those still suggestions
   const changeIds = changes.map(({ a }) => a.change_id).filter(Boolean);
   const group = (list, place, first) => list.length ? (
     <ChangesCard key={place} guide="chat.changes"
@@ -354,7 +375,10 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
         ? t("Changed in your library · {n}", { n: list.reduce((n, { a }) => n + changeCount(a), 0) })
         : t("Changed in your notes · {n}", { n: list.length })}
       tail={first ? <>
-        {onReverted && changeIds.length ? <KeepAll ids={changeIds} disabled={working || busy} /> : null}
+        {onReverted && changeIds.length ? (
+          <AcceptAll ids={changeIds} disabled={working || busy} onStart={() => setAllRefusal(null)}
+            onFailed={(err) => setAllRefusal(revertRefusal(err))} />
+        ) : null}
         {many ? (
           <button type="button" className="uiBtn sm ghost chatChangesAll" disabled={working || busy} onClick={onRevertMany}
             title={t("Choose changes of this conversation to undo together")}>
@@ -362,6 +386,14 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
           </button>
         ) : null}
       </> : null}>
+      {first && allRefusal ? (
+        <div className="chatRevertAsk" role="alert">
+          <div>{refusalCopy(allRefusal, false).text}</div>
+          <div className="chatApprovalActions">
+            <button type="button" className="uiBtn sm ghost" onClick={() => setAllRefusal(null)}>{t("Dismiss")}</button>
+          </div>
+        </div>
+      ) : null}
       {list.map(changeRow)}
     </ChangesCard>
   ) : null;

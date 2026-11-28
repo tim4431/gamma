@@ -27,16 +27,16 @@ const PERMISSIONS = [
   ["web_read", CloudDownloadIcon, t("Fetch documents"), t("Read a web page, DOI or URL without saving it to your library")],
   ["publisher_cookies", ShieldIcon, t("Use journal sign-ins"), t("Use connected publisher cookies when fetching documents")],
   ["save", FilePlusIcon, t("Save papers"), t("Add papers found online to your library on request")],
-  ["create", PagesIcon, t("Create pages"), t("Make new pages of notes on request. You can revert it from the reply.")],
+  ["create", PagesIcon, t("Create pages"), t("Make new pages of notes on request. You can undo it from the reply.")],
   ["rename", PenIcon, t("Rename pages"), t("Change page titles on request")],
   ["move", FolderIcon, t("Move pages"), t("Organize pages into folders")],
   ["restore", HistoryIcon, t("Restore deleted pages"), t("Bring pages back from Recently deleted on request")],
-  ["delete", TrashIcon, t("Delete pages"), t("Move pages to Recently deleted on request. You can revert it from the reply.")],
+  ["delete", TrashIcon, t("Delete pages"), t("Move pages to Recently deleted on request. You can undo it from the reply.")],
   ["organize", FoldersIcon, t("Organize folders and labels"), t("Rename folders, and make, rename and apply labels, on request")],
-  ["organize_delete", FolderMinusIcon, t("Delete folders and labels"), t("Delete a folder or a label on request, never its pages. You can revert it from the reply.")],
+  ["organize_delete", FolderMinusIcon, t("Delete folders and labels"), t("Delete a folder or a label on request, never its pages. You can undo it from the reply.")],
   ["block_edit", PencilIcon, t("Edit note blocks"), t("Create, edit and move notes, and transcribe handwriting, on request")],
   ["comment", MessageSquareIcon, t("Comments and highlights"), t("Comment on passages, reply in and resolve comment threads, and highlight passages and areas, under its own name")],
-  ["draw", ShapesIcon, t("Draw on pages"), t("Draw shapes, add text boxes, pictures and pages of paper on a page, on request. You can revert it from the reply.")],
+  ["draw", ShapesIcon, t("Draw on pages"), t("Draw shapes, add text boxes, pictures and pages of paper on a page, on request. You can undo it from the reply.")],
 ];
 export const permissionLabel = (key) => PERMISSIONS.find((row) => row[0] === key)?.[2] || key;
 export const permissionIcon = (key) => PERMISSIONS.find((row) => row[0] === key)?.[1] || ShieldIcon;

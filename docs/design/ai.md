@@ -124,24 +124,19 @@ sequenceDiagram
   participant AI as The agent
   participant You
   participant W as Your workspace
-  AI->>You: a card: the change, word by word, also drawn where it lands
-  alt Keep (or, from its menu, keep and allow in this chat or always)
-    You->>AI: kept
+  AI->>You: a card: the change, word by word
+  alt Allow once, in this chat, or always
+    You->>AI: allowed
     AI->>W: the change, checked against your role
-  else Undo
+  else Don't allow
     You->>AI: no, with a note on what to do instead
   end
 ```
 
-The change is drawn where it would land too, dashed in the note or on the
-PDF page, with the same *Keep* and *Undo*: answering either one answers
-both. A card for a call that is no change (a reading tool set to Ask, a
-comment, a resolve) asks *Allow once*, *Allow in this chat*, *Always allow*
-or *Don't allow*. The card's diff is built by the same code that
-will make the change, so the card and the change cannot differ. After
-*Undo* (or *Don't allow*) the agent is told not to retry or work around
-it. No answer in ten minutes counts as no, and a call that would change
-nothing asks nobody.
+The card's diff is built by the same code that will make the change, so
+the card and the change cannot differ. After *Don't allow* the agent is
+told not to retry or work around it. No answer in ten minutes counts as
+no, and a call that would change nothing asks nobody.
 
 Why this shape: the boundary already exists (the chat's scope and your
 role), so no sandbox is needed. The tools are few and named, so pattern
@@ -149,6 +144,32 @@ rules would add syntax without adding control. Letting the model decide
 when to ask was rejected: asking is your setting, not the model's call.
 The cards guard your intent; what protects a workspace is the role check
 on the server.
+
+## Editing or Reviewing
+
+The page header's switch says how your account takes the AI's edits, as
+Overleaf's editor and Word's Track Changes do. It holds for Gamma AI and
+for every assistant over MCP, in every tab and on every device.
+
+- **Editing**, the default: an edit goes through once you allow it, on
+  the chat's card or in the assistant's own question. Nothing more is drawn.
+  Clicking the change in the reply shows its diff where it landed, until
+  you press elsewhere.
+- **Reviewing**: an edit Gamma can draw where it lands is made at once,
+  without asking, as a suggestion. That is a note written, added, moved or
+  deleted, a highlight, a drawing, a text box, a picture or a page of paper.
+  - A suggestion is drawn where it landed: an edit word by word, a new note
+    in green, a deleted note struck through at its old place, an object on
+    the PDF in a green frame.
+  - Each has ✓ Accept and ✗ Reject at its right edge. The header's menu
+    steps through the page's suggestions, and accepts or rejects them all.
+  - Typing in a suggested note accepts it: the words are yours.
+  - Other changes, such as renaming pages or making one, still ask.
+  - A deletion too large to put back is refused rather than made untracked.
+
+Off still blocks a tool in either mode. A suggestion stays one after you
+switch back to Editing, until you decide it. The agent is told its edit is
+a suggestion, so it does not make it again.
 
 ## What the AI may never do
 
@@ -164,11 +185,9 @@ No setting allows:
 
 Every call shows in the reply, reads included, with lists of what changed.
 A change to a note, and a page renamed, moved, labelled, deleted or
-restored, has *Undo* and *Redo*, in any order, and *Keep* while it waits
-for review. Undoing keeps later edits by others. If someone changed the
-agent's text since, undoing stops and shows what would be lost. A kept
-change to a note or a PDF page leaves a mark there for a while (Settings →
-AI → Tool usage → Marks of kept changes), which unfolds it again.
+restored, has *Undo* and *Redo*, in any order, and *Accept* while it is
+a suggestion. Undoing keeps later edits by others. If someone changed the
+agent's text since, undoing stops and shows what would be lost.
 
 ## Papers from the web
 
@@ -218,13 +237,13 @@ you give it each workspace at one of three levels:
 |---|---|
 | View | read and search |
 | Comment | also comment, resolve and highlight; never asks first, since a comment changes no note, is signed and can be deleted |
-| Edit | also edit, create and move notes; asks you before each change, through the assistant and in Gamma on the page where the change would land, whichever is answered first, with a diff (you can turn asking off for a connection) |
+| Edit | also edit, create and move notes; asks you before each change through the assistant, with a diff (you can turn asking off for a connection); in Reviewing its edits are suggestions instead |
 
 Edit is offered only where your account edits. An assistant deletes a note
 only where its connection may delete notes. It can make a page, but never
 changes an existing page's title or place, and never touches folders,
-labels or settings. Its changes wait for your review in Gamma as the chat's
-do. Only you, signed in, keep them or answer its questions there. Gamma's own
+labels or settings. Its changes follow your Editing or Reviewing mode as
+the chat's do, and only you, signed in, accept its suggestions. Gamma's own
 AI connections are never used for it. A link pasted to an assistant grants
 nothing: its access is its token's.
 

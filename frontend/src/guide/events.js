@@ -36,7 +36,7 @@ export const EVENTS = [
   "chat.cited",       // an AI reply finished with a citation link in it
   "chat.changed",     // an AI reply finished having changed the library or notes
   "chat.archived",    // {discard}: New chat kept the conversation in History (or, Alt+click, threw it away)
-  "note.aiChange",    // an agent's change was marked in its note: kept (its mark) or waiting for review (Keep, Undo)
+  "note.aiChange",    // an agent's suggestion was drawn where it landed, with ✓ Accept and ✗ Reject
   "ink.selected",     // handwriting was selected (the lasso, or a tap on ink)
   "bibtex.shown",     // {folder}: the export dialog shows a bibliography and its Overleaf link
   "citation.shown",   // a citation's quote was found and marked in the PDF
@@ -49,7 +49,7 @@ export const EVENTS = [
   "sheet.created",    // {id}: a sheet of paper was added to a page (a new notebook, +, /note, or writing low on the last one)
   "job.started",      // {kind}: a background job was started on the server (an export, a backup, a restore, an import)
   "paper.fetched",    // a paper was fetched from an address (a URL, a DOI, an arXiv id) and filed in the library
-  "approval.shown",   // {tool, change}: the assistant asked before a call; `change`: a change's card (Keep, Undo)
+  "approval.shown",   // {tool}: the assistant asked before a change
   "table.shown",      // an editable table rendered in the notes
   "table.created",    // a table made with /table or a paste first rendered as one
   "table.edited",     // a table cell's in-place editor committed

@@ -12,7 +12,11 @@ in-scope check (`_load_scoped_page`/`_scope_pages`: folder = the page is
 filed in the chat's folder or below it, `_reach` / `_filed_in` over
 `blocks_store.folder_subtree_ids`; page = id equality, and for a reading
 tool the pages inside the page too) is shared by every executor. A mutating entry also has a `preview`: what its approval card
-shows when the user set its permission to Ask. Each changer has three
+shows when the user set its permission to Ask. An entry marked `tracked`
+(`registry.TRACKED_TOOLS`: the note tools but `clip_region`, `highlight`
+and the drawing tools) is one whose change Gamma draws where it lands. In
+Reviewing it asks nobody, and its change is a suggestion
+([ai.md](ai.md#reviewing-an-agents-changes)). Each changer has three
 parts: a `_plan_*` function checks a call and works out the change, the
 executor applies the plan, and the preview describes it. So the card and
 the change come from one place ("Asking before a call" in
@@ -1863,8 +1867,8 @@ chat" lets a list run without a card, as many one-page calls would.
 
 Their permission is **Delete folders and labels** (`organize_delete`, Ask
 by default). It takes all three states like any other: every deletion can
-be reverted, the folders' chats included (below). The card's Keep is the
-red one. Its preview carries the folder's or label's `block_id`. Once
+be reverted, the folders' chats included (below). The card's Allow once is
+the red one. Its preview carries the folder's or label's `block_id`. Once
 allowed, the gate plans the call again (`TREE_DELETES`), and when its path
 or name names another block by then (a rename or a move while the card
 waited), nothing is deleted and the model is told so
@@ -1981,7 +1985,12 @@ meanwhile lands beside the paste, never inside it; the tree becomes one op
 batch (`blocks_store.tree_inserts(conn, parent, nodes, gap)`, which the
 Zotero sync's note regions use too). One call takes at most `ops.MAX_OPS`
 (500) blocks and 100,000 characters; past either it is refused, with
-nothing written, and told to paste in parts. Every block carries the
+nothing written, and told to paste in parts. In Reviewing a paste of
+several blocks whose revert record would pass `_DELETE_REVERT_MAX` chars
+is refused too (`error: not pasted`), before anything is written: the
+record is built from the planned inserts (`notes._paste_revert`), and the
+model is told to paste in parts or ask the user to switch Gamma to
+Editing. Every block carries the
 scope's `properties.agent`, and each counts as read with its own text. A
 one-block paste answers `ok — created block [id]`; a longer one lists the
 new blocks, `[id] <first line>` indented by depth, up to 50 lines, and the
@@ -2050,7 +2059,10 @@ of the subtree, parent first, as `revert`
 (`{"blocks": [[id, parent, position, content, properties], …]}`), so the
 user's revert puts the subtree back where it was with the same ids and the
 redo takes it again (`ai_revert._plan_delete`; a record over
-`_DELETE_REVERT_MAX` chars is not kept and the result says so). The prompt
+`_DELETE_REVERT_MAX` chars is not kept and the result says so). In
+Reviewing such a deletion is refused instead (`error: not deleted`, an
+error chip), since a suggestion's Reject could not put it back: the result
+asks the model to have the user delete it, or switch Gamma to Editing. The prompt
 tells the model to delete only what the user asked to remove and to edit
 instead when only part of a block should go.
 
@@ -2152,16 +2164,12 @@ highlight reloads the open page's tree as a block tool does (`BLOCK_TOOLS`).
 A comment and a resolve have no revert row: they are the person's to delete
 or reopen. A highlight records a new block's revert (`after`, `parent`,
 `position`, `props`), journaled as kind `create`.
-- While its card asks, it is drawn on its page from its preview's
-  `pdf_page` and `shape` ([ai.md](ai.md#reviewing-an-agents-changes)). The
-  shape holds the rectangles in its position's frame, its style, and its
-  colour as the block will store it.
-- That colour is `hand.stored_color`'s `#rrggbbaa`, which `hand.highlight`
-  writes in `props.color` too. A colour name the tool does not know is
-  refused before anyone is asked.
-- It is undone from its note, its mark or its row as a note the agent made
-  (`chat/aiRevert.js` takes a highlight back as a new block). One commented
-  on since stops (`filled`).
+- It is a tracked tool: in Reviewing it is made as a suggestion, framed on
+  its PDF page until it is accepted or rejected
+  ([ai.md](ai.md#reviewing-an-agents-changes)).
+- It is undone from its row, or rejected where it is framed, as a note the
+  agent made (`chat/aiRevert.js` takes a highlight back as a new block).
+  One commented on since stops (`filled`).
 
 The same words on the same place by the same agent within `hand.REPEAT_S`
 are refused with what the first call wrote, so a call made again never
@@ -2247,7 +2255,7 @@ file. The prompt's drawing paragraph, armed with any of them, says to
 anchor to the text where it can, to look at the page before placing by
 fractions, to check the picture a result shows, and to draw only what the
 user asks for. MCP offers them at a connection's Edit level, asking first
-as its note tools do ([mcp.md](mcp.md) "Editing notes"); there, with no
+as its note tools do (in Reviewing, as suggestions, asking nobody) ([mcp.md](mcp.md) "Editing notes"); there, with no
 reply to revert from, a result says `undo_change` takes a misplaced drawing
 back (`_placed_after`, [mcp.md](mcp.md) "Undoing a change").
 
@@ -2344,7 +2352,8 @@ Deliberately not offered under any permission:
 Tools whose permission is Off are not offered to the model, and the server
 additionally refuses to execute them if called. A tool whose permission is
 Ask is offered, but each call waits on an approval card and runs only once
-the user allows it. Output/argument sizes are capped
+the user allows it; in Reviewing a tracked tool's call runs at once, as a
+suggestion. Output/argument sizes are capped
 (`_LIST_CAP` on listings; `_DETAIL_CAP` and `_ARG_CAP` cap the saved chip
 only — the model gets the full result, under the live budget
 `ai_context.LIVE_RESULT_BUDGET`), and the loop itself is bounded —
@@ -2371,15 +2380,15 @@ change tool that changed nothing is marked `noop` and not listed.
 Each row under "Changed in your notes" has an undo button. The user takes
 back one change at a time, in any order, and whatever anyone wrote since
 stays. An undone row has a redo button that puts the change back. A change
-the server journaled for review (`change_id` on the action) also has Keep
-while it waits. Its row goes by what was decided, wherever it was decided
-([ai.md](ai.md#reviewing-an-agents-changes)). Pages
+the server journaled (`change_id` on the action) goes by what was decided,
+wherever it was decided. A suggestion, made in Reviewing, also has Accept,
+and its undo rejects it ([ai.md](ai.md#reviewing-an-agents-changes)). Pages
 renamed, moved, labelled, deleted or restored by the agent (one or many in
 one call) and a deleted folder or label have one under "Changed in your
 library". To take back several at once, "Undo…" opens a dialog (below).
-A note that draws a change made without asking has Keep and Undo of its own
-on the bar under it. They make the row's decision, by the change's id in the
-journal, its steps newest first ([ai.md](ai.md#reviewing-an-agents-changes)).
+A suggestion drawn where it landed has ✓ Accept and ✗ Reject of its own.
+They make the row's decision, by the change's id in the journal, its steps
+newest first ([ai.md](ai.md#reviewing-an-agents-changes)).
 
 The note tools record what undoing and redoing their change needs, as
 `revert` on the action:
@@ -2387,7 +2396,7 @@ The note tools record what undoing and redoing their change needs, as
 | Tool | `revert` |
 | --- | --- |
 | `edit_block` | `before` and `after`: the block's text just before and just after the write, read under the write lock |
-| `create_block` | one block: `after`: the text the block was made with; `parent` and `position`: where it went. A paste of several: `blocks`, every block it made, parent first, as `delete_block`'s `[id, parent, position, content, properties]` (none past `_DELETE_REVERT_MAX` chars, which the result says) |
+| `create_block` | one block: `after`: the text the block was made with; `parent` and `position`: where it went. A paste of several: `blocks`, every block it made, parent first, as `delete_block`'s `[id, parent, position, content, properties]` (none past `_DELETE_REVERT_MAX` chars, which the result says; in Reviewing such a paste is refused) |
 | `draw` / `add_text_box` / `place_picture` / `add_sheet` | as `create_block`'s, and `props`: the properties the block was made with (a drawing's `ink_url`, a box's `text_box`, a picture's `picture`, a sheet's `sheet`, the agent's stamp) |
 | `create_page` | `made`: the page's id |
 | `move_block` | `parent` and `position`: where the block was; `to_parent` and `to_position`: where it went |
@@ -2463,8 +2472,8 @@ pages as they were), saves the conversation
 (`chatSession.edit`), and reloads the touched pages when no socket brought
 the ops.
 
-In the list, an undone row shows "Undone" and its redo button, and a kept
-one "Kept". A stopped row says why, shows the diff, and offers "Undo anyway", "Delete anyway"
+In the list, an undone row shows "Undone" and its redo button, and a
+suggestion "Suggestion" with its Accept. A stopped row says why, shows the diff, and offers "Undo anyway", "Delete anyway"
 or "Move back anyway" (for a redo, "Redo anyway" or "Move anyway") beside
 "Keep it". The buttons wait while a reply streams. A viewer and the share
 view get none. A page tool's row whose every page changed since says so,

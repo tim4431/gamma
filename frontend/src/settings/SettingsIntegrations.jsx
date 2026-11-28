@@ -3,8 +3,10 @@ import { guideEvents } from "../guide/events.js";
 import { API, apiJson, jsonInit } from "../shared/lib/utils";
 import { CopyField, Empty, FormNotice, PaneHead, Section, Row, Segmented, Step, Toggle } from "./SettingsKit";
 import { MorphText } from "../shared/ui/MotionWidgets";
+import { GammaNavContext } from "../shared/ui/Widgets";
 import { LinkIcon, KeyIcon, MonitorIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon, HistoryIcon, TrashIcon,
   UndoIcon } from "../shared/ui/Icons";
+import { openChange } from "../chat/AgentChanges.jsx";
 import { refusalCopy, revertRefusal } from "../chat/aiRevert.js";
 import { CHANGE_STATES } from "../chat/noteReview.js";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
@@ -71,19 +73,22 @@ function ConnectionRow({ item, names, busy, onEdit, onChanges, onRevoke }) {
 }
 
 // What a connection changed in the notes through MCP (gamma/agent_changes.py),
-// newest first, by its journal state. One that waits for review (made
-// without asking) has Keep, the person's review as its note's bar gives it;
-// a deletion or a page made has no note to draw it in, so this is where it
-// is kept. Each not undone has Undo: the chat's revert (gamma/ai_revert.py),
-// as the person. Someone's work since stops it, worded as the chat's row
-// words it (chat/aiRevert.js refusalCopy), with the button that undoes
-// anyway. Both act in the change's own workspace, which need not be the one
-// open (Keep's ?ws=, Undo's workspace_id).
-function ConnectionChanges({ item }) {
+// newest first, by its journal state. A suggestion (made while the account
+// reviews the AI's edits) has Accept, as its ✓ where it is drawn gives it.
+// Each not undone has Undo: the chat's revert (gamma/ai_revert.py), as the
+// person, which rejects a suggestion. Someone's work since stops it, worded
+// as the chat's row words it (chat/aiRevert.js refusalCopy), with the button
+// that undoes anyway. Both act in the change's own workspace, which need not
+// be the one open (Accept's ?ws=, Undo's workspace_id). One of the open
+// workspace has Open, which closes Settings and opens where it landed with
+// its diff shown there, as its row in a reply does (chat/AgentChanges.jsx
+// openChange), from the journal's record of it (GET /api/ai/changes/<id>).
+function ConnectionChanges({ item, workspaceId, closeSettings }) {
   const url = `${API}/integrations/tokens/${item.id}/changes`;
+  const nav = React.useContext(GammaNavContext);
   const [changes, setChanges] = React.useState(null);
   const [failed, setFailed] = React.useState(null);  // {id, text, force?}: the last action's failure; id "" for the list's
-  const [doing, setDoing] = React.useState(null);  // {id, action}: "keep" or "undo"
+  const [doing, setDoing] = React.useState(null);  // {id, action}: "accept", "undo" or "open"
   const load = React.useCallback(() => apiJson(url).then((d) => setChanges(d.changes || []))
     .catch((err) => setFailed({ id: "", text: err?.message || String(err) })), [url]);
   React.useEffect(() => { load(); }, [load]);
@@ -97,10 +102,19 @@ function ConnectionChanges({ item }) {
   const undo = (change, force = false) => act(change, "undo",
     () => apiJson(`${url}/${change.id}/undo`, jsonInit("POST", { workspace_id: change.workspace_id, force })),
     (err) => refusalCopy(revertRefusal(err), false));
-  const keep = (change) => act(change, "keep",
+  const accept = (change) => act(change, "accept",
     () => apiJson(`${API}/ai/changes/${encodeURIComponent(change.id)}?ws=${encodeURIComponent(change.workspace_id)}`,
       jsonInit("POST", { decision: "keep" })),
     (err) => ({ text: err?.message || String(err) }));
+  const canOpen = (change) => !!nav && !!closeSettings && change.workspace_id === workspaceId;
+  const open = async (change) => {
+    setDoing({ id: change.id, action: "open" }); setFailed(null);
+    try {
+      const found = (await apiJson(`${API}/ai/changes/${encodeURIComponent(change.id)}`)).change;
+      closeSettings();
+      openChange(nav, { ...found, change_id: found.id });
+    } catch (err) { setFailed({ id: change.id, text: err?.message || String(err) }); setDoing(null); }
+  };
   const busy = (change, action) => doing?.id === change.id && doing.action === action;
   if (!changes) return failed ? <FormNotice>{failed.text}</FormNotice> : <p className="setNotice loadingHint">{t("Loading…")}</p>;
   if (!changes.length) return <Empty icon={HistoryIcon}>{t("It has changed nothing yet.")}</Empty>;
@@ -112,10 +126,14 @@ function ConnectionChanges({ item }) {
       <Row icon={change.tool === "delete_block" ? TrashIcon : UndoIcon} label={change.summary}
         hint={[when, change.workspace, change.page_title].filter(Boolean).join(" · ")}>
         {state === CHANGE_STATES.UNDONE ? <span className="uiTag">{t("Undone")}</span> : <div className="integrationActions">
-          {state === CHANGE_STATES.KEPT ? <span className="uiTag">{t("Kept")}</span> : null}
+          {state === CHANGE_STATES.OPEN ? <span className="uiTag">{t("Suggestion")}</span> : null}
+          {canOpen(change) ? (
+            <button type="button" className="uiBtn sm" disabled={!!doing} title={t("Show the change where it was made")}
+              onClick={() => open(change)}>{t("Open")}</button>
+          ) : null}
           {state === CHANGE_STATES.OPEN ? (
-            <button type="button" className="uiBtn sm" disabled={!!doing} title={t("Keep this change")} onClick={() => keep(change)}>
-              <MorphText>{busy(change, "keep") ? t("Keeping…") : t("Keep")}</MorphText>
+            <button type="button" className="uiBtn sm" disabled={!!doing} title={t("Accept this suggestion")} onClick={() => accept(change)}>
+              <MorphText>{busy(change, "accept") ? t("Accepting…") : t("Accept")}</MorphText>
             </button>
           ) : null}
           <button type="button" className="uiBtn sm" disabled={!!doing} onClick={() => undo(change)}>
@@ -130,7 +148,8 @@ function ConnectionChanges({ item }) {
   });
 }
 
-export function IntegrationSettings({ workspaceId, setStatus }) {
+// `closeSettings`: closes the dialog, for a change's Open (none: no Open).
+export function IntegrationSettings({ workspaceId, setStatus, closeSettings }) {
   // The connections, through the dialog's reads (settingsReads.js
   // PANE_READS): a second visit shows the last answer at once and reads it
   // again in place.
@@ -316,7 +335,9 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
           onChanges={(row) => setWatching(watching === row.id ? "" : row.id)}
           onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: accessOf(row, spaces), asks: row.asks !== false,
             deletes: !!row.deletes })} />
-        {watching === item.id ? <div className="integrationDetails integrationEdit"><ConnectionChanges item={item} /></div> : null}
+        {watching === item.id ? <div className="integrationDetails integrationEdit">
+          <ConnectionChanges item={item} workspaceId={workspaceId} closeSettings={closeSettings} />
+        </div> : null}
         {editing?.id === item.id ? <div className="integrationDetails integrationEdit">
           <WorkspacePicker workspaces={spaces} value={editing.access} disabled={busy} roles={item.scope !== "write"}
             label={t("Workspaces {name} may read", { name: item.name })} onChange={(value) => setEditing({ ...editing, access: value })} />

@@ -134,19 +134,17 @@ export const install = {
   steps: [{ id: "install", anchor: null, title: T("For full screen, tap Share, then Add to Home Screen.") }],
 };
 
-// The first time the assistant asks before a change: Keep and its grants,
-// whose differences matter, and the one that is easy to miss (Undo can say
-// what to do instead). A card, not a tour — answering it takes the anchor
-// away (docs/dev/ai.md, "Asking before a call").
+// The first time the assistant asks before a change: four answers whose
+// differences matter, and the one that is easy to miss (a declined call can
+// say what to do instead). A card, not a tour — answering it takes the
+// anchor away (docs/dev/ai.md, "Asking before a call").
 export const approvals = {
   id: "approvals",
-  version: 2,
+  version: 3,
   hint: true,
-  // a change's card, whose answers these are (chat/approvals.js isChangeCall);
-  // a comment's, a resolve's or a reading tool's says Allow once and Don't allow
-  trigger: { event: "approval.shown", match: { change: true } },
+  trigger: { event: "approval.shown" },
   steps: [{ id: "approvals", anchor: "chat.approval", placement: "top",
-    title: T("Keep it once or for this chat; Undo can suggest another way.") }],
+    title: T("Allow once or for this chat; Don't allow can suggest another way.") }],
 };
 
 // A page with the user's own work on it, the moment they open the menu that
@@ -359,18 +357,17 @@ export const filesWindow = {
     title: T("Your folders and synced folders in one tree; {key:app.quickOpen} finds a file by name too.") }],
 };
 
-// An agent's change marked in its note (docs/dev/ai.md "Reviewing an
-// agent's changes"): waiting for review, with Keep and Undo, or kept, as a
-// mark at the note's edge that unfolds to the change and its Undo. The
-// approvals hint has the asking kind.
+// The first suggestion drawn where it landed, made while the account
+// reviews the AI's edits (docs/dev/ai.md "Reviewing an agent's changes"):
+// its ✓ and ✗ decide it. The approvals hint has the asking kind.
 export const noteReview = {
   id: "note-review",
-  version: 2,
+  version: 3,
   hint: true,
   requires: { editable: true },
   trigger: { event: "note.aiChange" },
   steps: [{ id: "note-review", anchor: "notes.review", placement: "bottom",
-    title: T("The AI's change is marked at the note's edge: press the mark to see it, and **Undo** to take it back.") }],
+    title: T("In Reviewing mode the AI's edits are suggestions: **✓** accepts one, **✗** rejects it.") }],
 };
 
 // A picture put on a PDF page or a sheet (docs/dev/pictures.md "Adding a

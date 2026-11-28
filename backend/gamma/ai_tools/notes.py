@@ -158,6 +158,12 @@ def _run_delete_block(conn, ws: str, scope: dict, args: dict):
     rows = fetch_subtree(conn, block["id"])
     record = [[r[0], r[1], r[2], r[3] or "", r[4] or "{}"] for r in rows]
     revert = {"blocks": record} if len(json.dumps(record)) <= _DELETE_REVERT_MAX else None
+    if not revert and scope.get("reviewing"):
+        # Reviewing: a deletion is a suggestion the person rejects by putting
+        # it back, and this one is too large to keep for that.
+        conn.rollback()
+        return ("error: not deleted — this note and the notes under it are too large to keep as a suggestion the "
+                "user could reject. Ask the user to delete it themselves, or to switch Gamma to Editing."), None
     after_commit(ws, conn, apply_ops(
         conn, page_id, [{"op": "delete", "id": block["id"]}], actor=scope.get("actor", ""), client="ai"))
     seen = notes_seen(scope)
@@ -360,15 +366,12 @@ def _plan_edit_block(conn, scope: dict, args: dict):
 
 
 def _preview_edit_block(conn, scope: dict, args: dict):
-    # `text`: the block's whole new text, which the note shows as tracked
-    # changes against what it says while the card waits (the card's `diff`
-    # cuts long unchanged stretches).
     plan, answer = _plan_edit_block(conn, scope, args)
     if not plan:
         return None, answer
     return {"page_id": plan["page_id"], "title": plan["title"], "block_id": plan["block"]["id"],
             "mode": plan["mode"], "diff": text_diff(plan["block"]["content"] or "", plan["text"]),
-            "text": plan["text"], **_preview_pictures(plan["text"], plan["block"]["content"])}, None
+            **_preview_pictures(plan["text"], plan["block"]["content"])}, None
 
 
 def missing_uploads(scope: dict, content: str, before: str = "") -> str:
@@ -499,9 +502,7 @@ def _plan_create_block(conn, scope: dict, args: dict):
 def _preview_create_block(conn, scope: dict, args: dict):
     # `diff`: the blocks' texts as lines, indented by depth (one block: its
     # text as written); `count` the blocks, `after` the sibling they follow
-    # or `first`; the pictures and files the paste shows, counted. Where the
-    # note draws it while the card waits: under `parent_id`, after
-    # `after_id` ("" when first), its `text` as written.
+    # or `first`; the pictures and files the paste shows, counted.
     plan, answer = _plan_create_block(conn, scope, args)
     if not plan:
         return None, answer
@@ -512,11 +513,19 @@ def _preview_create_block(conn, scope: dict, args: dict):
     text = content if plan["count"] == 1 else "\n".join(_outline(plan["nodes"]))
     return {"page_id": page_id, "title": plan["title"],
             "parent": "" if parent["id"] == page_id else _excerpt(parent["content"]),
-            "parent_id": parent["id"], "after_id": "" if plan["first"] else str(args.get("after_id") or ""),
-            "text": content,
             "count": plan["count"], **({"first": True} if plan["first"] else {"after": _excerpt(after)} if after else {}),
             "picture_count": len(pictures), "file_count": len(upload_refs(content, {})) - len(pictures),
             "diff": text_diff("", text), **_preview_pictures(content)}, None
+
+
+def _paste_revert(inserts) -> dict | None:
+    """The revert record of a paste of several blocks, from its insert ops:
+    every block it makes, parent first, as a deletion records them, so its
+    revert deletes them again (gamma/ai_revert.py). None past
+    ``_DELETE_REVERT_MAX`` characters."""
+    record = [[op["id"], op["parent"], op.get("position"), op.get("content") or "", json.dumps(op.get("props") or {})]
+              for op in inserts]
+    return {"blocks": record} if len(json.dumps(record)) <= _DELETE_REVERT_MAX else None
 
 
 def _run_create_block(conn, ws: str, scope: dict, args: dict):
@@ -538,8 +547,18 @@ def _run_create_block(conn, ws: str, scope: dict, args: dict):
                 "children": [with_ids(c) for c in node["children"]]}
 
     roots = [with_ids(n) for n in plan["nodes"]]
-    result = apply_ops(conn, page_id, tree_inserts(conn, parent["id"], roots, plan["gap"]),
-                       actor=scope.get("actor", ""), client="ai")
+    inserts = tree_inserts(conn, parent["id"], roots, plan["gap"])
+    if len(inserts) > 1 and scope.get("reviewing") and not _paste_revert(inserts):
+        # Reviewing: a paste is a suggestion the person rejects by deleting
+        # its blocks again, and this one is too large to record for that.
+        # The planned inserts carry the ids, texts and properties the written
+        # blocks keep, so their record is the paste's, read before anything
+        # is written.
+        conn.rollback()
+        return ("error: not pasted — these blocks are too large to keep as a suggestion the user could reject. "
+                "Paste it in parts, each part after_id the last block the one before made, or ask the user to "
+                "switch Gamma to Editing."), None
+    result = apply_ops(conn, page_id, inserts, actor=scope.get("actor", ""), client="ai")
     after_commit(ws, conn, result)
     made_ops = [op for op in result["ops"] if op.get("op") == "insert"]
     seen = notes_seen(scope)
@@ -552,11 +571,7 @@ def _run_create_block(conn, ws: str, scope: dict, args: dict):
                 {**action, "summary": f"Added a note in “{page_title[:60]}”",
                  "revert": {"after": first.get("content") or "", "parent": parent["id"],
                             "position": first.get("position")}})
-    # A paste of several blocks records every block it made, parent first,
-    # as a deletion does: its revert deletes them again (gamma/ai_revert.py).
-    record = [[op["id"], op["parent"], op.get("position"), op.get("content") or "", json.dumps(op.get("props") or {})]
-              for op in made_ops]
-    revert = {"blocks": record} if len(json.dumps(record)) <= _DELETE_REVERT_MAX else None
+    revert = _paste_revert(made_ops)
     depth = {parent["id"]: -1}
     lines = []
     for op in made_ops:
@@ -660,7 +675,7 @@ def _preview_move_block(conn, scope: dict, args: dict):
         return None, answer
     parent, page_id = plan["parent"], plan["page_id"]
     preview = {"page_id": page_id, "title": plan["page_title"], "block_id": plan["block"]["id"],
-               "parent": "" if parent["id"] == page_id else _excerpt(parent["content"]), "parent_id": parent["id"],
+               "parent": "" if parent["id"] == page_id else _excerpt(parent["content"]),
                "diff": [["ctx", _excerpt(plan["block"]["content"], 600)]]}
     if plan["src_page_id"] != page_id:
         preview.update(src_page_id=plan["src_page_id"], src_title=plan["src_title"])
@@ -698,7 +713,7 @@ def _run_move_block(conn, ws: str, scope: dict, args: dict):
 TOOLS = [
     {
         "perm": "block_edit", "kind": "edit", "scopes": ("folder", "page"), "mutating": True, "run": _run_edit_block,
-        "preview": _preview_edit_block,
+        "preview": _preview_edit_block, "tracked": True,
         "spec": {
             "name": "edit_block",
             "description": (
@@ -746,7 +761,7 @@ TOOLS = [
     },
     {
         "perm": "block_edit", "kind": "create", "scopes": ("folder", "page"), "mutating": True, "run": _run_create_block,
-        "preview": _preview_create_block,
+        "preview": _preview_create_block, "tracked": True,
         "spec": {
             "name": "create_block",
             "description": (
@@ -775,7 +790,7 @@ TOOLS = [
     },
     {
         "perm": "block_edit", "kind": "move", "scopes": ("folder", "page"), "mutating": True, "run": _run_move_block,
-        "preview": _preview_move_block,
+        "preview": _preview_move_block, "tracked": True,
         "spec": {
             "name": "move_block",
             "description": (
@@ -794,7 +809,7 @@ TOOLS = [
     },
     {
         "perm": "block_edit", "kind": "delete", "scopes": ("folder", "page"), "mutating": True,
-        "run": _run_delete_block, "preview": _preview_delete_block,
+        "run": _run_delete_block, "preview": _preview_delete_block, "tracked": True,
         "spec": {
             "name": "delete_block",
             "description": (

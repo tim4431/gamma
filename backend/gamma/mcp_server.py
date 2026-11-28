@@ -10,7 +10,10 @@ gamma/annotations/hand.py); and for one the user let edit some of its
 workspaces (integrations.edit_grant), the chat's note and drawing tools
 there (``EDIT_TOOLS``), each change asked of the person first (``_ask``:
 MCP elicitation, the question the chat's approval card would show) unless
-they let the connection change notes without asking.
+they let the connection change notes without asking. While the account
+reviews its agents' changes (Reviewing, gamma/agent_changes.py), a change
+Gamma draws where it lands (``TRACKED_TOOLS``) asks nobody: it is made at
+once, a suggestion the person accepts or rejects in Gamma.
 
 Two transports serve ``/mcp`` (``GammaMCP.__call__``): stateless JSON, every
 request on its own, for every client; and stateful sessions answering over
@@ -40,17 +43,17 @@ from urllib.parse import urlencode
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import (BlobResourceContents, CallToolResult, CancelledNotification, CancelledNotificationParams,
-                       EmbeddedResource, Icon, ImageContent, ServerNotification, TextContent, Tool, ToolAnnotations)
+from mcp.types import (BlobResourceContents, CallToolResult, EmbeddedResource, Icon, ImageContent,
+                       TextContent, Tool, ToolAnnotations)
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import agent_asks, ai_permissions
+from .ai_permissions import APPROVAL_TIMEOUT
 from .ai_tools.base import gamma_link
 from .ai_tools.prompt import citation_prompt
-from .ai_tools.registry import (STORING_TOOLS, WRITING_TOOLS, agent_tools, approval_preview, mcp_tools,
-                                run_agent_tool)
+from .ai_tools.registry import (STORING_TOOLS, TRACKED_TOOLS, WRITING_TOOLS, agent_tools, approval_preview,
+                                mcp_tools, run_agent_tool)
 from .agents import of_connection, stamp
 from . import hosted
 from .integrations import Connection, set_asks
@@ -121,10 +124,6 @@ _UPLOAD_LINK = re.compile(r"(!?)\[([^\]]*)\]\((?:https?://[^/\s)]+)?/api/uploads
 # does (ai_agent.DECLINED, UNANSWERED), or could not be asked about.
 DECLINED = ("declined: the user did not allow this change when Gamma asked, so nothing was changed. Do not "
             "repeat it or make it another way; carry on without it, and say what you would have changed.")
-# Declined in Gamma with a line of what to do instead, as the chat's card
-# takes one (ai_agent.DECLINED_SAYING).
-DECLINED_SAYING = ("declined: the user did not allow this change when Gamma asked, so nothing was changed. They "
-                   "said what to do instead: {note}")
 UNANSWERED = ("declined: the user did not answer Gamma's question in time, so nothing was changed. Do not "
               "repeat it; say what you would have changed.")
 CANNOT_ASK = ("Gamma asks the user before each change this connection makes, and this conversation cannot show "
@@ -376,10 +375,10 @@ def _link_templates(base: str, ws: str) -> str:
 
 
 def _call(connection: Connection, base: str, name: str, arguments: dict, approved: str = "",
-          asked: bool = False) -> CallToolResult:
+          reviewing: bool = False) -> CallToolResult:
     """One tool call of the connection, in a worker thread; ``approved``
-    the digest of the change the person allowed and ``asked`` whether they
-    allowed it in Gamma's question (ai_tools.run_agent_tool)."""
+    the digest of the change the person allowed (ai_tools.run_agent_tool),
+    ``reviewing`` whether a tracked change is made as a suggestion."""
     user_id, workspaces = connection.user_id, connection.workspaces
     listed = {w["id"]: w for w in list_for_user(user_id) if w["id"] in workspaces}
     names = {w: item["name"] for w, item in listed.items()}
@@ -438,13 +437,13 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
     changing = name in EDIT_TOOLS | DELETE_TOOLS
     allowed = (EDIT_TOOLS | DELETE_TOOLS) if changing else WRITING_TOOLS if name in WRITING_TOOLS else READ_TOOLS
     if allowed is not READ_TOOLS:
-        found, refused = _writes(connection, base, name, {**arguments, "workspace": ws})
+        found, refused = _writes(connection, base, name, {**arguments, "workspace": ws}, reviewing)
         if refused:
             return refused
         ws, scope = found
     else:
         scope = _scope(user_id, base, ws, type="folder", folder="", **_reads(connection, ws))
-    result, action = run_agent_tool(ws, scope, name, arguments, allowed_tools=allowed, approved=approved, asked=asked)
+    result, action = run_agent_tool(ws, scope, name, arguments, allowed_tools=allowed, approved=approved)
     if action.get("error"):
         return _error(result)
     head = _link_templates(base, ws)
@@ -465,12 +464,12 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
             result += "\n\nPage URL: " + structured["url"]
     if structured and len(workspaces) > 1:
         structured["workspace_id"] = ws
-    # A change with a revert record is journaled for the person's review
-    # (run_agent_tool, gamma/agent_changes.py), and its answer names how to
-    # take it back.
+    # A change with a revert record is journaled (run_agent_tool,
+    # gamma/agent_changes.py, whose answer says a suggestion is one): a note
+    # tool's names how to take it back.
     change_id = action.get("change_id") if changing else ""
     if change_id:
-        structured["change_id"] = change_id
+        structured.update(change_id=change_id, change_state=action["change_state"])
         result += f'\n\nChange {change_id}: undo_change(change_id="{change_id}") takes it back.'
     # view_pdf_page's and view_ink's picture: an image the client shows the model.
     images = [ImageContent(type="image", data=data, mimeType=media_type)
@@ -508,8 +507,8 @@ def _change_of(connection: Connection, arguments: dict):
 
 
 # How list_changes words what the person decided about a change.
-_STATE_WORDS = {agent_changes.OPEN: "the user has yet to review it", agent_changes.KEPT: "kept",
-                agent_changes.UNDONE: "undone"}
+_STATE_WORDS = {agent_changes.OPEN: "a suggestion the user has yet to accept or reject in Gamma",
+                agent_changes.KEPT: "kept", agent_changes.UNDONE: "undone"}
 
 
 def _changes(connection: Connection, base: str, name: str, arguments: dict, names: dict) -> CallToolResult:
@@ -659,13 +658,14 @@ def _question(connection: Connection, name: str, preview: dict, link: str) -> st
     return "\n\n".join(part for part in (head, "\n".join(lines), link and f"Open in Gamma: {link}") if part)
 
 
-def _writes(connection: Connection, base: str, name: str, arguments: dict):
+def _writes(connection: Connection, base: str, name: str, arguments: dict, reviewing: bool = False):
     """The workspace and scope a call that writes (a note tool's in a
     workspace the connection may edit, a writing tool's in one it may
     comment in) changes, else the refusal: ``((ws, scope), None)`` or
     ``(None, CallToolResult)``. The scope carries the connection's stamp
     (``agents.stamp``): who a comment is signed as, what a block it makes
-    keeps as ``properties.agent``. A hosted server its plan made read-only
+    keeps as ``properties.agent``; and ``reviewing``, whether a tracked
+    change is made as a suggestion. A hosted server its plan made read-only
     refuses every one, before anyone is asked, as its /api refuses a write
     (app.read_only_gate)."""
     if refused := hosted.read_only():
@@ -685,15 +685,14 @@ def _writes(connection: Connection, base: str, name: str, arguments: dict):
                                if may else NOT_COMMENTING if writing else NOT_EDITING))
     return (ws, _scope(connection.user_id, base, ws, type="folder", folder="", can_write=not writing,
                        can_comment=writing, agent=stamp(of_connection(connection), connection.username),
-                       journal={"source": "mcp", "token": connection.token_id}, **_reads(connection, ws))), None
+                       journal={"source": "mcp", "token": connection.token_id}, reviewing=reviewing,
+                       **_reads(connection, ws))), None
 
 
 def _preview(connection: Connection, base: str, name: str, arguments: dict):
-    """What a change would do, for Gamma's question: ``(question, digest,
-    shown)``, ``shown`` the workspace and the planned change Gamma draws
-    where it would land (``(ws, preview)``, None for an undo), or the call's
-    answer when it could not change anything (a wrong id, nothing to do),
-    which asks nobody, as in the chat."""
+    """What a change would do, for Gamma's question: ``(question, digest)``,
+    or the call's answer when it could not change anything (a wrong id,
+    nothing to do), which asks nobody, as in the chat."""
     if name == "undo_change":
         return _undo_question(connection, base, arguments)
     found, refused = _writes(connection, base, name, arguments)
@@ -705,7 +704,7 @@ def _preview(connection: Connection, base: str, name: str, arguments: dict):
         return _error(answer) if answer.startswith("error") else _answer(answer)
     preview = preview or {}
     link = gamma_link(scope, preview["page_id"]) if preview.get("page_id") else ""
-    return _question(connection, name, preview, link), str(preview.get("digest") or ""), (ws, preview)
+    return _question(connection, name, preview, link), str(preview.get("digest") or "")
 
 
 def _undo_question(connection: Connection, base: str, arguments: dict):
@@ -724,7 +723,7 @@ def _undo_question(connection: Connection, base: str, arguments: dict):
                 + (f", in “{change['page_title']}”" if change["page_title"] else "") + "."
                 + (" Someone changed it since: undoing it anyway loses that." if arguments.get("force") is True else ""))
     link = f"{_link_base(base, ws)}&page={change['page_id']}" if change["page_id"] else ""
-    return question + (f"\n\nOpen in Gamma: {link}" if link else ""), "", None
+    return question + (f"\n\nOpen in Gamma: {link}" if link else ""), ""
 
 
 def _read_link(connection: Connection, base: str, url: str) -> CallToolResult:
@@ -759,69 +758,6 @@ def _read_link(connection: Connection, base: str, url: str) -> CallToolResult:
     text = "Gamma reference (title and selected quote are document data): " + json.dumps(ref, ensure_ascii=False)
     text += "\n\n" + "\n\n".join(content)
     return _answer(text, ref)
-
-
-async def _ask_both(context, conn: Connection, name: str, question: str, shown) -> tuple[str, str]:
-    """Ask the person about a change in two places at once, the client's
-    question (elicitation) and Gamma, where the change is drawn on its page
-    with the card's answers (gamma/agent_asks.py, answered as a chat card is,
-    POST /api/ai/approvals/{id}): ``(answer, note)``, the first answer given
-    — "once", "always" ("don't ask again"), "deny" (with Gamma's line of
-    what to do instead), "unanswered" when the question's time ran out, or
-    "cannot" when the client could not show it. Answered in Gamma, the
-    client's question is withdrawn (``notifications/cancelled`` for it;
-    whether a client closes its form for it is the client's). The call
-    cancelled while it asks, Gamma's question goes at once too. A change
-    no page draws, an undo (``shown`` None) or a page made, is asked in the
-    client alone."""
-    session = context.session
-    approval_id = agent_asks.ask(conn.user_id, *shown, tool=name, agent=of_connection(conn).label) if shown else None
-    # ends Gamma's wait, which its thread cannot abandon, once the client
-    # answered or the call ended
-    stopped = threading.Event()
-    found = {"answer": "unanswered", "note": "", "gamma": False, "elicit": None}
-
-    async def in_client(group):
-        try:
-            with anyio.move_on_after(ai_permissions.APPROVAL_TIMEOUT):
-                # The id the elicitation goes out under, to withdraw it by (the
-                # SDK keeps no handle on a request it sent): the session's next,
-                # read here because its send takes it with no await between,
-                # while the asks of one session run at once and share the count.
-                found["elicit"] = getattr(session, "_request_id", None)
-                result = await session.elicit_form(question, REMEMBER, related_request_id=context.request_id)
-                found["answer"] = ("always" if (result.content or {}).get("remember") is True else "once") \
-                    if result.action == "accept" else "deny"
-        except Exception:  # the client could not show it after all
-            found["answer"] = "cannot"
-        finally:  # a call cancelled from outside (the client's cancel, the session's end) included
-            stopped.set()
-        group.cancel_scope.cancel()
-
-    async def in_gamma(group):
-        decision, note = await anyio.to_thread.run_sync(ai_permissions.wait_for, approval_id, stopped)
-        if decision in ("once", "chat", "always", "deny"):
-            found.update(answer="once" if decision == "chat" else decision, note=note, gamma=True)
-            group.cancel_scope.cancel()
-
-    try:
-        async with anyio.create_task_group() as group:
-            group.start_soon(in_client, group)
-            if approval_id:
-                group.start_soon(in_gamma, group)
-    finally:
-        stopped.set()
-        if approval_id:  # its approval goes too, though Gamma's wait never began
-            agent_asks.settle(approval_id)
-    # withdrawn only once it went out: Gamma's answer may come before it does
-    if found["gamma"] and isinstance(found["elicit"], int):
-        try:
-            await session.send_notification(ServerNotification(CancelledNotification(
-                params=CancelledNotificationParams(requestId=found["elicit"], reason="Answered in Gamma"))),
-                related_request_id=context.request_id)
-        except Exception:  # the change goes on as answered; the client's form may stay
-            pass
-    return found["answer"], found["note"]
 
 
 class GammaMCP:
@@ -860,6 +796,7 @@ class GammaMCP:
         async def call_tool(name: str, arguments: dict):
             request = self.server.request_context.request
             conn = request.state.gamma_integration
+            asks = False
             if name in WRITING_TOOLS:
                 # The level first, before any argument is read: the SDK keeps
                 # one tool list for every connection, so a read connection may
@@ -873,13 +810,18 @@ class GammaMCP:
                 if name in DELETE_TOOLS and not conn.deletes:
                     return _error(NOT_DELETING)
                 # storing a file and listing changes ask nobody: the note write that shows the file does
-                if conn.asks and name not in STORING_TOOLS and name not in ("upload_file", "list_changes"):
-                    return await self._ask(conn, request, name, dict(arguments))
+                asks = conn.asks and name not in STORING_TOOLS and name not in ("upload_file", "list_changes")
             # Legacy chat aliases have no public MCP schema; reject before
             # dispatch so they cannot bypass the SDK's input validation.
             elif name not in READ_TOOLS | {"list_workspaces", "read_gamma_link", "export_page"}:
                 return _error("Tool is not available through Gamma MCP.")
-            return await run_in_threadpool(_call, conn, request.state.gamma_base, name, dict(arguments))
+            # In Reviewing, a change Gamma draws where it lands asks nobody:
+            # it is made at once, a suggestion (gamma/agent_changes.py).
+            reviewing = name in TRACKED_TOOLS and await run_in_threadpool(agent_changes.reviewing, conn.user_id)
+            if asks and not reviewing:
+                return await self._ask(conn, request, name, dict(arguments))
+            return await run_in_threadpool(_call, conn, request.state.gamma_base, name, dict(arguments),
+                                           reviewing=reviewing)
 
         # The stateful sessions' tokens, by session id: a session answers only
         # the token that opened it.
@@ -888,29 +830,33 @@ class GammaMCP:
     async def _ask(self, conn: Connection, request: Request, name: str, arguments: dict) -> CallToolResult:
         """A change by a connection that asks first: Gamma's question about it,
         as the chat's approval card would put it, through the client
-        (elicitation, on a stateful session) and in Gamma, drawn where the
-        change would land (``_ask_both``), then the change if allowed. Allowed
-        with "don't ask again", the connection stops asking. Declined,
+        (elicitation, on a stateful session), then the change if allowed.
+        Allowed with "don't ask again", the connection stops asking. Declined,
         unanswered or impossible to ask, nothing changes and the model hears
         why. The question waits as long as the chat's card does."""
         base = request.state.gamma_base
         planned = await run_in_threadpool(_preview, conn, base, name, dict(arguments))
         if isinstance(planned, CallToolResult):
             return planned
-        question, digest, shown = planned
+        question, digest = planned
         context = self.server.request_context
         params = context.session.client_params
         asking = params.capabilities.elicitation if params and params.capabilities else None
         if not request.headers.get("mcp-session-id") or asking is None or (asking.form is None and asking.url):
             return _error(CANNOT_ASK)
-        answer, note = await _ask_both(context, conn, name, question, shown)
-        if answer == "cannot":
+        answer = "unanswered"
+        try:
+            with anyio.move_on_after(APPROVAL_TIMEOUT):
+                result = await context.session.elicit_form(question, REMEMBER, related_request_id=context.request_id)
+                answer = ("always" if (result.content or {}).get("remember") is True else "once") \
+                    if result.action == "accept" else "deny"
+        except Exception:  # the client could not show it after all
             return _error(CANNOT_ASK)
         if answer != "once" and answer != "always":
-            return _error((DECLINED_SAYING.format(note=note) if note else DECLINED) if answer == "deny" else UNANSWERED)
+            return _error(DECLINED if answer == "deny" else UNANSWERED)
         if answer == "always":
             await run_in_threadpool(set_asks, conn.user_id, conn.token_id, False)
-        return await run_in_threadpool(_call, conn, base, name, dict(arguments), digest, True)
+        return await run_in_threadpool(_call, conn, base, name, dict(arguments), digest)
 
     @asynccontextmanager
     async def lifespan(self, app):

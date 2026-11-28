@@ -248,7 +248,8 @@ function sameHighlights(a, b) {
   return true;
 }
 // A highlight's tooltip: who made it when an agent did ("Highlighted by
-// Codex on TIM-PC, for tim"), then its note.
+// Codex on TIM-PC", with ", for bob" when it acted for another account than
+// the viewer's: chat/agents.js madeBy), then its note.
 function highlightTitle(h) {
   const made = h.agent ? t("Highlighted by {agent}", { agent: stampLabel(h.agent) }) : "";
   return [made, h.note || ""].filter(Boolean).join("\n");

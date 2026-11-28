@@ -1,5 +1,15 @@
 # Reviewing AI changes: one change, drawn where it lands, decided anywhere
 
+**Status 2026-11-27.** The design this note led to was built, then
+replaced by an account-wide Editing / Reviewing mode in the page header.
+The marks of kept changes, the page's review strip and the asks drawn in
+place, MCP's question asked in Gamma too, went with it. In Editing a
+change asks first, as the permissions say, and is kept with nothing drawn.
+In Reviewing a note or drawing change is made at once as a suggestion,
+drawn where it lands with ✓ Accept and ✗ Reject. The journal and the diff
+renderers stay. As built: [dev/ai.md](../dev/ai.md#reviewing-an-agents-changes).
+The survey below is as it was written.
+
 Asked 2026-11-25. The owner asked three questions about the git-diff view
 of AI changes:
 

@@ -135,8 +135,8 @@ export function MarkupLayers({ surface, wrapRef, width, height, marks, active = 
           chrome={chrome} onZoomStroke={onZoomStroke} zoom={chrome && ink.zoom?.page === surface ? ink.zoom : null}
           onZoom={chrome && ink.zoom && !readOnly ? actions.onZoom : undefined} view={!!preview} />
       )}
-      {/* over them all, an agent's changes here: what it asks to put here while its card waits,
-          and what it put here that waits for review or is marked */}
+      {/* over them all, an agent's changes here: what it put here as a suggestion, and the
+          change the chat shows */}
       {chrome ? <ReviewLayer surface={surface} width={width} height={height} /> : null}
     </>
   );

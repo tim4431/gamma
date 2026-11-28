@@ -1,42 +1,41 @@
 // The agents' changes as one store every surface reads, in the words of a
-// diff: what an agent proposes is drawn where it would land before anyone
-// decides, and what it changed stays marked where it landed.
+// diff, and the account's way of taking them (Overleaf's Editing /
+// Reviewing, Word's Track Changes).
 //
-// - Asking (`asking`): a change waiting on its approval card is drawn in
-//   place, dashed, with the card's own answers (Keep, Undo), which answer
-//   the card: an edit as tracked changes against what the note says now, a
-//   new note as a ghost row where it would go, a note to delete struck out,
-//   a note to move marked with where it goes (editor/BlockTree.jsx,
-//   editor/NoteReviewBar.jsx), and a highlight, a drawing, a text box or a
-//   picture on its PDF page or page of paper (markup/ReviewLayer.jsx). The
-//   card and the drawing are one question: either answer takes both away.
-//   An assistant over MCP asks the same way (`remote`, read with the page's
-//   changes: gamma/agent_asks.py): its question in its client and its
-//   drawing here are one question too, whichever is answered first.
-// - Made: the server's journal (gamma/agent_changes.py, /api/ai/changes)
-//   holds every change an agent made, Gamma AI's in the chat and an
-//   assistant's over MCP, for the account it was made for. A page's changes
-//   (`pages`: those that wait for review and the kept ones whose mark
-//   stands) are read while something on screen draws the page (`watch`:
-//   its notes' strip, its PDF pages and pages of paper, a tab group's view
-//   of it), whether or not its notes show, and again on the server's nudge
-//   (the window event gamma:ai-changes); a reply's change on a page on
-//   screen is drawn at once as it lands in this tab (`landed`). One that
-//   waits for review (made without asking) shows unfolded, with Keep and
-//   Undo. A kept one (kept on its card, or here) leaves a mark at its
-//   note's edge, as a diff's gutter does, until its mark is cleared or its
-//   time is up (the account's choice, `setMarkLife`: a minute unless set
-//   otherwise; never, till cleared) — an unfolded one stays while it is
-//   unfolded; the mark unfolds it (`toggle`) to the change, which Undo
-//   still takes back. A press on the change's row in the chat unfolds it
-//   the same way (`reveal`), from the reply's own record when the journal
-//   no longer holds it, and that one goes as it folds. Several edits of one
-//   block in a row are one change, from the text before the first to the
-//   text after the last.
+// - The mode (`reviewing`, the account pref "ai-review"): in Editing (false,
+//   the default) an AI edit goes through as the permissions say, asking
+//   first where they ask (on the chat's approval card, or in an
+//   assistant's own question over MCP, as the connection's switch says),
+//   and is journaled kept. Reviewing (true) makes an edit that can be
+//   drawn where it lands (a note written, added, moved or deleted, a
+//   highlight, a drawing, a text box, a picture, a page of paper) at once,
+//   without asking, as a suggestion: journaled open, until it is accepted
+//   or rejected. The server reads the same pref (gamma/agent_changes.py
+//   reviewing); editor/ReviewMode.jsx switches it.
+// - Suggestions: the server's journal (gamma/agent_changes.py,
+//   /api/ai/changes) holds every change an agent made, Gamma AI's in the
+//   chat and an assistant's over MCP, for the account it was made for; a
+//   page's open ones (`pages`) are read while something on screen draws the
+//   page (`watch`: its notes' header, its PDF pages and pages of paper, a
+//   tab group's view of it), whether or not its notes show, and again on
+//   the server's nudge (the window event gamma:ai-changes); a reply's
+//   suggestion on a page on screen is drawn at once as it lands in this tab
+//   (`landed`). Each is drawn where it landed until it is decided, however
+//   the mode stands since: an edit as tracked changes, a new note as new, a
+//   deleted note struck through at its old place, a move tinted
+//   (editor/BlockTree.jsx), a placed block framed on its PDF page or page
+//   of paper (markup/ReviewLayer.jsx), each with Accept and Reject
+//   (editor/ReviewButtons.jsx). Accept keeps it in the journal, Reject
+//   undoes it; either way it goes from here.
+// - Shown (`shown`): a press on a change's row in the chat shows that one
+//   change where it landed, from the reply's own record, until it is
+//   hidden (Esc, a press outside it, its Hide) or decided; one at a time. A
+//   suggestion is drawn already: the press lands on it.
 //
-// `states` holds what was decided about each change this tab has heard of
-// ("open", "kept", "undone"), for the reply's rows; one not known yet is read
-// in a batch (`useChangeState`).
+// Several edits of one block in a row are one change, from the text before
+// the first to the text after the last. `states` holds what was decided
+// about each change this tab has heard of ("open", "kept", "undone"), for
+// the reply's rows; one not known yet is read in a batch (`useChangeState`).
 import { useEffect, useSyncExternalStore } from "react";
 
 const OPEN = "open";
@@ -49,50 +48,83 @@ export const CHANGE_STATES = { OPEN, KEPT, UNDONE };
 export const isUndone = (action, state) => (state ? state === UNDONE : !!action?.reverted);
 const EMPTY = [];
 
-// pages: page id → its journal rows, oldest first (each with `change_id`
-// and `state`); revealed: block id → a change unfolded from a reply's row
-// that the journal does not draw ({rows, undo}), while it is unfolded;
-// changes: block id → the change it draws (`chains`); asking: approval id →
-// the call waiting on its card; expanded: the block ids whose kept change
-// is unfolded, while it has one; refusals: block id → {text, force, diff}
-// of the Undo or the Keep that stopped there.
-// `markLife`: how long a kept change's mark stays, in ms (0: till cleared).
+// pages: page id → its suggestions' journal rows, oldest first (each with
+// `change_id`); shown: the change shown from a reply's row ({blockId, ids,
+// rows}) while it shows, or null; changes: block id → the change it draws
+// (`chains`); refusals: block id → {text, force, diff} of the Reject or the
+// Accept that stopped there; reviewing: the account's mode.
 let snapshot = {
-  pages: new Map(), revealed: new Map(), changes: new Map(), states: new Map(), asking: new Map(),
-  expanded: new Set(), refusals: new Map(), markLife: 60000,
+  pages: new Map(), shown: null, changes: new Map(), states: new Map(), refusals: new Map(), reviewing: false,
 };
-// The clock marks time out by; a test hands its own. Its timer holds no
-// process open where there is one (node).
-const SYSTEM_CLOCK = {
-  now: () => Date.now(),
-  set: (fn, ms) => { const id = setTimeout(fn, ms); id?.unref?.(); return id; },
-  clear: (id) => clearTimeout(id),
-};
+// The clock a failed read waits by; a test hands its own.
+const SYSTEM_CLOCK = { now: () => Date.now() };
 let clock = SYSTEM_CLOCK;
-let expiry = null; // the timer of the next mark whose time is up
 const listeners = new Set();
 // The requests: `(path, init)` → the answer, throwing the API's error (its
 // `status` and `data`). The app hands its own (app/App.jsx, apiJson), as a
 // test does; none before then.
 let request = () => Promise.reject(new Error("The review is not connected"));
-const post = (path, body) => request(path, { method: "POST", headers: { "Content-Type": "application/json" },
+const send = (method, path, body) => request(path, { method, headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body) });
+const post = (path, body) => send("POST", path, body);
 
 function set(next) {
   snapshot = next;
+  hearHides(!!next.shown);
   for (const listener of listeners) listener();
 }
+
+// While a change shown from a reply's row shows, Esc or a press outside it
+// hides it, wherever it is drawn (a note's row, a deleted note's struck
+// row, a frame on a PDF page or a page of paper, with the notes shown or
+// not): one listener on the document while one shows (none where there is
+// no document: node). What draws it carries `data-review-shown`; a press
+// within the box of one counts as on it (a frame takes no pointer, the page
+// under it does), and every change's buttons (`.reviewBtns`) keep their
+// presses.
+const SHOWN_ATTR = "data-review-shown";
+let hides = null;
+const within = (el, x, y) => {
+  const r = el.getBoundingClientRect();
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+};
+function onHideKey(e) {
+  if (e.key === "Escape") noteReview.hide();
+}
+function onHidePress(e) {
+  if (e.target?.closest?.(`.reviewBtns, [${SHOWN_ATTR}]`)) return;
+  if ([...(hides?.querySelectorAll(`[${SHOWN_ATTR}]`) || [])].some((el) => within(el, e.clientX, e.clientY))) return;
+  noteReview.hide();
+}
+function hearHides(on) {
+  const target = on && typeof document !== "undefined" && typeof document.addEventListener === "function" ? document : null;
+  if (target === hides) return;
+  hides?.removeEventListener("keydown", onHideKey);
+  hides?.removeEventListener("pointerdown", onHidePress);
+  target?.addEventListener("keydown", onHideKey);
+  target?.addEventListener("pointerdown", onHidePress);
+  hides = target;
+}
+// The attribute what draws the shown change carries, so a press on it keeps
+// it shown: spread on its element (none for a suggestion).
+export const shownMark = (change) => (change?.shown ? { [SHOWN_ATTR]: "" } : null);
 
 // The tools that put something on a page as one new block (a drawing, a
 // text box, a picture, a page of paper, a highlight): their change is the
 // block itself, drawn as it is, not a text.
 const OBJECT_TOOLS = new Set(["draw", "add_text_box", "place_picture", "add_sheet", "highlight"]);
+// A block row of a revert record (create_block's paste, delete_block's
+// subtree: gamma/ai_tools/notes.py): [id, parent_id, position, content,
+// properties], a parent before its children.
+const blockRows = (rows) => (Array.isArray(rows) ? rows.filter((b) => Array.isArray(b) && typeof b[0] === "string") : EMPTY);
 
 // What a change made to the notes, block by block, as a note draws it:
 // [{blockId, pageId, type, before, after}], `type` "edit" (a text before and
-// after), "add" (a new note's text), "move" or "object" (a placed block);
-// none for a read, a failure, a change that changed nothing, a deletion (the
-// note is gone) or a change of the library.
+// after), "add" (a new note's text), "move", "object" (a placed block) or
+// "delete" (the note that went, its text `before`, with its `parentId`, its
+// sibling key `position`, how many notes went with it, `count`, and their
+// ids, `under`); none for a read, a failure, a change that changed nothing,
+// a deletion too large to record or a change of the library.
 export function noteChanges(a) {
   if (!a || a.error || a.noop || a.reverted || !a.block_id || !a.revert) return EMPTY;
   const at = { pageId: a.page_id || "" };
@@ -103,10 +135,15 @@ export function noteChanges(a) {
   }
   if (a.tool === "create_block") {
     if (Array.isArray(r.blocks)) {
-      return r.blocks.filter((b) => Array.isArray(b) && typeof b[0] === "string")
-        .map(([id, , , content]) => ({ ...at, blockId: id, type: "add", before: "", after: content || "" }));
+      return blockRows(r.blocks).map(([id, , , content]) => ({ ...at, blockId: id, type: "add", before: "", after: content || "" }));
     }
     return typeof r.after === "string" ? [{ ...at, blockId: a.block_id, type: "add", before: "", after: r.after }] : EMPTY;
+  }
+  if (a.tool === "delete_block") {
+    const [top, ...under] = blockRows(r.blocks);
+    if (!top) return EMPTY;
+    return [{ ...at, blockId: top[0], type: "delete", before: top[3] || "", after: "", parentId: top[1] || "",
+      position: typeof top[2] === "string" ? top[2] : "", count: under.length, under: under.map((b) => b[0]) }];
   }
   if (a.tool === "move_block") return [{ ...at, blockId: a.block_id, type: "move", before: "", after: "" }];
   if (OBJECT_TOOLS.has(a.tool)) return [{ ...at, blockId: a.block_id, type: "object", before: "", after: "" }];
@@ -117,32 +154,45 @@ export function noteChanges(a) {
 // type: an edit, a new note's text).
 export const isTextChange = (type) => type === "edit" || type === "add";
 
+const byAt = (x, y) => (x.at > y.at ? 1 : x.at < y.at ? -1 : 0);
+// A change with its `steps` (the rows, oldest first) summed up: `ids`
+// (their change ids), its `state` (open while one step waits for review,
+// else kept), `at` (when its latest step was made) and the `agent` that
+// made its latest step, by name, with its `stamp` (gamma/agents.py stamp:
+// chat/agents.js stampLabel words it).
+function summed(change, row) {
+  const name = row.agent?.name || "";
+  return { ...change, ids: [...new Set(change.steps.map((s) => s.change_id))], agent: name || change.agent || "",
+    stamp: name ? row.agent : change.stamp || null, state: change.steps.some((s) => s.state === OPEN) ? OPEN : KEPT,
+    at: change.steps[change.steps.length - 1]?.at || "" };
+}
+
 // `changes` with the row's changes added. A text change chains onto the
 // block's change when it starts from the text that change left; a move or
-// a placed block joins the block's change (its ids, so Undo takes it back
+// a placed block joins the block's change (its ids, so Reject takes it back
 // too), as an edit of a placed block does (it stays that block); an edit
 // after a move is drawn as the edit, the move's id kept. An edit that
 // chains onto nothing (the block was typed in since) is drawn alone, the
-// earlier steps that still wait for review kept in it, so Keep and Undo
-// reach them. A change carries its `steps` (the rows, oldest first), `ids`
-// (their change ids), its `state` (open while one step waits for review,
-// else kept), `keptAt` (when its latest step was kept, on this tab's
-// clock) and the `agent` that made its latest step.
+// earlier steps that still wait for review kept in it, so Accept and
+// Reject reach them. A deletion takes the block's change into it, and the
+// changes of the notes that went with it, which no row draws now.
 export function withChange(changes, row) {
   const parts = noteChanges(row);
   if (!parts.length) return changes;
   const next = new Map(changes);
-  const agent = row.agent?.name || "";
   for (const c of parts) {
     const prev = next.get(c.blockId);
     next.delete(c.blockId);
-    const step = (base, extra = {}) => {
-      const steps = [...base.steps, row];
-      return { ...base, ...extra, steps, ids: [...new Set(steps.map((s) => s.change_id))], agent: agent || base.agent,
-        state: steps.some((s) => s.state === OPEN) ? OPEN : KEPT, keptAt: Math.max(...steps.map((s) => s.keptAt || 0)) };
-    };
-    if (prev && isTextChange(c.type) && isTextChange(prev.type) && prev.after === c.before) {
-      // back where it started: nothing to mark, unless a step still waits
+    const step = (base, extra = {}) => summed({ ...base, ...extra, steps: [...base.steps, row] }, row);
+    if (c.type === "delete") {
+      const inner = (c.under || EMPTY).flatMap((id) => {
+        const gone = next.get(id);
+        next.delete(id);
+        return gone ? gone.steps : EMPTY;
+      });
+      next.set(c.blockId, summed({ ...prev, ...c, steps: [...(prev?.steps || EMPTY), ...inner, row].sort(byAt) }, row));
+    } else if (prev && isTextChange(c.type) && isTextChange(prev.type) && prev.after === c.before) {
+      // back where it started: nothing to draw, unless a step still waits
       const joined = step(prev, { after: c.after });
       if (prev.before !== c.after || joined.state === OPEN) next.set(c.blockId, joined);
     } else if (prev && (!isTextChange(c.type) || prev.type === "object")) {
@@ -150,75 +200,52 @@ export function withChange(changes, row) {
     } else if (prev && prev.type === "move") {
       next.set(c.blockId, step(prev, { type: c.type, before: c.before, after: c.after }));
     } else {
-      next.set(c.blockId, step({ ...c, steps: prev ? prev.steps.filter((s) => s.state === OPEN) : [], agent: "" }));
+      next.set(c.blockId, step({ ...c, steps: prev ? prev.steps.filter((s) => s.state === OPEN) : [], agent: "", stamp: null }));
     }
   }
   return next;
 }
 
-// Every page's changes as the blocks draw them, less the kept ones whose
-// mark's time is up (an unfolded one stays while it is unfolded), then those
-// unfolded from a reply's row that the journal does not hold (`revealed`,
-// only the unfolded ones: rebuilt); and when the next mark's time is up
-// (Infinity: none).
-function chains(pages, revealed, expanded, life) {
-  let all = new Map();
-  for (const rows of pages.values()) for (const row of rows) all = withChange(all, row);
-  const now = clock.now();
-  let next = Infinity;
-  const changes = new Map();
-  for (const [blockId, change] of all) {
-    const ends = change.state === KEPT && life > 0 && !expanded.has(blockId) ? change.keptAt + life : Infinity;
-    if (ends <= now) continue;
-    next = Math.min(next, ends);
-    changes.set(blockId, change);
-  }
-  for (const [blockId, shown] of revealed) {
-    if (changes.has(blockId)) continue;
+// Every page's suggestions as the blocks draw them, then the change shown
+// from a reply's row (`shown: true`) on each block it changed (every note
+// of a paste) that draws no suggestion.
+function chains(pages, shown) {
+  let changes = new Map();
+  for (const rows of pages.values()) for (const row of rows) changes = withChange(changes, row);
+  if (shown) {
     let own = new Map();
     for (const row of shown.rows) own = withChange(own, row);
-    const change = own.get(blockId);
-    if (change) changes.set(blockId, { ...change, undo: shown.undo });
+    for (const [blockId, change] of own) if (!changes.has(blockId)) changes.set(blockId, { ...change, shown: true });
   }
-  return { changes, next };
+  return changes;
 }
 
-// The map or set as it was while the filter left nothing of it out, so a
-// row that reads it renders nothing again.
+// The map as it was while the filter left nothing of it out, so a row that
+// reads it renders nothing again.
 const unchanged = (all, left) => (left.size === all.size ? all : left);
 
-// `next` with its changes drawn again, and the timer set for the next mark
-// whose time comes. Every path that changes what is drawn comes through
-// here, so here a change unfolded from a reply's row goes once it is
-// folded, and a block stays unfolded only while it has a change to show
-// (one undone, cleared or gone leaves none for the next to start unfolded).
+// `next` with its changes drawn again. Every path that changes what is
+// drawn comes through here, so here the shown change goes once no block
+// draws it (a suggestion is drawn there instead, or the journal holds it as
+// one), and a refusal goes with its change.
 function rebuilt(next) {
-  const revealed = unchanged(next.revealed, new Map([...next.revealed].filter(([blockId]) => next.expanded.has(blockId))));
-  const { changes, next: ends } = chains(next.pages, revealed, next.expanded, next.markLife);
-  const expanded = unchanged(next.expanded, new Set([...next.expanded].filter((blockId) => changes.has(blockId))));
+  const changes = chains(next.pages, next.shown);
+  const shown = next.shown && [...changes.values()].some((c) => c.shown) ? next.shown : null;
   const refusals = unchanged(next.refusals, new Map([...next.refusals].filter(([blockId]) => changes.has(blockId))));
-  if (expiry) clock.clear(expiry);
-  expiry = Number.isFinite(ends) ? clock.set(() => { expiry = null; set(rebuilt(snapshot)); }, ends - clock.now() + 20) : null;
-  return { ...next, revealed, expanded, changes, refusals };
+  return { ...next, shown, changes, refusals };
 }
 
 // `ids` were decided (`state`), or left by the server's word (unknown here:
-// read again). A kept one stays, folded to its mark, until cleared.
+// read again): no longer suggestions, and the shown change goes with them.
 function settle(ids, state = "") {
   if (!ids.length) return;
   const gone = new Set(ids);
   const pages = new Map();
-  const now = clock.now();
-  for (const [page, rows] of snapshot.pages) {
-    pages.set(page, rows.flatMap((r) => (!gone.has(r.change_id) ? [r] : state === KEPT ? [{ ...r, state: KEPT, keptAt: now }] : [])));
-  }
+  for (const [page, rows] of snapshot.pages) pages.set(page, rows.filter((r) => !gone.has(r.change_id)));
   const states = new Map(snapshot.states);
   for (const id of ids) if (state) states.set(id, state); else states.delete(id);
-  const revealed = new Map([...snapshot.revealed].filter(([, shown]) => !shown.rows.some((r) => gone.has(r.change_id))));
-  // folded to its mark, though the strip's stepping had unfolded it
-  const expanded = state !== KEPT ? snapshot.expanded
-    : new Set([...snapshot.expanded].filter((blockId) => !snapshot.changes.get(blockId)?.ids.some((id) => gone.has(id))));
-  set(rebuilt({ ...snapshot, pages, states, revealed, expanded }));
+  const shown = snapshot.shown?.ids.some((id) => gone.has(id)) ? null : snapshot.shown;
+  set(rebuilt({ ...snapshot, pages, states, shown }));
 }
 
 // The ids whose state a row asked for, read together once the render is
@@ -283,21 +310,20 @@ function hearNudges(on) {
 // sent before its page was dropped.
 let loadSeq = 0;
 const applied = new Map();
-// Whether an MCP question is about the page: the page it is drawn on (a
-// move's, the note's page now).
-const askOn = (ask, pageId) => ask.remote && (ask.preview.src_page_id || ask.preview.page_id) === pageId;
+// The mode's reads and writes: the newest read sent, the newest write sent
+// and how many writes are on their way. A read's answer is left when a
+// newer read was sent, or when a write was on its way as it was sent or
+// was sent since (the server may have answered it before the write), so a
+// switch is never undone by a read; a failed write puts the mode back
+// unless a newer write was sent.
+let modeRead = 0;
+let modeWrite = 0;
+let modeWriting = 0;
+const MODE_PATH = "/prefs/ai-review";
 
-// Where a waiting call draws (`asking`): a note (an edit, a deletion, a
-// move), a parent's place (a new note) or a surface (a PDF page by its
-// page and number, a page of paper by its id).
-const ON_BLOCK = new Set(["edit_block", "delete_block", "move_block"]);
-const ON_SURFACE = new Set(["draw", "add_text_box", "place_picture", "highlight"]);
+// Where a surface is: a PDF page by its page and number, a page of paper
+// by its id.
 export const surfaceKey = (pageId, surface) => (typeof surface === "number" ? `${pageId}:${surface}` : String(surface || ""));
-function askSurface(ask) {
-  const p = ask.preview || {};
-  if (!ON_SURFACE.has(ask.tool) || !p.shape?.kind) return "";
-  return p.sheet_id ? p.sheet_id : p.pdf_page ? surfaceKey(p.page_id, p.pdf_page) : "";
-}
 // Where a placed block an agent made (a change of kind "object") sits on
 // its surface, from the properties its revert record keeps: {surface (a
 // `surfaceKey`), frame ([width, height] the box is measured in; null: the
@@ -305,7 +331,7 @@ function askSurface(ask) {
 // on a PDF page by their position, a text box and a picture by their frame,
 // on a PDF page or on the page of paper they were made under; null for one
 // that cannot be told so (a drawing on a page of paper: its strokes are in
-// its file), which its row in the notes marks alone.
+// its file), which its row in the notes draws alone.
 export function objectFrame(row) {
   const props = row?.revert?.props;
   if (!props || typeof props !== "object") return null;
@@ -320,12 +346,29 @@ export function objectFrame(row) {
   return surface ? { surface, frame: null, box: [placed.x, placed.y, placed.x + placed.w, placed.y + placed.h] } : null;
 }
 
-// Whether a waiting call can be drawn where it would land.
-function drawable(tool, p) {
-  if (tool === "edit_block") return !!p.block_id && typeof p.text === "string";
-  if (ON_BLOCK.has(tool)) return !!p.block_id;
-  if (tool === "create_block") return !!p.parent_id && typeof p.text === "string";
-  return !!askSurface({ tool, preview: p });
+// Where a deleted note's row goes among its parent's notes now (`list`, in
+// order): before the first whose sibling key comes after its own, else
+// last. A note with no key yet (made in this tab since) is passed over.
+export function deletedAt(list, change) {
+  const i = list.findIndex((b) => typeof b.position === "string" && b.position > change.position);
+  return i < 0 ? list.length : i;
+}
+
+// Where a jump to a change lands (app/App.jsx landOnChange): its page
+// (`pageId`) and the note to land on (`blockId`); for a deleted note, its
+// struck row (`struck`, its id) under its parent (`blockId`, the page's
+// root for a note at the top); for a text box or a picture on a PDF page,
+// that page (`pdfPage`: such a block keeps no position on it; a
+// highlight's and a drawing's are reached through their note). `change`:
+// one the notes draw (`changes`'s), or a change's record (a reply's action,
+// a journal row), whose first note it lands on.
+export function changeLanding(change) {
+  const c = change?.steps ? change : { ...(noteChanges({ ...change, reverted: false })[0]
+    || { pageId: change?.page_id || "", blockId: change?.block_id || "" }), steps: [change] };
+  if (c.type === "delete") return { pageId: c.pageId, blockId: c.parentId || c.pageId, struck: c.blockId, pdfPage: 0 };
+  const props = c.type === "object" ? c.steps[0]?.revert?.props : null;
+  const placed = props && !props.pdf_position && (props.text_box || props.picture);
+  return { pageId: c.pageId, blockId: c.blockId, struck: "", pdfPage: placed ? Number(props.pdf_page) || 0 : 0 };
 }
 
 export const noteReview = {
@@ -336,19 +379,8 @@ export const noteReview = {
   getSnapshot: () => snapshot,
   // How the store reaches the server: `fn(path, init)` (app/App.jsx; tests).
   setRequest(fn) { request = fn; },
-  // The clock marks time out by: {now, set(fn, ms), clear(id)} (tests);
-  // none, the system's again.
+  // The clock a failed read waits by: {now} (tests); none, the system's again.
   setClock(next = SYSTEM_CLOCK) { clock = next; },
-  // How long a kept change's mark stays, in ms; 0 keeps it till cleared
-  // (the account's choice: ReviewMarkLife, below, which app/App.jsx
-  // mounts). The pages on screen are read again: a longer time than they
-  // were read with brings back marks they left out.
-  setMarkLife(ms) {
-    const life = Math.max(0, Number(ms) || 0);
-    if (life === snapshot.markLife) return;
-    set(rebuilt({ ...snapshot, markLife: life }));
-    for (const pageId of watching.keys()) noteReview.load(pageId);
-  },
   // Something on screen draws the page's changes: the first to come reads
   // them, and while one stays they are read again on each of the server's
   // nudges about the page; once the last has gone they are dropped. Returns
@@ -374,133 +406,85 @@ export const noteReview = {
       });
     };
   },
-  // The page's changes its note draws, read again. Those that went since
-  // were decided elsewhere: their states are read again too.
+  // The page's suggestions, read again (GET /api/ai/changes?page_id: the
+  // account's open changes on it, oldest first). Those that went since were
+  // decided elsewhere: their states are read again too.
   async load(pageId) {
     if (!pageId) return;
     const seq = ++loadSeq;
     let answer;
-    const life = snapshot.markLife;
     try {
-      answer = await request(`/ai/changes?page_id=${encodeURIComponent(pageId)}${life ? `&marks_for=${life / 1000}` : ""}`);
+      answer = await request(`/ai/changes?page_id=${encodeURIComponent(pageId)}`);
     } catch {
       return; // a viewer, the server away: nothing to draw
     }
     if (seq <= (applied.get(pageId) || 0)) return;
     applied.set(pageId, seq);
-    // A kept one's time is the server's word of how long ago, on this
-    // tab's clock: a clock that is off times nothing out early or late.
-    const now = clock.now();
-    const rows = (answer?.changes || []).map((r) => ({ ...r, change_id: r.id,
-      keptAt: r.state === OPEN ? 0 : now - (Number(r.kept_ago) || 0) * 1000 }));
+    const rows = (answer?.changes || []).filter((r) => r?.id && (r.state || OPEN) === OPEN)
+      .map((r) => ({ ...r, change_id: r.id, state: OPEN }));
     const before = snapshot.pages.get(pageId) || [];
     const ids = new Set(rows.map((r) => r.change_id));
     const pages = new Map(snapshot.pages);
     if (rows.length) pages.set(pageId, rows); else pages.delete(pageId);
     const states = new Map(snapshot.states);
-    for (const r of rows) states.set(r.change_id, r.state === OPEN ? OPEN : KEPT);
+    for (const r of rows) states.set(r.change_id, OPEN);
     for (const r of before) if (!ids.has(r.change_id)) states.delete(r.change_id);
-    // What an assistant over MCP asks about on the page: the server's list
-    // stands in for the one read before. Answered as a chat card is.
-    const asking = new Map([...snapshot.asking].filter(([, ask]) => !askOn(ask, pageId)));
-    for (const a of answer?.asks || []) {
-      if (!a?.id || !drawable(a.tool, a.preview || {})) continue;
-      asking.set(a.id, { id: a.id, tool: a.tool, perm: a.perm || "", preview: a.preview, agent: a.agent || "", remote: true,
-        decide: (decision, note) => post(`/ai/approvals/${encodeURIComponent(a.id)}`, { decision, note: note || "" }) });
-    }
-    set(rebuilt({ ...snapshot, pages, states, asking }));
+    set(rebuilt({ ...snapshot, pages, states }));
   },
-  // A page left the screen: its changes and an assistant's questions about
-  // it are read again when it comes back (a read on its way is left).
+  // A page left the screen: its suggestions are read again when it comes
+  // back (a read on its way is left).
   drop(pageId) {
     applied.set(pageId, loadSeq);
-    const asking = new Map([...snapshot.asking].filter(([, ask]) => !askOn(ask, pageId)));
-    if (!snapshot.pages.has(pageId) && asking.size === snapshot.asking.size) return;
+    if (!snapshot.pages.has(pageId)) return;
     const pages = new Map(snapshot.pages);
     pages.delete(pageId);
-    set(rebuilt({ ...snapshot, pages, asking: unchanged(snapshot.asking, asking) }));
+    set(rebuilt({ ...snapshot, pages }));
   },
-  // An action of a reply streaming in this tab landed (ChatDock): drawn at
-  // once, before the server's word comes — kept, folded to its mark, when
-  // it was allowed on its card; waiting for review when it ran unasked. One
-  // on a page off screen has its state alone: the page reads its changes
-  // when it comes.
+  // An action of a reply streaming in this tab landed (ChatDock): its state
+  // is the journal's (`change_state`: "open" for a suggestion, else kept),
+  // and a suggestion on a page on screen is drawn at once, before the
+  // server's word comes. One on a page off screen has its state alone: the
+  // page reads its suggestions when it comes.
   landed(action) {
     const id = action?.change_id;
     if (!id) return;
-    const state = action.approval ? KEPT : OPEN;
+    const state = action.change_state === OPEN ? OPEN : KEPT;
     const states = new Map(snapshot.states).set(id, state);
     const page = action.page_id || "";
     const rows = snapshot.pages.get(page) || [];
-    if (!noteChanges(action).length || !watching.has(page) || rows.some((r) => r.change_id === id)) {
+    if (state !== OPEN || !noteChanges(action).length || !watching.has(page) || rows.some((r) => r.change_id === id)) {
       set({ ...snapshot, states });
       return;
     }
     const pages = new Map(snapshot.pages);
-    pages.set(page, [...rows, { ...action, id, state, at: new Date().toISOString(), agent: { name: "" },
-      keptAt: state === KEPT ? clock.now() : 0 }]);
+    pages.set(page, [...rows, { ...action, id, change_id: id, state, at: new Date().toISOString(), agent: { name: "" } }]);
     set(rebuilt({ ...snapshot, pages, states }));
   },
-  // A call waits on its approval card; `decide(decision, note)` answers it
-  // ("once", "chat", "always" or "deny", with the line of what to do
-  // instead) as the card does, and `labels` are the card's words for the
-  // answers' titles: {permission, kind}. Drawn where it would land, when its
-  // preview says where (a note edit's whole new text; a new note's parent,
-  // place and text; a note to delete or move; a shape on a surface).
-  ask(approval, decide, labels = {}) {
-    const p = approval?.preview;
-    if (!p || !drawable(approval.tool, p)) return;
-    const asking = new Map(snapshot.asking);
-    asking.set(approval.id, { id: approval.id, tool: approval.tool, perm: approval.perm || "", preview: p, decide,
-      permission: labels.permission || "", kind: labels.kind || "" });
-    set({ ...snapshot, asking });
-  },
-  // The card was answered, or its reply ended.
-  settle(id) {
-    if (!snapshot.asking.has(id)) return;
-    const asking = new Map(snapshot.asking);
-    asking.delete(id);
-    set({ ...snapshot, asking });
-  },
-  // Unfold or fold a kept change's mark; one whose time is up goes as it
-  // folds, as does one unfolded from a reply's row that the journal does
-  // not hold.
-  toggle(blockId, open = !snapshot.expanded.has(blockId)) {
-    if (open === snapshot.expanded.has(blockId)) return;
-    const expanded = new Set(snapshot.expanded);
-    if (open) expanded.add(blockId); else expanded.delete(blockId);
-    set(rebuilt({ ...snapshot, expanded }));
-  },
-  // Unfold one change, folding the others (the page's strip stepping).
-  focus(blockId) {
-    set(rebuilt({ ...snapshot, expanded: new Set(blockId ? [blockId] : []) }));
-  },
-  // A reply's row was pressed: unfold the change it names in its note. One
-  // the journal does not draw (gone from it, or saved before it) is drawn
-  // from the reply's own record, `undo({force})` taking it back as the row
-  // does. One undone (`isUndone`) no longer stands: there is nothing to
-  // unfold.
-  reveal(action, { undo } = {}) {
-    if (isUndone(action, action?.change_id ? snapshot.states.get(action.change_id) : "")) return;
+  // A reply's row was pressed: show the change it names where it landed,
+  // from the reply's own record; the change shown before goes. Returns the
+  // block it is drawn on (its first note): a suggestion's, drawn already (or
+  // once its page is read); "" for one undone (`isUndone`), which no longer
+  // stands, or one no note draws.
+  reveal(action) {
+    const id = action?.change_id || "";
+    if (isUndone(action, id ? snapshot.states.get(id) : "")) return "";
     const parts = noteChanges({ ...action, reverted: false });
-    if (!parts.length) return;
+    if (!parts.length) return "";
     const blockId = parts[0].blockId;
-    const expanded = new Set(snapshot.expanded).add(blockId);
-    // One the journal holds, though its mark's time is up: unfolded, it shows.
-    const held = [...snapshot.pages.values()].some((rows) => rows.some((r) => r.change_id && r.change_id === action.change_id));
-    const known = snapshot.changes.get(blockId);
-    if ((known && (!action.change_id || known.ids.includes(action.change_id))) || held) {
-      set(rebuilt({ ...snapshot, expanded }));
-      return;
-    }
-    const revealed = new Map(snapshot.revealed);
-    revealed.set(blockId, { rows: [{ ...action, reverted: false, change_id: action.change_id || "", state: KEPT }], undo });
-    set(rebuilt({ ...snapshot, revealed, expanded }));
+    const drawn = snapshot.changes.get(blockId);
+    if (id && ((drawn && !drawn.shown && drawn.ids.includes(id)) || snapshot.states.get(id) === OPEN)) return blockId;
+    const shown = { blockId, ids: id ? [id] : [], rows: [{ ...action, reverted: false, change_id: id, state: KEPT }] };
+    set(rebuilt({ ...snapshot, shown }));
+    return blockId;
   },
-  // Keep changes (by id): kept in the journal, folded to their marks. One
+  // Stop showing the change shown from a reply's row.
+  hide() {
+    if (snapshot.shown) set(rebuilt({ ...snapshot, shown: null }));
+  },
+  // Accept changes (by id): kept in the journal, no longer suggestions. One
   // the server did not keep (undone or kept elsewhere meanwhile) is what
   // the journal says: its state is read again, and its page with it.
-  async keep(ids) {
+  async accept(ids) {
     const list = [...new Set(ids)].filter(Boolean);
     if (!list.length) return;
     if (list.length === 1) {
@@ -514,17 +498,6 @@ export const noteReview = {
     settle(rest);
     for (const pageId of reread) if (watching.has(pageId)) noteReview.load(pageId);
   },
-  // Clear the marks of kept changes (by id): no longer drawn; the changes
-  // stand, and their rows in the chat still undo them.
-  async clear(ids) {
-    const list = [...new Set(ids)].filter(Boolean);
-    if (!list.length) return;
-    await post("/ai/changes/clear", { ids: list });
-    const gone = new Set(list);
-    const pages = new Map();
-    for (const [page, rows] of snapshot.pages) pages.set(page, rows.filter((r) => !gone.has(r.change_id)));
-    set(rebuilt({ ...snapshot, pages }));
-  },
   // Keep, undo or redo one change (`decision` "keep", "undo" or "redo"):
   // settles by the answer's state, resolves once done, throws the API's
   // refusal (chat/aiRevert.js revertRefusal reads it).
@@ -533,40 +506,34 @@ export const noteReview = {
     settle([id], answer?.state || (decision === "undo" ? UNDONE : KEPT));
     return answer;
   },
-  // Keep a block's change that waits for review. Resolves to null, or to
-  // why it could not (`failure`), which every surface drawing the block
-  // then shows on its bar, as an Undo's refusal.
-  async keepBlock(blockId) {
+  // Accept a block's suggestion. Resolves to null, or to why it could not
+  // (`failure`), which every surface drawing the block then shows by its
+  // buttons, as a Reject's refusal.
+  async acceptBlock(blockId) {
     const change = snapshot.changes.get(blockId);
     if (!change || change.state !== OPEN) return null;
     noteReview.clearRefusal(blockId);
     try {
-      await noteReview.keep(waitingIds(change));
+      await noteReview.accept(waitingIds(change));
       return null;
     } catch (err) {
       return refuse(blockId, failure(err));
     }
   },
-  // Take a block's change back, its steps newest first. Resolves to null, or
-  // to the refusal of the step that stopped (`refused(err)` words it: {text,
-  // force, diff}; else `failure`), which the block's bar then shows.
-  async undoBlock(blockId, { force = false, refused = failure } = {}) {
+  // Reject a block's change: its steps undone newest first. Resolves to
+  // null, or to the refusal of the step that stopped (`refused(err)` words
+  // it: {text, force, diff}; else `failure`), which the block's buttons
+  // then show.
+  async rejectBlock(blockId, { force = false, refused = failure } = {}) {
     const change = snapshot.changes.get(blockId);
     if (!change) return null;
     noteReview.clearRefusal(blockId);
-    const steps = change.undo ? [() => change.undo({ force })]
-      : [...change.ids].reverse().map((id) => () => noteReview.decide(id, "undo", { force }));
-    for (const run of steps) {
+    for (const id of [...change.ids].reverse()) {
       try {
-        await run();
+        await noteReview.decide(id, "undo", { force });
       } catch (err) {
         return refuse(blockId, refused(err));
       }
-    }
-    if (change.undo) {
-      const revealed = new Map(snapshot.revealed);
-      revealed.delete(blockId);
-      set(rebuilt({ ...snapshot, revealed }));
     }
     return null;
   },
@@ -576,25 +543,18 @@ export const noteReview = {
     refusals.delete(blockId);
     set({ ...snapshot, refusals });
   },
-  // The page's changes: Keep All keeps those that wait for review, Undo All
-  // takes them back newest first and stops at the first that stops (its
-  // block's bar says why): resolves to that block's id, or "". Clear marks
-  // clears the kept ones' marks.
-  keepPage(pageId) {
-    return noteReview.keep(pageChanges(pageId).filter((c) => c.state === OPEN).flatMap(waitingIds));
+  // The page's suggestions: Accept all keeps them, Reject all undoes them
+  // newest first and stops at the first that stops (its block's buttons say
+  // why): resolves to that block's id, or "".
+  acceptPage(pageId) {
+    return noteReview.accept(pageChanges(pageId).flatMap(waitingIds));
   },
-  async undoPage(pageId, { refused } = {}) {
-    const all = pageChanges(pageId).filter((c) => c.state === OPEN).sort((a, b) => (last(b) > last(a) ? 1 : -1));
+  async rejectPage(pageId, { refused } = {}) {
+    const all = pageChanges(pageId).sort((a, b) => (b.at > a.at ? 1 : -1));
     for (const change of all) {
-      if (await noteReview.undoBlock(change.blockId, { refused })) return change.blockId;
+      if (await noteReview.rejectBlock(change.blockId, { refused })) return change.blockId;
     }
     return "";
-  },
-  clearPage(pageId) {
-    const ids = pageChanges(pageId).filter((c) => c.state === KEPT && !c.undo).flatMap((c) => c.ids);
-    const revealed = new Map([...snapshot.revealed].filter(([blockId]) => snapshot.changes.get(blockId)?.pageId !== pageId));
-    if (revealed.size !== snapshot.revealed.size) set(rebuilt({ ...snapshot, revealed }));
-    return noteReview.clear(ids);
   },
   // A row asked for a change's state: read with the others asked for now
   // (not again while it is being read, nor straight after a failed read).
@@ -603,17 +563,48 @@ export const noteReview = {
     wanted.add(id);
     if (!reading) reading = Promise.resolve().then(readStates);
   },
+  // The account's mode, read again (GET /api/prefs/ai-review: true is
+  // Reviewing); the server away leaves it as last known, as does an answer
+  // a write may have overtaken.
+  async loadMode() {
+    const seq = ++modeRead;
+    const since = modeWriting ? -1 : modeWrite;
+    let answer;
+    try {
+      answer = await request(MODE_PATH);
+    } catch {
+      return;
+    }
+    if (seq !== modeRead || modeWriting || since !== modeWrite) return;
+    if ((answer?.value === true) !== snapshot.reviewing) set({ ...snapshot, reviewing: answer?.value === true });
+  },
+  // Switch the mode: shown at once, written to the account (PUT
+  // /api/prefs/ai-review), and put back as it was when the write fails,
+  // whose error it throws.
+  async setReviewing(on) {
+    const was = snapshot.reviewing;
+    const seq = ++modeWrite;
+    modeWriting += 1;
+    set({ ...snapshot, reviewing: !!on });
+    try {
+      await send("PUT", MODE_PATH, { value: !!on });
+    } catch (err) {
+      if (seq === modeWrite) set({ ...snapshot, reviewing: was });
+      throw err;
+    } finally {
+      modeWriting -= 1;
+    }
+  },
 };
 
-const last = (change) => change.steps[change.steps.length - 1]?.at || "";
-// The ids of a change's steps that wait for review: what its Keep keeps. A
-// chain can hold a step kept already (on its card, say) before one made
-// without asking; the server keeps only those that wait, and one sent that
-// it did not keep would be read again as if its state were unknown.
+// The ids of a change's steps that wait for review: what its Accept keeps.
+// The server keeps only those that wait, and one sent that it did not keep
+// would be read again as if its state were unknown.
 const waitingIds = (change) => change.steps.filter((s) => s.state === OPEN).map((s) => s.change_id);
-const pageChanges = (pageId) => [...snapshot.changes.values()].filter((c) => c.pageId === pageId);
-// Why a block's Keep or Undo stopped, as its bar shows it: the error's
-// words, nothing to force; held for the block, and returned.
+// A page's suggestions (the change shown from a reply's row is none).
+const pageChanges = (pageId) => [...snapshot.changes.values()].filter((c) => c.pageId === pageId && c.state === OPEN);
+// Why a block's Accept or Reject stopped, as its buttons show it: the
+// error's words, nothing to force; held for the block, and returned.
 const failure = (err) => ({ text: err?.message || String(err), force: "", diff: null });
 function refuse(blockId, why) {
   set({ ...snapshot, refusals: new Map(snapshot.refusals).set(blockId, why) });
@@ -625,76 +616,51 @@ function refuse(blockId, why) {
 export function useWatchPage(pageId, enabled = true) {
   useEffect(() => (enabled && pageId ? noteReview.watch(pageId) : undefined), [pageId, enabled]);
 }
-// The account's time for a kept change's mark, in minutes (aiMarkMinutes;
-// 0: till cleared), handed to the store: mounted once by app/App.jsx, it
-// draws nothing.
-export function ReviewMarkLife({ minutes }) {
-  useEffect(() => { noteReview.setMarkLife(minutes * 60000); }, [minutes]);
-  return null;
-}
 
 // What each row reads: its own entry only, so a change elsewhere renders
 // nothing here.
 const useSelect = (fn) => useSyncExternalStore(noteReview.subscribe, fn);
-// The change a block draws, whether its mark is unfolded, the refusal its
-// Undo met.
+// The change a block draws ({blockId, pageId, type, before, after, steps,
+// ids, state, agent, stamp, at}, and `shown` for the one shown from a
+// reply's row), and the refusal its Reject or Accept met.
 export const useNoteChange = (blockId) => useSelect(() => snapshot.changes.get(blockId) || null);
-export const useExpanded = (blockId) => useSelect(() => snapshot.expanded.has(blockId));
 export const useRefusal = (blockId) => useSelect(() => snapshot.refusals.get(blockId) || null);
-// The waiting calls by where they draw, built once per change of `asking`.
-let askCache = { asking: null, byBlock: new Map(), byParent: new Map(), bySurface: new Map() };
-function askIndex() {
-  if (askCache.asking === snapshot.asking) return askCache;
-  const byBlock = new Map(), byParent = new Map(), bySurface = new Map();
-  for (const ask of snapshot.asking.values()) {
-    const p = ask.preview;
-    if (ON_BLOCK.has(ask.tool)) byBlock.set(p.block_id, ask);
-    else if (ask.tool === "create_block") byParent.set(p.parent_id, [...(byParent.get(p.parent_id) || []), ask]);
-    else {
-      const key = askSurface(ask);
-      if (key) bySurface.set(key, [...(bySurface.get(key) || []), ask]);
+// The account's mode (true: Reviewing).
+export const useReviewing = () => useSelect(() => snapshot.reviewing);
+// The changes by where they draw, built once per change of `changes`: the
+// deleted notes by their parent, in their sibling keys' order, and the
+// placed blocks on each surface with where they sit.
+let drawCache = { changes: null, byParent: new Map(), bySurface: new Map() };
+function drawIndex() {
+  if (drawCache.changes === snapshot.changes) return drawCache;
+  const byParent = new Map(), bySurface = new Map();
+  for (const change of snapshot.changes.values()) {
+    if (change.type === "delete") {
+      byParent.set(change.parentId, [...(byParent.get(change.parentId) || []), change]);
+    } else if (change.type === "object") {
+      const at = objectFrame(change.steps[0]);
+      if (at) bySurface.set(at.surface, [...(bySurface.get(at.surface) || []), { change, ...at }]);
     }
   }
-  askCache = { asking: snapshot.asking, byBlock, byParent, bySurface };
-  return askCache;
+  for (const list of byParent.values()) list.sort((a, b) => (a.position > b.position ? 1 : a.position < b.position ? -1 : 0));
+  drawCache = { changes: snapshot.changes, byParent, bySurface };
+  return drawCache;
 }
-// The call waiting on its card that a note draws on itself (an edit, a
-// deletion, a move).
-export const useNoteAsk = (blockId) => useSelect(() => askIndex().byBlock.get(blockId) || null);
-// The new notes waiting on their cards under a parent, drawn as ghost rows.
-export const useGhostAsks = (parentId) => useSelect(() => askIndex().byParent.get(parentId) || EMPTY);
-// Whether a new note waits to go under the parent (its list of children
-// shows, though it is empty).
-export const useAsksUnder = () => useSelect(() => askIndex().byParent);
-// The shapes waiting on their cards on a surface (`surfaceKey`).
-export const useSurfaceAsks = (key) => useSelect(() => askIndex().bySurface.get(key) || EMPTY);
-// The placed blocks agents made on each surface, with where they sit: built
-// once per change of `changes`.
-let objectCache = { changes: null, bySurface: new Map() };
-function objectIndex() {
-  if (objectCache.changes === snapshot.changes) return objectCache;
-  const bySurface = new Map();
-  for (const change of snapshot.changes.values()) {
-    if (change.type !== "object") continue;
-    const at = objectFrame(change.steps[0]);
-    if (at) bySurface.set(at.surface, [...(bySurface.get(at.surface) || []), { change, ...at }]);
-  }
-  objectCache = { changes: snapshot.changes, bySurface };
-  return objectCache;
-}
-// The placed blocks agents made on a surface, waiting for review or kept and
-// marked: [{change, frame, box}].
-export const useSurfaceChanges = (key) => useSelect(() => objectIndex().bySurface.get(key) || EMPTY);
-// The block ids of a page's changes and how many wait for review (an
-// object stable until they change), for the page's strip.
+// The deleted notes drawn under each parent (struck through at their
+// places): a map of parent id → its list.
+export const useDeletedByParent = () => useSelect(() => drawIndex().byParent);
+// The placed blocks agents made on a surface that are drawn there (the
+// suggestions, and the change shown from a reply's row): [{change, frame,
+// box}].
+export const useSurfaceChanges = (key) => useSelect(() => drawIndex().bySurface.get(key) || EMPTY);
+// The block ids of a page's suggestions and how many there are (an object
+// stable until they change), for the header's Editing / Reviewing menu.
 let pageCache = new Map();
 export const usePageChanges = (pageId) => useSelect(() => {
-  const list = pageChanges(pageId);
-  const ids = list.map((c) => c.blockId);
-  const open = list.filter((c) => c.state === OPEN).length;
+  const ids = pageChanges(pageId).map((c) => c.blockId);
   const cached = pageCache.get(pageId);
-  if (cached && cached.open === open && cached.ids.length === ids.length && cached.ids.every((id, i) => id === ids[i])) return cached;
-  const value = { ids, open };
+  if (cached && cached.ids.length === ids.length && cached.ids.every((id, i) => id === ids[i])) return cached;
+  const value = { ids, open: ids.length };
   pageCache = new Map(pageCache).set(pageId, value);
   return value;
 });

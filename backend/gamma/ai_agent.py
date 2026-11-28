@@ -67,8 +67,8 @@ from .ai_tools.base import CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, 
 from .ai_tools.folders import TREE_DELETES
 from .ai_tools.notes import find_selection
 from .ai_tools.organizing import listed_pages
-from .ai_tools.registry import (MUTATING_TOOLS, STORING_TOOLS, approval_preview, replayed, run_agent_tool,
-                                settled_action, tool_action, tool_permission)
+from .ai_tools.registry import (MUTATING_TOOLS, STORING_TOOLS, TRACKED_TOOLS, approval_preview, replayed,
+                                run_agent_tool, settled_action, tool_action, tool_permission)
 from .ai_tools.web import skipped_fetch, unanswered_fetch
 from .logbuf import log
 
@@ -687,7 +687,10 @@ class Helper:
 class ApprovalGate:
     """The chat's Ask permissions: a call of an asking tool shows what it
     would do on an approval card and waits for the user's decision
-    (``gamma/ai_permissions.py``).
+    (``gamma/ai_permissions.py``). In Reviewing (the scope's ``reviewing``,
+    gamma/agent_changes.py) a tracked tool (``TRACKED_TOOLS``) asks nobody:
+    its change is made at once, a suggestion the person accepts or rejects
+    where it lands.
 
     Once runs the call; for the chat or always also allow that permission's
     later calls of this reply; a decline, or no answer, leaves the call
@@ -708,7 +711,9 @@ class ApprovalGate:
     def asks(self, name: str) -> bool:
         # A tool that only stores a file asks nobody: the note write that
         # shows the file asks, with its picture on the card.
-        return name not in STORING_TOOLS and self.scope["permissions"].get(tool_permission(name)) == "ask"
+        if name in STORING_TOOLS or (self.scope.get("reviewing") and name in TRACKED_TOOLS):
+            return False
+        return self.scope["permissions"].get(tool_permission(name)) == "ask"
 
     def run(self, name: str, call: dict, armed):
         """Yield the card event if there is one, then return
@@ -739,9 +744,8 @@ class ApprovalGate:
                 if again and again.get("block_id") != preview.get("block_id"):
                     return CHANGED_WHILE_ASKING, {**settled_action(name, args, CHANGED_WHILE_ASKING),
                                                   "approval": decision}
-            # Allowed on its card, it waits for no review after it is made.
             result, action = run_agent_tool(self.ws, self.scope, name, args, allowed_tools=armed,
-                                            approved=str(preview.get("digest") or ""), asked=True)
+                                            approved=str(preview.get("digest") or ""))
             return result, {**action, "approval": decision}
         # The chip names the refused change by its page's title (and a note
         # edit's mode), but carries no page_id: nothing changed on that page.

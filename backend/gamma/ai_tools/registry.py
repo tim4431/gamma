@@ -27,7 +27,8 @@ from .base import READ_CHARS_DEFAULT, _ARG_CAP, _DETAIL_CAP, _read_cap, ensure_t
 # permission key, the action kind its chip carries, the scopes the tool
 # exists in, whether it mutates the library, its executor and, for a tool
 # that changes something, the preview its approval card shows
-# (approval_preview). The order is the one the model and an MCP client list.
+# (approval_preview) and whether Gamma draws its change where it lands
+# (``tracked``). The order is the one the model and an MCP client list.
 TOOLS = [*reading.TOOLS, *annotations.TOOLS, *viewing.TOOLS, *library.TOOLS, *web.TOOLS, *organizing.TOOLS,
          *folders.TOOLS, *notes.TOOLS, *commenting.TOOLS, *drawing.TOOLS, *pages.TOOLS, *skills.TOOLS]
 _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
@@ -46,6 +47,12 @@ WRITING_TOOLS = frozenset(t["spec"]["name"] for t in TOOLS if t.get("commenting"
 # and over MCP, since the note write that shows the file asks with it in
 # view.
 STORING_TOOLS = frozenset(t["spec"]["name"] for t in TOOLS if t.get("stores"))
+# The tools whose change Gamma draws where it lands, a note's text, a note
+# added, moved or deleted, a highlight or a block on a PDF page or a page of
+# paper: in Reviewing (gamma/agent_changes.py) they ask nobody, in the chat
+# (ApprovalGate) and over MCP, and each change is a suggestion the person
+# accepts or rejects there.
+TRACKED_TOOLS = frozenset(t["spec"]["name"] for t in TOOLS if t.get("tracked"))
 # The tools whose answer is a picture: a model that reads text only gets
 # neither (routers/ai.py, _chat_tools).
 PICTURE_TOOLS = frozenset({"view_pdf_page", "view_ink", "view_image"})
@@ -218,7 +225,7 @@ def _deleting(ws: str) -> bool:
 
 
 def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
-                   *, allowed_tools=None, approved: str = "", asked: bool = False) -> tuple[str, dict]:
+                   *, allowed_tools=None, approved: str = "") -> tuple[str, dict]:
     """Execute one tool call against a trusted, caller-resolved workspace/scope.
 
     Chat and MCP share this dispatcher; each passes the tool names it armed
@@ -226,13 +233,15 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
     authenticates the workspace before invoking this layer. ``approved`` is
     the digest of the approval card the user allowed for this call
     (``ApprovalGate``): a call naming several pages runs only as that card
-    showed it. ``asked``: the person allowed this very call before it ran
-    (a card, a client's question).
+    showed it.
 
     A change made where the scope names its ``journal`` (``{source,
-    token}``: the chat's, an MCP connection's) is journaled for the
-    person's review (gamma/agent_changes.py), kept already when ``asked``,
-    and its action carries the ``change_id``.
+    token}``: the chat's, an MCP connection's) is journaled
+    (gamma/agent_changes.py), and its action carries the ``change_id`` and
+    the ``change_state`` it starts in: a suggestion (``open``) when the
+    scope is ``reviewing`` and the tool is tracked (``TRACKED_TOOLS``), else
+    ``kept``. Such a suggestion the journal cannot keep stands as written,
+    and the model's result says so (``agent_changes.UNTRACKED``).
 
     Returns ``(result_text, action)`` — result_text goes back to the model;
     action is the ``{kind, summary, tool, args, result}`` UI event for EVERY
@@ -301,13 +310,19 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
         chip["images"] = images
     journal = scope.get("journal")
     if journal and tool["mutating"] and not chip.get("error") and not chip.get("noop"):
+        kept = not (scope.get("reviewing") and tool.get("tracked"))
         try:
             change_id = agent_changes.record(ws, account=scope.get("actor") or "", source=journal["source"],
                                              token_id=journal.get("token") or "", agent=scope.get("agent"),
-                                             tool=name, action=chip, kept=asked)
-        except Exception as e:  # the change is made: a journal that fails only loses its review
+                                             tool=name, action=chip, kept=kept)
+        except Exception as e:  # the change is made: a journal that fails loses only its row
             log.warning(f"[ai_tools] {name}: the change could not be journaled: {e}")
             change_id = ""
         if change_id:
             chip["change_id"] = change_id
+            chip["change_state"] = agent_changes.KEPT if kept else agent_changes.OPEN
+            if not kept:
+                result += "\n\n" + agent_changes.SUGGESTED
+        elif not kept:
+            result += "\n\n" + agent_changes.UNTRACKED
     return result, chip

@@ -656,7 +656,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     }
   });
 
-  await step("comments: Gamma AI asked in a PDF's chat comments on a passage once allowed: the passage is highlighted naming it, the thread signed Gamma AI, for its person", async () => {
+  await step("comments: Gamma AI asked in a PDF's chat comments on a passage once allowed: the passage is highlighted naming it, the thread signed Gamma AI, for its person, who is not named to themselves", async () => {
     const model = await commentingModel({ quote: "A preprint on", pdf_page: 1, body: "Which paper is this one?" });
     const provider = (await ben.api("/api/ai/providers", { method: "POST", body: {
       protocol: "openai", name: "Stand-in model", api_key: "e2e-comment-only", base_url: model.base, models: "comment-model" } }))
@@ -684,8 +684,8 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       await dock.locator(".chatBubble.ai", { hasText: "I left the authors a comment." }).waitFor({ timeout: 15000 });
       assert(model.results.some((r) => r.includes("ok — commented on page 1, “A preprint on”")),
         `the tool's answer reached the model: ${JSON.stringify(model.results)}`);
-      // the new highlight arrives live and says who made it
-      await page.locator('[data-page="1"] div[data-hl-id][title="Highlighted by Gamma AI, for cm-ben"]').first().waitFor({ timeout: 10000 });
+      // the new highlight arrives live and says who made it: to ben, whom it was for, Gamma AI alone
+      await page.locator('[data-page="1"] div[data-hl-id][title="Highlighted by Gamma AI"]').first().waitFor({ timeout: 10000 });
       const thread = (await ben.api(`/api/pages/${assisted}/comments?state=all`)).threads
         .find((th) => th.comments[0]?.body === "Which paper is this one?");
       assert(thread, "the thread is on the page");
@@ -695,7 +695,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       const item = page.locator(".commentItem", { hasText: "Which paper is this one?" }).first();
       await item.waitFor({ timeout: 10000 });
       assertEq(await item.locator(".commentAuthor").textContent(), "Gamma AI", "Gamma AI's name");
-      assertEq(await item.locator(".commentFor").textContent(), "for cm-ben", "for the person who asked");
+      assertEq(await item.locator(".commentFor").count(), 0, "the person who asked is not named to themselves");
       assertEq(await item.locator(":scope > .agentAvatar").getAttribute("data-agent"), "gamma", "Gamma AI's avatar");
       assertNoProblems(page);
     } finally {

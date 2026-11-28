@@ -241,7 +241,7 @@ export async function mcpScenarios(env) {
     return (body) => post(body, session);
   }
 
-  await step("mcp: a connection that edits asks before each change through the client and in Gamma, and makes only the changes allowed", async () => {
+  await step("mcp: a connection that edits asks before each change through the client, and makes only the changes allowed", async () => {
     // A client that can show a question (elicitation) and a connection that
     // edits alice's workspace, asking first (the default).
     const agent = await alice.api("/api/integrations/tokens", { method: "POST", body: { name: "Asked agent", edit_workspaces: [alice.ws] } });
@@ -279,34 +279,6 @@ export async function mcpScenarios(env) {
         pasted.question?.message);
       assert(!pasted.result.isError && pasted.result.structuredContent.block_ids.length === 3, JSON.stringify(pasted.result));
       assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note", "Pasted one", "- pasted two", "- pasted three"]));
-      // Answered in Gamma: the open page draws the question where the note would go, by the agent's name, with
-      // Keep and Undo; Keep there makes the change, the client's question is withdrawn, and the note lands
-      // folded to its mark (kept on its question).
-      const ctx = await alice.context(browser);
-      try {
-        const tab = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${page.id}`);
-        await tab.locator(".blockRowWrap", { hasText: "Asked note" }).waitFor();
-        const call = messages(await send({ jsonrpc: "2.0", id: ++id, method: "tools/call", params: {
-          name: "create_block", arguments: { parent_id: page.id, content: "Kept in Gamma" } } }));
-        const { value: asking } = await call.next();
-        assertEq(asking.method, "elicitation/create");
-        const ghost = tab.locator(".aiAskGhostWrap", { hasText: "Kept in Gamma" });
-        await ghost.waitFor();
-        await ghost.getByText("Asked agent wants to add this note").waitFor();
-        await ghost.getByRole("button", { name: "Keep", exact: true }).click();
-        const { value: withdrawn } = await call.next();
-        assertEq(withdrawn.method, "notifications/cancelled");
-        assertEq(withdrawn.params.requestId, asking.id, "the client's own question is withdrawn");
-        const { value: done } = await call.next();
-        assert(done.id === id && !done.result.isError, JSON.stringify(done));
-        await until(async () => !(await ghost.count()), { what: "answered, the page draws the question no more" });
-        await tab.locator(".blockRowWrap", { hasText: "Kept in Gamma" }).locator(".aiChangeMark").waitFor();
-        assertNoProblems(tab);
-      } finally {
-        await ctx.close();
-      }
-      assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note", "Pasted one", "- pasted two", "- pasted three",
-        "Kept in Gamma"]));
       // "Don't ask again": this change goes through, and the next one is not asked about.
       const remembered = await change("Remembered note", { action: "accept", content: { remember: true } });
       assert(remembered.question && !remembered.result.isError, JSON.stringify(remembered.result));
@@ -314,75 +286,83 @@ export async function mcpScenarios(env) {
       const unasked = await change("Unasked note", null);
       assert(!unasked.question && !unasked.result.isError, "no question once it changes without asking");
       assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note", "Pasted one", "- pasted two", "- pasted three",
-        "Kept in Gamma", "Remembered note", "Unasked note"]));
+        "Remembered note", "Unasked note"]));
     } finally {
       await alice.api(`/api/integrations/tokens/${agent.id}`, { method: "DELETE" });
     }
   });
 
-  await step("mcp: an assistant's question is drawn in Gamma whatever the notes show: a drawing on the PDF with the Notes window closed, a note on a page with none", async () => {
-    const agent = await alice.api("/api/integrations/tokens", { method: "POST", body: { name: "Drawing agent", edit_workspaces: [alice.ws] } });
-    const up = await alice.upload("/api/uploads", makePdf([["A page the assistant draws on", "a passage to box"]]), "asked.pdf", "application/pdf");
+  await step("mcp: while the account reviews, a connection's note and text box are made without asking the client, suggestions drawn where they land with ✓ and ✗; back in Editing it asks again, and its row in Settings → Integrations opens the change where it landed", async () => {
+    // A client that can be asked, and a connection that edits alice's workspace, asking first (the default).
+    const agent = await alice.api("/api/integrations/tokens", { method: "POST", body: { name: "Reviewed agent", edit_workspaces: [alice.ws] } });
+    const up = await alice.upload("/api/uploads", makePdf([["A paper the assistant marks up", "a passage to remark on"]]), "reviewed.pdf", "application/pdf");
     const paper = (await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
-      body: { default_title: "Asked paper", source_url: up.source_url } })).id;
-    const bare = await alice.upload("/api/uploads", makePdf([["A paper nobody annotated yet"]]), "bare.pdf", "application/pdf");
-    const empty = (await alice.api(`/api/blocks/by-doc/${bare.doc_id}`, { method: "POST",
-      body: { default_title: "Unannotated paper", source_url: bare.source_url } })).id;
+      body: { default_title: "Reviewed paper", source_url: up.source_url } })).id;
     const ctx = await alice.context(browser);
     try {
       const send = await askedSession(agent.token);
-      // A call's question: the call's stream, and the question it opens with.
-      const ask = async (id, name, args) => {
-        const call = messages(await send({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }));
-        const { value: asking } = await call.next();
-        assertEq(asking.method, "elicitation/create");
-        return { call, asking };
+      // A call: its stream and its first message, Gamma's question or, asking nobody, its own result.
+      let id = 40;
+      const call = async (name, args) => {
+        const stream = messages(await send({ jsonrpc: "2.0", id: ++id, method: "tools/call", params: { name, arguments: args } }));
+        return { stream, first: (await stream.next()).value, id };
       };
+      await alice.api("/api/prefs/ai-review", { method: "PUT", body: { value: true } });
       const tab = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${paper}`);
       await waitForPdf(tab, 1);
-      // the Notes window closed: the PDF alone shows the page
       await tab.getByRole("button", { name: "View", exact: true }).click();
       const notesItem = tab.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "Notes" });
-      if ((await notesItem.getAttribute("aria-checked")) === "true") await notesItem.click();
-      await tab.keyboard.press("Escape");
-      await until(async () => !(await tab.locator('[data-guide="dock.notes"]').count()), { what: "the Notes window closed" });
-      const strokes = () => tab.locator('.pdfViewer [data-page="1"] .inkLayer path').count();
-      assertEq(await strokes(), 0, "nothing drawn yet");
-      // The drawing is drawn where it would land, by the agent's name, with Keep; Keep there answers the client too.
-      const drawing = await ask(31, "draw", { page_id: paper, pdf_page: 1, shapes: [{ kind: "rect", box: [0.1, 0.1, 0.6, 0.3] }] });
-      const layer = tab.locator('.pdfPageWrap[data-page="1"] .reviewLayer');
-      await layer.locator(".reviewFrame").waitFor();
-      const tag = layer.locator(".reviewTag", { hasText: "Drawing agent wants to draw this" });
-      await tag.waitFor();
-      await tag.getByRole("button", { name: "Keep", exact: true }).click();
-      const { value: withdrawn } = await drawing.call.next();
-      assertEq(withdrawn.method, "notifications/cancelled");
-      assertEq(withdrawn.params.requestId, drawing.asking.id, "the client's own question is withdrawn");
-      const { value: drawn } = await drawing.call.next();
-      assert(drawn.id === 31 && !drawn.result.isError, JSON.stringify(drawn));
-      await until(async () => !(await layer.locator(".reviewFrame").count()), { what: "answered, the page draws the question no more" });
-      await until(async () => (await strokes()) > 0, { what: "the drawing on page 1" });
-      await layer.locator(".reviewObjectMark").waitFor(); // kept on its question: marked where it landed
-      // A paper with no notes yet (a PDF's page seeds no placeholder note, so its tree is empty), the Notes
-      // window open again, draws a new note it asks to add; declined in the client, it goes from the page.
-      await tab.goto(`${server.base}/?ws=${alice.ws}&page=${empty}`);
-      await waitForPdf(tab, 1);
-      await tab.getByRole("button", { name: "View", exact: true }).click();
       if ((await notesItem.getAttribute("aria-checked")) !== "true") await notesItem.click();
       await tab.keyboard.press("Escape");
       await tab.locator(".notesTail.isEmpty").waitFor();
-      const note = await ask(32, "create_block", { parent_id: empty, content: "A first note, asked for" });
-      const ghost = tab.locator(".aiAskGhostWrap", { hasText: "A first note, asked for" });
-      await ghost.waitFor();
-      await ghost.getByText("Drawing agent wants to add this note").waitFor();
-      assertEq((await send({ jsonrpc: "2.0", id: note.asking.id, result: { action: "decline" } })).status, 202);
-      const { value: declined } = await note.call.next();
-      assert(declined.id === 32 && declined.result.isError, JSON.stringify(declined));
-      await until(async () => !(await ghost.count()), { what: "answered in the client, the page draws the question no more" });
-      assertEq((await alice.api(`/api/blocks/${empty}/children`)).children.length, 0, "declined: no note");
+      // Reviewing: the note is made at once, a suggestion drawn as new with ✓ and ✗ that name the agent.
+      const note = await call("create_block", { parent_id: paper, content: "A note the assistant suggests" });
+      assertEq(note.first.id, note.id, "no question: the call's own result");
+      assert(!note.first.result.isError && note.first.result.structuredContent.change_state === "open", JSON.stringify(note.first.result));
+      const suggested = tab.locator(".blockRowWrap", { hasText: "A note the assistant suggests" });
+      await suggested.locator(".mdDiffView.mdDiffNew").waitFor();
+      const accept = suggested.getByRole("button", { name: "Accept", exact: true });
+      assert((await accept.getAttribute("title")).includes("Reviewed agent"), "its ✓ names the agent");
+      // and a text box on the PDF page, framed there with its own ✓ and ✗: ✗ takes it back
+      const box = await call("add_text_box", { page_id: paper, pdf_page: 1, text: "A margin remark", at: [0.1, 0.5] });
+      assertEq(box.first.id, box.id, "no question for the text box either");
+      const layer = tab.locator('.pdfPageWrap[data-page="1"] .reviewLayer');
+      const remark = tab.locator('.pdfViewer [data-page="1"] .textBox', { hasText: "A margin remark" });
+      await layer.locator(".reviewObjectFrame").waitFor();
+      await remark.waitFor();
+      await layer.getByRole("button", { name: "Reject", exact: true }).click();
+      await until(async () => !(await layer.locator(".reviewObjectFrame").count()) && !(await remark.count()),
+        { what: "rejected, the text box goes" });
+      await accept.click();
+      await until(async () => !(await suggested.locator(".mdDiffView, .reviewBtns").count()), { what: "accepted, the note is drawn as written" });
+      // Editing again: the next change asks the client first, and lands as written.
+      await alice.api("/api/prefs/ai-review", { method: "PUT", body: { value: false } });
+      const asked = await call("create_block", { parent_id: paper, content: "A note asked about" });
+      assertEq(asked.first.method, "elicitation/create", "Editing asks the client");
+      assertEq((await send({ jsonrpc: "2.0", id: asked.first.id, result: { action: "accept", content: { remember: false } } })).status, 202);
+      const { value: made } = await asked.stream.next();
+      assert(made.id === asked.id && !made.result.isError && made.result.structuredContent.change_state === "kept", JSON.stringify(made));
+      const kept = tab.locator(".blockRowWrap", { hasText: "A note asked about" });
+      await kept.waitFor();
+      assertEq(await kept.locator(".mdDiffView, .reviewBtns").count(), 0, "allowed in the client: drawn as written");
+      // Its row among the connection's changes in Settings → Integrations opens it where it landed, its diff shown.
+      await tab.locator('[data-guide="header.account"]').click();
+      await tab.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+      await tab.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Integrations", exact: true }).click();
+      await tab.locator('.settingsPane [data-setting="Reviewed agent"]').getByRole("button", { name: "Changes", exact: true }).click();
+      const changeRows = tab.locator('.settingsPane [data-setting="Added a note in “Reviewed paper”"]');
+      await until(async () => (await changeRows.count()) === 2, { what: "both notes among its changes" });
+      await changeRows.first().getByRole("button", { name: "Open", exact: true }).click();
+      await tab.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "detached" });
+      await kept.locator(".mdDiffView.mdDiffNew").waitFor();
+      await kept.getByRole("button", { name: "Hide the change", exact: true }).click();
+      await until(async () => !(await kept.locator(".mdDiffView").count()), { what: "× hides it" });
+      assertEq(JSON.stringify((await alice.api(`/api/blocks/${paper}/children`)).children.map((b) => b.content)),
+        JSON.stringify(["A note the assistant suggests", "A note asked about"]), "the text box rejected, the notes kept");
       assertNoProblems(tab);
     } finally {
       await ctx.close();
+      await alice.api("/api/prefs/ai-review", { method: "PUT", body: { value: false } });
       await alice.api(`/api/integrations/tokens/${agent.id}`, { method: "DELETE" });
     }
   });

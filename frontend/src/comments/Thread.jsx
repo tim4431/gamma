@@ -145,7 +145,7 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
       <div className="commentMain">
         <div className="commentMeta">
           <span className="commentAuthor" title={comment.agent ? byline : undefined}>{who || t("Someone")}</span>
-          {comment.agent ? <span className="commentFor" title={byline}>{agentFor(comment)}</span> : null}
+          {comment.agent && agentFor(comment) ? <span className="commentFor" title={byline}>{agentFor(comment)}</span> : null}
           <span className="commentTime" title={fmtDate(comment.created_at, { dateStyle: "medium", timeStyle: "short" })}>
             {formatRelativeTime(comment.created_at)}
           </span>

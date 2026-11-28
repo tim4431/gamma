@@ -3056,8 +3056,8 @@ reach.
       band and corner, a text box's width handle, band and open editor, a
       selected picture and its crop (`.pagePicture.selected`,
       `.pictureCrop`), and the page's own controls (`PAGE_CONTROLS`): the
-      comment cards beside a PDF page and an agent's change's bar or mark
-      (`markup/ReviewLayer.jsx`). So a
+      comment cards beside a PDF page (`.commentMargin`) and the buttons of
+      an agent's change on it (`.reviewTag`, `markup/ReviewLayer.jsx`). So a
       picture placed while a pen is armed moves before the pen writes over
       it. With an ink tool armed, an unselected picture takes no pointer
       (`markup.css`), and ink draws over it.

@@ -1,11 +1,12 @@
-"""An agent's changes, as the person reviews them and takes them back
+"""An agent's changes, as the person decides on them and takes them back
 (docs/dev/ai.md "Reviewing an agent's changes"): the journal's
-(gamma/agent_changes.py) read for a page or a reply's rows, kept, their
-marks cleared, undone or redone (``/ai/changes*``), and a reply's change
+(gamma/agent_changes.py) suggestions on a page, the states of a reply's
+rows and one change read (``GET /ai/changes*``), a suggestion accepted,
+a change undone or redone (``POST /ai/changes*``), and a reply's change
 taken back by the revert record its action keeps (``/ai/revert``,
-gamma/ai_revert.py). Keeping and clearing are the person's review, from a
-signed-in session; undoing and redoing are a workspace editor's, as the
-chat's writes are."""
+gamma/ai_revert.py). Reading one change and accepting are the person's,
+from a signed-in session; undoing and redoing are a workspace editor's,
+as the chat's writes are."""
 
 from typing import Literal
 
@@ -13,8 +14,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import agent_asks, agent_changes, ai_revert
+from .. import agent_changes, ai_revert
 from ..auth import TOKEN_REFUSAL, actor_of, is_token, require_ws
+from .integrations import token_workspaces
 
 router = APIRouter(prefix="/api", tags=["ai"])
 
@@ -47,36 +49,65 @@ def ai_revert_change(payload: AIRevert, request: Request):
         return JSONResponse(status_code=e.status, content=e.body())
 
 
+# What a change says of itself to the page that draws it or shows it.
+_FIELDS = ("id", "at", "tool", "kind", "block_id", "page_id", "summary", "revert", "agent", "source", "state")
+
+
 @router.get("/ai/changes")
-def ai_changes(request: Request, page_id: str = "", ids: str = "", marks_for: float = 0):
+def ai_changes(request: Request, page_id: str = "", ids: str = ""):
     """The account's agent changes (gamma/agent_changes.py): with
-    ``page_id``, those its note draws, oldest first (``{changes}``: those
-    that wait for review, and the kept ones whose mark stands, by their
-    ``state``, a kept one with its ``kept_ago`` in seconds; ``marks_for``,
-    how long the account's marks last in seconds, leaves out the kept ones
-    whose time is up; and ``{asks}``, what an assistant over MCP is asking
-    about on the page, gamma/agent_asks.py, none to an integration token:
-    only the person answers them); with ``ids`` (comma-separated), the
-    states of those changes (``{states: {id: open|kept|undone}}``: a
-    reply's rows). Another account's changes are never listed."""
+    ``page_id``, its suggestions on that page, oldest first (``{changes}``,
+    each ``open``: what the page draws until the person accepts or rejects
+    it); with ``ids`` (comma-separated), the states of those changes
+    (``{states: {id: open|kept|undone}}``: a reply's rows). Another
+    account's changes are never listed."""
     ws = require_ws(request)
     user_id = request.state.user_id or ""
     if not user_id:  # a share link's visitor has no changes of its own
-        return {"changes": [], "asks": []} if page_id else {"states": {}}
+        return {"changes": []} if page_id else {"states": {}}
     if page_id:
-        return {"changes": [{k: c[k] for k in ("id", "at", "tool", "kind", "block_id", "page_id", "summary",
-                                                "revert", "agent", "source", "state", "kept_ago") if k in c}
-                            for c in agent_changes.marked_on(ws, user_id, page_id, max(0.0, marks_for))],
-                "asks": [] if is_token(request) else agent_asks.on_page(user_id, ws, page_id)}
+        return {"changes": [{k: c[k] for k in _FIELDS} for c in agent_changes.suggested_on(ws, user_id, page_id)]}
     return {"states": agent_changes.states(ws, user_id, ids.split(","))}
 
 
 def _person_reviews(request: Request) -> None:
-    """Keeping an agent's change or clearing its mark is the person's
-    review, from a signed-in session: an integration token, through which
-    the changes may have been made, reviews none (403)."""
+    """Accepting an agent's change, or reading one to show it, is the
+    person's, from a signed-in session: an integration token, through which
+    the changes may have been made, does neither (403)."""
     if is_token(request):
         raise HTTPException(403, TOKEN_REFUSAL)
+
+
+def _readable(change: dict, user_id: str, ws: str) -> bool:
+    """Whether ``user_id`` reads ``change`` in ``ws``: one made for the
+    account, or one an MCP connection journaled before migration step 73
+    named the account (``account`` ''), made by a connection of the
+    account's that reads ``ws``, as its Changes in Settings list it."""
+    if change["account"]:
+        return change["account"] == user_id
+    if not change["token_id"]:
+        return False
+    try:
+        return ws in token_workspaces(user_id, change["token_id"])
+    except HTTPException:  # a connection gone, or another account's
+        return False
+
+
+@router.get("/ai/changes/{change_id}")
+def ai_change(change_id: str, request: Request):
+    """One of the account's agent changes in the request's workspace, for
+    the page it landed on to show its diff (a reply's row, a connection's
+    row in Settings): ``{change}``, with its state. A change one of the
+    account's connections made before the journal named accounts is the
+    account's too (``_readable``). 404 for a change that is gone or another
+    account's; 403 to an integration token."""
+    ws = require_ws(request)
+    _person_reviews(request)
+    user_id = request.state.user_id or ""
+    change = agent_changes.find(ws, change_id)
+    if not change or not user_id or not _readable(change, user_id, ws):
+        raise HTTPException(404, "No such change")
+    return {"change": {k: change[k] for k in _FIELDS}}
 
 
 class AIChangesMany(BaseModel):
@@ -85,22 +116,12 @@ class AIChangesMany(BaseModel):
 
 @router.post("/ai/changes/keep")
 def ai_changes_keep(payload: AIChangesMany, request: Request):
-    """Keep the account's changes among ``ids`` that wait for review (a
-    page's or a reply's Keep All): ``{kept}``, the ids kept now; one
-    undone or kept already is not among them."""
+    """Accept the account's suggestions among ``ids`` (a page's or a
+    reply's Accept all): ``{kept}``, the ids kept now; one undone or kept
+    already is not among them."""
     ws = require_ws(request)
     _person_reviews(request)
     return {"kept": agent_changes.keep(ws, request.state.user_id or "", payload.ids)}
-
-
-@router.post("/ai/changes/clear")
-def ai_changes_clear(payload: AIChangesMany, request: Request):
-    """Clear the marks of the account's kept changes among ``ids`` (a page's
-    Clear marks): ``{cleared}``, the ids cleared now. The changes stand, and
-    their rows in the chat still undo them."""
-    ws = require_ws(request)
-    _person_reviews(request)
-    return {"cleared": agent_changes.clear(ws, request.state.user_id or "", payload.ids)}
 
 
 class AIChangeDecision(BaseModel):
@@ -108,16 +129,17 @@ class AIChangeDecision(BaseModel):
     force: bool = False
 
 
-# After keep and clear, whose paths this one's matches too.
+# After keep, whose path this one's matches too.
 @router.post("/ai/changes/{change_id}")
 def ai_change_decide(change_id: str, payload: AIChangeDecision, request: Request):
-    """Keep, undo or redo one of the account's agent changes, from its note,
-    its row in the chat or the dialog: ``{state, page_id, noop?}``, the
-    change's state after it — with ``noop`` the state it had, when there
-    was nothing to do (a keep of one undone or kept already). Undo and
-    redo are ``/ai/revert``'s, with its 409s (what ``force`` would do) and
-    404; 404 too for a change that is gone or another account's. A keep is
-    the person's review: 403 to an integration token."""
+    """Accept (``keep``), reject or undo (``undo``) or redo one of the
+    account's agent changes, from where it landed, its row in the chat or
+    the dialog: ``{state, page_id, noop?}``, the change's state after it —
+    with ``noop`` the state it had, when there was nothing to do (an accept
+    of one undone or kept already). Undo and redo are ``/ai/revert``'s,
+    with its 409s (what ``force`` would do) and 404; 404 too for a change
+    that is gone or another account's. An accept is the person's: 403 to
+    an integration token."""
     user_id = request.state.user_id or ""
     ws = require_ws(request, write=payload.decision != "keep")
     if payload.decision == "keep":

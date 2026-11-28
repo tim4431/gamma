@@ -571,6 +571,15 @@ export function revealBlock(blocks, view, targetId) {
   return { ...view, folds };
 }
 
+// Unfold whatever hides the notes under `parentId`: revealBlock's, and the
+// block itself when it is folded — a view change only. The same view comes
+// back when nothing hid them (the page's root, say, is no block).
+export function revealUnder(blocks, view, parentId) {
+  const shown = revealBlock(blocks, view, parentId);
+  const parent = findBlock(blocks, parentId);
+  return parent && isFolded(parent, shown) ? { ...shown, folds: { ...shown.folds, [parentId]: false } } : shown;
+}
+
 // True when a folded ancestor hides `targetId` — what revealBlock opens.
 export function isFoldedAway(blocks, targetId, view) {
   return (ancestorsOf(blocks, targetId) || []).some((b) => isFolded(b, view));

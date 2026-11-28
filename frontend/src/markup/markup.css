@@ -274,63 +274,18 @@
   cursor: default;
 }
 
-/* --- What an agent asks to put on a surface, and what it put there -------- */
-/* (markup/ReviewLayer.jsx) Over the ink, the shapes asked for faded inside
-   a dashed frame in the accent, as a diff marks what is not written yet,
-   and the card's answers by the frame, in screen pixels; only the answers
-   and the marks take the pointer. The dark-page filter is ink's rule in
-   app.css, on the strokes' layer (.reviewInk) and a text box's body. */
+/* --- An agent's changes on a surface (markup/ReviewLayer.jsx) ------------- */
+/* Over the ink, a placed block that is a suggestion, or whose change the
+   chat shows, framed solid in the green of what an agent added, with its
+   buttons by the frame in screen pixels; only the buttons take the
+   pointer. The frame's place (inline: its left, top, width and height) is
+   the page's. */
 .reviewLayer {
   position: absolute;
   inset: 0;
   z-index: 7;
   pointer-events: none;
 }
-.reviewShapes {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-.reviewShape { opacity: 0.75; }
-.reviewFrame {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.5px;
-  stroke-dasharray: 5 4;
-  vector-effect: non-scaling-stroke;
-}
-/* A text box asked for: the page's own box face (.textBoxBody), filling
-   its frame, its text as written. */
-.reviewTextBox {
-  box-sizing: border-box;
-  width: 100%;
-  height: 100%;
-  white-space: pre-wrap;
-}
-/* The bar, placed by ReviewLayer inside its page; its padding is the gap
-   to the frame above or below it, and passes the pointer through. */
-.reviewTag {
-  position: absolute;
-  width: max-content;
-  max-width: min(30rem, 100%);
-  padding: var(--space-1) 0;
-  pointer-events: none;
-}
-.reviewTag .noteReviewBar {
-  margin-top: 0;
-  pointer-events: auto;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-2);
-}
-/* A placed block an agent made: framed solid in the mark's green while it
-   waits for review or is unfolded, else the notes' kept-change mark
-   (.aiChangeMark, app.css) at its left, which unfolds it; here only its
-   place (inline: its left, top and height) is the page's. */
 .reviewObjectFrame {
   position: absolute;
   border: 1.5px solid var(--ok);
@@ -338,7 +293,15 @@
   background: color-mix(in srgb, var(--ok) 6%, transparent);
   pointer-events: none;
 }
-.reviewObjectMark {
-  margin-left: -6px;
-  pointer-events: auto;
+/* The buttons, placed by ReviewLayer inside its page; the tag's padding is
+   the gap to the frame above or below it, and passes the pointer through.
+   Their pill (app.css .reviewBtns) floats over the page. */
+.reviewTag {
+  position: absolute;
+  width: max-content;
+  max-width: min(30rem, 100%);
+  padding: var(--space-1) 0;
+  pointer-events: none;
 }
+.reviewTagBox { display: flex; pointer-events: auto; }
+.reviewTagBox > .reviewBtns { margin: 0; box-shadow: var(--shadow-2); }

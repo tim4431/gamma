@@ -3,7 +3,7 @@
 // `revert` (what undoing it needs, recorded by its tool — gamma/ai_tools/),
 // and so do a folder or label it deleted and a page tool's rename, move or
 // label change (`revert.pages`, one page or many). A change the server
-// journaled for review (`change_id`) is undone by its id (POST
+// journaled (`change_id`) is undone by its id (POST
 // /api/ai/changes/<id>, chat/noteReview.js), another by its record (POST
 // /api/ai/revert); either is a merge into the notes or the library as they
 // are now (gamma/ai_revert.py), and the action is marked `reverted` in the

@@ -416,6 +416,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   align-items: flex-start;
   gap: 10px;
   margin-bottom: 12px;
+  /* A narrow row keeps the review switch's icon alone (.reviewModeLabel). */
+  container: pageTitleRow / inline-size;
 }
 
 .pageTitleRow h3 {
@@ -1420,15 +1422,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   font-size: var(--fs-sm);
 }
 
-/* Who made a highlight when an agent did, under its passage (BlockTree). */
-.blockMadeBy {
-  display: flex; align-items: center; gap: var(--space-2);
-  margin-top: 6px; min-width: 0;
-  font-size: var(--fs-xs); color: var(--text-muted);
-}
-.blockMadeBy > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.blockMadeBy .agentAvatar { flex-shrink: 0; width: 16px; height: 16px; border: none; }
-
 /* Area-selection crop on a note card — quote-style left border in the
    highlight's color; clicking anywhere on the card already jumps the PDF. */
 .blockAreaSnap {
@@ -1693,12 +1686,12 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   60% { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
   100% { background: transparent; box-shadow: inset 3px 0 0 transparent; }
 }
-/* A ghost row's handle column (a note streaming in, a note asked for,
-   editor/BlockTree.jsx GhostRow) is an inert stand-in that keeps its card
-   aligned with its siblings'. The streaming row's tint is the one the
-   block it becomes starts its fade from (ai-create), so the handoff does
-   not pulse. */
-.sortableBlockWrap:is(.aiGhostWrap, .aiAskGhostWrap) > .rowHandles { visibility: hidden; pointer-events: none; }
+/* A ghost row's handle column (a note streaming in, a note an agent
+   deleted, editor/BlockTree.jsx GhostRow) is an inert stand-in that keeps
+   its card aligned with its siblings'. The streaming row's tint is the one
+   the block it becomes starts its fade from (ai-create), so the handoff
+   does not pulse. */
+.sortableBlockWrap:is(.aiGhostWrap, .aiDeletedWrap) > .rowHandles { visibility: hidden; pointer-events: none; }
 .aiGhostWrap .blockRow { animation: none; background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
 .blockRendered.aiStreaming { min-height: 1.45em; }
 .blockRendered.aiStreaming > :last-child { display: inline-block; margin-bottom: 0; }
@@ -1718,7 +1711,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
    ins.mdDiff, with the approval card's below); a code block or display
    formula that went or came is marked whole, by a bar at its side and the
    tint; a note the AI made is all new, its text as it renders on the
-   inserted tint. Under it, the bar of editor/NoteReviewBar.jsx. */
+   inserted tint. At the row's right edge, the buttons of
+   editor/ReviewButtons.jsx (.reviewBtns). */
 /* In a note's own reading size what went reads as gone: its line the full
    red (the tint under it would swallow a paler one in a dark theme), its
    words a step quieter, a little room before what came, bold or not. */
@@ -1803,35 +1797,11 @@ ins.mdDiff img { outline-color: color-mix(in srgb, var(--ok) 60%, transparent); 
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--ok) 10%, transparent);
 }
-.noteReviewBar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-}
-.noteReviewLabel { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
-.noteReviewLabel svg { flex: none; color: var(--accent); }
-/* The approval card's answers (chat/ApprovalShell.jsx) in the bar's row:
-   the buttons after the label, Don't allow at the row's end; its line of
-   what to do instead beside them; a refusal on a line of its own. */
-.noteReviewBar > .chatApprovalActions { flex: 1 1 auto; margin-top: 0; }
-.noteReviewBar > .chatApprovalDecline { display: flex; flex: 1 1 18rem; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.noteReviewBar .chatApprovalDecline .aiKeyInput { flex: 1 1 14rem; width: auto; min-width: 0; margin: 0; }
-.noteReviewBar .chatApprovalDecline .chatApprovalActions { margin-top: 0; }
-.noteReviewBar > :is(.chatApprovalStatus, .chatApprovalError) { flex-basis: 100%; margin-top: 0; }
-.noteReviewBar > .chatApprovalDiff { flex-basis: 100%; }
-/* The card's Show: to where its change is drawn while it waits. */
-.chatApprovalShow { align-self: flex-start; margin-bottom: var(--space-1); }
 /* An agent's change marks its row's left edge, as a diff's gutter marks a
    line (chat/noteReview.js): the accent for an edit or a move, green for
-   what was added (a note, a drawing, a text box, a picture, a highlight),
-   red for a deletion asked for; dashed while it waits on its card (not
-   written yet), solid once made. A kept change's mark is a button that
-   unfolds it (.aiChangeMark). A pseudo-element or the button, never the
-   row's own box-shadow, which the fading tint of an agent's edit (.ai-edit)
+   what was added (a note, a drawing, a text box, a picture, a highlight,
+   a page of paper), red for a deletion. A pseudo-element, never the row's
+   own box-shadow, which the fading tint of an agent's edit (.ai-edit)
    keeps at its last frame. */
 .blockRow.aiReview { position: relative; --review-mark: var(--accent); }
 .blockRow:is(.aiReview-add, .aiReview-object) { --review-mark: var(--ok); }
@@ -1847,63 +1817,52 @@ ins.mdDiff img { outline-color: color-mix(in srgb, var(--ok) 60%, transparent); 
   background: var(--review-mark);
   pointer-events: none;
 }
-.blockRow.aiReview-ask::before { background: repeating-linear-gradient(to bottom, var(--review-mark) 0 4px, transparent 4px 7px); }
-.blockRow.aiReview-kept::before { display: none; }
-/* A note asked to go: struck out and faded, its bar as it is. */
-.blockRow.aiReview-ask.aiReview-delete .blockBody > :not(.noteReviewBar) {
-  opacity: 0.55;
-  text-decoration: line-through;
-  text-decoration-color: var(--danger);
-}
-/* A change unfolded that is no text (a move, a placed block): the row
-   tinted in its mark's colour while the bar shows. */
-.blockRow.aiReview-unfolded:is(.aiReview-move, .aiReview-object) .blockBody {
+/* A change that is no text (a move, a placed block): its row tinted in its
+   mark's colour too. */
+.blockRow:is(.aiReview-move, .aiReview-object) .blockBody {
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--review-mark) 8%, transparent);
 }
-/* The kept change's mark: a 3px bar with a wider hit area, which widens
-   under the pointer and while the change is unfolded. */
-.aiChangeMark {
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  left: -3px;
-  z-index: 1;
-  width: 9px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  cursor: pointer;
+/* A note an agent deleted (editor/BlockTree.jsx DeletedRow): its text
+   struck through and faded at the place it had, and how many notes went
+   with it under that. */
+.aiDeletedText { opacity: 0.55; text-decoration: line-through; text-decoration-color: var(--danger); }
+.aiDeletedUnder { margin-top: var(--space-1); font-size: var(--fs-xs); color: var(--text-muted); }
+/* A change's buttons (editor/ReviewButtons.jsx) at its row's right edge,
+   before the row's comment and its ×: one pill, apart from them, in their
+   height (comments.css .commentCtl), always shown, since the suggestion
+   waits on them: Accept in green, Reject red under the pointer
+   (.ctlBtn.danger), or the shown change's Hide. An Accept or a Reject that
+   stopped says why in a small card under them, over what follows. A
+   deleted note's ghost row holds stand-ins of the comment control and the
+   × after them (.rowToolStandIn), so its buttons stand where the other
+   rows' do. */
+.reviewBtns {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-self: flex-start;
+  gap: 1px;
+  height: var(--ctl-icon-btn-xs);
+  margin: 1px var(--space-1) 0 0;
+  padding: 0 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
 }
-.aiChangeMark::after {
-  content: "";
+.reviewBtns > .ctlBtn { width: var(--ctl-close-sm); height: 100%; border-radius: var(--radius-full); }
+.reviewBtns > .ctlBtn.reviewAccept { color: var(--ok); }
+.reviewBtns > .ctlBtn.reviewAccept:hover:not(:disabled) { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.reviewRefusal {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 3px;
-  width: 3px;
-  border-radius: var(--radius-xs);
-  background: var(--accent);
-  transition: left var(--dur-fast) var(--ease-out), width var(--dur-fast) var(--ease-out);
-}
-.aiChangeMark:is(.aiChangeMark-add, .aiChangeMark-object)::after { background: var(--ok); }
-.aiChangeMark:is(:hover, [aria-expanded="true"])::after { left: 2px; width: 5px; }
-.aiChangeMark:focus-visible { outline-offset: 1px; }
-/* The change the page's strip stepped to flashes once. */
-.blockRow.reviewFocus { animation: blockLanded 1.2s ease-out; }
-/* The strip at the foot of a page's notes while agents' changes on it wait
-   for review (editor/PageReviewStrip.jsx): it stays in view as the notes
-   scroll, over them. */
-.pageReviewStrip {
-  position: sticky;
-  bottom: var(--space-2);
+  top: calc(100% + var(--space-1));
+  right: 0;
   z-index: var(--z-float);
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-2);
-  margin: var(--space-3) var(--space-2) var(--space-2);
+  width: max-content;
+  max-width: min(22rem, calc(100vw - 2 * var(--space-4)));
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1911,12 +1870,24 @@ ins.mdDiff img { outline-color: color-mix(in srgb, var(--ok) 60%, transparent); 
   box-shadow: var(--shadow-2);
   font-size: var(--fs-xs);
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }
-.pageReviewCount { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-primary); }
-.pageReviewCount svg { color: var(--accent); }
-.pageReviewNav { display: inline-flex; align-items: center; gap: var(--space-1); }
-.pageReviewAt { min-width: 3.5em; text-align: center; font-variant-numeric: tabular-nums; }
-.pageReviewSpacer { flex: 1 1 auto; }
+.reviewRefusal > .chatApprovalDiff { margin-top: 0; }
+.reviewRefusalActions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.aiDeletedWrap .rowToolStandIn { visibility: hidden; pointer-events: none; }
+/* The page header's Editing / Reviewing switch (editor/ReviewMode.jsx): a
+   page action with its mode's name, in the accent while Reviewing; in its
+   menu a line under each mode's name says what it does. */
+.pageActionBtn.reviewModeBtn { width: auto; padding: 0 var(--space-2); gap: var(--space-1); font-size: var(--fs-xs); }
+.pageActionBtn.reviewModeBtn.on { color: var(--accent); }
+/* The mode's name gives the title its room where the notes are narrow (a
+   pane beside a PDF, a phone): the glyph says which mode it is. */
+@container pageTitleRow (max-width: 30rem) {
+  .reviewModeLabel { display: none; }
+}
+.reviewModeMenu { max-width: min(20rem, calc(100vw - 2 * var(--space-4))); }
+.reviewModeMenu .ctxMenuText:has(> .reviewModeHint) { display: flex; flex-direction: column; white-space: normal; }
+.reviewModeHint { font-size: var(--fs-xs); color: var(--text-muted); }
 /* Whole-page read (read_page / read_block on the page id): the outline's
    left edge breathes once. */
 .blockList.aiPageRead { animation: aiPageReadPulse 1.6s ease-in-out 2; }
@@ -7947,10 +7918,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkEditOptions .ctlBtn, .inkEditOptions .colorBtn { min-width: 32px; min-height: 32px; }
 /* The selection menu's second row (More edits): the first row's targets. */
 .inkEditOptions.inkEditMore .ctlBtn { flex: 1; min-width: 36px; min-height: 36px; }
-/* A dark page flips its ink and its text boxes' bodies with it, and so an
-   agent's strokes and text box asked for (.reviewInk, markup/ReviewLayer.jsx),
-   which look as they will once written. */
-:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .inkWetCanvas, .textBoxBody, .reviewInk) { filter: invert(1) hue-rotate(180deg); }
+/* A dark page flips its ink and its text boxes' bodies with it. */
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .inkWetCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
 /* Turned over with the page, a highlighter screens, multiply's dual: the
    dark page shows the light page's highlight inverted, the light text under
    it staying light. */

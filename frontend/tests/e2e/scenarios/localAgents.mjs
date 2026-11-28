@@ -495,14 +495,14 @@ export async function localAgentScenarios(env) {
         const question = await asked(tex.id, TEX_QUESTION);
         assertEq(JSON.stringify([question.comments[0].agent, question.comments[0].author]), JSON.stringify(["Codex", "la-user"]),
           "the question is Codex's");
-        // the thread opened: the reply under Codex's name, its byline naming the computer and the person
+        // the thread opened: the reply under Codex's name, its byline naming the computer (the person is the viewer)
         await page.goto(`${at(tex.id)}&thread=${texThread.id}`);
         const item = page.locator(".commentItem.reply", { hasText: TEX_REPLY }).first();
         await item.waitFor({ timeout: 10000 });
-        const byline = `Written by Codex on ${computer}, for la-user`;
+        const byline = `Written by Codex on ${computer}`;
         assertEq((await item.locator(".commentAuthor").textContent()).trim(), "Codex", "the agent's name");
-        assertEq(await item.locator(".commentAuthor").getAttribute("title"), byline, "the byline names the computer and the person");
-        assertEq(await item.locator(".commentFor").textContent(), `on ${computer}, for la-user`, "after the agent's name");
+        assertEq(await item.locator(".commentAuthor").getAttribute("title"), byline, "the byline names the computer");
+        assertEq(await item.locator(".commentFor").textContent(), `on ${computer}`, "after the agent's name");
         assertEq(await item.locator(":scope > .agentAvatar").getAttribute("title"), byline, "and so does the agent's avatar");
         assertNoProblems(page);
       } finally { await ctx.close(); }
@@ -1073,13 +1073,13 @@ export async function localAgentScenarios(env) {
         const computer = comment.agent_on;
         assert(computer, "the comment names the computer Codex ran on");
         // the highlight it made says who made it
-        await page.locator(`[data-page="1"] [data-hl-id][title="Highlighted by Codex on ${computer}, for la-user"]`).first()
+        await page.locator(`[data-page="1"] [data-hl-id][title="Highlighted by Codex on ${computer}"]`).first()
           .waitFor({ timeout: 10000 });
         await page.goto(`${at(paper.id)}&thread=${thread.id}`);
         const item = page.locator(".commentItem", { hasText: "Is noon right here?" }).first();
         await item.waitFor({ timeout: 10000 });
         assertEq(await item.locator(".commentAuthor").textContent(), "Codex", "the agent's name");
-        assertEq(await item.locator(".commentFor").textContent(), `on ${computer}, for la-user`, "on its computer, for the person");
+        assertEq(await item.locator(".commentFor").textContent(), `on ${computer}`, "on its computer, the person the viewer");
         assertEq(await item.locator(":scope > .agentAvatar").getAttribute("data-agent"), "computer", "a computer agent's avatar");
         assertNoProblems(page);
       } finally { await ctx.close(); }

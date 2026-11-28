@@ -25,7 +25,7 @@ import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, isTextRangeBlo
 import { plainSnippet } from "../search/snippets.js";
 import { CHIP_RE, refWords } from "../editor/refLabels.js";
 import { agentWorking } from "../vault/vaultState.js";
-import { GAMMA, agentWords, madeBy } from "../chat/agents.js";
+import { GAMMA, agentWords, isViewer, madeBy } from "../chat/agents.js";
 
 export const MAX_COMMENT = 20000; // characters, as the server (comments.MAX_BODY)
 
@@ -247,7 +247,8 @@ export const isEdited = (comment) => !comment.deleted && !!comment.updated_at &&
 // "Claude Code", Gamma AI; gamma/agents.py), else its author, whose
 // comment it is either way. `agentFor` is what the byline adds after an
 // agent's name: the computer it runs on and the person it wrote for ("on
-// TIM-PC, for tim"). `authorTitle` is the avatar's title, the whole of it
+// TIM-PC, for bob"), that person only when it is not the viewer
+// (chat/agents.js isViewer). `authorTitle` is the avatar's title, the whole of it
 // (chat/agents.js madeBy), the agent's owner named where it wrote for a
 // co-author (`agent_owner`: "alice's Codex on TIM-PC, for bob"), a
 // connection's said as written with the person's connection.
@@ -256,6 +257,7 @@ export const authorLabel = (comment) => (comment.agent ? madeBy({ id: agentId(co
 export function agentFor(comment) {
   if (!comment.agent) return "";
   const person = comment.author || t("Someone");
+  if (isViewer(comment.author)) return comment.agent_on ? t("on {computer}", { computer: comment.agent_on }) : "";
   return comment.agent_on ? t("on {computer}, for {person}", { computer: comment.agent_on, person })
     : t("for {person}", { person });
 }
