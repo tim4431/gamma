@@ -54,6 +54,37 @@ share host trusts this project's default network, whose subnet
 Without that every visitor would share the proxy's rate limits, the
 sign-ins at `app.gammapdf.com` among them.
 
+## The host's disk
+
+The VPS has a 20 GB disk. The Admin page's Machines tab shows how full it
+is, and the account server mails an alert when it fills up. Three settings
+on the host keep it from filling:
+
+- `/etc/docker/daemon.json` rotates every container's log (`json-file`,
+  3 files of 20 MB). It applies only to containers created after
+  `systemctl restart docker`, so after changing it, run
+  `docker compose up -d --force-recreate` once in each project.
+- `/etc/systemd/journald.conf.d/size.conf` caps the journal at 200 MB.
+- `/etc/cron.weekly/docker-image-prune` runs `docker image prune -a -f`
+  every Sunday and logs what it removed (`journalctl -t docker-image-prune`).
+  It removes every image no container uses, including the `:latest` builds
+  that deploys replaced and `sha-` tags pulled by hand. A rollback pulls its
+  `sha-` tag from GHCR again. A hosted server's previous build stays, because
+  the fleet agent keeps it as the stopped `gamma-<label>-prev` container.
+
+Watchtower's `--cleanup` removes only the image it replaced itself. The
+deploy skills (`update-account-server`, `update-share-host`,
+`update-demo-server`, `update-fleet`) end with `docker image prune -f`,
+which removes the image their restart left untagged. The weekly job removes
+everything else. On a new host:
+
+```bash
+printf '{\n  "log-driver": "json-file",\n  "log-opts": { "max-size": "20m", "max-file": "3" }\n}\n' > /etc/docker/daemon.json
+dockerd --validate --config-file /etc/docker/daemon.json && systemctl restart docker
+mkdir -p /etc/systemd/journald.conf.d && printf '[Journal]\nSystemMaxUse=200M\n' > /etc/systemd/journald.conf.d/size.conf && systemctl restart systemd-journald
+printf '#!/bin/sh\n/usr/bin/docker image prune -a -f 2>&1 | logger -t docker-image-prune\n' > /etc/cron.weekly/docker-image-prune && chmod 755 /etc/cron.weekly/docker-image-prune
+```
+
 ## First deployment on a VPS
 
 1. **DNS.** In the Cloudflare zone add `A account → <the VPS address>`,
@@ -462,7 +493,7 @@ same from the shell.
 ## Updating
 
 ```bash
-cd ~/Container/gamma-account && docker compose pull account && docker compose up -d
+cd ~/Container/gamma-account && docker compose pull account && docker compose up -d && docker image prune -f
 ```
 
 (`/update-account-server` does this after checking the publish finished,

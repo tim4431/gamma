@@ -108,11 +108,14 @@ docker compose pull -q share
 GOT=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' ghcr.io/tim4431/gamma:latest)
 [ "$GOT" = "$1" ] || { echo ":latest is $GOT, not $1; nothing restarted"; exit 1; }
 docker compose up -d --no-deps share
+docker image prune -f
 EOF
 ```
 
 `up -d --no-deps share` recreates the share host alone: its visitors lose
-their connection for the seconds of the restart. At start the image upgrades
+their connection for the seconds of the restart. `docker image prune -f`
+removes the image it ran before, unless the demo still runs it; the host's
+weekly job takes it then ([the host's disk](../../../cloud/deploy/README.md#the-hosts-disk)). At start the image upgrades
 `share-data/` itself (snapshot first into `share-data/backups/`). It refuses a
 directory written by a newer build, so a `share` that keeps restarting needs
 its log read before anything else.

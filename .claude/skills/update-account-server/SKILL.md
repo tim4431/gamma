@@ -88,10 +88,13 @@ subnet the share host trusts (`FORWARDED_ALLOW_IPS`).
 SSH uses public-key auth (no password prompt expected). `pull` then `up -d`
 recreates only the containers whose image or config changed — no `down`, so
 the portal is gone for seconds, not the whole pull. `--remove-orphans` stops
-services the compose file has dropped:
+services the compose file has dropped, and `docker image prune -f` removes
+the image the new one replaced, which the project's Watchtower never cleans
+up because it only updates `share`
+([the host's disk](../../../cloud/deploy/README.md#the-hosts-disk)):
 
 ```bash
-ssh root@69.63.206.178 "cd /root/Container/gamma-account && docker compose pull account && docker compose up -d --remove-orphans"
+ssh root@69.63.206.178 "cd /root/Container/gamma-account && docker compose pull account && docker compose up -d --remove-orphans && docker image prune -f"
 ```
 
 After copying a `Caddyfile`, reload it (`up -d` does not restart Caddy for

@@ -65,10 +65,12 @@ alone, which also throws away a rollback pin set in `compose.yml`.
 
 The agent finishes the job it holds before it exits (the compose file
 allows five minutes), and the hosted containers are not compose services,
-so they keep running through the restart:
+so they keep running through the restart. `docker image prune -f` then
+removes the agent image the new one replaced
+([the host's disk](../../../cloud/deploy/README.md#the-hosts-disk)):
 
 ```bash
-ssh root@69.63.206.178 "cd /root/Container/gamma-fleet && docker compose pull && docker compose up -d"
+ssh root@69.63.206.178 "cd /root/Container/gamma-fleet && docker compose pull && docker compose up -d && docker image prune -f"
 ```
 
 ## Verify

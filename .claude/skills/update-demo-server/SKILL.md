@@ -130,12 +130,15 @@ docker compose pull -q demo
 GOT=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' ghcr.io/tim4431/gamma:latest)
 [ "$GOT" = "$1" ] || { echo ":latest is $GOT, not $1; nothing restarted"; exit 1; }
 docker compose up -d --remove-orphans
+docker image prune -f
 EOF
 ```
 
 `up -d` recreates the demo alone (and starts Watchtower if it was not
 running): guests lose their connection for the seconds of the restart and
-keep their workspaces. At start the image upgrades the data directory itself
+keep their workspaces. `docker image prune -f` removes the image the demo ran
+before, unless the share host still runs it; the host's weekly job takes it
+then ([the host's disk](../../../cloud/deploy/README.md#the-hosts-disk)). At start the image upgrades the data directory itself
 (`manage.py migrate`, snapshot first into `data/backups/`). It refuses a
 directory written by a newer build, so a `demo` that keeps restarting needs
 its log read before anything else.

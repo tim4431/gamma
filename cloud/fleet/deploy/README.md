@@ -167,7 +167,7 @@ name that is a 404 here is not `<label>-user.<domain>`.
 ## Updating
 
 ```bash
-cd ~/Container/gamma-fleet && docker compose pull && docker compose up -d
+cd ~/Container/gamma-fleet && docker compose pull && docker compose up -d && docker image prune -f
 ```
 
 That pulls Caddy too on a host with the `edge` profile. Running
